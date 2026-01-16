@@ -1,0 +1,133 @@
+[package]
+name = "microfetch"
+version = "0.1.0"
+edition = "2021"
+description = "Ultra-minimal browser engine with JS support, HTTP/3, cookie auth, passkeys, and anti-fingerprinting"
+license = "MIT"
+rust-version = "1.75"
+
+[dependencies]
+# ═══════════════════════════════════════════════════════════════════════════════
+# HTTP CLIENT - ALL ACCELERATION FEATURES
+# ═══════════════════════════════════════════════════════════════════════════════
+reqwest = { version = "0.12", default-features = false, features = [
+    "cookies",           # Cookie jar support
+    "brotli",            # Brotli decompression (20-25% better than gzip)
+    "zstd",              # Zstd decompression (40% faster than brotli)
+    "gzip",              # Gzip fallback
+    "deflate",           # Deflate fallback
+    "rustls-tls",        # TLS 1.3 with 0-RTT support
+    "http2",             # HTTP/2 multiplexing (100 streams/connection)
+    "stream",            # Streaming responses
+    "hickory-dns",       # DNS caching + Happy Eyeballs (IPv4/6 racing)
+    "charset",           # Auto charset detection
+    "macos-system-configuration", # macOS proxy detection
+] }
+
+# HTTP/3 + QUIC (0-RTT connection resumption)
+# Latest compatible versions as of 2026-01
+quinn = { version = "0.11", optional = true }
+h3 = { version = "0.0.8", optional = true }
+h3-quinn = { version = "0.0.10", optional = true }
+bytes = "1"                         # Required for h3
+
+# WebSocket support
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tungstenite = "0.24"
+rustls = { version = "0.23", features = ["ring"] }
+rustls-native-certs = "0.8"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HTML PARSING (Browser-grade, from Servo)
+# ═══════════════════════════════════════════════════════════════════════════════
+html5ever = "0.29"
+# markup5ever_rcdom removed - scraper provides DOM manipulation
+scraper = "0.22"                    # CSS selectors + DOM manipulation
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JAVASCRIPT ENGINE (QuickJS - 1MB, ES2020)
+# ═══════════════════════════════════════════════════════════════════════════════
+rquickjs = { version = "0.9", features = [
+    "bindgen",           # Auto-generate bindings
+    "classes",           # ES6 class support
+    "futures",           # Async/Promise integration with Rust futures
+    "macro",             # Convenient macros
+    "parallel",          # Multi-context support
+    "loader",            # Module loading
+] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTHENTICATION - Passkeys/WebAuthn (1Password's open-source library)
+# ═══════════════════════════════════════════════════════════════════════════════
+passkey = "0.5"                     # 1Password's WebAuthn client
+passkey-client = "0.5"              # Passkey client implementation
+passkey-types = "0.5"               # Type definitions
+coset = "0.3"                       # COSE (for WebAuthn)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BROWSER FINGERPRINT SPOOFING
+# ═══════════════════════════════════════════════════════════════════════════════
+# fake-useragent removed - we have custom fingerprinting in fingerprint.rs
+rand = "0.8"
+regex = "1"                             # OTP pattern extraction                        # Randomization for fingerprints
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ASYNC RUNTIME & UTILITIES
+# ═══════════════════════════════════════════════════════════════════════════════
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SERIALIZATION
+# ═══════════════════════════════════════════════════════════════════════════════
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONTENT PROCESSING
+# ═══════════════════════════════════════════════════════════════════════════════
+html2md = "0.2"                     # HTML to Markdown
+url = "2"                           # URL parsing
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ERROR HANDLING & LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLI (for testing)
+# ═══════════════════════════════════════════════════════════════════════════════
+clap = { version = "4", features = ["derive"], optional = true }
+http = "1.4.0"
+dirs = "6.0.0"
+
+[features]
+default = ["cli", "http3"]
+cli = ["clap"]
+# HTTP/3 + QUIC - enabled by default for maximum performance
+# Disable with: cargo build --no-default-features --features cli
+http3 = ["quinn", "h3", "h3-quinn"]
+
+[dev-dependencies]
+criterion = "0.5"
+tokio-test = "0.4"
+
+[[bin]]
+name = "microfetch"
+path = "src/main.rs"
+required-features = ["cli"]
+
+# Benchmarks disabled until core functionality validated
+# [[bench]]
+# name = "fetch_benchmark"
+# harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+# panic = "abort"  # Disabled - conflicts with some deps
+strip = true
+opt-level = 3
