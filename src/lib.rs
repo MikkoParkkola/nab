@@ -28,11 +28,13 @@ pub mod http3_client;
 pub mod js_engine;
 pub mod mfa;
 pub mod prefetch;
+pub mod stream;
 pub mod websocket;
 
 pub use auth::{CookieSource, Credential, CredentialRetriever, CredentialSource, OnePasswordAuth, OtpCode, OtpRetriever, OtpSource};
 pub use mfa::{detect_mfa_type, MfaHandler, MfaResult, MfaType, NotificationConfig};
 pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManager};
+pub use stream::{StreamProvider, StreamBackend, StreamInfo};
 pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 pub use http3_client::Http3Client;
 #[cfg(feature = "http3")]

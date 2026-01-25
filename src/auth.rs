@@ -550,9 +550,29 @@ impl CookieSource {
         }
 
         // Read cookies using sqlite3 CLI (avoids linking sqlite)
-        let query = format!(
-            "SELECT name, value, encrypted_value FROM cookies WHERE host_key LIKE '%{domain}' OR host_key LIKE '%.{domain}'"
-        );
+        // Cookie matching rules:
+        // - Cookie on .example.com matches sub.example.com, example.com, etc.
+        // - Cookie on example.com matches only example.com exactly
+        // - We need to match: exact domain, .domain (parent), and any .parent where domain is subdomain
+
+        // Extract base domain parts for subdomain matching
+        let domain_parts: Vec<&str> = domain.split('.').collect();
+        let mut conditions = vec![
+            format!("host_key = '{domain}'"),  // Exact match
+            format!("host_key = '.{domain}'"), // Parent domain with dot
+        ];
+
+        // Add parent domain matches (e.g., for areena.yle.fi, also match .yle.fi, .fi)
+        for i in 1..domain_parts.len() {
+            let parent = domain_parts[i..].join(".");
+            conditions.push(format!("host_key = '.{parent}'"));
+        }
+
+        let where_clause = conditions.join(" OR ");
+        let query =
+            format!("SELECT name, value, encrypted_value FROM cookies WHERE {where_clause}");
+
+        debug!("Cookie SQL query for '{}': WHERE {}", domain, where_clause);
 
         let output = Command::new("sqlite3")
             .args(["-separator", "\t", temp_db.to_str().unwrap(), &query])
@@ -599,11 +619,15 @@ impl CookieSource {
             }
         }
 
-        info!(
-            "Native extraction: {} cookies for {}",
-            cookies.len(),
-            domain
-        );
+        if cookies.is_empty() {
+            debug!("Native extraction: 0 cookies for {}", domain);
+        } else {
+            info!(
+                "Native extraction: {} cookies for {}",
+                cookies.len(),
+                domain
+            );
+        }
         Ok(cookies)
     }
 
@@ -628,8 +652,23 @@ impl CookieSource {
 import json
 try:
     import browser_cookie3 as bc
-    cj = bc.{browser_fn}(domain_name='{domain}')
-    cookies = {{c.name: c.value for c in cj if '{domain}' in c.domain}}
+    # Don't use domain_name parameter - it doesn't support subdomain matching
+    # Instead, fetch all cookies and filter ourselves
+    cj = bc.{browser_fn}()
+
+    # Cookie domain matching rules:
+    # - Cookie on .example.com matches sub.example.com, example.com, etc.
+    # - Cookie on example.com (no dot) matches only example.com exactly
+    def matches_cookie_domain(cookie_domain, request_domain):
+        if cookie_domain.startswith('.'):
+            # Parent domain with leading dot - matches request domain and all subdomains
+            parent = cookie_domain[1:]  # Remove leading dot
+            return request_domain == parent or request_domain.endswith('.' + parent)
+        else:
+            # No leading dot - exact match only
+            return cookie_domain == request_domain
+
+    cookies = {{c.name: c.value for c in cj if matches_cookie_domain(c.domain, '{domain}')}}
     print(json.dumps(cookies))
 except Exception as e:
     print(json.dumps({{"__error__": str(e)}}))

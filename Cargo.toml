@@ -105,6 +105,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 http = "1.4.0"
 dirs = "6.0.0"
 rust-mcp-sdk = { version = "0.7.2", features = ["server", "macros", "stdio", "2025-06-18"] }
+which = "6.0"                       # Find ffmpeg binary in PATH
 
 [features]
 default = ["cli", "http3"]
