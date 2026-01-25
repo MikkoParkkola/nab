@@ -36,6 +36,28 @@ enum OutputFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Default, ValueEnum)]
+enum AnalyzeOutputFormat {
+    #[default]
+    /// JSON with all analysis data
+    Json,
+    /// Markdown report
+    Markdown,
+    /// SRT subtitle format
+    Srt,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum OverlayStyleArg {
+    #[default]
+    /// Clean subtitles only
+    Minimal,
+    /// Subtitles + speaker labels
+    Detailed,
+    /// All overlays including timestamps
+    Debug,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Fetch a URL (token-optimized output available)
@@ -233,6 +255,69 @@ enum Commands {
         /// ffmpeg output options (e.g., "-c:v libx265")
         #[arg(long = "ffmpeg-opts")]
         ffmpeg_opts: Option<String>,
+
+        /// Pipe output to media player (vlc, mpv, etc.)
+        #[arg(long)]
+        player: Option<String>,
+    },
+
+    /// Analyze video with multimodal pipeline (transcription + vision)
+    Analyze {
+        /// Video file or URL to analyze
+        video: String,
+
+        /// Skip visual analysis, transcription only
+        #[arg(long)]
+        audio_only: bool,
+
+        /// Enable speaker diarization
+        #[arg(long)]
+        diarize: bool,
+
+        /// Output format
+        #[arg(long, short, default_value = "json")]
+        format: AnalyzeOutputFormat,
+
+        /// Output file (default: stdout)
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+
+        /// Offload processing to DGX Spark
+        #[arg(long)]
+        dgx: bool,
+
+        /// Claude API key for vision analysis (or `ANTHROPIC_API_KEY` env)
+        #[arg(long)]
+        api_key: Option<String>,
+    },
+
+    /// Add overlays to video (subtitles, speaker labels, analysis)
+    Annotate {
+        /// Input video file
+        video: String,
+
+        /// Output video file
+        output: String,
+
+        /// Generate and burn subtitles
+        #[arg(long)]
+        subtitles: bool,
+
+        /// Add speaker identification labels
+        #[arg(long)]
+        speaker_labels: bool,
+
+        /// Add emotional/behavioral analysis overlay
+        #[arg(long)]
+        analysis: bool,
+
+        /// Overlay style
+        #[arg(long, default_value = "minimal")]
+        style: OverlayStyleArg,
+
+        /// Use hardware acceleration (`VideoToolbox` on macOS)
+        #[arg(long)]
+        hwaccel: bool,
     },
 }
 
@@ -345,6 +430,7 @@ async fn main() -> Result<()> {
             cookies,
             duration,
             ffmpeg_opts,
+            player,
         } => {
             cmd_stream(
                 &source,
@@ -358,6 +444,47 @@ async fn main() -> Result<()> {
                 cookies.as_deref(),
                 duration.as_deref(),
                 ffmpeg_opts.as_deref(),
+                player.as_deref(),
+            )
+            .await?;
+        }
+        Commands::Analyze {
+            video,
+            audio_only,
+            diarize,
+            format,
+            output,
+            dgx,
+            api_key,
+        } => {
+            cmd_analyze(
+                &video,
+                audio_only,
+                diarize,
+                format,
+                output,
+                dgx,
+                api_key.as_deref(),
+            )
+            .await?;
+        }
+        Commands::Annotate {
+            video,
+            output,
+            subtitles,
+            speaker_labels,
+            analysis,
+            style,
+            hwaccel,
+        } => {
+            cmd_annotate(
+                &video,
+                &output,
+                subtitles,
+                speaker_labels,
+                analysis,
+                style,
+                hwaccel,
             )
             .await?;
         }
@@ -848,7 +975,7 @@ fn extract_json_object(s: &str) -> Option<&str> {
     let mut in_string = false;
     let mut escape_next = false;
 
-    for (i, c) in s.chars().enumerate() {
+    for (i, c) in s.char_indices() {
         if escape_next {
             escape_next = false;
             continue;
@@ -1224,6 +1351,7 @@ async fn cmd_stream(
     cookies: Option<&str>,
     duration: Option<&str>,
     ffmpeg_opts: Option<&str>,
+    player: Option<&str>,
 ) -> Result<()> {
     use microfetch::stream::{
         StreamProvider, StreamBackend, StreamQuality,
@@ -1234,6 +1362,7 @@ async fn cmd_stream(
     use microfetch::CookieSource;
     use std::collections::HashMap;
     use tokio::io::{stdout, AsyncWriteExt};
+    use std::process::Stdio;
 
     // Parse quality
     let stream_quality = match quality.to_lowercase().as_str() {
@@ -1424,7 +1553,31 @@ async fn cmd_stream(
                 p.elapsed_seconds);
         };
 
-        if output == "-" {
+        if let Some(player_cmd) = player {
+            // Stream to media player
+            eprintln!("🎬 Piping to: {player_cmd}");
+            let player_args = get_player_stdin_args(player_cmd);
+            let mut child = tokio::process::Command::new(player_cmd)
+                .args(&player_args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("Failed to spawn {player_cmd}: {e}"))?;
+
+            let mut stdin = child.stdin.take()
+                .ok_or_else(|| anyhow::anyhow!("Failed to get stdin for {player_cmd}"))?;
+
+            if let Some(dur_str) = duration {
+                let secs = parse_duration(dur_str)?;
+                backend.stream_with_duration(manifest_url, &config, &mut stdin, secs, Some(Box::new(progress_cb))).await?;
+            } else {
+                backend.stream_to(manifest_url, &config, &mut stdin, Some(Box::new(progress_cb))).await?;
+            }
+
+            drop(stdin); // Close stdin to signal EOF
+            child.wait().await?;
+        } else if output == "-" {
             // Stream to stdout
             let mut stdout = stdout();
             if let Some(dur_str) = duration {
@@ -1456,7 +1609,26 @@ async fn cmd_stream(
                 p.elapsed_seconds);
         };
 
-        if output == "-" {
+        if let Some(player_cmd) = player {
+            // Stream to media player
+            eprintln!("🎬 Piping to: {player_cmd}");
+            let player_args = get_player_stdin_args(player_cmd);
+            let mut child = tokio::process::Command::new(player_cmd)
+                .args(&player_args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("Failed to spawn {player_cmd}: {e}"))?;
+
+            let mut stdin = child.stdin.take()
+                .ok_or_else(|| anyhow::anyhow!("Failed to get stdin for {player_cmd}"))?;
+
+            backend.stream_to(manifest_url, &config, &mut stdin, Some(Box::new(progress_cb))).await?;
+
+            drop(stdin); // Close stdin to signal EOF
+            child.wait().await?;
+        } else if output == "-" {
             let mut stdout = stdout();
             backend.stream_to(manifest_url, &config, &mut stdout, Some(Box::new(progress_cb))).await?;
             stdout.flush().await?;
@@ -1468,6 +1640,18 @@ async fn cmd_stream(
 
     eprintln!("\n✅ Stream complete");
     Ok(())
+}
+
+/// Get arguments for media players to read from stdin
+fn get_player_stdin_args(player: &str) -> Vec<&'static str> {
+    match player {
+        "vlc" => vec!["-", "--intf", "dummy", "--play-and-exit"],
+        "mpv" => vec!["-"],
+        "ffplay" => vec!["-i", "-"],
+        "mplayer" => vec!["-"],
+        "iina" => vec!["--stdin"],
+        _ => vec!["-"], // Default: most players accept - for stdin
+    }
 }
 
 /// Parse duration string like "1h", "30m", "1h30m", "90" (seconds)
@@ -1507,4 +1691,183 @@ fn parse_duration(s: &str) -> Result<u64> {
     }
 
     Ok(total_secs)
+}
+
+async fn cmd_analyze(
+    video: &str,
+    audio_only: bool,
+    diarize: bool,
+    format: AnalyzeOutputFormat,
+    output: Option<PathBuf>,
+    dgx: bool,
+    api_key: Option<&str>,
+) -> Result<()> {
+    use microfetch::analyze::{
+        AnalysisPipeline, PipelineConfig as AnalysisConfig, VisionBackend,
+        report::{AnalysisReport, ReportFormat},
+    };
+
+    eprintln!("🎬 Analyzing: {video}");
+
+    // Build configuration
+    let mut config = AnalysisConfig::default();
+
+    // DGX offload
+    if dgx {
+        config.dgx_host = Some("spark".to_string());
+        eprintln!("   GPU: DGX Spark (nvfp4 quantization)");
+    }
+
+    // Diarization
+    config.enable_diarization = diarize;
+    if diarize {
+        eprintln!("   Diarization: enabled");
+    }
+
+    // Vision backend
+    let _skip_vision = audio_only;
+    if audio_only {
+        eprintln!("   Mode: audio-only (transcription)");
+    } else if let Some(key) = api_key {
+        config.vision_backend = VisionBackend::ClaudeApi { api_key: key.to_string() };
+        eprintln!("   Vision: Claude API");
+    } else if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        config.vision_backend = VisionBackend::ClaudeApi { api_key: key };
+        eprintln!("   Vision: Claude API (from ANTHROPIC_API_KEY)");
+    } else {
+        config.vision_backend = VisionBackend::Local;
+        eprintln!("   Vision: local models");
+    }
+
+    // Create and run pipeline
+    let pipeline = AnalysisPipeline::with_config(config)?;
+
+    let start = std::time::Instant::now();
+    let analysis = pipeline.analyze(video).await?;
+    let elapsed = start.elapsed();
+
+    eprintln!(
+        "\n✅ Analysis complete: {} segments in {:.1}s",
+        analysis.segments.len(),
+        elapsed.as_secs_f64()
+    );
+
+    // Generate output
+    let report_format = match format {
+        AnalyzeOutputFormat::Json => ReportFormat::Json,
+        AnalyzeOutputFormat::Markdown => ReportFormat::Markdown,
+        AnalyzeOutputFormat::Srt => ReportFormat::Srt,
+    };
+
+    let report = AnalysisReport::generate(&analysis, report_format)?;
+
+    // Output to file or stdout
+    if let Some(path) = output {
+        std::fs::write(&path, &report)?;
+        eprintln!("📄 Saved to: {}", path.display());
+    } else {
+        println!("{report}");
+    }
+
+    // Summary stats to stderr
+    if let Some(ref meta) = analysis.metadata {
+        eprintln!("\n📊 Video: {}x{} @ {:.1}fps, {:.1}s",
+            meta.width, meta.height, meta.fps, meta.duration);
+    }
+
+    let speakers: std::collections::HashSet<_> = analysis.segments
+        .iter()
+        .filter_map(|s| s.speaker.as_ref())
+        .collect();
+
+    if !speakers.is_empty() {
+        eprintln!("   Speakers: {}", speakers.len());
+    }
+
+    Ok(())
+}
+
+async fn cmd_annotate(
+    video: &str,
+    output: &str,
+    subtitles: bool,
+    speaker_labels: bool,
+    analysis: bool,
+    style: OverlayStyleArg,
+    hwaccel: bool,
+) -> Result<()> {
+    use microfetch::annotate::{
+        AnnotationPipeline,
+        PipelineConfig,
+        AnalysisConfig,
+    };
+
+    eprintln!("🎬 Annotating: {video}");
+    eprintln!("   Output: {output}");
+
+    // Build configuration based on style
+    let mut config = match style {
+        OverlayStyleArg::Minimal => PipelineConfig::default(),
+        OverlayStyleArg::Detailed => PipelineConfig::high_quality()
+            .with_speaker_labels(true),
+        OverlayStyleArg::Debug => PipelineConfig::high_quality()
+            .with_speaker_labels(true)
+            .with_analysis(true),
+    };
+
+    // Override with explicit flags
+    if subtitles || (!subtitles && !speaker_labels && !analysis) {
+        config.subtitles = true;
+        eprintln!("   Subtitles: enabled");
+    }
+
+    if speaker_labels {
+        config.speaker_labels = true;
+        config.transcription = config.transcription.with_diarization();
+        eprintln!("   Speaker labels: enabled");
+    }
+
+    if analysis {
+        config.analysis_overlay = true;
+        config.analysis = AnalysisConfig::full();
+        eprintln!("   Analysis overlay: enabled");
+    }
+
+    // Hardware acceleration (VideoToolbox on macOS, NVENC on Linux)
+    if hwaccel {
+        #[cfg(target_os = "macos")]
+        {
+            config.compositor = config.compositor.with_hwaccel("videotoolbox");
+            eprintln!("   Hardware acceleration: VideoToolbox");
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            config.compositor = config.compositor.with_hwaccel("nvenc");
+            eprintln!("   Hardware acceleration: NVENC");
+        }
+    }
+
+    eprintln!("   Style: {style:?}");
+
+    // Create and run pipeline
+    let pipeline = AnnotationPipeline::new(config)?;
+
+    let start = std::time::Instant::now();
+    let result = pipeline.process_file(video, output).await?;
+    let elapsed = start.elapsed();
+
+    eprintln!("\n✅ Annotation complete in {:.1}s", elapsed.as_secs_f64());
+
+    if let Some(ref path) = result.output_path {
+        eprintln!("   Output: {}", path.display());
+    }
+
+    eprintln!("   Subtitles: {} entries", result.subtitle_count);
+    eprintln!("   Speakers detected: {}", result.speakers.len());
+
+    if let Some(ref lang) = result.detected_language {
+        eprintln!("   Language: {lang}");
+    }
+
+    Ok(())
 }

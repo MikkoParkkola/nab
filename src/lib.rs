@@ -21,6 +21,8 @@
 //! }
 //! ```
 
+pub mod analyze;
+pub mod annotate;
 pub mod auth;
 pub mod fingerprint;
 pub mod http_client;
@@ -31,6 +33,14 @@ pub mod prefetch;
 pub mod stream;
 pub mod websocket;
 
+pub use analyze::{AnalysisPipeline, AnalysisOutput, AnalysisSegment, PipelineConfig as AnalysisPipelineConfig};
+pub use annotate::{
+    AnnotationPipeline, PipelineConfig as AnnotationPipelineConfig, PipelineResult,
+    SubtitleFormat, SubtitleEntry, SrtGenerator, AssGenerator,
+    OverlayTrack, OverlayPosition, SpeakerLabelOverlay, AnalysisOverlay,
+    Compositor, CompositorConfig,
+    TranscriptionConfig, AnalysisConfig as AnnotateAnalysisConfig,
+};
 pub use auth::{CookieSource, Credential, CredentialRetriever, CredentialSource, OnePasswordAuth, OtpCode, OtpRetriever, OtpSource};
 pub use mfa::{detect_mfa_type, MfaHandler, MfaResult, MfaType, NotificationConfig};
 pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManager};

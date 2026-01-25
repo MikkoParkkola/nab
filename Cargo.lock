@@ -1980,6 +1980,7 @@ dependencies = [
  "tracing-subscriber",
  "tungstenite",
  "url",
+ "uuid",
  "which 6.0.3",
 ]
 

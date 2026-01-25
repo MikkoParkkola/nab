@@ -425,6 +425,7 @@ impl StreamBackend for NativeHlsBackend {
 struct HlsVariant {
     bandwidth: u64,
     height: u32,
+    #[allow(dead_code)]
     codecs: Option<String>,
     uri: String,
 }
@@ -434,12 +435,14 @@ struct HlsPlaylist {
     segments: Vec<HlsSegment>,
     is_live: bool,
     target_duration: f64,
+    #[allow(dead_code)]
     media_sequence: u64,
 }
 
 #[derive(Debug, Clone)]
 struct HlsSegment {
     sequence: u64,
+    #[allow(dead_code)]
     duration: f64,
     uri: String,
 }

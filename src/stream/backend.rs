@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub enum BackendType {
     Native,
     Ffmpeg,
+    Streamlink,
 }
 
 /// Configuration for stream output
