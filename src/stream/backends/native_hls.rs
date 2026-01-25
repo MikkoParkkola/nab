@@ -255,19 +255,28 @@ impl NativeHlsBackend {
         }
     }
 
-    async fn stream_live<W: AsyncWrite + Unpin + Send>(
+    async fn stream_live_with_duration<W: AsyncWrite + Unpin + Send>(
         &self,
         playlist_url: &str,
         headers: &HashMap<String, String>,
         output: &mut W,
         progress: &Option<ProgressCallback>,
         start_time: std::time::Instant,
+        duration_secs: Option<u64>,
     ) -> Result<()> {
         let mut last_sequence = 0u64;
         let mut bytes_downloaded = 0u64;
         let mut segments_completed = 0u32;
 
         loop {
+            // Check if we've reached duration limit
+            if let Some(max_dur) = duration_secs {
+                if start_time.elapsed().as_secs() >= max_dur {
+                    info!("Duration limit reached ({max_dur}s), stopping live stream");
+                    break;
+                }
+            }
+
             let playlist = self.parse_media_playlist(playlist_url, headers).await?;
 
             // Find new segments
@@ -296,6 +305,14 @@ impl NativeHlsBackend {
                             elapsed_seconds: start_time.elapsed().as_secs_f64(),
                         });
                     }
+
+                    // Check duration limit after each segment
+                    if let Some(max_dur) = duration_secs {
+                        if start_time.elapsed().as_secs() >= max_dur {
+                            info!("Duration limit reached ({max_dur}s), stopping live stream");
+                            return Ok(());
+                        }
+                    }
                 }
             }
 
@@ -310,25 +327,15 @@ impl NativeHlsBackend {
 
         Ok(())
     }
-}
 
-#[async_trait]
-impl StreamBackend for NativeHlsBackend {
-    fn backend_type(&self) -> BackendType {
-        BackendType::Native
-    }
-
-    fn can_handle(&self, manifest_url: &str, encrypted: bool) -> bool {
-        // Native backend handles unencrypted HLS only
-        !encrypted && manifest_url.contains(".m3u8")
-    }
-
-    async fn stream_to<W: AsyncWrite + Unpin + Send>(
+    /// Internal streaming with optional duration limit
+    async fn stream_to_internal<W: AsyncWrite + Unpin + Send>(
         &self,
         manifest_url: &str,
         config: &StreamConfig,
         output: &mut W,
         progress: Option<ProgressCallback>,
+        duration_secs: Option<u64>,
     ) -> Result<()> {
         let headers = &config.headers;
         let start_time = std::time::Instant::now();
@@ -372,11 +379,28 @@ impl StreamBackend for NativeHlsBackend {
         // For VOD: fetch all segments in order with limited concurrency
         // For live: continuously poll and fetch new segments
         if playlist.is_live {
-            self.stream_live(&media_url, headers, output, &progress, start_time)
+            self.stream_live_with_duration(&media_url, headers, output, &progress, start_time, duration_secs)
                 .await?;
         } else {
+            // Calculate max segments if duration is limited
+            let max_segments = duration_secs.and_then(|dur| {
+                if playlist.segments.is_empty() {
+                    None
+                } else {
+                    // Estimate segments from target duration
+                    let avg_seg_duration = playlist.target_duration;
+                    Some((dur as f64 / avg_seg_duration).ceil() as usize)
+                }
+            });
+
+            let segments_to_fetch = if let Some(max) = max_segments {
+                playlist.segments.iter().take(max).collect::<Vec<_>>()
+            } else {
+                playlist.segments.iter().collect::<Vec<_>>()
+            };
+
             // Fetch segments with concurrency
-            for chunk in playlist.segments.chunks(self.max_concurrent) {
+            for chunk in segments_to_fetch.chunks(self.max_concurrent) {
                 let futures: Vec<_> = chunk
                     .iter()
                     .map(|seg| self.fetch_segment(&seg.uri, headers))
@@ -406,6 +430,28 @@ impl StreamBackend for NativeHlsBackend {
         output.flush().await?;
         Ok(())
     }
+}
+
+#[async_trait]
+impl StreamBackend for NativeHlsBackend {
+    fn backend_type(&self) -> BackendType {
+        BackendType::Native
+    }
+
+    fn can_handle(&self, manifest_url: &str, encrypted: bool) -> bool {
+        // Native backend handles unencrypted HLS only
+        !encrypted && manifest_url.contains(".m3u8")
+    }
+
+    async fn stream_to<W: AsyncWrite + Unpin + Send>(
+        &self,
+        manifest_url: &str,
+        config: &StreamConfig,
+        output: &mut W,
+        progress: Option<ProgressCallback>,
+    ) -> Result<()> {
+        self.stream_to_internal(manifest_url, config, output, progress, None).await
+    }
 
     async fn stream_to_file(
         &self,
@@ -413,10 +459,11 @@ impl StreamBackend for NativeHlsBackend {
         config: &StreamConfig,
         path: &std::path::Path,
         progress: Option<ProgressCallback>,
+        duration_secs: Option<u64>,
     ) -> Result<()> {
         let file = tokio::fs::File::create(path).await?;
         let mut writer = tokio::io::BufWriter::new(file);
-        self.stream_to(manifest_url, config, &mut writer, progress)
+        self.stream_to_internal(manifest_url, config, &mut writer, progress, duration_secs)
             .await
     }
 }

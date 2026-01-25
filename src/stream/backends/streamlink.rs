@@ -91,7 +91,7 @@ impl StreamlinkBackend {
     }
 
     /// Build streamlink command arguments for file output
-    fn build_args_file(&self, url: &str, config: &StreamConfig, output_path: &str) -> Vec<String> {
+    fn build_args_file(&self, url: &str, config: &StreamConfig, output_path: &str, duration_secs: Option<u64>) -> Vec<String> {
         let mut args = Vec::new();
 
         // Output to file
@@ -100,6 +100,12 @@ impl StreamlinkBackend {
 
         // Force overwrite
         args.push("-f".to_string());
+
+        // Duration limit for HLS/DASH streams
+        if let Some(dur) = duration_secs {
+            args.push("--stream-segmented-duration".to_string());
+            args.push(format!("{dur}s"));
+        }
 
         // Headers
         for (key, value) in &config.headers {
@@ -310,9 +316,10 @@ impl StreamBackend for StreamlinkBackend {
         config: &StreamConfig,
         path: &Path,
         progress: Option<ProgressCallback>,
+        duration_secs: Option<u64>,
     ) -> Result<()> {
         let path_str = path.to_string_lossy();
-        let args = self.build_args_file(manifest_url, config, &path_str);
+        let args = self.build_args_file(manifest_url, config, &path_str, duration_secs);
         debug!("streamlink args: {:?}", args);
 
         let mut child = Command::new(&self.streamlink_path)
@@ -413,7 +420,7 @@ mod tests {
             cookies: None,
         };
 
-        let args = backend.build_args_file("https://www.twitch.tv/example", &config, "/tmp/output.ts");
+        let args = backend.build_args_file("https://www.twitch.tv/example", &config, "/tmp/output.ts", None);
 
         assert!(args.contains(&"-o".to_string()));
         assert!(args.contains(&"/tmp/output.ts".to_string()));

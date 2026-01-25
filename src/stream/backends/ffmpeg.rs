@@ -357,9 +357,10 @@ impl StreamBackend for FfmpegBackend {
         config: &StreamConfig,
         path: &Path,
         progress: Option<ProgressCallback>,
+        duration_secs: Option<u64>,
     ) -> Result<()> {
         let path_str = path.to_string_lossy();
-        let args = self.build_args(manifest_url, config, Some(&path_str), None);
+        let args = self.build_args(manifest_url, config, Some(&path_str), duration_secs);
         debug!("ffmpeg args: {:?}", args);
 
         let mut child = Command::new(&self.ffmpeg_path)

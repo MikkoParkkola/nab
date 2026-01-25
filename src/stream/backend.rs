@@ -67,5 +67,6 @@ pub trait StreamBackend: Send + Sync {
         config: &StreamConfig,
         path: &std::path::Path,
         progress: Option<ProgressCallback>,
+        duration_secs: Option<u64>,
     ) -> Result<()>;
 }

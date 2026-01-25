@@ -1590,7 +1590,8 @@ async fn cmd_stream(
         } else {
             // Stream to file
             let path = std::path::Path::new(output);
-            backend.stream_to_file(manifest_url, &config, path, Some(Box::new(progress_cb))).await?;
+            let duration_parsed = duration.map(parse_duration).transpose()?;
+            backend.stream_to_file(manifest_url, &config, path, Some(Box::new(progress_cb)), duration_parsed).await?;
         }
     } else {
         eprintln!("🔧 Backend: native");
@@ -1634,7 +1635,8 @@ async fn cmd_stream(
             stdout.flush().await?;
         } else {
             let path = std::path::Path::new(output);
-            backend.stream_to_file(manifest_url, &config, path, Some(Box::new(progress_cb))).await?;
+            let duration_parsed = duration.map(parse_duration).transpose()?;
+            backend.stream_to_file(manifest_url, &config, path, Some(Box::new(progress_cb)), duration_parsed).await?;
         }
     }
 
@@ -1709,6 +1711,20 @@ async fn cmd_analyze(
 
     eprintln!("🎬 Analyzing: {video}");
 
+    // Auto-detect audio-only files by extension
+    let is_audio_file = video.to_lowercase().ends_with(".wav")
+        || video.to_lowercase().ends_with(".mp3")
+        || video.to_lowercase().ends_with(".flac")
+        || video.to_lowercase().ends_with(".m4a")
+        || video.to_lowercase().ends_with(".aac")
+        || video.to_lowercase().ends_with(".ogg");
+
+    let audio_only = audio_only || is_audio_file;
+
+    if is_audio_file {
+        eprintln!("   Detected audio-only file, skipping video analysis");
+    }
+
     // Build configuration
     let mut config = AnalysisConfig::default();
 
@@ -1743,7 +1759,11 @@ async fn cmd_analyze(
     let pipeline = AnalysisPipeline::with_config(config)?;
 
     let start = std::time::Instant::now();
-    let analysis = pipeline.analyze(video).await?;
+    let analysis = if audio_only {
+        pipeline.analyze_audio_only(video).await?
+    } else {
+        pipeline.analyze(video).await?
+    };
     let elapsed = start.elapsed();
 
     eprintln!(
