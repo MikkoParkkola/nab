@@ -793,6 +793,11 @@ fn html_to_markdown(html: &str) -> String {
 }
 
 fn is_boilerplate(line: &str) -> bool {
+    // Preserve markdown links - never filter lines containing link syntax
+    if line.contains("](") {
+        return false;
+    }
+
     let lower = line.to_lowercase();
     // Skip common navigation/boilerplate patterns
     lower.contains("skip to content")
