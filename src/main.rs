@@ -84,17 +84,17 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge)
-        #[arg(short, long)]
-        cookies: Option<String>,
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
 
         /// Use 1Password credentials for this URL
         #[arg(long = "1password", visible_alias = "op")]
         use_1password: bool,
 
-        /// Convert HTML to markdown (strips clutter)
-        #[arg(short, long)]
-        markdown: bool,
+        /// Output raw HTML instead of markdown
+        #[arg(long)]
+        raw_html: bool,
 
         /// Extract links only
         #[arg(short, long)]
@@ -138,9 +138,9 @@ enum Commands {
         /// URL to extract data from
         url: String,
 
-        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge)
-        #[arg(short, long)]
-        cookies: Option<String>,
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
 
         /// Show raw HTML
         #[arg(long)]
@@ -151,7 +151,7 @@ enum Commands {
         console: bool,
 
         /// Wait time in milliseconds after page load for AJAX/setTimeout to complete
-        #[arg(long, default_value = "2000")]
+        #[arg(long, default_value = "5000")]
         wait: u64,
 
         /// API endpoint patterns to look for (comma-separated)
@@ -251,9 +251,9 @@ enum Commands {
         #[arg(long)]
         list: bool,
 
-        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge)
-        #[arg(short, long)]
-        cookies: Option<String>,
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
 
         /// Duration limit for live streams (e.g., "1h", "30m")
         #[arg(long)]
@@ -348,7 +348,7 @@ async fn main() -> Result<()> {
             output,
             cookies,
             use_1password,
-            markdown,
+            raw_html,
             links,
             max_body,
             add_headers,
@@ -365,9 +365,9 @@ async fn main() -> Result<()> {
                 body,
                 format,
                 output,
-                cookies.as_deref(),
+                &cookies,
                 use_1password,
-                markdown,
+                raw_html,
                 links,
                 max_body,
                 &add_headers,
@@ -397,7 +397,7 @@ async fn main() -> Result<()> {
         } => {
             cmd_spa(
                 &url,
-                cookies.as_deref(),
+                &cookies,
                 html,
                 console,
                 wait,
@@ -450,7 +450,7 @@ async fn main() -> Result<()> {
                 ffmpeg,
                 info,
                 list,
-                cookies.as_deref(),
+                &cookies,
                 duration.as_deref(),
                 ffmpeg_opts.as_deref(),
                 player.as_deref(),
@@ -508,9 +508,9 @@ async fn cmd_fetch(
     show_body: bool,
     format: OutputFormat,
     output_file: Option<PathBuf>,
-    cookies: Option<&str>,
+    cookies: &str,
     use_1password: bool,
-    markdown: bool,
+    raw_html: bool,
     links: bool,
     max_body: usize,
     custom_headers: &[String],
@@ -535,22 +535,19 @@ async fn cmd_fetch(
         .and_then(|u| u.host_str().map(std::string::ToString::to_string))
         .unwrap_or_default();
 
-    // Get cookies if requested or auto-detect
+    // Get cookies (auto-detect by default, unless "none")
     let mut cookie_header = String::new();
-    let browser_name = if let Some(browser_arg) = cookies {
-        // User specified a browser
-        if browser_arg.to_lowercase() == "auto" {
-            // Auto-detect
-            if let Ok(detected) = microfetch::detect_default_browser() {
-                Some(detected.as_str().to_string())
-            } else {
-                Some("chrome".to_string()) // fallback
-            }
+    let browser_name = if cookies.to_lowercase() == "none" {
+        None
+    } else if cookies.to_lowercase() == "auto" {
+        // Auto-detect
+        if let Ok(detected) = microfetch::detect_default_browser() {
+            Some(detected.as_str().to_string())
         } else {
-            Some(browser_arg.to_string())
+            Some("chrome".to_string()) // fallback
         }
     } else {
-        None
+        Some(cookies.to_string())
     };
 
     if let Some(browser) = &browser_name {
@@ -567,6 +564,9 @@ async fn cmd_fetch(
             println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
         }
     }
+
+    // Convert raw_html flag to markdown (default is markdown unless --raw-html)
+    let markdown = !raw_html;
 
     // Handle 1Password
     if use_1password && OnePasswordAuth::is_available() {
@@ -696,7 +696,7 @@ async fn cmd_fetch(
                 println!(
                     "🍪 Loaded {} cookies from {}",
                     cookie_header.matches('=').count(),
-                    cookies.unwrap_or("browser")
+                    if cookies == "auto" { "browser (auto-detected)" } else { cookies }
                 );
             }
 
@@ -848,7 +848,7 @@ fn truncate_text(text: &str, max: usize) -> String {
 
 async fn cmd_spa(
     url: &str,
-    cookies: Option<&str>,
+    cookies: &str,
     show_html: bool,
     show_console: bool,
     wait_ms: u64,
@@ -869,25 +869,22 @@ async fn cmd_spa(
         .and_then(|u| u.host_str().map(std::string::ToString::to_string))
         .unwrap_or_default();
 
-    // Get cookies if requested or auto-detect
+    // Get cookies (auto-detect by default, unless "none")
     let mut cookie_header = String::new();
-    let browser_name = if let Some(browser_arg) = cookies {
-        // User specified a browser
-        if browser_arg.to_lowercase() == "auto" {
-            // Auto-detect
-            if let Ok(detected) = microfetch::detect_default_browser() {
-                Some(detected.as_str().to_string())
-            } else {
-                Some("chrome".to_string()) // fallback
-            }
+    let browser_name = if cookies.to_lowercase() == "none" {
+        None
+    } else if cookies.to_lowercase() == "auto" {
+        // Auto-detect
+        if let Ok(detected) = microfetch::detect_default_browser() {
+            Some(detected.as_str().to_string())
         } else {
-            Some(browser_arg.to_string())
+            Some("chrome".to_string()) // fallback
         }
     } else {
-        None
+        Some(cookies.to_string())
     };
 
-    if let Some(browser) = browser_name {
+    if let Some(browser) = &browser_name {
         let source = match browser.to_lowercase().as_str() {
             "brave" => CookieSource::Brave,
             "chrome" => CookieSource::Chrome,
@@ -1617,7 +1614,7 @@ async fn cmd_stream(
     force_ffmpeg: bool,
     info_only: bool,
     list_episodes: bool,
-    cookies: Option<&str>,
+    cookies: &str,
     duration: Option<&str>,
     ffmpeg_opts: Option<&str>,
     player: Option<&str>,
@@ -1735,28 +1732,25 @@ async fn cmd_stream(
             rng.gen_range(1..255));
         headers.insert("X-Forwarded-For".to_string(), ip);
 
-        if cookies.is_some() {
-            eprintln!("🔐 Using browser session + Finnish IP for Yle");
+        if cookies.to_lowercase() == "none" {
+            eprintln!("🌍 Using Finnish IP for geo access. Add --cookies to enable authenticated content.");
         } else {
-            eprintln!("🌍 Using Finnish IP for geo access. Add --cookies brave for premium content.");
+            eprintln!("🔐 Using browser session + Finnish IP for Yle");
         }
     }
 
-    // Extract cookies from browser if specified or auto-detect
-    let browser_name = if let Some(browser_arg) = cookies {
-        // User specified a browser
-        if browser_arg.to_lowercase() == "auto" {
-            // Auto-detect
-            if let Ok(detected) = microfetch::detect_default_browser() {
-                Some(detected.as_str().to_string())
-            } else {
-                Some("chrome".to_string()) // fallback
-            }
+    // Extract cookies from browser (auto-detect by default, unless "none")
+    let browser_name = if cookies.to_lowercase() == "none" {
+        None
+    } else if cookies.to_lowercase() == "auto" {
+        // Auto-detect
+        if let Ok(detected) = microfetch::detect_default_browser() {
+            Some(detected.as_str().to_string())
         } else {
-            Some(browser_arg.to_string())
+            Some("chrome".to_string()) // fallback
         }
     } else {
-        None
+        Some(cookies.to_string())
     };
 
     if let Some(browser) = browser_name {
@@ -1792,7 +1786,11 @@ async fn cmd_stream(
     let config = StreamConfig {
         quality: stream_quality,
         headers,
-        cookies: cookies.map(String::from),
+        cookies: if cookies.to_lowercase() == "none" {
+            None
+        } else {
+            Some(cookies.to_string())
+        },
     };
 
     // For Yle, get fresh manifest URL via yle-dl (Akamai tokens expire quickly)
