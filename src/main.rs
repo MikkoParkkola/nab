@@ -147,6 +147,10 @@ enum Commands {
         #[arg(long)]
         console: bool,
 
+        /// Wait time in milliseconds after page load for AJAX/setTimeout to complete
+        #[arg(long, default_value = "2000")]
+        wait: u64,
+
         /// API endpoint patterns to look for (comma-separated)
         #[arg(short, long)]
         patterns: Option<String>,
@@ -378,6 +382,7 @@ async fn main() -> Result<()> {
             cookies,
             html,
             console,
+            wait,
             patterns,
             output,
             extract,
@@ -392,6 +397,7 @@ async fn main() -> Result<()> {
                 cookies.as_deref(),
                 html,
                 console,
+                wait,
                 patterns.as_deref(),
                 &output,
                 extract.as_deref(),
@@ -817,6 +823,7 @@ async fn cmd_spa(
     cookies: Option<&str>,
     _show_html: bool,
     _show_console: bool,
+    _wait_ms: u64,
     _patterns: Option<&str>,
     output: &str,
     extract_path: Option<&str>,
