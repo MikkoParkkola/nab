@@ -85,7 +85,10 @@ pub struct CompositorConfig {
 impl Default for CompositorConfig {
     fn default() -> Self {
         Self {
-            ffmpeg_path: which::which("ffmpeg").map_or_else(|_| "ffmpeg".to_string(), |p| p.to_string_lossy().to_string()),
+            ffmpeg_path: which::which("ffmpeg").map_or_else(
+                |_| "ffmpeg".to_string(),
+                |p| p.to_string_lossy().to_string(),
+            ),
             output_format: CompositorOutput::default(),
             video_codec: None,
             audio_codec: None,
@@ -251,12 +254,7 @@ impl Compositor {
     }
 
     /// Build ffmpeg arguments
-    fn build_args(
-        &self,
-        input: &str,
-        output: Option<&str>,
-        filter_complex: &str,
-    ) -> Vec<String> {
+    fn build_args(&self, input: &str, output: Option<&str>, filter_complex: &str) -> Vec<String> {
         let mut args = Vec::new();
 
         // Hide banner, show stats

@@ -236,16 +236,16 @@ impl JsonRpcWebSocket {
         // Wait for matching response
         let deadline = tokio::time::Instant::now() + timeout;
         while tokio::time::Instant::now() < deadline {
-            if let Some(msg) = self.ws.recv_timeout(Duration::from_millis(100)).await? {
-                if let WebSocketMessage::Text(text) = msg {
-                    let response: serde_json::Value = serde_json::from_str(&text)?;
-                    if response.get("id") == Some(&serde_json::json!(id)) {
-                        if let Some(error) = response.get("error") {
-                            return Err(anyhow::anyhow!("JSON-RPC error: {error}"));
-                        }
-                        if let Some(result) = response.get("result") {
-                            return Ok(serde_json::from_value(result.clone())?);
-                        }
+            if let Some(WebSocketMessage::Text(text)) =
+                self.ws.recv_timeout(Duration::from_millis(100)).await?
+            {
+                let response: serde_json::Value = serde_json::from_str(&text)?;
+                if response.get("id") == Some(&serde_json::json!(id)) {
+                    if let Some(error) = response.get("error") {
+                        return Err(anyhow::anyhow!("JSON-RPC error: {error}"));
+                    }
+                    if let Some(result) = response.get("result") {
+                        return Ok(serde_json::from_value(result.clone())?);
                     }
                 }
             }

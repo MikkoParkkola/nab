@@ -16,7 +16,9 @@ use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, info};
 
-use super::super::backend::{BackendType, ProgressCallback, StreamBackend, StreamConfig, StreamProgress};
+use super::super::backend::{
+    BackendType, ProgressCallback, StreamBackend, StreamConfig, StreamProgress,
+};
 use super::super::StreamQuality;
 
 /// Native HLS streaming backend
@@ -44,7 +46,7 @@ impl NativeHlsBackend {
         })
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn with_concurrency(mut self, max: usize) -> Self {
         self.max_concurrent = max;
         self
@@ -63,8 +65,8 @@ impl NativeHlsBackend {
         let mut lines = content.lines().peekable();
 
         while let Some(line) = lines.next() {
-            if line.starts_with("#EXT-X-STREAM-INF:") {
-                let attrs = Self::parse_attributes(&line[18..]);
+            if let Some(rest) = line.strip_prefix("#EXT-X-STREAM-INF:") {
+                let attrs = Self::parse_attributes(rest);
                 let bandwidth = attrs
                     .get("BANDWIDTH")
                     .and_then(|v| v.parse().ok())
@@ -116,12 +118,12 @@ impl NativeHlsBackend {
         for line in content.lines() {
             if line.starts_with("#EXT-X-ENDLIST") {
                 is_live = false;
-            } else if line.starts_with("#EXT-X-MEDIA-SEQUENCE:") {
-                media_sequence = line[22..].parse().unwrap_or(0);
-            } else if line.starts_with("#EXT-X-TARGETDURATION:") {
-                target_duration = line[22..].parse().unwrap_or(10.0);
-            } else if line.starts_with("#EXTINF:") {
-                current_duration = line[8..]
+            } else if let Some(rest) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
+                media_sequence = rest.parse().unwrap_or(0);
+            } else if let Some(rest) = line.strip_prefix("#EXT-X-TARGETDURATION:") {
+                target_duration = rest.parse().unwrap_or(10.0);
+            } else if let Some(rest) = line.strip_prefix("#EXTINF:") {
+                current_duration = rest
                     .split(',')
                     .next()
                     .and_then(|d| d.parse().ok())
@@ -379,8 +381,15 @@ impl NativeHlsBackend {
         // For VOD: fetch all segments in order with limited concurrency
         // For live: continuously poll and fetch new segments
         if playlist.is_live {
-            self.stream_live_with_duration(&media_url, headers, output, &progress, start_time, duration_secs)
-                .await?;
+            self.stream_live_with_duration(
+                &media_url,
+                headers,
+                output,
+                &progress,
+                start_time,
+                duration_secs,
+            )
+            .await?;
         } else {
             // Calculate max segments if duration is limited
             let max_segments = duration_secs.and_then(|dur| {
@@ -450,7 +459,8 @@ impl StreamBackend for NativeHlsBackend {
         output: &mut W,
         progress: Option<ProgressCallback>,
     ) -> Result<()> {
-        self.stream_to_internal(manifest_url, config, output, progress, None).await
+        self.stream_to_internal(manifest_url, config, output, progress, None)
+            .await
     }
 
     async fn stream_to_file(

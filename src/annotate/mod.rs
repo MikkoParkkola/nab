@@ -22,23 +22,18 @@
 //! }
 //! ```
 
-pub mod subtitle;
-pub mod overlay;
 pub mod compositor;
+pub mod overlay;
 pub mod pipeline;
+pub mod subtitle;
 
-pub use subtitle::{
-    SubtitleFormat, SubtitleGenerator, SubtitleEntry, SubtitleStyle,
-    SrtGenerator, AssGenerator,
-};
+pub use compositor::{Compositor, CompositorConfig, CompositorOutput};
 pub use overlay::{
-    OverlayTrack, OverlayEntry, OverlayPosition, OverlayStyle,
-    SpeakerLabelOverlay, AnalysisOverlay,
-};
-pub use compositor::{
-    Compositor, CompositorConfig, CompositorOutput,
+    AnalysisOverlay, OverlayEntry, OverlayPosition, OverlayStyle, OverlayTrack, SpeakerLabelOverlay,
 };
 pub use pipeline::{
-    AnnotationPipeline, PipelineConfig, PipelineResult,
-    TranscriptionConfig, AnalysisConfig,
+    AnalysisConfig, AnnotationPipeline, PipelineConfig, PipelineResult, TranscriptionConfig,
+};
+pub use subtitle::{
+    AssGenerator, SrtGenerator, SubtitleEntry, SubtitleFormat, SubtitleGenerator, SubtitleStyle,
 };

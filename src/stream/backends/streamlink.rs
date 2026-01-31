@@ -29,8 +29,10 @@ pub struct StreamlinkBackend {
 impl StreamlinkBackend {
     /// Create new streamlink backend, searching for binary in PATH
     pub fn new() -> Result<Self> {
-        let streamlink_path = which::which("streamlink")
-            .map_or_else(|_| "streamlink".to_string(), |p| p.to_string_lossy().to_string());
+        let streamlink_path = which::which("streamlink").map_or_else(
+            |_| "streamlink".to_string(),
+            |p| p.to_string_lossy().to_string(),
+        );
 
         Ok(Self {
             streamlink_path,
@@ -91,7 +93,13 @@ impl StreamlinkBackend {
     }
 
     /// Build streamlink command arguments for file output
-    fn build_args_file(&self, url: &str, config: &StreamConfig, output_path: &str, duration_secs: Option<u64>) -> Vec<String> {
+    fn build_args_file(
+        &self,
+        url: &str,
+        config: &StreamConfig,
+        output_path: &str,
+        duration_secs: Option<u64>,
+    ) -> Vec<String> {
         let mut args = Vec::new();
 
         // Output to file
@@ -176,7 +184,9 @@ impl StreamlinkBackend {
                 _ => return None,
             };
 
-            return Some(StreamlinkProgress { bytes_downloaded: bytes });
+            return Some(StreamlinkProgress {
+                bytes_downloaded: bytes,
+            });
         }
 
         None
@@ -211,7 +221,7 @@ impl StreamBackend for StreamlinkBackend {
             "nimo.tv",
             "picarto.tv",
             "pluto.tv",
-            "tv.se",  // Swedish TV
+            "tv.se", // Swedish TV
             "svtplay.se",
             "tv4play.se",
             "ruv.is",
@@ -379,8 +389,14 @@ mod tests {
 
     #[test]
     fn test_quality_to_string() {
-        assert_eq!(StreamlinkBackend::quality_to_string(&StreamQuality::Best), "best");
-        assert_eq!(StreamlinkBackend::quality_to_string(&StreamQuality::Worst), "worst");
+        assert_eq!(
+            StreamlinkBackend::quality_to_string(&StreamQuality::Best),
+            "best"
+        );
+        assert_eq!(
+            StreamlinkBackend::quality_to_string(&StreamQuality::Worst),
+            "worst"
+        );
         assert_eq!(
             StreamlinkBackend::quality_to_string(&StreamQuality::Specific(720)),
             "720p"
@@ -420,7 +436,12 @@ mod tests {
             cookies: None,
         };
 
-        let args = backend.build_args_file("https://www.twitch.tv/example", &config, "/tmp/output.ts", None);
+        let args = backend.build_args_file(
+            "https://www.twitch.tv/example",
+            &config,
+            "/tmp/output.ts",
+            None,
+        );
 
         assert!(args.contains(&"-o".to_string()));
         assert!(args.contains(&"/tmp/output.ts".to_string()));

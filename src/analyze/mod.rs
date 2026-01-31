@@ -7,23 +7,23 @@
 //! - Visual analysis (local models or Claude Vision API)
 //! - Multimodal fusion with timestamp alignment
 
-pub mod extract;
-pub mod transcribe;
 pub mod diarize;
-pub mod vision;
+pub mod extract;
 pub mod fusion;
 pub mod report;
+pub mod transcribe;
+pub mod vision;
 
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-pub use extract::{FrameExtractor, AudioExtractor, ExtractedFrame};
-pub use transcribe::{Transcriber, TranscriptSegment, WordTiming};
 pub use diarize::{Diarizer, SpeakerSegment};
-pub use vision::{VisionAnalyzer, VisualAnalysis, VisionBackend};
-pub use fusion::{FusionEngine, FusedSegment};
+pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor};
+pub use fusion::{FusedSegment, FusionEngine};
 pub use report::{AnalysisReport, ReportFormat};
+pub use transcribe::{Transcriber, TranscriptSegment, WordTiming};
+pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
 
 /// Analysis pipeline errors
 #[derive(Error, Debug)]
@@ -196,8 +196,13 @@ impl AnalysisPipeline {
         std::fs::create_dir_all(&frames_dir)?;
 
         // Run extraction
-        let (frames, metadata) = self.frame_extractor.extract(video_path, &frames_dir).await?;
-        self.audio_extractor.extract(video_path, &audio_path).await?;
+        let (frames, metadata) = self
+            .frame_extractor
+            .extract(video_path, &frames_dir)
+            .await?;
+        self.audio_extractor
+            .extract(video_path, &audio_path)
+            .await?;
 
         tracing::info!("Extracted {} keyframes", frames.len());
 
@@ -217,12 +222,9 @@ impl AnalysisPipeline {
         tracing::info!("Analyzed {} frames visually", visual_analyses.len());
 
         // 5. Fuse all modalities
-        let segments = self.fusion.fuse(
-            &transcript,
-            speakers.as_deref(),
-            &frames,
-            &visual_analyses,
-        )?;
+        let segments =
+            self.fusion
+                .fuse(&transcript, speakers.as_deref(), &frames, &visual_analyses)?;
 
         Ok(AnalysisOutput {
             segments,
@@ -236,7 +238,9 @@ impl AnalysisPipeline {
         let audio_path = self.config.work_dir.join("audio.wav");
 
         // Extract audio
-        self.audio_extractor.extract(video_path, &audio_path).await?;
+        self.audio_extractor
+            .extract(video_path, &audio_path)
+            .await?;
 
         // Transcribe
         let transcript = self.transcriber.transcribe(&audio_path).await?;

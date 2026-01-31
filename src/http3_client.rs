@@ -62,9 +62,9 @@ use std::time::Duration;
 #[cfg(feature = "http3")]
 use anyhow::{Context, Result};
 #[cfg(feature = "http3")]
-use bytes::Bytes;
-#[cfg(feature = "http3")]
 use bytes::Buf;
+#[cfg(feature = "http3")]
+use bytes::Bytes;
 #[cfg(feature = "http3")]
 use tracing::{debug, info};
 
@@ -134,7 +134,10 @@ impl Http3Client {
             .await
             .context("QUIC handshake failed")?;
 
-        debug!("QUIC connected, protocol: {:?}", connection.handshake_data());
+        debug!(
+            "QUIC connected, protocol: {:?}",
+            connection.handshake_data()
+        );
 
         // HTTP/3 layer
         let (mut driver, mut send_request) = h3::client::new(h3_quinn::Connection::new(connection))
@@ -153,7 +156,10 @@ impl Http3Client {
             .uri(url)
             .header("Host", host)
             .header("User-Agent", &self.profile.user_agent)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
             .header("Accept-Language", &self.profile.accept_language)
             .header("Accept-Encoding", "gzip, deflate, br")
             .body(())
@@ -168,7 +174,10 @@ impl Http3Client {
         stream.finish().await.context("Failed to finish request")?;
 
         // Receive response
-        let response = stream.recv_response().await.context("Failed to receive response")?;
+        let response = stream
+            .recv_response()
+            .await
+            .context("Failed to receive response")?;
         let status = response.status();
         let headers = response.headers().clone();
 

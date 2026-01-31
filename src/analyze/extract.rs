@@ -3,10 +3,10 @@
 //! Uses ffmpeg's scene detection for smart keyframe selection
 //! rather than extracting every frame.
 
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::Command;
-use serde::{Deserialize, Serialize};
 
 use super::{AnalysisError, Result, VideoMetadata};
 
@@ -30,7 +30,7 @@ pub struct FrameExtractor {
 }
 
 impl FrameExtractor {
-    #[must_use] 
+    #[must_use]
     pub fn new(scene_threshold: f32, max_frames: usize) -> Self {
         Self {
             scene_threshold,
@@ -53,18 +53,23 @@ impl FrameExtractor {
 
         let status = Command::new("ffmpeg")
             .args([
-                "-i", video_path.to_str().ok_or_else(|| AnalysisError::Io(
-                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid video path")
-                ))?,
-                "-vf", &format!(
-                    "select='gt(scene,{:.2})',showinfo",
-                    self.scene_threshold
-                ),
-                "-vsync", "vfr",
-                "-frame_pts", "1",
-                "-q:v", "2",  // High quality JPEG
+                "-i",
+                video_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid video path",
+                    ))
+                })?,
+                "-vf",
+                &format!("select='gt(scene,{:.2})',showinfo", self.scene_threshold),
+                "-vsync",
+                "vfr",
+                "-frame_pts",
+                "1",
+                "-q:v",
+                "2", // High quality JPEG
                 output_pattern.to_str().unwrap(),
-                "-y",  // Overwrite
+                "-y", // Overwrite
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -81,7 +86,11 @@ impl FrameExtractor {
         // Limit to max_frames (keeping evenly distributed selection)
         if frames.len() > self.max_frames {
             let step = frames.len() / self.max_frames;
-            frames = frames.into_iter().step_by(step).take(self.max_frames).collect();
+            frames = frames
+                .into_iter()
+                .step_by(step)
+                .take(self.max_frames)
+                .collect();
         }
 
         Ok((frames, metadata))
@@ -91,8 +100,10 @@ impl FrameExtractor {
     async fn get_metadata(&self, video_path: &Path) -> Result<VideoMetadata> {
         let output = Command::new("ffprobe")
             .args([
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 video_path.to_str().unwrap(),
@@ -107,16 +118,22 @@ impl FrameExtractor {
         let probe: FfprobeOutput = serde_json::from_slice(&output.stdout)?;
 
         // Find video stream
-        let video_stream = probe.streams.iter()
+        let video_stream = probe
+            .streams
+            .iter()
             .find(|s| s.codec_type.as_deref() == Some("video"))
             .ok_or_else(|| AnalysisError::Ffmpeg("No video stream found".to_string()))?;
 
         // Find audio stream
-        let audio_stream = probe.streams.iter()
+        let audio_stream = probe
+            .streams
+            .iter()
             .find(|s| s.codec_type.as_deref() == Some("audio"));
 
         // Parse frame rate (e.g., "30/1" or "30000/1001")
-        let fps = video_stream.r_frame_rate.as_ref()
+        let fps = video_stream
+            .r_frame_rate
+            .as_ref()
             .and_then(|r| {
                 let parts: Vec<&str> = r.split('/').collect();
                 if parts.len() == 2 {
@@ -151,7 +168,8 @@ impl FrameExtractor {
         let mut entries: Vec<_> = std::fs::read_dir(output_dir)?
             .filter_map(std::result::Result::ok)
             .filter(|e| {
-                e.path().extension()
+                e.path()
+                    .extension()
                     .is_some_and(|ext| ext == "jpg" || ext == "png")
             })
             .collect();
@@ -170,7 +188,7 @@ impl FrameExtractor {
                 path,
                 timestamp,
                 frame_number,
-                scene_score: self.scene_threshold,  // Threshold used
+                scene_score: self.scene_threshold, // Threshold used
             });
         }
 
@@ -186,10 +204,14 @@ impl FrameExtractor {
     ) -> Result<ExtractedFrame> {
         let status = Command::new("ffmpeg")
             .args([
-                "-ss", &format!("{timestamp:.3}"),
-                "-i", video_path.to_str().unwrap(),
-                "-frames:v", "1",
-                "-q:v", "2",
+                "-ss",
+                &format!("{timestamp:.3}"),
+                "-i",
+                video_path.to_str().unwrap(),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "2",
                 output_path.to_str().unwrap(),
                 "-y",
             ])
@@ -197,7 +219,9 @@ impl FrameExtractor {
             .await?;
 
         if !status.success() {
-            return Err(AnalysisError::Ffmpeg("Single frame extraction failed".to_string()));
+            return Err(AnalysisError::Ffmpeg(
+                "Single frame extraction failed".to_string(),
+            ));
         }
 
         Ok(ExtractedFrame {
@@ -213,7 +237,7 @@ impl FrameExtractor {
 pub struct AudioExtractor;
 
 impl AudioExtractor {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -222,11 +246,15 @@ impl AudioExtractor {
     pub async fn extract(&self, video_path: &Path, output_path: &Path) -> Result<()> {
         let status = Command::new("ffmpeg")
             .args([
-                "-i", video_path.to_str().unwrap(),
-                "-vn",           // No video
-                "-acodec", "pcm_s16le",  // 16-bit PCM
-                "-ar", "16000",  // 16kHz sample rate (Whisper optimal)
-                "-ac", "1",      // Mono
+                "-i",
+                video_path.to_str().unwrap(),
+                "-vn", // No video
+                "-acodec",
+                "pcm_s16le", // 16-bit PCM
+                "-ar",
+                "16000", // 16kHz sample rate (Whisper optimal)
+                "-ac",
+                "1", // Mono
                 output_path.to_str().unwrap(),
                 "-y",
             ])
@@ -252,13 +280,19 @@ impl AudioExtractor {
 
         let status = Command::new("ffmpeg")
             .args([
-                "-ss", &format!("{start:.3}"),
-                "-t", &format!("{duration:.3}"),
-                "-i", video_path.to_str().unwrap(),
+                "-ss",
+                &format!("{start:.3}"),
+                "-t",
+                &format!("{duration:.3}"),
+                "-i",
+                video_path.to_str().unwrap(),
                 "-vn",
-                "-acodec", "pcm_s16le",
-                "-ar", "16000",
-                "-ac", "1",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
                 output_path.to_str().unwrap(),
                 "-y",
             ])
@@ -266,7 +300,9 @@ impl AudioExtractor {
             .await?;
 
         if !status.success() {
-            return Err(AnalysisError::Ffmpeg("Audio segment extraction failed".to_string()));
+            return Err(AnalysisError::Ffmpeg(
+                "Audio segment extraction failed".to_string(),
+            ));
         }
 
         Ok(())

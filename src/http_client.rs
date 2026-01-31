@@ -193,7 +193,7 @@ impl AcceleratedClient {
     }
 
     /// Get the underlying reqwest client
-    #[must_use] 
+    #[must_use]
     pub fn inner(&self) -> &Client {
         &self.client
     }

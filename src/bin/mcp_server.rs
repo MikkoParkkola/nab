@@ -35,9 +35,7 @@ static CLIENT: OnceCell<AcceleratedClient> = OnceCell::const_new();
 
 async fn get_client() -> &'static AcceleratedClient {
     CLIENT
-        .get_or_init(|| async {
-            AcceleratedClient::new().expect("Failed to create HTTP client")
-        })
+        .get_or_init(|| async { AcceleratedClient::new().expect("Failed to create HTTP client") })
         .await
 }
 
@@ -128,7 +126,10 @@ impl FetchTool {
         output.push_str("\n📊 Response:\n");
         output.push_str(&format!("   Status: {status}\n"));
         output.push_str(&format!("   Version: {version}\n"));
-        output.push_str(&format!("   Time: {:.2}ms\n", elapsed.as_secs_f64() * 1000.0));
+        output.push_str(&format!(
+            "   Time: {:.2}ms\n",
+            elapsed.as_secs_f64() * 1000.0
+        ));
 
         if self.headers {
             output.push_str("\n📋 Headers:\n");
@@ -156,7 +157,9 @@ impl FetchTool {
             output.push_str(&format!("\n{truncated}"));
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -230,7 +233,9 @@ impl FetchBatchTool {
             self.urls.len()
         ));
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -257,7 +262,9 @@ impl AuthLookupTool {
         if !OnePasswordAuth::is_available() {
             output.push_str("❌ 1Password CLI not available or not authenticated\n");
             output.push_str("   Run: op signin\n");
-            return Ok(CallToolResult::text_content(vec![TextContent::from(output)]));
+            return Ok(CallToolResult::text_content(vec![TextContent::from(
+                output,
+            )]));
         }
 
         match CredentialRetriever::get_credential_for_url(&self.url) {
@@ -285,7 +292,9 @@ impl AuthLookupTool {
             }
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -330,14 +339,19 @@ impl FingerprintTool {
 
             output.push_str(&format!("Profile {}:\n", i + 1));
             output.push_str(&format!("   UA: {}\n", profile.user_agent));
-            output.push_str(&format!("   Accept-Language: {}\n", profile.accept_language));
+            output.push_str(&format!(
+                "   Accept-Language: {}\n",
+                profile.accept_language
+            ));
             if !profile.sec_ch_ua.is_empty() {
                 output.push_str(&format!("   Sec-CH-UA: {}\n", profile.sec_ch_ua));
             }
             output.push('\n');
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -427,7 +441,9 @@ impl ValidateTool {
             start.elapsed().as_secs_f64()
         ));
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -489,12 +505,24 @@ impl BenchmarkTool {
             }
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
 // Generate the tools enum
-tool_box!(MicroFetchTools, [FetchTool, FetchBatchTool, AuthLookupTool, FingerprintTool, ValidateTool, BenchmarkTool]);
+tool_box!(
+    MicroFetchTools,
+    [
+        FetchTool,
+        FetchBatchTool,
+        AuthLookupTool,
+        FingerprintTool,
+        ValidateTool,
+        BenchmarkTool
+    ]
+);
 
 // ============================================================================
 // SERVER HANDLER
@@ -521,7 +549,8 @@ impl ServerHandler for MicroFetchHandler {
         request: CallToolRequest,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<CallToolResult, CallToolError> {
-        let tool = MicroFetchTools::try_from(request.params).map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let tool = MicroFetchTools::try_from(request.params)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         match tool {
             MicroFetchTools::FetchTool(t) => t.run().await,

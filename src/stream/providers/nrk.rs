@@ -16,9 +16,7 @@ pub struct NrkProvider {
 
 impl NrkProvider {
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .user_agent("microfetch/1.0")
-            .build()?;
+        let client = Client::builder().user_agent("microfetch/1.0").build()?;
         Ok(Self { client })
     }
 
@@ -58,7 +56,8 @@ impl NrkProvider {
 
             // Fallback: last path segment
             parts
-                .iter().rfind(|p| !p.is_empty() && !p.starts_with('?'))
+                .iter()
+                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
                 .unwrap_or(&url_or_id)
                 .split('?')
                 .next()
@@ -86,7 +85,8 @@ impl NrkProvider {
 
             // Fallback
             parts
-                .iter().rfind(|p| !p.is_empty() && !p.starts_with('?'))
+                .iter()
+                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
                 .unwrap_or(&url_or_id)
                 .to_string()
         } else {
@@ -189,7 +189,8 @@ impl StreamProvider for NrkProvider {
         let metadata = self.fetch_program_metadata(&program_id).await.ok();
 
         let title = metadata
-            .as_ref().map_or_else(|| program_id.clone(), |m| m.titles.title.clone());
+            .as_ref()
+            .map_or_else(|| program_id.clone(), |m| m.titles.title.clone());
 
         let description = metadata.as_ref().and_then(|m| m.titles.subtitle.clone());
 
@@ -271,7 +272,11 @@ fn parse_iso8601_duration(duration: &str) -> Option<u64> {
         }
     }
 
-    if seconds > 0 { Some(seconds) } else { None }
+    if seconds > 0 {
+        Some(seconds)
+    } else {
+        None
+    }
 }
 
 // Serde structures for NRK API responses
@@ -362,7 +367,10 @@ mod tests {
 
     #[test]
     fn test_extract_program_id() {
-        assert_eq!(NrkProvider::extract_program_id("KMTE50001219"), "KMTE50001219");
+        assert_eq!(
+            NrkProvider::extract_program_id("KMTE50001219"),
+            "KMTE50001219"
+        );
         assert_eq!(
             NrkProvider::extract_program_id("https://tv.nrk.no/program/KMTE50001219"),
             "KMTE50001219"

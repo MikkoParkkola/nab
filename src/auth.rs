@@ -601,16 +601,16 @@ impl CookieSource {
                 let value = parts[1].to_string();
 
                 // If value is empty and we have encrypted_value, try to decrypt
-                if value.is_empty() && parts.len() >= 3 && key.is_some() {
-                    // Try native decryption - if it fails, we'll fall back to Python at the caller
-                    if let Ok(decrypted) =
-                        self.decrypt_cookie_value(parts[2], key.as_ref().unwrap())
-                    {
-                        cookies.insert(name, decrypted);
-                        continue;
+                if value.is_empty() && parts.len() >= 3 {
+                    if let Some(k) = key.as_ref() {
+                        // Try native decryption - if it fails, we'll fall back to Python at the caller
+                        if let Ok(decrypted) = self.decrypt_cookie_value(parts[2], k) {
+                            cookies.insert(name, decrypted);
+                            continue;
+                        }
+                        // If decryption fails, return error to trigger Python fallback
+                        anyhow::bail!("Cookie decryption failed for encrypted values");
                     }
-                    // If decryption fails, return error to trigger Python fallback
-                    anyhow::bail!("Cookie decryption failed for encrypted values");
                 }
 
                 if !value.is_empty() {

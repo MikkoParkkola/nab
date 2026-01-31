@@ -3,10 +3,10 @@
 //! Supports multiple providers (Yle, `YouTube`, generic HLS) with
 //! native and ffmpeg backends.
 
-pub mod provider;
 pub mod backend;
-pub mod providers;
 pub mod backends;
+pub mod provider;
+pub mod providers;
 
-pub use provider::{StreamProvider, StreamInfo, StreamQuality};
-pub use backend::{StreamBackend, BackendType};
+pub use backend::{BackendType, StreamBackend};
+pub use provider::{StreamInfo, StreamProvider, StreamQuality};

@@ -502,6 +502,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_fetch(
     url: &str,
     show_headers: bool,
@@ -557,7 +558,7 @@ async fn cmd_fetch(
             "firefox" => CookieSource::Firefox,
             "safari" => CookieSource::Safari,
             "edge" => CookieSource::Chrome, // Edge uses Chromium cookie format
-            _ => CookieSource::Chrome, // Default to Chrome
+            _ => CookieSource::Chrome,      // Default to Chrome
         };
         cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
         if !cookie_header.is_empty() && matches!(format, OutputFormat::Full) {
@@ -607,7 +608,10 @@ async fn cmd_fetch(
     if let Some(body_data) = data {
         request = request.body(body_data.to_owned());
         // Default to JSON content type if not specified
-        if !custom_headers.iter().any(|h| h.to_lowercase().starts_with("content-type")) {
+        if !custom_headers
+            .iter()
+            .any(|h| h.to_lowercase().starts_with("content-type"))
+        {
             request = request.header("Content-Type", "application/json");
         }
     }
@@ -667,7 +671,12 @@ async fn cmd_fetch(
             // Minimal: STATUS SIZE TIME
             let body_text = response.text().await?;
             let body_len = body_text.len();
-            println!("{} {}B {:.0}ms", status.as_u16(), body_len, elapsed.as_secs_f64() * 1000.0);
+            println!(
+                "{} {}B {:.0}ms",
+                status.as_u16(),
+                body_len,
+                elapsed.as_secs_f64() * 1000.0
+            );
 
             if show_body || output_file.is_some() || markdown || links {
                 output_body(&body_text, output_file, markdown, links, max_body)?;
@@ -696,7 +705,11 @@ async fn cmd_fetch(
                 println!(
                     "🍪 Loaded {} cookies from {}",
                     cookie_header.matches('=').count(),
-                    if cookies == "auto" { "browser (auto-detected)" } else { cookies }
+                    if cookies == "auto" {
+                        "browser (auto-detected)"
+                    } else {
+                        cookies
+                    }
                 );
             }
 
@@ -766,7 +779,11 @@ fn output_body(
     };
 
     // Display with optional limit
-    let limit = if max_body == 0 { output.len() } else { max_body };
+    let limit = if max_body == 0 {
+        output.len()
+    } else {
+        max_body
+    };
     if output.len() > limit {
         println!("\n{}", &output[..limit]);
         println!("\n... [{} more bytes]", output.len() - limit);
@@ -846,6 +863,7 @@ fn truncate_text(text: &str, max: usize) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_spa(
     url: &str,
     cookies: &str,
@@ -891,14 +909,11 @@ async fn cmd_spa(
             "firefox" => CookieSource::Firefox,
             "safari" => CookieSource::Safari,
             "edge" => CookieSource::Chrome, // Edge uses Chromium cookie format
-            _ => CookieSource::Chrome, // Default to Chrome
+            _ => CookieSource::Chrome,      // Default to Chrome
         };
         cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
         if !cookie_header.is_empty() {
-            println!(
-                "🍪 Loading {} cookies for {domain}",
-                browser.to_lowercase()
-            );
+            println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
         }
     }
 
@@ -931,10 +946,19 @@ async fn cmd_spa(
     let discovered_endpoints = api_discovery.discover_from_html(&html);
 
     if !discovered_endpoints.is_empty() && show_console {
-        println!("\n🔍 Discovered {} API endpoints statically:", discovered_endpoints.len());
+        println!(
+            "\n🔍 Discovered {} API endpoints statically:",
+            discovered_endpoints.len()
+        );
         for (i, endpoint) in discovered_endpoints.iter().take(5).enumerate() {
             let method_str = endpoint.method.as_deref().unwrap_or("?");
-            println!("   {}. {} {} (from {})", i + 1, method_str, endpoint.url, endpoint.source);
+            println!(
+                "   {}. {} {} (from {})",
+                i + 1,
+                method_str,
+                endpoint.url,
+                endpoint.source
+            );
         }
         if discovered_endpoints.len() > 5 {
             println!("   ... and {} more", discovered_endpoints.len() - 5);
@@ -955,15 +979,18 @@ async fn cmd_spa(
             }
 
             // Resolve relative URLs
-            let endpoint_url = if endpoint.url.starts_with("http://") || endpoint.url.starts_with("https://") {
-                endpoint.url.clone()
-            } else if endpoint.url.starts_with('/') {
-                // Use base URL from original request
-                url::Url::parse(url)
-                    .ok().map_or_else(|| endpoint.url.clone(), |u| format!("{}{}", u.origin().unicode_serialization(), endpoint.url))
-            } else {
-                continue; // Skip relative paths without leading /
-            };
+            let endpoint_url =
+                if endpoint.url.starts_with("http://") || endpoint.url.starts_with("https://") {
+                    endpoint.url.clone()
+                } else if endpoint.url.starts_with('/') {
+                    // Use base URL from original request
+                    url::Url::parse(url).ok().map_or_else(
+                        || endpoint.url.clone(),
+                        |u| format!("{}{}", u.origin().unicode_serialization(), endpoint.url),
+                    )
+                } else {
+                    continue; // Skip relative paths without leading /
+                };
 
             if show_console {
                 println!("🌐 Trying endpoint: {endpoint_url}");
@@ -992,12 +1019,24 @@ async fn cmd_spa(
                 } else {
                     Err(anyhow::anyhow!("Not an object or array"))
                 }
-            }.await;
+            }
+            .await;
 
             if let Ok(data) = fetch_result {
-                println!("\n📊 Extraction complete in {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+                println!(
+                    "\n📊 Extraction complete in {:.2}ms",
+                    elapsed.as_secs_f64() * 1000.0
+                );
                 println!("\n✅ API endpoint {endpoint_url} returned data:");
-                output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+                output_spa_data(
+                    &data,
+                    output,
+                    extract_path,
+                    summary,
+                    minify,
+                    max_array,
+                    max_depth,
+                )?;
                 found_data = true;
                 break;
             }
@@ -1008,9 +1047,20 @@ async fn cmd_spa(
     // __NEXT_DATA__ (Next.js)
     if !found_data {
         if let Some(data) = extract_script_json(&html, "__NEXT_DATA__") {
-            println!("\n📊 Extraction complete in {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+            println!(
+                "\n📊 Extraction complete in {:.2}ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
             println!("\n✅ __NEXT_DATA__ found:");
-            output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+            output_spa_data(
+                &data,
+                output,
+                extract_path,
+                summary,
+                minify,
+                max_array,
+                max_depth,
+            )?;
             found_data = true;
         }
     }
@@ -1018,30 +1068,63 @@ async fn cmd_spa(
     // __INITIAL_STATE__ (Redux, Vuex)
     if let Some(data) = extract_script_json(&html, "__INITIAL_STATE__") {
         if !found_data {
-            println!("\n📊 Extraction complete in {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+            println!(
+                "\n📊 Extraction complete in {:.2}ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
         }
         println!("\n✅ __INITIAL_STATE__ found:");
-        output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+        output_spa_data(
+            &data,
+            output,
+            extract_path,
+            summary,
+            minify,
+            max_array,
+            max_depth,
+        )?;
         found_data = true;
     }
 
     // __NUXT__ (Nuxt.js)
     if let Some(data) = extract_script_json(&html, "__NUXT__") {
         if !found_data {
-            println!("\n📊 Extraction complete in {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+            println!(
+                "\n📊 Extraction complete in {:.2}ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
         }
         println!("\n✅ __NUXT__ found:");
-        output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+        output_spa_data(
+            &data,
+            output,
+            extract_path,
+            summary,
+            minify,
+            max_array,
+            max_depth,
+        )?;
         found_data = true;
     }
 
     // __PRELOADED_STATE__ (common Redux pattern)
     if let Some(data) = extract_script_json(&html, "__PRELOADED_STATE__") {
         if !found_data {
-            println!("\n📊 Extraction complete in {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+            println!(
+                "\n📊 Extraction complete in {:.2}ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
         }
         println!("\n✅ __PRELOADED_STATE__ found:");
-        output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+        output_spa_data(
+            &data,
+            output,
+            extract_path,
+            summary,
+            minify,
+            max_array,
+            max_depth,
+        )?;
         found_data = true;
     }
 
@@ -1060,8 +1143,16 @@ async fn cmd_spa(
 
         // Create fetch client with cookies
         let fetch_client = FetchClient::new(
-            if cookie_header.is_empty() { None } else { Some(cookie_header.clone()) },
-            if base_url.is_empty() { None } else { Some(base_url.clone()) }
+            if cookie_header.is_empty() {
+                None
+            } else {
+                Some(cookie_header.clone())
+            },
+            if base_url.is_empty() {
+                None
+            } else {
+                Some(base_url.clone())
+            },
         );
 
         // Inject fetch() bridge into JS context (clone so we can access the log later)
@@ -1126,7 +1217,15 @@ async fn cmd_spa(
                 if json_str != "null" {
                     if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
                         println!("\n✅ {name} found via JavaScript execution:");
-                        output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+                        output_spa_data(
+                            &data,
+                            output,
+                            extract_path,
+                            summary,
+                            minify,
+                            max_array,
+                            max_depth,
+                        )?;
                         found_data = true;
                         break;
                     }
@@ -1143,14 +1242,15 @@ async fn cmd_spa(
                         let mut clean_data = serde_json::Map::new();
                         for (key, value) in obj {
                             // Skip known browser APIs and our shims
-                            if !key.starts_with('_') &&
-                               key != "document" &&
-                               key != "window" &&
-                               key != "console" &&
-                               key != "navigator" &&
-                               key != "location" &&
-                               key != "localStorage" &&
-                               key != "sessionStorage" {
+                            if !key.starts_with('_')
+                                && key != "document"
+                                && key != "window"
+                                && key != "console"
+                                && key != "navigator"
+                                && key != "location"
+                                && key != "localStorage"
+                                && key != "sessionStorage"
+                            {
                                 clean_data.insert(key.clone(), value.clone());
                             }
                         }
@@ -1158,7 +1258,15 @@ async fn cmd_spa(
                         if !clean_data.is_empty() {
                             println!("\n✅ Extracted window data via JavaScript:");
                             let data = serde_json::Value::Object(clean_data);
-                            output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+                            output_spa_data(
+                                &data,
+                                output,
+                                extract_path,
+                                summary,
+                                minify,
+                                max_array,
+                                max_depth,
+                            )?;
                             found_data = true;
                         }
                     }
@@ -1206,7 +1314,10 @@ fn extract_script_json(html: &str, var_name: &str) -> Option<serde_json::Value> 
     let pattern = format!("window.{var_name}");
     if let Some(start_idx) = html.find(&pattern) {
         let after_eq = html[start_idx..].find('=')? + start_idx + 1;
-        let json_start = html[after_eq..].chars().position(|c| c == '{' || c == '[')? + after_eq;
+        let json_start = html[after_eq..]
+            .chars()
+            .position(|c| c == '{' || c == '[')?
+            + after_eq;
 
         // Find matching bracket
         let json_str = extract_json_object(&html[json_start..])?;
@@ -1219,7 +1330,10 @@ fn extract_script_json(html: &str, var_name: &str) -> Option<serde_json::Value> 
     let self_pattern = format!("self.{var_name}");
     if let Some(start_idx) = html.find(&self_pattern) {
         let after_eq = html[start_idx..].find('=')? + start_idx + 1;
-        let json_start = html[after_eq..].chars().position(|c| c == '{' || c == '[')? + after_eq;
+        let json_start = html[after_eq..]
+            .chars()
+            .position(|c| c == '{' || c == '[')?
+            + after_eq;
         let json_str = extract_json_object(&html[json_start..])?;
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
             return Some(json);
@@ -1288,7 +1402,12 @@ fn output_spa_data(
 
     // Apply transformations
     let transformed = if max_array.is_some() || max_depth.is_some() {
-        transform_json(&target, max_array.unwrap_or(usize::MAX), max_depth.unwrap_or(usize::MAX), 0)
+        transform_json(
+            &target,
+            max_array.unwrap_or(usize::MAX),
+            max_depth.unwrap_or(usize::MAX),
+            0,
+        )
     } else {
         target
     };
@@ -1310,7 +1429,12 @@ fn output_spa_data(
     Ok(())
 }
 
-fn transform_json(value: &serde_json::Value, max_array: usize, max_depth: usize, depth: usize) -> serde_json::Value {
+fn transform_json(
+    value: &serde_json::Value,
+    max_array: usize,
+    max_depth: usize,
+    depth: usize,
+) -> serde_json::Value {
     if depth >= max_depth {
         return serde_json::Value::String("[depth limit]".to_string());
     }
@@ -1324,7 +1448,10 @@ fn transform_json(value: &serde_json::Value, max_array: usize, max_depth: usize,
                 .collect();
             if arr.len() > max_array {
                 let mut result = limited;
-                result.push(serde_json::Value::String(format!("... +{} more", arr.len() - max_array)));
+                result.push(serde_json::Value::String(format!(
+                    "... +{} more",
+                    arr.len() - max_array
+                )));
                 serde_json::Value::Array(result)
             } else {
                 serde_json::Value::Array(limited)
@@ -1333,7 +1460,12 @@ fn transform_json(value: &serde_json::Value, max_array: usize, max_depth: usize,
         serde_json::Value::Object(obj) => {
             let transformed: serde_json::Map<String, serde_json::Value> = obj
                 .iter()
-                .map(|(k, v)| (k.clone(), transform_json(v, max_array, max_depth, depth + 1)))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        transform_json(v, max_array, max_depth, depth + 1),
+                    )
+                })
                 .collect();
             serde_json::Value::Object(transformed)
         }
@@ -1412,9 +1544,7 @@ async fn cmd_bench(urls: &str, iterations: usize) -> Result<()> {
         let max = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
         println!("📊 {url}");
-        println!(
-            "   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms\n"
-        );
+        println!("   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms\n");
     }
 
     Ok(())
@@ -1605,6 +1735,7 @@ fn cmd_otp(domain: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_stream(
     source: &str,
     id: &str,
@@ -1620,21 +1751,22 @@ async fn cmd_stream(
     player: Option<&str>,
 ) -> Result<()> {
     use microfetch::stream::{
-        StreamProvider, StreamBackend, StreamQuality,
-        providers::{YleProvider, GenericHlsProvider},
-        backends::{NativeHlsBackend, FfmpegBackend},
         backend::StreamConfig,
+        backends::{FfmpegBackend, NativeHlsBackend},
+        providers::{GenericHlsProvider, YleProvider},
+        StreamBackend, StreamProvider, StreamQuality,
     };
     use microfetch::CookieSource;
     use std::collections::HashMap;
-    use tokio::io::{stdout, AsyncWriteExt};
     use std::process::Stdio;
+    use tokio::io::{stdout, AsyncWriteExt};
 
     // Parse quality
     let stream_quality = match quality.to_lowercase().as_str() {
         "best" => StreamQuality::Best,
         "worst" => StreamQuality::Worst,
-        q => q.parse::<u32>()
+        q => q
+            .parse::<u32>()
             .map(StreamQuality::Specific)
             .unwrap_or(StreamQuality::Best),
     };
@@ -1672,13 +1804,16 @@ async fn cmd_stream(
         println!("Series: {}", series.title);
         println!("Episodes: {}", series.episodes.len());
         for ep in &series.episodes {
-            let duration = ep.duration_seconds
+            let duration = ep
+                .duration_seconds
                 .map(|d| format!(" ({}:{:02})", d / 60, d % 60))
                 .unwrap_or_default();
-            let ep_num = ep.episode_number
+            let ep_num = ep
+                .episode_number
                 .map(|n| format!("E{n}"))
                 .unwrap_or_default();
-            let season = ep.season_number
+            let season = ep
+                .season_number
                 .map(|n| format!("S{n}"))
                 .unwrap_or_default();
             println!("  {} {}{}: {}{}", ep.id, season, ep_num, ep.title, duration);
@@ -1726,10 +1861,12 @@ async fn cmd_stream(
         use rand::Rng;
         let mut rng = rand::thread_rng();
         // Elisa Finland IP range: 91.152.0.0/13 (91.152.0.1 - 91.159.255.254)
-        let ip = format!("91.{}.{}.{}",
+        let ip = format!(
+            "91.{}.{}.{}",
             rng.gen_range(152..160),
             rng.gen_range(0..256),
-            rng.gen_range(1..255));
+            rng.gen_range(1..255)
+        );
         headers.insert("X-Forwarded-For".to_string(), ip);
 
         if cookies.to_lowercase() == "none" {
@@ -1761,13 +1898,14 @@ async fn cmd_stream(
             "firefox" => CookieSource::Firefox,
             "safari" => CookieSource::Safari,
             "edge" => CookieSource::Chrome, // Edge uses Chromium cookie format
-            _ => CookieSource::Chrome, // Default to Chrome
+            _ => CookieSource::Chrome,      // Default to Chrome
         };
 
         // Get Yle cookies
         match cookie_source.get_cookies("yle.fi") {
             Ok(cookie_map) if !cookie_map.is_empty() => {
-                let cookie_str: String = cookie_map.iter()
+                let cookie_str: String = cookie_map
+                    .iter()
                     .map(|(k, v)| format!("{k}={v}"))
                     .collect::<Vec<_>>()
                     .join("; ");
@@ -1832,9 +1970,11 @@ async fn cmd_stream(
         }
 
         let progress_cb = |p: microfetch::stream::backend::StreamProgress| {
-            eprint!("\r   📥 {:.1} MB, {:.1}s elapsed    ",
+            eprint!(
+                "\r   📥 {:.1} MB, {:.1}s elapsed    ",
                 p.bytes_downloaded as f64 / 1_000_000.0,
-                p.elapsed_seconds);
+                p.elapsed_seconds
+            );
         };
 
         if let Some(player_cmd) = player {
@@ -1849,14 +1989,31 @@ async fn cmd_stream(
                 .spawn()
                 .map_err(|e| anyhow::anyhow!("Failed to spawn {player_cmd}: {e}"))?;
 
-            let mut stdin = child.stdin.take()
+            let mut stdin = child
+                .stdin
+                .take()
                 .ok_or_else(|| anyhow::anyhow!("Failed to get stdin for {player_cmd}"))?;
 
             if let Some(dur_str) = duration {
                 let secs = parse_duration(dur_str)?;
-                backend.stream_with_duration(manifest_url, &config, &mut stdin, secs, Some(Box::new(progress_cb))).await?;
+                backend
+                    .stream_with_duration(
+                        manifest_url,
+                        &config,
+                        &mut stdin,
+                        secs,
+                        Some(Box::new(progress_cb)),
+                    )
+                    .await?;
             } else {
-                backend.stream_to(manifest_url, &config, &mut stdin, Some(Box::new(progress_cb))).await?;
+                backend
+                    .stream_to(
+                        manifest_url,
+                        &config,
+                        &mut stdin,
+                        Some(Box::new(progress_cb)),
+                    )
+                    .await?;
             }
 
             drop(stdin); // Close stdin to signal EOF
@@ -1866,16 +2023,39 @@ async fn cmd_stream(
             let mut stdout = stdout();
             if let Some(dur_str) = duration {
                 let secs = parse_duration(dur_str)?;
-                backend.stream_with_duration(manifest_url, &config, &mut stdout, secs, Some(Box::new(progress_cb))).await?;
+                backend
+                    .stream_with_duration(
+                        manifest_url,
+                        &config,
+                        &mut stdout,
+                        secs,
+                        Some(Box::new(progress_cb)),
+                    )
+                    .await?;
             } else {
-                backend.stream_to(manifest_url, &config, &mut stdout, Some(Box::new(progress_cb))).await?;
+                backend
+                    .stream_to(
+                        manifest_url,
+                        &config,
+                        &mut stdout,
+                        Some(Box::new(progress_cb)),
+                    )
+                    .await?;
             }
             stdout.flush().await?;
         } else {
             // Stream to file
             let path = std::path::Path::new(output);
             let duration_parsed = duration.map(parse_duration).transpose()?;
-            backend.stream_to_file(manifest_url, &config, path, Some(Box::new(progress_cb)), duration_parsed).await?;
+            backend
+                .stream_to_file(
+                    manifest_url,
+                    &config,
+                    path,
+                    Some(Box::new(progress_cb)),
+                    duration_parsed,
+                )
+                .await?;
         }
     } else {
         eprintln!("🔧 Backend: native");
@@ -1886,12 +2066,17 @@ async fn cmd_stream(
         }
 
         let progress_cb = |p: microfetch::stream::backend::StreamProgress| {
-            let total = p.segments_total.map(|t| format!("/{t}")).unwrap_or_default();
-            eprint!("\r   📥 {:.1} MB, {}{} segments, {:.1}s    ",
+            let total = p
+                .segments_total
+                .map(|t| format!("/{t}"))
+                .unwrap_or_default();
+            eprint!(
+                "\r   📥 {:.1} MB, {}{} segments, {:.1}s    ",
                 p.bytes_downloaded as f64 / 1_000_000.0,
                 p.segments_completed,
                 total,
-                p.elapsed_seconds);
+                p.elapsed_seconds
+            );
         };
 
         if let Some(player_cmd) = player {
@@ -1906,21 +2091,45 @@ async fn cmd_stream(
                 .spawn()
                 .map_err(|e| anyhow::anyhow!("Failed to spawn {player_cmd}: {e}"))?;
 
-            let mut stdin = child.stdin.take()
+            let mut stdin = child
+                .stdin
+                .take()
                 .ok_or_else(|| anyhow::anyhow!("Failed to get stdin for {player_cmd}"))?;
 
-            backend.stream_to(manifest_url, &config, &mut stdin, Some(Box::new(progress_cb))).await?;
+            backend
+                .stream_to(
+                    manifest_url,
+                    &config,
+                    &mut stdin,
+                    Some(Box::new(progress_cb)),
+                )
+                .await?;
 
             drop(stdin); // Close stdin to signal EOF
             child.wait().await?;
         } else if output == "-" {
             let mut stdout = stdout();
-            backend.stream_to(manifest_url, &config, &mut stdout, Some(Box::new(progress_cb))).await?;
+            backend
+                .stream_to(
+                    manifest_url,
+                    &config,
+                    &mut stdout,
+                    Some(Box::new(progress_cb)),
+                )
+                .await?;
             stdout.flush().await?;
         } else {
             let path = std::path::Path::new(output);
             let duration_parsed = duration.map(parse_duration).transpose()?;
-            backend.stream_to_file(manifest_url, &config, path, Some(Box::new(progress_cb)), duration_parsed).await?;
+            backend
+                .stream_to_file(
+                    manifest_url,
+                    &config,
+                    path,
+                    Some(Box::new(progress_cb)),
+                    duration_parsed,
+                )
+                .await?;
         }
     }
 
@@ -1989,8 +2198,8 @@ async fn cmd_analyze(
     api_key: Option<&str>,
 ) -> Result<()> {
     use microfetch::analyze::{
-        AnalysisPipeline, PipelineConfig as AnalysisConfig, VisionBackend,
         report::{AnalysisReport, ReportFormat},
+        AnalysisPipeline, PipelineConfig as AnalysisConfig, VisionBackend,
     };
 
     eprintln!("🎬 Analyzing: {video}");
@@ -2029,7 +2238,9 @@ async fn cmd_analyze(
     if audio_only {
         eprintln!("   Mode: audio-only (transcription)");
     } else if let Some(key) = api_key {
-        config.vision_backend = VisionBackend::ClaudeApi { api_key: key.to_string() };
+        config.vision_backend = VisionBackend::ClaudeApi {
+            api_key: key.to_string(),
+        };
         eprintln!("   Vision: Claude API");
     } else if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
         config.vision_backend = VisionBackend::ClaudeApi { api_key: key };
@@ -2075,11 +2286,14 @@ async fn cmd_analyze(
 
     // Summary stats to stderr
     if let Some(ref meta) = analysis.metadata {
-        eprintln!("\n📊 Video: {}x{} @ {:.1}fps, {:.1}s",
-            meta.width, meta.height, meta.fps, meta.duration);
+        eprintln!(
+            "\n📊 Video: {}x{} @ {:.1}fps, {:.1}s",
+            meta.width, meta.height, meta.fps, meta.duration
+        );
     }
 
-    let speakers: std::collections::HashSet<_> = analysis.segments
+    let speakers: std::collections::HashSet<_> = analysis
+        .segments
         .iter()
         .filter_map(|s| s.speaker.as_ref())
         .collect();
@@ -2100,11 +2314,7 @@ async fn cmd_annotate(
     style: OverlayStyleArg,
     hwaccel: bool,
 ) -> Result<()> {
-    use microfetch::annotate::{
-        AnnotationPipeline,
-        PipelineConfig,
-        AnalysisConfig,
-    };
+    use microfetch::annotate::{AnalysisConfig, AnnotationPipeline, PipelineConfig};
 
     eprintln!("🎬 Annotating: {video}");
     eprintln!("   Output: {output}");
@@ -2112,15 +2322,14 @@ async fn cmd_annotate(
     // Build configuration based on style
     let mut config = match style {
         OverlayStyleArg::Minimal => PipelineConfig::default(),
-        OverlayStyleArg::Detailed => PipelineConfig::high_quality()
-            .with_speaker_labels(true),
+        OverlayStyleArg::Detailed => PipelineConfig::high_quality().with_speaker_labels(true),
         OverlayStyleArg::Debug => PipelineConfig::high_quality()
             .with_speaker_labels(true)
             .with_analysis(true),
     };
 
     // Override with explicit flags
-    if subtitles || (!subtitles && !speaker_labels && !analysis) {
+    if subtitles || (!speaker_labels && !analysis) {
         config.subtitles = true;
         eprintln!("   Subtitles: enabled");
     }

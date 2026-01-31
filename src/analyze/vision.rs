@@ -3,9 +3,9 @@
 //! Analyzes keyframes for emotions, actions, gaze direction, etc.
 //! Supports local models (via Python) and Claude Vision API fallback.
 
+use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::process::Command;
-use serde::{Deserialize, Serialize};
 
 use super::{AnalysisError, ExtractedFrame, Result};
 
@@ -16,13 +16,9 @@ pub enum VisionBackend {
     #[default]
     Local,
     /// Claude Vision API
-    ClaudeApi {
-        api_key: String,
-    },
+    ClaudeApi { api_key: String },
     /// Hybrid: local first, API fallback
-    Hybrid {
-        api_key: String,
-    },
+    Hybrid { api_key: String },
 }
 
 /// Visual analysis result for a frame
@@ -54,7 +50,7 @@ pub struct EmotionResult {
 /// Face-specific analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FaceAnalysis {
-    pub bbox: [f32; 4],  // x, y, width, height (normalized 0-1)
+    pub bbox: [f32; 4], // x, y, width, height (normalized 0-1)
     pub emotion: EmotionResult,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gaze: Option<String>,
@@ -72,10 +68,7 @@ impl VisionAnalyzer {
     }
 
     /// Analyze multiple frames
-    pub async fn analyze_frames(
-        &self,
-        frames: &[ExtractedFrame],
-    ) -> Result<Vec<VisualAnalysis>> {
+    pub async fn analyze_frames(&self, frames: &[ExtractedFrame]) -> Result<Vec<VisualAnalysis>> {
         let mut results = Vec::with_capacity(frames.len());
 
         for frame in frames {
@@ -90,15 +83,11 @@ impl VisionAnalyzer {
     pub async fn analyze_frame(&self, frame: &ExtractedFrame) -> Result<VisualAnalysis> {
         match &self.backend {
             VisionBackend::Local => self.analyze_local(frame).await,
-            VisionBackend::ClaudeApi { api_key } => {
-                self.analyze_claude(frame, api_key).await
-            }
-            VisionBackend::Hybrid { api_key } => {
-                match self.analyze_local(frame).await {
-                    Ok(result) => Ok(result),
-                    Err(_) => self.analyze_claude(frame, api_key).await,
-                }
-            }
+            VisionBackend::ClaudeApi { api_key } => self.analyze_claude(frame, api_key).await,
+            VisionBackend::Hybrid { api_key } => match self.analyze_local(frame).await {
+                Ok(result) => Ok(result),
+                Err(_) => self.analyze_claude(frame, api_key).await,
+            },
         }
     }
 
@@ -109,7 +98,8 @@ impl VisionAnalyzer {
             return self.analyze_remote(frame, host).await;
         }
 
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import cv2
 from deepface import DeepFace
@@ -205,11 +195,7 @@ print(json.dumps(result))
     }
 
     /// Remote analysis on DGX Spark
-    async fn analyze_remote(
-        &self,
-        frame: &ExtractedFrame,
-        host: &str,
-    ) -> Result<VisualAnalysis> {
+    async fn analyze_remote(&self, frame: &ExtractedFrame, host: &str) -> Result<VisualAnalysis> {
         let remote_path = format!("/tmp/microfetch_frame_{}.jpg", std::process::id());
 
         // Copy frame to DGX
@@ -223,11 +209,12 @@ print(json.dumps(result))
 
         if !scp_status.success() {
             return Err(AnalysisError::Vision(
-                "Failed to copy frame to DGX".to_string()
+                "Failed to copy frame to DGX".to_string(),
             ));
         }
 
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import cv2
 from deepface import DeepFace
@@ -378,12 +365,12 @@ Return ONLY valid JSON, no markdown."#;
 
         if !response.status().is_success() {
             let error = response.text().await.unwrap_or_default();
-            return Err(AnalysisError::Vision(format!(
-                "Claude API error: {error}"
-            )));
+            return Err(AnalysisError::Vision(format!("Claude API error: {error}")));
         }
 
-        let api_response: serde_json::Value = response.json().await
+        let api_response: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| AnalysisError::Vision(e.to_string()))?;
 
         // Extract content from Claude response

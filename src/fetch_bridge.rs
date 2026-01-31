@@ -4,7 +4,7 @@
 //! to Rust's reqwest HTTP client.
 //!
 //! Architecture:
-//! ```
+//! ```text
 //! JavaScript:  fetch("/api/data")
 //!      ↓       Native function call
 //! Rust:        reqwest::blocking::get(url).text()
@@ -45,7 +45,7 @@ impl FetchClient {
     }
 
     /// Get the list of all fetched URLs
-    #[must_use] 
+    #[must_use]
     pub fn get_fetch_log(&self) -> Vec<String> {
         self.fetch_log.lock().unwrap().clone()
     }

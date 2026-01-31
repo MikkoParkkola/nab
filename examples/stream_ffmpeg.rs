@@ -5,7 +5,6 @@
 use anyhow::Result;
 use microfetch::stream::backend::{StreamBackend, StreamConfig, StreamProgress};
 use microfetch::stream::backends::FfmpegBackend;
-use std::io::stdout;
 use tokio::io::AsyncWriteExt;
 
 #[tokio::main]

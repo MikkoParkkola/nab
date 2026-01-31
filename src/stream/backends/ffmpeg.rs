@@ -31,7 +31,10 @@ pub struct FfmpegBackend {
 impl FfmpegBackend {
     /// Create new ffmpeg backend, searching for binary in PATH
     pub fn new() -> Result<Self> {
-        let ffmpeg_path = which::which("ffmpeg").map_or_else(|_| "ffmpeg".to_string(), |p| p.to_string_lossy().to_string());
+        let ffmpeg_path = which::which("ffmpeg").map_or_else(
+            |_| "ffmpeg".to_string(),
+            |p| p.to_string_lossy().to_string(),
+        );
 
         Ok(Self {
             ffmpeg_path,
@@ -41,21 +44,21 @@ impl FfmpegBackend {
     }
 
     /// Specify custom ffmpeg binary path
-    #[must_use] 
+    #[must_use]
     pub fn with_ffmpeg_path(mut self, path: &str) -> Self {
         self.ffmpeg_path = path.to_string();
         self
     }
 
     /// Enable transcoding (e.g., "-c:v libx265 -crf 28")
-    #[must_use] 
+    #[must_use]
     pub fn with_transcode_opts(mut self, opts: &str) -> Self {
         self.transcode_opts = Some(opts.to_string());
         self
     }
 
     /// Add extra ffmpeg arguments
-    #[must_use] 
+    #[must_use]
     pub fn with_extra_args(mut self, args: Vec<String>) -> Self {
         self.extra_args = args;
         self
@@ -100,18 +103,25 @@ impl FfmpegBackend {
         args.extend(
             [
                 // Buffer and queue settings
-                "-thread_queue_size", "2048",
-                "-seekable", "0",
-                "-allowed_extensions", "ts,aac,vtt",
+                "-thread_queue_size",
+                "2048",
+                "-seekable",
+                "0",
+                "-allowed_extensions",
+                "ts,aac,vtt",
                 // Speed optimizations for VOD (download as fast as possible)
-                "-fflags", "+genpts+discardcorrupt",
+                "-fflags",
+                "+genpts+discardcorrupt",
                 // Reconnection for reliability
-                "-reconnect", "1",
-                "-reconnect_streamed", "1",
-                "-reconnect_delay_max", "2",
+                "-reconnect",
+                "1",
+                "-reconnect_streamed",
+                "1",
+                "-reconnect_delay_max",
+                "2",
             ]
-                .iter()
-                .map(std::string::ToString::to_string),
+            .iter()
+            .map(std::string::ToString::to_string),
         );
 
         // Input
@@ -136,7 +146,11 @@ impl FfmpegBackend {
             args.push(path.to_string());
         } else {
             // Output to stdout as MPEG-TS (streamable)
-            args.extend(["-f", "mpegts", "pipe:1"].iter().map(std::string::ToString::to_string));
+            args.extend(
+                ["-f", "mpegts", "pipe:1"]
+                    .iter()
+                    .map(std::string::ToString::to_string),
+            );
         }
 
         args
@@ -514,12 +528,7 @@ mod tests {
 
         let config = StreamConfig::default();
 
-        let args = backend.build_args(
-            "https://example.com/master.m3u8",
-            &config,
-            None,
-            Some(3600),
-        );
+        let args = backend.build_args("https://example.com/master.m3u8", &config, None, Some(3600));
 
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"3600".to_string()));

@@ -28,36 +28,42 @@ pub mod auth;
 pub mod browser_detect;
 pub mod fetch_bridge;
 pub mod fingerprint;
-pub mod http_client;
 pub mod http3_client;
+pub mod http_client;
 pub mod js_engine;
 pub mod mfa;
 pub mod prefetch;
 pub mod stream;
 pub mod websocket;
 
-pub use analyze::{AnalysisPipeline, AnalysisOutput, AnalysisSegment, PipelineConfig as AnalysisPipelineConfig};
-pub use annotate::{
-    AnnotationPipeline, PipelineConfig as AnnotationPipelineConfig, PipelineResult,
-    SubtitleFormat, SubtitleEntry, SrtGenerator, AssGenerator,
-    OverlayTrack, OverlayPosition, SpeakerLabelOverlay, AnalysisOverlay,
-    Compositor, CompositorConfig,
-    TranscriptionConfig, AnalysisConfig as AnnotateAnalysisConfig,
+pub use analyze::{
+    AnalysisOutput, AnalysisPipeline, AnalysisSegment, PipelineConfig as AnalysisPipelineConfig,
 };
-pub use auth::{CookieSource, Credential, CredentialRetriever, CredentialSource, OnePasswordAuth, OtpCode, OtpRetriever, OtpSource};
-pub use mfa::{detect_mfa_type, MfaHandler, MfaResult, MfaType, NotificationConfig};
-pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManager};
-pub use stream::{StreamProvider, StreamBackend, StreamInfo};
-pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
+pub use annotate::{
+    AnalysisConfig as AnnotateAnalysisConfig, AnalysisOverlay, AnnotationPipeline, AssGenerator,
+    Compositor, CompositorConfig, OverlayPosition, OverlayTrack,
+    PipelineConfig as AnnotationPipelineConfig, PipelineResult, SpeakerLabelOverlay, SrtGenerator,
+    SubtitleEntry, SubtitleFormat, TranscriptionConfig,
+};
+pub use api_discovery::{ApiDiscovery, ApiEndpoint};
+pub use auth::{
+    CookieSource, Credential, CredentialRetriever, CredentialSource, OnePasswordAuth, OtpCode,
+    OtpRetriever, OtpSource,
+};
+pub use browser_detect::{detect_default_browser, BrowserType};
+pub use fetch_bridge::{inject_fetch_sync, FetchClient};
+pub use fingerprint::{
+    chrome_profile, firefox_profile, random_profile, safari_profile, BrowserProfile,
+};
 pub use http3_client::Http3Client;
 #[cfg(feature = "http3")]
 pub use http3_client::Http3Response;
-pub use api_discovery::{ApiDiscovery, ApiEndpoint};
-pub use browser_detect::{detect_default_browser, BrowserType};
-pub use fetch_bridge::{FetchClient, inject_fetch_sync};
-pub use fingerprint::{chrome_profile, firefox_profile, random_profile, safari_profile, BrowserProfile};
 pub use http_client::AcceleratedClient;
 pub use js_engine::JsEngine;
+pub use mfa::{detect_mfa_type, MfaHandler, MfaResult, MfaType, NotificationConfig};
+pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManager};
+pub use stream::{StreamBackend, StreamInfo, StreamProvider};
+pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 
 /// Version of microfetch
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

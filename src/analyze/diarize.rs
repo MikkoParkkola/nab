@@ -3,10 +3,10 @@
 //! Identifies who speaks when in the audio track.
 //! Requires pyannote.audio Python package and `HuggingFace` token.
 
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
-use serde::{Deserialize, Serialize};
 
 use super::{AnalysisError, Result};
 
@@ -41,7 +41,8 @@ impl Diarizer {
 
     /// Local diarization using pyannote
     async fn diarize_local(&self, audio_path: &Path) -> Result<Vec<SpeakerSegment>> {
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import os
 from pyannote.audio import Pipeline
@@ -82,7 +83,7 @@ print(json.dumps(segments))
             // Check for common errors
             if stderr.contains("HF_TOKEN") || stderr.contains("authentication") {
                 return Err(AnalysisError::Diarization(
-                    "HuggingFace token required. Set HF_TOKEN environment variable.".to_string()
+                    "HuggingFace token required. Set HF_TOKEN environment variable.".to_string(),
                 ));
             }
 
@@ -96,11 +97,7 @@ print(json.dumps(segments))
     }
 
     /// Remote diarization on DGX Spark
-    async fn diarize_remote(
-        &self,
-        audio_path: &Path,
-        host: &str,
-    ) -> Result<Vec<SpeakerSegment>> {
+    async fn diarize_remote(&self, audio_path: &Path, host: &str) -> Result<Vec<SpeakerSegment>> {
         let remote_path = format!("/tmp/microfetch_diarize_{}.wav", std::process::id());
 
         // Copy audio to DGX
@@ -114,12 +111,13 @@ print(json.dumps(segments))
 
         if !scp_status.success() {
             return Err(AnalysisError::Diarization(
-                "Failed to copy audio to DGX".to_string()
+                "Failed to copy audio to DGX".to_string(),
             ));
         }
 
         // Run pyannote on DGX with GPU
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import os
 import torch
@@ -177,7 +175,8 @@ print(json.dumps(segments))
         audio_path: &Path,
         num_speakers: u32,
     ) -> Result<Vec<SpeakerSegment>> {
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import os
 from pyannote.audio import Pipeline
@@ -222,7 +221,7 @@ print(json.dumps(segments))
     }
 
     /// Merge overlapping or adjacent speaker segments
-    #[must_use] 
+    #[must_use]
     pub fn merge_segments(segments: &[SpeakerSegment], gap_threshold: f64) -> Vec<SpeakerSegment> {
         if segments.is_empty() {
             return Vec::new();
@@ -289,7 +288,7 @@ mod tests {
 
         let merged = Diarizer::merge_segments(&segments, 0.5);
         assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0].end, 4.0);  // A segments merged
+        assert_eq!(merged[0].end, 4.0); // A segments merged
         assert_eq!(merged[1].speaker, "B");
     }
 }

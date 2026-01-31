@@ -16,9 +16,7 @@ pub struct DrProvider {
 
 impl DrProvider {
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .user_agent("microfetch/1.0")
-            .build()?;
+        let client = Client::builder().user_agent("microfetch/1.0").build()?;
         Ok(Self { client })
     }
 
@@ -32,7 +30,8 @@ impl DrProvider {
 
             // Get the last path segment which contains slug_id
             let last_segment = parts
-                .iter().rfind(|p| !p.is_empty() && !p.starts_with('?'))
+                .iter()
+                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
                 .unwrap_or(&url_or_id);
 
             // Extract just the numeric ID after underscore
@@ -63,7 +62,8 @@ impl DrProvider {
 
             // Fallback
             parts
-                .iter().rfind(|p| !p.is_empty() && !p.starts_with('?'))
+                .iter()
+                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
                 .unwrap_or(&url_or_id)
                 .to_string()
         } else {
@@ -101,11 +101,7 @@ impl DrProvider {
 
     async fn fetch_manifest(&self, program_id: &str) -> Result<DrManifestResponse> {
         // First get an anonymous token
-        let token_resp = self
-            .client
-            .get(DR_TOKEN_API)
-            .send()
-            .await?;
+        let token_resp = self.client.get(DR_TOKEN_API).send().await?;
 
         let _token: Option<String> = if token_resp.status().is_success() {
             token_resp.json().await.ok()
@@ -191,12 +187,10 @@ impl StreamProvider for DrProvider {
             .and_then(|a| a.duration_in_milliseconds)
             .map(|ms| ms / 1000);
 
-        let thumbnail_url = program
-            .primary_image_uri
-            .map(|uri| {
-                // DR image URLs need resolution suffix
-                format!("{}/{}x{}", uri, 960, 540)
-            });
+        let thumbnail_url = program.primary_image_uri.map(|uri| {
+            // DR image URLs need resolution suffix
+            format!("{}/{}x{}", uri, 960, 540)
+        });
 
         let is_live = program
             .primary_asset
@@ -309,7 +303,9 @@ mod tests {
     fn test_extract_program_id() {
         assert_eq!(DrProvider::extract_program_id("363891"), "363891");
         assert_eq!(
-            DrProvider::extract_program_id("https://www.dr.dk/drtv/episode/gintberg-til-gaes_363891"),
+            DrProvider::extract_program_id(
+                "https://www.dr.dk/drtv/episode/gintberg-til-gaes_363891"
+            ),
             "gintberg-til-gaes_363891"
         );
         assert_eq!(
@@ -320,14 +316,19 @@ mod tests {
 
     #[test]
     fn test_get_numeric_id() {
-        assert_eq!(DrProvider::get_numeric_id("gintberg-til-gaes_363891"), "363891");
+        assert_eq!(
+            DrProvider::get_numeric_id("gintberg-til-gaes_363891"),
+            "363891"
+        );
         assert_eq!(DrProvider::get_numeric_id("363891"), "363891");
     }
 
     #[test]
     fn test_extract_series_slug() {
         assert_eq!(
-            DrProvider::extract_series_slug("https://www.dr.dk/drtv/serie/gintberg-til-gaes_123456"),
+            DrProvider::extract_series_slug(
+                "https://www.dr.dk/drtv/serie/gintberg-til-gaes_123456"
+            ),
             "gintberg-til-gaes_123456"
         );
     }

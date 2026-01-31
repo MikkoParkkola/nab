@@ -144,7 +144,7 @@ impl EarlyHints {
     /// Parse Early Hints from Link headers
     ///
     /// Format: `<url>; rel=preload; as=script`
-    #[must_use] 
+    #[must_use]
     pub fn parse(link_headers: &[&str]) -> Self {
         let mut links = Vec::new();
 
@@ -205,13 +205,13 @@ impl EarlyHints {
     }
 
     /// Get all preload hints
-    #[must_use] 
+    #[must_use]
     pub fn preloads(&self) -> Vec<&EarlyHintLink> {
         self.links.iter().filter(|l| l.rel == "preload").collect()
     }
 
     /// Get all preconnect hints
-    #[must_use] 
+    #[must_use]
     pub fn preconnects(&self) -> Vec<&EarlyHintLink> {
         self.links
             .iter()
@@ -220,7 +220,7 @@ impl EarlyHints {
     }
 
     /// Get all dns-prefetch hints
-    #[must_use] 
+    #[must_use]
     pub fn dns_prefetches(&self) -> Vec<&EarlyHintLink> {
         self.links
             .iter()
@@ -232,7 +232,7 @@ impl EarlyHints {
 /// Extract link hints from HTML
 ///
 /// Parses `<link rel="preconnect">`, `<link rel="dns-prefetch">`, etc.
-#[must_use] 
+#[must_use]
 pub fn extract_link_hints(html: &str) -> Vec<EarlyHintLink> {
     let mut links = Vec::new();
 

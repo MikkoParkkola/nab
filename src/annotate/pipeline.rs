@@ -2,6 +2,8 @@
 //!
 //! Orchestrates the complete workflow from raw video to annotated output.
 
+#![allow(dead_code)] // Whisper output fields reserved for word-level timestamps
+
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -94,8 +96,7 @@ impl TranscriptionConfig {
 }
 
 /// Configuration for analysis overlays
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AnalysisConfig {
     /// Enable emotion/sentiment analysis
     pub emotion_analysis: bool,
@@ -106,7 +107,6 @@ pub struct AnalysisConfig {
     /// Analysis model or API endpoint
     pub analysis_model: Option<String>,
 }
-
 
 impl AnalysisConfig {
     /// Enable all analysis features
@@ -428,7 +428,10 @@ impl AnnotationPipeline {
         let audio_path = self.extract_audio(input_path).await?;
 
         // Step 2: Transcribe
-        info!("Transcribing with Whisper ({})...", self.config.transcription.model);
+        info!(
+            "Transcribing with Whisper ({})...",
+            self.config.transcription.model
+        );
         let whisper_output = self.transcribe_audio(&audio_path).await?;
 
         // Cleanup audio file
@@ -448,7 +451,10 @@ impl AnnotationPipeline {
                 let speaker_overlay =
                     SpeakerLabelOverlay::new().with_position(self.config.speaker_position);
                 overlay_tracks.push(speaker_overlay.generate(&speaker_segments));
-                info!("Generated speaker labels for {} segments", speaker_segments.len());
+                info!(
+                    "Generated speaker labels for {} segments",
+                    speaker_segments.len()
+                );
             }
         }
 
@@ -456,7 +462,8 @@ impl AnnotationPipeline {
         if self.config.analysis_overlay && self.config.analysis.emotion_analysis {
             // This is a placeholder - in a real implementation, this would
             // call an emotion detection model/API
-            let _analysis_overlay = AnalysisOverlay::new().with_position(self.config.analysis_position);
+            let _analysis_overlay =
+                AnalysisOverlay::new().with_position(self.config.analysis_position);
             // Would generate real analysis data here
             info!("Analysis overlay enabled (placeholder)");
         }
@@ -523,7 +530,10 @@ impl AnnotationPipeline {
         let start_time = std::time::Instant::now();
         let input_path = Path::new(input);
 
-        info!("Starting streaming annotation pipeline for {:?}", input_path);
+        info!(
+            "Starting streaming annotation pipeline for {:?}",
+            input_path
+        );
 
         // Same process as file, but stream at the end
         let audio_path = self.extract_audio(input_path).await?;
@@ -656,10 +666,7 @@ mod tests {
     fn test_pipeline_config_streaming() {
         use crate::annotate::compositor::CompositorOutput;
         let config = PipelineConfig::streaming();
-        assert_eq!(
-            config.compositor.output_format,
-            CompositorOutput::MpegTs
-        );
+        assert_eq!(config.compositor.output_format, CompositorOutput::MpegTs);
     }
 
     #[test]

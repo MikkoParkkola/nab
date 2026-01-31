@@ -126,7 +126,7 @@ impl ApiDiscovery {
     }
 
     /// Discover API endpoints from JavaScript code
-    #[must_use] 
+    #[must_use]
     pub fn discover(&self, js_code: &str) -> Vec<ApiEndpoint> {
         let mut endpoints = HashSet::new();
 
@@ -166,7 +166,7 @@ impl ApiDiscovery {
     }
 
     /// Discover endpoints from HTML (extracts inline scripts and external script URLs)
-    #[must_use] 
+    #[must_use]
     pub fn discover_from_html(&self, html: &str) -> Vec<ApiEndpoint> {
         use scraper::{Html, Selector};
 
@@ -192,7 +192,7 @@ impl ApiDiscovery {
 
     /// Score an endpoint for likelihood of containing useful data
     /// Higher score = more likely to be useful
-    #[must_use] 
+    #[must_use]
     pub fn score_endpoint(endpoint: &ApiEndpoint) -> i32 {
         let mut score = 0;
 

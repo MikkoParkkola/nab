@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::io::AsyncWrite;
 use std::collections::HashMap;
+use tokio::io::AsyncWrite;
 
 /// Type of backend
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

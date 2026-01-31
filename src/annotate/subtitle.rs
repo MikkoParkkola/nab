@@ -2,6 +2,8 @@
 //!
 //! Supports SRT and ASS formats with styling options.
 
+#![allow(dead_code)] // VTT format support reserved for future
+
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as FmtWrite;

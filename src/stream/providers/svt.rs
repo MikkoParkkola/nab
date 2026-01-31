@@ -16,9 +16,7 @@ pub struct SvtProvider {
 
 impl SvtProvider {
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .user_agent("microfetch/1.0")
-            .build()?;
+        let client = Client::builder().user_agent("microfetch/1.0").build()?;
         Ok(Self { client })
     }
 
@@ -44,7 +42,8 @@ impl SvtProvider {
 
             // Fallback: last meaningful path segment
             parts
-                .iter().rfind(|p| !p.is_empty() && !p.starts_with('?'))
+                .iter()
+                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
                 .unwrap_or(&url_or_id)
                 .split('?')
                 .next()
@@ -60,7 +59,8 @@ impl SvtProvider {
     fn extract_series_slug(url_or_id: &str) -> String {
         if url_or_id.starts_with("http") {
             url_or_id
-                .split('/').rfind(|p| !p.is_empty() && !p.starts_with('?') && *p != "www.svtplay.se")
+                .split('/')
+                .rfind(|p| !p.is_empty() && !p.starts_with('?') && *p != "www.svtplay.se")
                 .unwrap_or(url_or_id)
                 .split('?')
                 .next()
@@ -181,7 +181,9 @@ impl StreamProvider for SvtProvider {
 
         Ok(StreamInfo {
             id: video_id,
-            title: video.program_title.unwrap_or_else(|| video.episode_title.clone().unwrap_or_default()),
+            title: video
+                .program_title
+                .unwrap_or_else(|| video.episode_title.clone().unwrap_or_default()),
             description: video.description,
             duration_seconds: duration,
             manifest_url,

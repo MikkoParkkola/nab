@@ -368,7 +368,7 @@ impl Default for MfaHandler {
 }
 
 /// Detect MFA type from HTML content
-#[must_use] 
+#[must_use]
 pub fn detect_mfa_type(html: &str, url: &str) -> Option<MfaType> {
     let html_lower = html.to_lowercase();
     let url_lower = url.to_lowercase();

@@ -3,10 +3,10 @@
 //! Supports both local Whisper (via Python subprocess) and
 //! remote execution on DGX Spark for GPU acceleration.
 
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
-use serde::{Deserialize, Serialize};
 
 use super::{AnalysisError, Result};
 
@@ -60,7 +60,8 @@ impl Transcriber {
     /// Local transcription using Python whisper
     async fn transcribe_local(&self, audio_path: &Path) -> Result<Vec<TranscriptSegment>> {
         // Create Python script for Whisper transcription
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import sys
 import whisper
@@ -109,9 +110,7 @@ print(json.dumps(segments))
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AnalysisError::Whisper(format!(
-                "Whisper failed: {stderr}"
-            )));
+            return Err(AnalysisError::Whisper(format!("Whisper failed: {stderr}")));
         }
 
         let segments: Vec<TranscriptSegment> = serde_json::from_slice(&output.stdout)?;
@@ -136,11 +135,14 @@ print(json.dumps(segments))
             .await?;
 
         if !scp_status.success() {
-            return Err(AnalysisError::Whisper("Failed to copy audio to DGX".to_string()));
+            return Err(AnalysisError::Whisper(
+                "Failed to copy audio to DGX".to_string(),
+            ));
         }
 
         // Run Whisper on DGX with GPU acceleration
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import whisper
 
@@ -177,7 +179,11 @@ for seg in result["segments"]:
 
 print(json.dumps(segments))
 "#,
-            model = if self.model == "base" { "large-v3" } else { &self.model },
+            model = if self.model == "base" {
+                "large-v3"
+            } else {
+                &self.model
+            },
             remote_path = remote_path
         );
 
@@ -211,7 +217,8 @@ print(json.dumps(segments))
         audio_path: &Path,
         language: &str,
     ) -> Result<Vec<TranscriptSegment>> {
-        let script = format!(r#"
+        let script = format!(
+            r#"
 import json
 import whisper
 
@@ -261,9 +268,7 @@ print(json.dumps(segments))
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AnalysisError::Whisper(format!(
-                "Whisper failed: {stderr}"
-            )));
+            return Err(AnalysisError::Whisper(format!("Whisper failed: {stderr}")));
         }
 
         let segments: Vec<TranscriptSegment> = serde_json::from_slice(&output.stdout)?;

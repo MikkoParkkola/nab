@@ -220,7 +220,7 @@ impl JsEngine {
 
     /// Get reference to the underlying `QuickJS` context
     /// Used for injecting native functions like `fetch()`
-    #[must_use] 
+    #[must_use]
     pub fn context(&self) -> &Context {
         &self.context
     }

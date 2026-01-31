@@ -3,6 +3,8 @@
 //! Combines audio transcripts, speaker diarization, and visual analysis
 //! into unified time-aligned segments.
 
+#![allow(dead_code)] // Timeline event types reserved for future segment building
+
 use super::{
     AnalysisSegment, EmotionAnalysis, ExtractedFrame, Result, SpeakerSegment, TranscriptSegment,
     VisualAnalysis, VisualContext,
@@ -26,14 +28,14 @@ pub struct FusedSegment {
 }
 
 impl FusionEngine {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             alignment_tolerance: 0.5, // 500ms tolerance
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn with_tolerance(tolerance: f64) -> Self {
         Self {
             alignment_tolerance: tolerance,
@@ -191,7 +193,7 @@ impl FusionEngine {
     }
 
     /// Interpolate visual analysis between keyframes
-    #[must_use] 
+    #[must_use]
     pub fn interpolate_visual(
         &self,
         analyses: &[VisualAnalysis],
@@ -234,7 +236,7 @@ impl FusionEngine {
     }
 
     /// Merge adjacent segments with same speaker and similar content
-    #[must_use] 
+    #[must_use]
     pub fn merge_similar_segments(
         &self,
         segments: Vec<AnalysisSegment>,

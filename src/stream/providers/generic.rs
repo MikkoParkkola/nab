@@ -8,7 +8,7 @@ use crate::stream::provider::{SeriesInfo, StreamInfo, StreamProvider};
 pub struct GenericHlsProvider;
 
 impl GenericHlsProvider {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -44,9 +44,7 @@ impl StreamProvider for GenericHlsProvider {
     }
 
     async fn list_series(&self, _series_id: &str) -> Result<SeriesInfo> {
-        Err(anyhow!(
-            "Generic provider does not support series listing"
-        ))
+        Err(anyhow!("Generic provider does not support series listing"))
     }
 }
 
