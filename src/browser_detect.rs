@@ -261,6 +261,5 @@ mod tests {
         // Just verify it doesn't panic
         let result = detect_default_browser();
         assert!(result.is_ok());
-        println!("Detected browser: {:?}", result.unwrap());
     }
 }

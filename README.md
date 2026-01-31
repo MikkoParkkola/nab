@@ -1,6 +1,9 @@
 # MicroFetch
 
-Ultra-minimal browser engine with HTTP/3, JS support, cookie auth, passkeys, and anti-fingerprinting.
+[![Rust](https://img.shields.io/badge/rust-1.93+-blue.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Ultra-minimal browser engine with HTTP/3, JS support, cookie auth, passkeys, and anti-fingerprinting. Optimized for LLM token efficiency.
 
 **Smart Defaults**: Auto-detects browser cookies, outputs markdown, zero configuration needed.
 
@@ -17,8 +20,17 @@ Ultra-minimal browser engine with HTTP/3, JS support, cookie auth, passkeys, and
   - Browser password storage (Chromium-based)
 - **JavaScript**: QuickJS engine with minimal DOM (ES2020 support)
 - **SPA Extraction**: 80% success rate across Next.js, React, Nuxt, Vue apps
+- **Streaming**: HLS/DASH streaming with native and ffmpeg backends
+- **Video/Audio Analysis**: Transcription, annotation, and subtitle generation
 - **WebSocket**: Full WebSocket support with JSON-RPC convenience layer
 - **Prefetching**: Early Hints (103) support, link hint extraction
+- **Cross-Platform**: Works on macOS, Linux, and Windows. Cookie extraction has the broadest browser support on macOS.
+
+## Requirements
+
+- **Rust 1.93+**
+- **ffmpeg** (optional, for streaming/analyze/annotate commands): `brew install ffmpeg` / `apt install ffmpeg`
+- **1Password CLI** (optional, for credential integration): [Install guide](https://developer.1password.com/docs/cli/get-started/)
 
 ## Installation
 
@@ -55,8 +67,26 @@ microfetch spa https://nextjs-app.com
 # Extract specific JSON path
 microfetch spa https://nextjs-app.com --extract "props.pageProps.data"
 
-# Structure summary (95% token savings)
+# Structure summary
 microfetch spa https://nextjs-app.com --summary
+```
+
+### Streaming (HLS/DASH)
+```bash
+# Stream to player
+microfetch stream generic https://example.com/master.m3u8 vlc
+
+# Stream to file with duration limit
+microfetch stream generic https://example.com/master.m3u8 file --duration 60
+```
+
+### Video/Audio Analysis
+```bash
+# Transcribe and analyze media
+microfetch analyze video.mp4
+
+# Add subtitle annotations
+microfetch annotate video.mp4
 ```
 
 ### Benchmark
@@ -119,24 +149,6 @@ microfetch otp github.com
 microfetch validate
 ```
 
-## Kauppalehti Portfolio (KL.fi)
-
-For authenticated Kauppalehti portfolio access, use the dedicated helper which handles CloudFront session requirements:
-
-```bash
-# Compact format (token-optimized for LLMs)
-kl-portfolio XXXXXX --format compact
-# KL:My Portfolio|€XXX,XXX|+XX.X%|2026-01-21T14:02
-# EXAMPLE|XXXX|€XX,XXX|-0.4%
-# ...
-
-# Full format with names
-kl-portfolio XXXXXX --format full
-
-# JSON for parsing
-kl-portfolio XXXXXX --format json
-```
-
 ## Library Usage
 
 ```rust
@@ -159,6 +171,14 @@ HTTP/3 is enabled by default. To disable:
 cargo build --no-default-features --features cli
 ```
 
+## Responsible Use
+
+This tool includes browser cookie extraction and fingerprint spoofing capabilities. These features are intended for legitimate use cases such as accessing your own authenticated content and automated testing. Use responsibly and only on sites where you have authorization.
+
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Credits
+
+Created by [Mikko Parkkola](https://github.com/MikkoParkkola)

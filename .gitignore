@@ -6,6 +6,8 @@ __pycache__/
 *.pyc
 *.pyo
 .python-version
+.mypy_cache/
+.ruff_cache/
 
 # IDE
 .idea/
@@ -23,3 +25,6 @@ __pycache__/
 
 # Test artifacts
 *.profraw
+
+# Development artifacts
+.tiers/
