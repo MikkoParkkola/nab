@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ffmpeg backend provides robust streaming support for HLS and DASH streams by using ffmpeg as a subprocess bridge. This allows microfetch to handle complex scenarios that are difficult to implement in pure Rust:
+The ffmpeg backend provides robust streaming support for HLS and DASH streams by using ffmpeg as a subprocess bridge. This allows nab to handle complex scenarios that are difficult to implement in pure Rust:
 
 - DASH streams (.mpd manifests)
 - Encrypted HLS (Widevine DRM, AES encryption)
@@ -37,8 +37,8 @@ The ffmpeg backend provides robust streaming support for HLS and DASH streams by
 ### Basic Streaming
 
 ```rust
-use microfetch::stream::backend::{StreamBackend, StreamConfig};
-use microfetch::stream::backends::FfmpegBackend;
+use nab::stream::backend::{StreamBackend, StreamConfig};
+use nab::stream::backends::FfmpegBackend;
 
 let backend = FfmpegBackend::new()?;
 
@@ -78,7 +78,7 @@ backend.stream_to(manifest_url, &config, &mut output, None).await?;
 ### With Progress Tracking
 
 ```rust
-use microfetch::stream::backend::StreamProgress;
+use nab::stream::backend::StreamProgress;
 
 let progress_cb = Box::new(|p: StreamProgress| {
     eprintln!(

@@ -356,7 +356,7 @@ impl Default for AssGenerator {
                 SubtitleStyle::speaker_label(),
                 SubtitleStyle::analysis_overlay(),
             ],
-            title: "microfetch annotation".to_string(),
+            title: "nab annotation".to_string(),
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Test autoupdate functionality
 
-use microfetch::fingerprint::autoupdate::BrowserVersions;
+use nab::fingerprint::autoupdate::BrowserVersions;
 
 fn main() {
     println!("Testing browser version auto-update...\n");

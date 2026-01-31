@@ -16,7 +16,7 @@ pub struct NrkProvider {
 
 impl NrkProvider {
     pub fn new() -> Result<Self> {
-        let client = Client::builder().user_agent("microfetch/1.0").build()?;
+        let client = Client::builder().user_agent("nab/1.0").build()?;
         Ok(Self { client })
     }
 

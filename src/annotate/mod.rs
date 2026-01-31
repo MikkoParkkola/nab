@@ -1,4 +1,4 @@
-//! Video annotation and overlay system for microfetch
+//! Video annotation and overlay system for nab
 //!
 //! Provides synchronized subtitles and analysis commentary for video streams.
 //!
@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use microfetch::annotate::{AnnotationPipeline, PipelineConfig};
+//! use nab::annotate::{AnnotationPipeline, PipelineConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {

@@ -196,7 +196,7 @@ print(json.dumps(result))
 
     /// Remote analysis on DGX Spark
     async fn analyze_remote(&self, frame: &ExtractedFrame, host: &str) -> Result<VisualAnalysis> {
-        let remote_path = format!("/tmp/microfetch_frame_{}.jpg", std::process::id());
+        let remote_path = format!("/tmp/nab_frame_{}.jpg", std::process::id());
 
         // Copy frame to DGX
         let scp_status = Command::new("scp")

@@ -98,7 +98,7 @@ print(json.dumps(segments))
 
     /// Remote diarization on DGX Spark
     async fn diarize_remote(&self, audio_path: &Path, host: &str) -> Result<Vec<SpeakerSegment>> {
-        let remote_path = format!("/tmp/microfetch_diarize_{}.wav", std::process::id());
+        let remote_path = format!("/tmp/nab_diarize_{}.wav", std::process::id());
 
         // Copy audio to DGX
         let scp_status = Command::new("scp")

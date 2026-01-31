@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use microfetch::AcceleratedClient;
+//! use nab::AcceleratedClient;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -65,5 +65,5 @@ pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManage
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};
 pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 
-/// Version of microfetch
+/// Version of nab
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

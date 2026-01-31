@@ -1,6 +1,6 @@
 # SPA Extraction Test Results
 Date: 2026-01-29
-Tool: microfetch v0.1.0 with smart defaults (auto-cookies, 5s wait)
+Tool: nab v0.1.0 with smart defaults (auto-cookies, 5s wait)
 
 ## Executive Summary
 **Success Rate**: 8/10 sites (80%)
@@ -58,7 +58,7 @@ Tool: microfetch v0.1.0 with smart defaults (auto-cookies, 5s wait)
 
 ## Value Delivered
 
-**Zero-friction extraction**: All successful tests used simple `microfetch spa URL` command
+**Zero-friction extraction**: All successful tests used simple `nab spa URL` command
 **Generic solution**: 80% success rate across diverse frameworks without site-specific code
 **Fast**: All extractions completed in <10s (avg ~6s including 5s wait)
 

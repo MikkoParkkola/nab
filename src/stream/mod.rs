@@ -1,4 +1,4 @@
-//! Streaming media support for microfetch
+//! Streaming media support for nab
 //!
 //! Supports multiple providers (Yle, `YouTube`, generic HLS) with
 //! native and ffmpeg backends.

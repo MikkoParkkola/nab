@@ -2,7 +2,7 @@
 
 ## Problem
 
-When fetching `areena.yle.fi`, microfetch reported "0 cookies for areena.yle.fi", but when fetching `yle.fi` it found "8 cookies from brave".
+When fetching `areena.yle.fi`, nab reported "0 cookies for areena.yle.fi", but when fetching `yle.fi` it found "8 cookies from brave".
 
 The issue was that cookies set on `.yle.fi` (parent domain with leading dot) were not being sent to subdomains like `areena.yle.fi`.
 
@@ -97,13 +97,13 @@ Run with:
 
 Before fix:
 ```bash
-$ microfetch fetch https://areena.yle.fi --cookies brave
+$ nab fetch https://areena.yle.fi --cookies brave
 # No cookie message (0 cookies loaded)
 ```
 
 After fix:
 ```bash
-$ microfetch fetch https://areena.yle.fi --cookies brave
+$ nab fetch https://areena.yle.fi --cookies brave
 🍪 Loaded 8 cookies from brave
 ```
 

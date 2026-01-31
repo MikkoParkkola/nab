@@ -25,11 +25,11 @@ FEATURES:
     - Happy Eyeballs (IPv4/IPv6 racing), DNS caching
 
 USAGE (HTTP):
-    Start server: python microfetch_mcp.py --port 39500
+    Start server: python nab_mcp.py --port 39500
     Fetch: curl http://localhost:39500/mcp -d '{"method":"tools/call","params":{"name":"fetch","arguments":{"url":"https://example.com"}}}'
 
 USAGE (stdio):
-    mcp-cli microfetch/fetch '{"url": "https://example.com"}'
+    mcp-cli nab/fetch '{"url": "https://example.com"}'
 
 Created: 2026-01-15
 """
@@ -76,15 +76,15 @@ except ImportError:
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("microfetch")
+logger = logging.getLogger("nab")
 
-# Path to the microfetch binary
+# Path to the nab binary
 MICROFETCH_DIR = Path(__file__).parent
-MICROFETCH_BIN = MICROFETCH_DIR / "target" / "release" / "microfetch"
+MICROFETCH_BIN = MICROFETCH_DIR / "target" / "release" / "nab"
 
 # Fallback to debug build if release not available
 if not MICROFETCH_BIN.exists():
-    MICROFETCH_BIN = MICROFETCH_DIR / "target" / "debug" / "microfetch"
+    MICROFETCH_BIN = MICROFETCH_DIR / "target" / "debug" / "nab"
 
 MICROFETCH_AVAILABLE = MICROFETCH_BIN.exists()
 
@@ -92,14 +92,14 @@ MICROFETCH_AVAILABLE = MICROFETCH_BIN.exists()
 _resource_cache: dict[str, dict[str, Any]] = {}
 
 
-async def run_microfetch(
+async def run_nab(
     args: list[str],
     timeout: float = 30.0,
     on_progress: Any | None = None,
 ) -> tuple[str, str, int]:
-    """Run microfetch binary with given arguments."""
+    """Run nab binary with given arguments."""
     if not MICROFETCH_AVAILABLE:
-        return "", f"microfetch binary not found at {MICROFETCH_BIN}", 1
+        return "", f"nab binary not found at {MICROFETCH_BIN}", 1
 
     proc = None
     try:
@@ -130,7 +130,7 @@ async def run_microfetch(
 
 
 # Initialize MCP server
-server = Server("microfetch")
+server = Server("nab")
 
 
 # ============================================================================
@@ -319,7 +319,7 @@ async def call_tool(
         if show_body:
             args.append("--body")
 
-        stdout, stderr, code = await run_microfetch(args)
+        stdout, stderr, code = await run_nab(args)
         elapsed = time.time() - start_time
 
         if code != 0:
@@ -347,7 +347,7 @@ async def call_tool(
             return [TextContent(type="text", text="Error: No URLs provided")]
 
         # Fetch all URLs concurrently
-        tasks = [run_microfetch(["fetch", url, "--body"]) for url in urls]
+        tasks = [run_nab(["fetch", url, "--body"]) for url in urls]
         results = await asyncio.gather(*tasks)
         elapsed = time.time() - start_time
 
@@ -369,10 +369,10 @@ async def call_tool(
         url = arguments.get("url", "")
 
         # Look up credentials
-        auth_stdout, _, _ = await run_microfetch(["auth", url])
+        auth_stdout, _, _ = await run_nab(["auth", url])
 
         # Fetch with body
-        fetch_stdout, fetch_stderr, fetch_code = await run_microfetch(["fetch", url, "--body"])
+        fetch_stdout, fetch_stderr, fetch_code = await run_nab(["fetch", url, "--body"])
         elapsed = time.time() - start_time
 
         result = f"=== 1Password Lookup ===\n{auth_stdout}\n"
@@ -389,7 +389,7 @@ async def call_tool(
         iterations = arguments.get("iterations", 3)
 
         args = ["bench", urls, "--iterations", str(iterations)]
-        stdout, stderr, code = await run_microfetch(args, timeout=120.0)
+        stdout, stderr, code = await run_nab(args, timeout=120.0)
         elapsed = time.time() - start_time
 
         if code != 0:
@@ -406,7 +406,7 @@ async def call_tool(
         count = arguments.get("count", 1)
 
         args = ["fingerprint", "--count", str(count)]
-        stdout, stderr, code = await run_microfetch(args)
+        stdout, stderr, code = await run_nab(args)
 
         if code != 0:
             return [TextContent(type="text", text=f"Error: {stderr}")]
@@ -414,7 +414,7 @@ async def call_tool(
         return [TextContent(type="text", text=stdout)]
 
     elif name == "validate":
-        stdout, stderr, code = await run_microfetch(["validate"], timeout=60.0)
+        stdout, stderr, code = await run_nab(["validate"], timeout=60.0)
         elapsed = time.time() - start_time
 
         if code != 0:
@@ -431,7 +431,7 @@ async def call_tool(
         url = arguments.get("url", "")
 
         args = ["auth", url]
-        stdout, stderr, code = await run_microfetch(args)
+        stdout, stderr, code = await run_nab(args)
 
         if code != 0:
             return [TextContent(type="text", text=f"Error: {stderr}")]
@@ -454,7 +454,7 @@ async def list_resources() -> list[Resource]:
     for resource_id, data in _resource_cache.items():
         resources.append(
             Resource(
-                uri=AnyUrl(f"microfetch://{resource_id}"),
+                uri=AnyUrl(f"nab://{resource_id}"),
                 name=f"Fetched: {data['url']}",
                 description=f"Cached content from {data['url']}",
                 mimeType="text/plain",
@@ -468,7 +468,7 @@ async def read_resource(uri: AnyUrl) -> str | bytes:
     """Read a cached resource."""
     # Extract resource ID from URI
     uri_str = str(uri)
-    if uri_str.startswith("microfetch://"):
+    if uri_str.startswith("nab://"):
         resource_id = uri_str[13:]
         if resource_id in _resource_cache:
             return _resource_cache[resource_id]["content"]
@@ -550,7 +550,7 @@ URL: {url}
 2. Analyze the content, focusing on: {focus}
 3. Summarize the key information found
 
-Use microfetch's HTTP acceleration for fast fetching.""",
+Use nab's HTTP acceleration for fast fetching.""",
                     ),
                 )
             ],
@@ -575,7 +575,7 @@ URLs: {", ".join(url_list)}
 2. Compare their content, structure, and key information
 3. Highlight similarities and differences
 
-Use microfetch's batch fetching for maximum efficiency.""",
+Use nab's batch fetching for maximum efficiency.""",
                     ),
                 )
             ],
@@ -650,7 +650,7 @@ def create_http_app() -> "_Starlette":  # type: ignore[valid-type]
         return _JSONResponse(  # type: ignore[misc]
             {
                 "status": "healthy",
-                "server": "microfetch",
+                "server": "nab",
                 "binary_available": MICROFETCH_AVAILABLE,
                 "binary_path": str(MICROFETCH_BIN),
                 "cached_resources": len(_resource_cache),
@@ -661,7 +661,7 @@ def create_http_app() -> "_Starlette":  # type: ignore[valid-type]
         """Server info endpoint."""
         return _JSONResponse(  # type: ignore[misc]
             {
-                "name": "microfetch",
+                "name": "nab",
                 "version": "0.1.0",
                 "description": "Ultra-minimal browser engine with HTTP acceleration",
                 "features": [
@@ -735,7 +735,7 @@ def main():
     # Check binary
     if not MICROFETCH_AVAILABLE:
         logger.warning(
-            f"microfetch binary not found at {MICROFETCH_BIN}. "
+            f"nab binary not found at {MICROFETCH_BIN}. "
             f"Run 'cargo build --release' in {MICROFETCH_DIR}"
         )
 

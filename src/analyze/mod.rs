@@ -144,7 +144,7 @@ impl Default for PipelineConfig {
             whisper_model: "base".to_string(),
             enable_diarization: true,
             vision_backend: VisionBackend::Local,
-            work_dir: std::env::temp_dir().join("microfetch_analyze"),
+            work_dir: std::env::temp_dir().join("nab_analyze"),
             dgx_host: None,
         }
     }

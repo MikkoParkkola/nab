@@ -43,116 +43,116 @@ cargo install --path .
 ### Fetch a URL
 ```bash
 # Basic fetch (auto-detects browser cookies, outputs markdown)
-microfetch fetch https://example.com
+nab fetch https://example.com
 
 # Disable cookies
-microfetch fetch https://example.com --cookies none
+nab fetch https://example.com --cookies none
 
 # Force specific browser
-microfetch fetch https://example.com --cookies brave
+nab fetch https://example.com --cookies brave
 
 # Raw HTML output (disable markdown)
-microfetch fetch https://example.com --raw-html
+nab fetch https://example.com --raw-html
 
 # With 1Password credentials
-microfetch fetch https://example.com --1password
+nab fetch https://example.com --1password
 ```
 
 ### Extract Data from SPAs (React, Next.js, Vue, Nuxt)
 ```bash
 # Auto-extracts embedded JSON (__NEXT_DATA__, __NUXT__, window state)
 # 80% success rate, auto-cookies, 5s wait, fetch logging
-microfetch spa https://nextjs-app.com
+nab spa https://nextjs-app.com
 
 # Extract specific JSON path
-microfetch spa https://nextjs-app.com --extract "props.pageProps.data"
+nab spa https://nextjs-app.com --extract "props.pageProps.data"
 
 # Structure summary
-microfetch spa https://nextjs-app.com --summary
+nab spa https://nextjs-app.com --summary
 ```
 
 ### Streaming (HLS/DASH)
 ```bash
 # Stream to player
-microfetch stream generic https://example.com/master.m3u8 vlc
+nab stream generic https://example.com/master.m3u8 vlc
 
 # Stream to file with duration limit
-microfetch stream generic https://example.com/master.m3u8 file --duration 60
+nab stream generic https://example.com/master.m3u8 file --duration 60
 ```
 
 ### Video/Audio Analysis
 ```bash
 # Transcribe and analyze media
-microfetch analyze video.mp4
+nab analyze video.mp4
 
 # Add subtitle annotations
-microfetch annotate video.mp4
+nab annotate video.mp4
 ```
 
 ### Benchmark
 ```bash
-microfetch bench "https://example.com,https://httpbin.org/get" -i 10
+nab bench "https://example.com,https://httpbin.org/get" -i 10
 ```
 
 ### Generate Browser Fingerprints
 ```bash
-microfetch fingerprint -c 5
+nab fingerprint -c 5
 ```
 
 ### Test 1Password Integration
 ```bash
-microfetch auth https://github.com
+nab auth https://github.com
 ```
 
 ### Token-Optimized Output (LLM-friendly)
 ```bash
 # Markdown output (default, 25× token savings)
-microfetch fetch https://example.com
+nab fetch https://example.com
 
 # Compact format: STATUS SIZE TIME
-microfetch fetch https://api.example.com --format compact
+nab fetch https://api.example.com --format compact
 # 200 1234B 45ms
 
 # JSON format for parsing
-microfetch fetch https://api.example.com --format json
+nab fetch https://api.example.com --format json
 
 # Save full body to file (bypasses truncation)
-microfetch fetch https://example.com --output body.html
+nab fetch https://example.com --output body.html
 
 # Raw HTML (disable markdown conversion)
-microfetch fetch https://example.com --raw-html
+nab fetch https://example.com --raw-html
 ```
 
 ### Custom Headers & Session Warmup
 ```bash
 # Add custom headers (API access)
-microfetch fetch https://api.example.com \
+nab fetch https://api.example.com \
   --add-header "Accept: application/json" \
   --add-header "X-Custom: value"
 
 # Auto-add Referer header
-microfetch fetch https://api.example.com --auto-referer
+nab fetch https://api.example.com --auto-referer
 
 # Warmup session first (for APIs requiring prior page load)
-microfetch fetch https://api.example.com/data \
+nab fetch https://api.example.com/data \
   --cookies brave \
   --warmup-url https://example.com/dashboard
 ```
 
 ### Get OTP Codes
 ```bash
-microfetch otp github.com
+nab otp github.com
 ```
 
 ### Validate All Features
 ```bash
-microfetch validate
+nab validate
 ```
 
 ## Library Usage
 
 ```rust
-use microfetch::AcceleratedClient;
+use nab::AcceleratedClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

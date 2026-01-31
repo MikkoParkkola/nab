@@ -149,7 +149,7 @@ impl Default for PipelineConfig {
             transcription: TranscriptionConfig::default(),
             analysis: AnalysisConfig::default(),
             compositor: CompositorConfig::default(),
-            temp_dir: std::env::temp_dir().join("microfetch_annotate"),
+            temp_dir: std::env::temp_dir().join("nab_annotate"),
             speaker_labels: true,
             analysis_overlay: false,
             subtitles: true,

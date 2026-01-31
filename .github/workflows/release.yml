@@ -60,13 +60,13 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          mv microfetch${{ matrix.suffix }} microfetch-${{ matrix.target }}${{ matrix.suffix }}
+          mv nab${{ matrix.suffix }} nab-${{ matrix.target }}${{ matrix.suffix }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: microfetch-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/microfetch-${{ matrix.target }}${{ matrix.suffix }}
+          name: nab-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/nab-${{ matrix.target }}${{ matrix.suffix }}
 
   release:
     name: Create Release
@@ -86,8 +86,8 @@ jobs:
       - name: Create checksums
         run: |
           cd artifacts
-          find . -type f -name 'microfetch-*' -exec mv {} . \;
-          sha256sum microfetch-* > checksums-sha256.txt
+          find . -type f -name 'nab-*' -exec mv {} . \;
+          sha256sum nab-* > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Create GitHub Release
@@ -95,5 +95,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/microfetch-*
+            artifacts/nab-*
             artifacts/checksums-sha256.txt

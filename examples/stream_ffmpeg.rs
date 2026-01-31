@@ -3,8 +3,8 @@
 //! Usage: cargo run --example stream_ffmpeg <manifest_url>
 
 use anyhow::Result;
-use microfetch::stream::backend::{StreamBackend, StreamConfig, StreamProgress};
-use microfetch::stream::backends::FfmpegBackend;
+use nab::stream::backend::{StreamBackend, StreamConfig, StreamProgress};
+use nab::stream::backends::FfmpegBackend;
 use tokio::io::AsyncWriteExt;
 
 #[tokio::main]
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
 
     // Configure streaming
     let config = StreamConfig {
-        quality: microfetch::stream::StreamQuality::Best,
+        quality: nab::stream::StreamQuality::Best,
         headers: std::collections::HashMap::new(),
         cookies: None,
     };

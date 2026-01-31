@@ -124,7 +124,7 @@ print(json.dumps(segments))
         host: &str,
     ) -> Result<Vec<TranscriptSegment>> {
         // Copy audio to DGX
-        let remote_path = format!("/tmp/microfetch_audio_{}.wav", std::process::id());
+        let remote_path = format!("/tmp/nab_audio_{}.wav", std::process::id());
 
         let scp_status = Command::new("scp")
             .args([

@@ -35,7 +35,7 @@ impl FetchClient {
     pub fn new(cookies: Option<String>, base_url: Option<String>) -> Self {
         Self {
             client: Client::builder()
-                .user_agent("microfetch/1.0")
+                .user_agent("nab/1.0")
                 .build()
                 .unwrap(),
             cookie_header: cookies.unwrap_or_default(),

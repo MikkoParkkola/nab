@@ -7,7 +7,7 @@
 //!
 //! Stdio mode (for Claude Code integration):
 //! ```bash
-//! microfetch-mcp
+//! nab-mcp
 //! ```
 
 use std::sync::Arc;
@@ -25,7 +25,7 @@ use rust_mcp_sdk::{tool_box, McpServer, StdioTransport, TransportOptions};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
-use microfetch::{
+use nab::{
     chrome_profile, firefox_profile, random_profile, safari_profile, AcceleratedClient,
     CookieSource, CredentialRetriever, OnePasswordAuth,
 };
@@ -581,7 +581,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Server details
     let server_details = InitializeResult {
         server_info: Implementation {
-            name: "microfetch".into(),
+            name: "nab".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("MicroFetch Browser Engine".into()),
         },

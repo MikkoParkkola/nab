@@ -14,13 +14,13 @@ use scraper::{Html, Selector};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use microfetch::{
+use nab::{
     inject_fetch_sync, AcceleratedClient, ApiDiscovery, CookieSource, FetchClient, JsEngine,
     OnePasswordAuth, OtpRetriever,
 };
 
 #[derive(Parser)]
-#[command(name = "microfetch")]
+#[command(name = "nab")]
 #[command(about = "Token-optimized HTTP client with SPA extraction")]
 #[command(version)]
 struct Cli {
@@ -542,7 +542,7 @@ async fn cmd_fetch(
         None
     } else if cookies.to_lowercase() == "auto" {
         // Auto-detect
-        if let Ok(detected) = microfetch::detect_default_browser() {
+        if let Ok(detected) = nab::detect_default_browser() {
             Some(detected.as_str().to_string())
         } else {
             Some("chrome".to_string()) // fallback
@@ -893,7 +893,7 @@ async fn cmd_spa(
         None
     } else if cookies.to_lowercase() == "auto" {
         // Auto-detect
-        if let Ok(detected) = microfetch::detect_default_browser() {
+        if let Ok(detected) = nab::detect_default_browser() {
             Some(detected.as_str().to_string())
         } else {
             Some("chrome".to_string()) // fallback
@@ -1554,7 +1554,7 @@ fn cmd_fingerprint(count: usize) {
     println!("🎭 Generating {count} browser fingerprints:\n");
 
     for i in 0..count {
-        let profile = microfetch::random_profile();
+        let profile = nab::random_profile();
         println!("Profile {}:", i + 1);
         println!("   UA: {}", profile.user_agent);
         println!("   Accept-Language: {}", profile.accept_language);
@@ -1750,13 +1750,13 @@ async fn cmd_stream(
     ffmpeg_opts: Option<&str>,
     player: Option<&str>,
 ) -> Result<()> {
-    use microfetch::stream::{
+    use nab::stream::{
         backend::StreamConfig,
         backends::{FfmpegBackend, NativeHlsBackend},
         providers::{GenericHlsProvider, YleProvider},
         StreamBackend, StreamProvider, StreamQuality,
     };
-    use microfetch::CookieSource;
+    use nab::CookieSource;
     use std::collections::HashMap;
     use std::process::Stdio;
     use tokio::io::{stdout, AsyncWriteExt};
@@ -1881,7 +1881,7 @@ async fn cmd_stream(
         None
     } else if cookies.to_lowercase() == "auto" {
         // Auto-detect
-        if let Ok(detected) = microfetch::detect_default_browser() {
+        if let Ok(detected) = nab::detect_default_browser() {
             Some(detected.as_str().to_string())
         } else {
             Some("chrome".to_string()) // fallback
@@ -1969,7 +1969,7 @@ async fn cmd_stream(
             anyhow::bail!("ffmpeg not found in PATH. Install ffmpeg or use --native.");
         }
 
-        let progress_cb = |p: microfetch::stream::backend::StreamProgress| {
+        let progress_cb = |p: nab::stream::backend::StreamProgress| {
             eprint!(
                 "\r   📥 {:.1} MB, {:.1}s elapsed    ",
                 p.bytes_downloaded as f64 / 1_000_000.0,
@@ -2065,7 +2065,7 @@ async fn cmd_stream(
             anyhow::bail!("Native backend cannot handle this stream. Try --ffmpeg.");
         }
 
-        let progress_cb = |p: microfetch::stream::backend::StreamProgress| {
+        let progress_cb = |p: nab::stream::backend::StreamProgress| {
             let total = p
                 .segments_total
                 .map(|t| format!("/{t}"))
@@ -2197,7 +2197,7 @@ async fn cmd_analyze(
     dgx: bool,
     api_key: Option<&str>,
 ) -> Result<()> {
-    use microfetch::analyze::{
+    use nab::analyze::{
         report::{AnalysisReport, ReportFormat},
         AnalysisPipeline, PipelineConfig as AnalysisConfig, VisionBackend,
     };
@@ -2314,7 +2314,7 @@ async fn cmd_annotate(
     style: OverlayStyleArg,
     hwaccel: bool,
 ) -> Result<()> {
-    use microfetch::annotate::{AnalysisConfig, AnnotationPipeline, PipelineConfig};
+    use nab::annotate::{AnalysisConfig, AnnotationPipeline, PipelineConfig};
 
     eprintln!("🎬 Annotating: {video}");
     eprintln!("   Output: {output}");
