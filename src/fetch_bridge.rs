@@ -98,42 +98,139 @@ pub fn inject_fetch_sync(ctx: &Context, client: FetchClient) -> Result<()> {
         // Set global fetch
         ctx.globals().set("fetch", fetch_fn)?;
 
-        // Also create a minimal Response object constructor for compatibility
-        let response_code = r"
+        // Create a minimal Response + Promise polyfill for fetch() compatibility
+        // QuickJS has no event loop, so we use synchronous "fake" Promises
+        let response_code = r#"
+            // Minimal Promise polyfill that resolves immediately (no event loop)
+            class SyncPromise {
+                constructor(executor) {
+                    this._state = 'pending';
+                    this._value = undefined;
+                    this._handlers = [];
+
+                    const resolve = (value) => {
+                        if (this._state !== 'pending') return;
+                        this._state = 'fulfilled';
+                        this._value = value;
+                        this._handlers.forEach(h => h.onFulfilled && h.onFulfilled(value));
+                    };
+
+                    const reject = (reason) => {
+                        if (this._state !== 'pending') return;
+                        this._state = 'rejected';
+                        this._value = reason;
+                        this._handlers.forEach(h => h.onRejected && h.onRejected(reason));
+                    };
+
+                    try {
+                        executor(resolve, reject);
+                    } catch (e) {
+                        reject(e);
+                    }
+                }
+
+                then(onFulfilled, onRejected) {
+                    return new SyncPromise((resolve, reject) => {
+                        const handle = () => {
+                            try {
+                                if (this._state === 'fulfilled') {
+                                    const result = onFulfilled ? onFulfilled(this._value) : this._value;
+                                    resolve(result);
+                                } else if (this._state === 'rejected') {
+                                    if (onRejected) {
+                                        const result = onRejected(this._value);
+                                        resolve(result);
+                                    } else {
+                                        reject(this._value);
+                                    }
+                                }
+                            } catch (e) {
+                                reject(e);
+                            }
+                        };
+
+                        if (this._state !== 'pending') {
+                            handle();
+                        } else {
+                            this._handlers.push({ onFulfilled: () => handle(), onRejected: () => handle() });
+                        }
+                    });
+                }
+
+                catch(onRejected) {
+                    return this.then(null, onRejected);
+                }
+
+                finally(onFinally) {
+                    return this.then(
+                        value => { onFinally && onFinally(); return value; },
+                        reason => { onFinally && onFinally(); throw reason; }
+                    );
+                }
+
+                static resolve(value) {
+                    return new SyncPromise(resolve => resolve(value));
+                }
+
+                static reject(reason) {
+                    return new SyncPromise((_, reject) => reject(reason));
+                }
+            }
+
+            // Use SyncPromise as global Promise if not available
+            if (typeof Promise === 'undefined') {
+                globalThis.Promise = SyncPromise;
+            }
+
             class Response {
                 constructor(body, init = {}) {
                     this.body = body;
                     this.ok = init.ok !== false;
                     this.status = init.status || 200;
+                    this.statusText = init.statusText || 'OK';
+                    this.headers = init.headers || {};
                     this._bodyUsed = false;
                 }
 
-                async text() {
-                    if (this._bodyUsed) throw new Error('Body already read');
+                text() {
+                    if (this._bodyUsed) return SyncPromise.reject(new Error('Body already read'));
                     this._bodyUsed = true;
-                    return this.body;
+                    return SyncPromise.resolve(this.body);
                 }
 
-                async json() {
-                    const text = await this.text();
-                    return JSON.parse(text);
+                json() {
+                    return this.text().then(text => JSON.parse(text));
+                }
+
+                clone() {
+                    return new Response(this.body, {
+                        ok: this.ok,
+                        status: this.status,
+                        statusText: this.statusText,
+                        headers: this.headers
+                    });
                 }
             }
 
-            // Override native fetch to return Response object
+            // Override native fetch to return Promise<Response>
             const _nativeFetch = fetch;
-            globalThis.fetch = function(url, options) {
-                const body = _nativeFetch(url);
-                try {
-                    // Try to parse as JSON to validate
-                    JSON.parse(body);
-                    return new Response(body, { ok: true, status: 200 });
-                } catch {
-                    // Not JSON, but still valid
-                    return new Response(body, { ok: true, status: 200 });
-                }
+            globalThis.fetch = function(url, options = {}) {
+                return new SyncPromise((resolve, reject) => {
+                    try {
+                        const body = _nativeFetch(url);
+                        // Check for error response
+                        if (body && body.startsWith('{"error":')) {
+                            const err = JSON.parse(body);
+                            reject(new Error(err.error));
+                        } else {
+                            resolve(new Response(body, { ok: true, status: 200 }));
+                        }
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
             };
-        ";
+        "#;
 
         ctx.eval::<(), _>(response_code)?;
 

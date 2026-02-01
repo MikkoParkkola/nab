@@ -120,6 +120,45 @@ impl ApiDiscovery {
                 url_group: 1,
                 method_group: None,
             },
+            // Google batchexecute: "/_/FlightSearch/data/batchexecute"
+            EndpointPattern {
+                name: "google_batchexecute",
+                regex: Regex::new(r#"["'`](/_/[A-Za-z]+/data/batchexecute)["'`]"#)?,
+                url_group: 1,
+                method_group: None,
+            },
+            // Google RPC-style: "https://www.google.com/_/..." or "/_/..."
+            EndpointPattern {
+                name: "google_rpc",
+                regex: Regex::new(r#"["'`]((?:https?://[^"'`]+)?/_/[A-Za-z]+[^"'`]*)["'`]"#)?,
+                url_group: 1,
+                method_group: None,
+            },
+            // Google Travel/Flights API patterns
+            EndpointPattern {
+                name: "google_travel",
+                regex: Regex::new(
+                    r#"["'`](/travel/[a-z]+/(?:search|offers|booking)[^"'`]*)["'`]"#,
+                )?,
+                url_group: 1,
+                method_group: None,
+            },
+            // gRPC-Web endpoints
+            EndpointPattern {
+                name: "grpc_web",
+                regex: Regex::new(r#"["'`]([^"'`]+\.grpc\.web[^"'`]*)["'`]"#)?,
+                url_group: 1,
+                method_group: None,
+            },
+            // Internal data endpoints: /data/, /api/v*, /_ah/
+            EndpointPattern {
+                name: "internal_data",
+                regex: Regex::new(
+                    r#"["'`](/(?:data|_ah|api/v\d+)/[^"'`]+)["'`]"#,
+                )?,
+                url_group: 1,
+                method_group: None,
+            },
         ];
 
         Ok(Self { patterns })
