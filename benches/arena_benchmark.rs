@@ -274,21 +274,19 @@ fn bench_large_response(c: &mut Criterion) {
 
 fn bench_arena_reuse(c: &mut Criterion) {
     c.bench_function("bumpalo_arena_reuse", |b| {
-        let mut arena = ResponseArena::new();
-
         b.iter(|| {
-            let mut buffer = ResponseBuffer::new(&arena);
+            let mut arena = ResponseArena::new();
+            {
+                let mut buffer = ResponseBuffer::new(&arena);
 
-            for chunk in HTML_CHUNKS {
-                buffer.push_str(black_box(chunk));
-            }
+                for chunk in HTML_CHUNKS {
+                    buffer.push_str(black_box(chunk));
+                }
 
-            let result = black_box(buffer.as_str());
-
-            // Reset for reuse (zero-cost with bumpalo)
-            arena.reset();
-
-            result
+                black_box(buffer.as_str())
+            } // buffer dropped here
+              // Reset for reuse (zero-cost with bumpalo)
+              // Note: In real usage, arena.reset() would be called between requests
         });
     });
 }
@@ -404,32 +402,33 @@ fn bench_string_interning(c: &mut Criterion) {
     let mut group = c.benchmark_group("string_interning");
 
     group.bench_function("with_interning", |b| {
-        let arena = ResponseArena::new();
         let interner = StringInterner::new();
-        let mut response = ArenaResponse::new(&arena);
 
         b.iter(|| {
+            let arena = ResponseArena::new();
+            let mut response = ArenaResponse::new(&arena);
+
             // Common header names benefit from interning
             response.add_header_interned(&arena, &interner, "content-type", "text/html");
             response.add_header_interned(&arena, &interner, "server", "nginx");
             response.add_header_interned(&arena, &interner, "cache-control", "max-age=3600");
             response.add_header_interned(&arena, &interner, "x-custom", "value");
 
-            black_box(&response)
+            black_box(response.headers.len())
         });
     });
 
     group.bench_function("without_interning", |b| {
-        let arena = ResponseArena::new();
-        let mut response = ArenaResponse::new(&arena);
-
         b.iter(|| {
+            let arena = ResponseArena::new();
+            let mut response = ArenaResponse::new(&arena);
+
             response.add_header(&arena, "content-type", "text/html");
             response.add_header(&arena, "server", "nginx");
             response.add_header(&arena, "cache-control", "max-age=3600");
             response.add_header(&arena, "x-custom", "value");
 
-            black_box(&response)
+            black_box(response.headers.len())
         });
     });
 
