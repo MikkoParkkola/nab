@@ -823,7 +823,12 @@ async fn cmd_fetch(
         let router = nab::content::ContentRouter::new();
         let ct = content_type.clone();
         let bytes = body_bytes.to_vec();
-        let result = tokio::task::spawn_blocking(move || router.convert(&bytes, &ct)).await??;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            tokio::task::spawn_blocking(move || router.convert(&bytes, &ct)),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Content conversion timed out after 60s"))???;
 
         if matches!(format, OutputFormat::Full) {
             if let Some(pages) = result.page_count {

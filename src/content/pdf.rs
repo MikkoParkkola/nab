@@ -317,19 +317,11 @@ impl ContentHandler for PdfHandler {
             });
         }
 
-        // Try char-by-char extraction for table detection (adds markdown tables).
-        // If it fails or finds no tables, just use the simple text.
-        let markdown = if let Ok((chars, _)) = Self::extract_chars(bytes) {
-            let lines = Self::reconstruct_lines(&chars);
-            let tables = detect_tables(&lines);
-            if tables.is_empty() {
-                // No tables detected — use pdfium's cleaner text reconstruction
-                simple_text
-            } else {
-                // Tables found — use positional rendering for table formatting
-                Self::render_markdown(&lines, &tables)
-            }
-        } else {
+        // Always use pdfium's built-in text reconstruction.
+        // Char-by-char extraction produces garbled output for many PDFs
+        // (LaTeX, RFC, etc.) due to font encoding issues. text.all() is reliable.
+        // TODO: Re-enable table detection with segment-based API (not per-char).
+        let markdown = {
             simple_text
         };
 

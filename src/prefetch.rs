@@ -437,47 +437,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_preconnect() {
-        let manager = PrefetchManager::new().unwrap();
-
-        // Preconnect to a fast host
-        let result = manager.preconnect("example.com").await;
-        assert!(result.is_ok());
-        assert!(manager.is_warmed("example.com").await);
-
-        // Second preconnect should be instant (already warmed)
-        let result2 = manager.preconnect("example.com").await;
-        assert!(result2.is_ok());
-        assert_eq!(result2.unwrap(), Duration::ZERO);
-    }
-
-    #[tokio::test]
-    async fn test_clear_removes_warmed() {
-        let manager = PrefetchManager::new().unwrap();
-
-        // Warm a host
-        let _ = manager.preconnect("example.com").await;
-        assert!(manager.is_warmed("example.com").await);
-
-        // Clear
-        manager.clear().await;
-        assert!(
-            !manager.is_warmed("example.com").await,
-            "cleared host should no longer be warmed"
-        );
-    }
-
-    #[tokio::test]
     async fn test_is_warmed_unknown_host() {
         let manager = PrefetchManager::new().unwrap();
         assert!(!manager.is_warmed("never-connected.example.com").await);
     }
 
     #[tokio::test]
-    async fn test_preconnect_with_scheme() {
+    async fn test_clear_removes_warmed_state() {
         let manager = PrefetchManager::new().unwrap();
-        let result = manager.preconnect("https://example.com").await;
+
+        // Manually insert into warmed set (no network needed)
+        {
+            let mut warmed = manager.warmed.write().await;
+            warmed.insert("test-host.example.com".to_string());
+        }
+        assert!(manager.is_warmed("test-host.example.com").await);
+
+        // Clear should remove it
+        manager.clear().await;
+        assert!(
+            !manager.is_warmed("test-host.example.com").await,
+            "cleared host should no longer be warmed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_preconnect_already_warmed_returns_zero() {
+        let manager = PrefetchManager::new().unwrap();
+
+        // Pre-warm without network
+        {
+            let mut warmed = manager.warmed.write().await;
+            warmed.insert("pre-warmed.example.com".to_string());
+        }
+
+        // Second preconnect should be instant (already warmed)
+        let result = manager.preconnect("pre-warmed.example.com").await;
         assert!(result.is_ok());
-        assert!(manager.is_warmed("https://example.com").await);
+        assert_eq!(result.unwrap(), Duration::ZERO);
     }
 }
