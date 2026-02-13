@@ -44,9 +44,11 @@ pub struct TextLine {
 }
 
 /// Converts PDF responses to markdown with table detection.
+#[derive(Default)]
 pub struct PdfHandler;
 
 impl PdfHandler {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

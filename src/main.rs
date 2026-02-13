@@ -2651,7 +2651,7 @@ async fn cmd_login(
     use_1password: bool,
     save_session: bool,
     cookies: &str,
-    show_headers: bool,
+    _show_headers: bool,
     format: OutputFormat,
 ) -> Result<()> {
     use nab::LoginFlow;
@@ -2729,7 +2729,7 @@ async fn output_response(
     response: reqwest::Response,
     show_headers: bool,
     show_body: bool,
-    format: OutputFormat,
+    _format: OutputFormat,
     output_file: Option<PathBuf>,
     raw_html: bool,
     links: bool,

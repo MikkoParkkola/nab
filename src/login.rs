@@ -188,7 +188,7 @@ impl LoginFlow {
             .context("No MFA form found")?;
 
         // Fill OTP code
-        for (key, _) in &mfa_form.fields.clone() {
+        for key in mfa_form.fields.clone().keys() {
             let key_lower = key.to_lowercase();
             if key_lower.contains("code") || key_lower.contains("otp") || key_lower.contains("token") {
                 debug!("Filling MFA field: {}", key);
