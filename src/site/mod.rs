@@ -26,7 +26,12 @@
 //! # }
 //! ```
 
+pub mod github;
+pub mod hackernews;
+pub mod instagram;
+pub mod reddit;
 mod twitter;
+pub mod youtube;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -88,8 +93,14 @@ impl SiteRouter {
     /// Create a router with all available site providers.
     #[must_use]
     pub fn new() -> Self {
-        let providers: Vec<Box<dyn SiteProvider>> =
-            vec![Box::new(twitter::TwitterProvider)];
+        let providers: Vec<Box<dyn SiteProvider>> = vec![
+            Box::new(twitter::TwitterProvider),
+            Box::new(reddit::RedditProvider),
+            Box::new(hackernews::HackerNewsProvider),
+            Box::new(github::GitHubProvider),
+            Box::new(instagram::InstagramProvider),
+            Box::new(youtube::YouTubeProvider),
+        ];
 
         Self { providers }
     }
@@ -136,10 +147,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn router_registers_twitter_provider() {
+    fn router_registers_all_providers() {
         let router = SiteRouter::new();
-        assert_eq!(router.providers.len(), 1);
+        assert_eq!(router.providers.len(), 6);
         assert_eq!(router.providers[0].name(), "twitter");
+        assert_eq!(router.providers[1].name(), "reddit");
+        assert_eq!(router.providers[2].name(), "hackernews");
+        assert_eq!(router.providers[3].name(), "github");
+        assert_eq!(router.providers[4].name(), "instagram");
+        assert_eq!(router.providers[5].name(), "youtube");
     }
 
     #[test]
@@ -150,9 +166,12 @@ mod tests {
     }
 
     #[test]
-    fn router_does_not_match_non_twitter_urls() {
+    fn router_does_not_match_non_provider_urls() {
         let router = SiteRouter::new();
-        assert!(!router.providers[0].matches("https://youtube.com/watch?v=abc"));
-        assert!(!router.providers[0].matches("https://x.com/user")); // Not a status URL
+        // None of the providers should match this generic URL
+        let generic_url = "https://example.com/page";
+        for provider in &router.providers {
+            assert!(!provider.matches(generic_url));
+        }
     }
 }
