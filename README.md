@@ -6,6 +6,8 @@
 
 **Fetch any URL as clean markdown — with your browser cookies, anti-bot evasion, and 25x fewer tokens than raw HTML.**
 
+![demo](demo.gif)
+
 nab is a local, token-optimized HTTP client built for LLM pipelines. It converts web pages to clean markdown, injects your real browser session cookies for authenticated content, and spoofs browser fingerprints to bypass bot detection. No API keys. No cloud. Just fast, authenticated, LLM-ready output.
 
 ## Why nab?
