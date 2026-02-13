@@ -30,9 +30,11 @@ pub mod browser_detect;
 pub mod content;
 pub mod fetch_bridge;
 pub mod fingerprint;
+pub mod form;
 pub mod http3_client;
 pub mod http_client;
 pub mod js_engine;
+pub mod login;
 pub mod mfa;
 pub mod prefetch;
 pub mod stream;
@@ -58,11 +60,13 @@ pub use fetch_bridge::{inject_fetch_sync, FetchClient};
 pub use fingerprint::{
     chrome_profile, firefox_profile, random_profile, safari_profile, BrowserProfile,
 };
+pub use form::{parse_field_args, Form};
 pub use http3_client::Http3Client;
 #[cfg(feature = "http3")]
 pub use http3_client::Http3Response;
 pub use http_client::AcceleratedClient;
 pub use js_engine::JsEngine;
+pub use login::{get_session_dir, LoginFlow, LoginResult};
 pub use mfa::{detect_mfa_type, MfaHandler, MfaResult, MfaType, NotificationConfig};
 pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManager};
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};

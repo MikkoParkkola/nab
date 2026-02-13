@@ -334,6 +334,62 @@ enum Commands {
         #[arg(long)]
         hwaccel: bool,
     },
+
+    /// Submit a form with smart field extraction (hidden fields, CSRF tokens)
+    Submit {
+        /// URL of the form page
+        url: String,
+
+        /// Form fields as "name=value" pairs (can be repeated)
+        #[arg(short, long = "field", action = clap::ArgAction::Append)]
+        fields: Vec<String>,
+
+        /// Extract CSRF token from specific selector (e.g., "input[name=_token]")
+        #[arg(long)]
+        csrf_from: Option<String>,
+
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
+
+        /// Use 1Password credentials
+        #[arg(long = "1password", visible_alias = "op")]
+        use_1password: bool,
+
+        /// Show response headers
+        #[arg(short = 'H', long)]
+        headers: bool,
+
+        /// Output format: full, compact, json
+        #[arg(short = 'f', long, default_value = "full")]
+        format: OutputFormat,
+    },
+
+    /// Auto-login to a website using 1Password credentials
+    Login {
+        /// URL of the login page or target page (will find login form)
+        url: String,
+
+        /// Use 1Password credentials (required)
+        #[arg(long = "1password", visible_alias = "op", default_value = "true")]
+        use_1password: bool,
+
+        /// Save session cookies for future requests
+        #[arg(long)]
+        save_session: bool,
+
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
+
+        /// Show response headers
+        #[arg(short = 'H', long)]
+        headers: bool,
+
+        /// Output format: full, compact, json
+        #[arg(short = 'f', long, default_value = "full")]
+        format: OutputFormat,
+    },
 }
 
 #[tokio::main]
@@ -507,6 +563,44 @@ async fn main() -> Result<()> {
                 analysis,
                 style,
                 hwaccel,
+            )
+            .await?;
+        }
+        Commands::Submit {
+            url,
+            fields,
+            csrf_from,
+            cookies,
+            use_1password,
+            headers,
+            format,
+        } => {
+            cmd_submit(
+                &url,
+                &fields,
+                csrf_from.as_deref(),
+                &cookies,
+                use_1password,
+                headers,
+                format,
+            )
+            .await?;
+        }
+        Commands::Login {
+            url,
+            use_1password,
+            save_session,
+            cookies,
+            headers,
+            format,
+        } => {
+            cmd_login(
+                &url,
+                use_1password,
+                save_session,
+                &cookies,
+                headers,
+                format,
             )
             .await?;
         }
@@ -2470,6 +2564,197 @@ async fn cmd_annotate(
 
     if let Some(ref lang) = result.detected_language {
         eprintln!("   Language: {lang}");
+    }
+
+    Ok(())
+}
+
+/// Submit command handler
+#[allow(clippy::too_many_arguments)]
+async fn cmd_submit(
+    url: &str,
+    field_args: &[String],
+    csrf_from: Option<&str>,
+    cookies: &str,
+    use_1password: bool,
+    show_headers: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    use nab::{parse_field_args, Form};
+
+    // Create HTTP client with cookie support
+    let client = create_client_with_cookies(cookies, use_1password, url).await?;
+
+    // Fetch the form page
+    println!("Fetching form page: {url}");
+    let page_html = client.fetch_text(url).await?;
+
+    // Parse forms from the page
+    let mut forms = Form::parse_all(&page_html)?;
+
+    if forms.is_empty() {
+        anyhow::bail!("No forms found on page");
+    }
+
+    // Use the first form (TODO: allow user to select which form)
+    let mut form = forms.remove(0);
+    println!("Found form: {} {}", form.method, form.action);
+    println!("  Hidden fields: {}", form.hidden_fields.len());
+
+    // Extract CSRF token if requested
+    if let Some(selector) = csrf_from {
+        if let Some(token) = Form::extract_csrf_token(&page_html, selector)? {
+            println!("  CSRF token extracted: {}", &token[..token.len().min(20)]);
+            // Determine CSRF field name from selector
+            let field_name = if selector.contains("name=") {
+                selector.split("name=").nth(1)
+                    .and_then(|s| s.split(']').next())
+                    .unwrap_or("csrf_token")
+            } else {
+                "csrf_token"
+            };
+            form.fields.insert(field_name.to_string(), token);
+        } else {
+            anyhow::bail!("CSRF token not found with selector: {}", selector);
+        }
+    }
+
+    // Parse and merge user-provided fields
+    let user_fields = parse_field_args(field_args)?;
+    println!("  User fields: {}", user_fields.len());
+    form.merge_fields(&user_fields);
+
+    // Resolve form action URL
+    let action_url = form.resolve_action(url)?;
+    println!("Submitting to: {action_url}");
+
+    // Submit the form
+    let form_data = form.encode_urlencoded();
+    let response = client
+        .inner()
+        .post(&action_url)
+        .header("Content-Type", form.content_type())
+        .body(form_data)
+        .send()
+        .await?;
+
+    // Output response
+    output_response(response, show_headers, true, format, None, false, false, 0).await?;
+
+    Ok(())
+}
+
+/// Login command handler
+#[allow(clippy::too_many_arguments)]
+async fn cmd_login(
+    url: &str,
+    use_1password: bool,
+    save_session: bool,
+    cookies: &str,
+    show_headers: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    use nab::LoginFlow;
+
+    if !use_1password {
+        anyhow::bail!("Login requires 1Password integration. Use --1password flag.");
+    }
+
+    // Check if 1Password is available
+    if !nab::OnePasswordAuth::is_available() {
+        anyhow::bail!(
+            "1Password CLI not available. Install with: brew install 1password-cli\n\
+             Then authenticate with: op account add"
+        );
+    }
+
+    println!("🔐 Starting auto-login for: {url}");
+
+    // Create HTTP client with cookie support
+    let client = create_client_with_cookies(cookies, false, url).await?;
+
+    // Create login flow
+    let login_flow = LoginFlow::new(client, use_1password);
+
+    // Execute login
+    let result = login_flow.login(url).await?;
+
+    // Save session if requested
+    if save_session {
+        login_flow.save_session(url, save_session)?;
+        println!("✅ Session saved");
+    }
+
+    println!("\n✅ Login successful!");
+    println!("   Final URL: {}", result.final_url);
+
+    // Output the final page
+    if matches!(format, OutputFormat::Full) {
+        println!("\n📄 Final page content:");
+    }
+
+    // Convert to markdown
+    let markdown = if result.body.starts_with('<') {
+        html_to_markdown(&result.body)
+    } else {
+        result.body.clone()
+    };
+
+    output_body(
+        &markdown,
+        None,
+        true,
+        false,
+        0,
+        false,
+    )?;
+
+    Ok(())
+}
+
+/// Create HTTP client with cookie support
+async fn create_client_with_cookies(
+    _cookies: &str,
+    _use_1password: bool,
+    _url: &str,
+) -> Result<AcceleratedClient> {
+    // Create client with cookie store enabled
+    // Cookies will be automatically managed by the reqwest cookie store
+    AcceleratedClient::new()
+}
+
+/// Output response helper
+#[allow(clippy::too_many_arguments)]
+async fn output_response(
+    response: reqwest::Response,
+    show_headers: bool,
+    show_body: bool,
+    format: OutputFormat,
+    output_file: Option<PathBuf>,
+    raw_html: bool,
+    links: bool,
+    max_body: usize,
+) -> Result<()> {
+    // Show headers if requested
+    if show_headers {
+        println!("\nResponse Headers:");
+        for (key, value) in response.headers() {
+            println!("  {}: {}", key, value.to_str().unwrap_or("<binary>"));
+        }
+    }
+
+    // Get response body
+    let body_text = response.text().await?;
+
+    // Show body if requested
+    if show_body {
+        let markdown = if raw_html {
+            body_text.clone()
+        } else {
+            html_to_markdown(&body_text)
+        };
+
+        output_body(&markdown, output_file, !raw_html, links, max_body, false)?;
     }
 
     Ok(())

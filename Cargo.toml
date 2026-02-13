@@ -104,6 +104,7 @@ serde_json = "1"
 # ═══════════════════════════════════════════════════════════════════════════════
 html2md = "0.2"                     # HTML to Markdown
 url = "2"                           # URL parsing
+urlencoding = "2"                   # URL encoding for forms
 
 # PDF extraction (optional - requires pdfium dynamic library)
 pdfium-render = { version = "0.8", default-features = true, optional = true }
