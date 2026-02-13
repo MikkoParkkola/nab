@@ -125,6 +125,14 @@ impl AcceleratedClient {
         })
     }
 
+    /// Create client from an existing reqwest::Client (for custom configurations like proxies)
+    pub fn from_client(client: Client) -> Result<Self> {
+        Ok(Self {
+            client,
+            profile: Arc::new(RwLock::new(random_profile())),
+        })
+    }
+
     /// Create client that doesn't follow redirects (for auth flows)
     pub fn new_no_redirect() -> Result<Self> {
         let profile = random_profile();
