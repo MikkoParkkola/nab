@@ -27,6 +27,7 @@ pub mod api_discovery;
 pub mod arena;
 pub mod auth;
 pub mod browser_detect;
+pub mod content;
 pub mod fetch_bridge;
 pub mod fingerprint;
 pub mod http3_client;

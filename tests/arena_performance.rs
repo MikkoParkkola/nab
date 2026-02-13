@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo test --release arena_performance -- --nocapture --ignored`
 
-use nab::arena::{Arena, ResponseBuffer};
+use nab::arena::{ResponseArena, ResponseBuffer};
 use std::time::Instant;
 
 const HTML_CHUNKS: &[&str] = &[
@@ -28,7 +28,7 @@ fn bench_arena_vs_vec_small() {
     // Arena allocator - just allocation, no final concat
     let start = Instant::now();
     for _ in 0..ITERATIONS {
-        let arena = Arena::new();
+        let arena = ResponseArena::new();
 
         for i in 0..CHUNKS_PER_ITER {
             let chunk = HTML_CHUNKS[i % HTML_CHUNKS.len()];
@@ -65,7 +65,7 @@ fn bench_arena_vs_vec_large() {
     // Arena allocator - just allocation
     let start = Instant::now();
     for _ in 0..ITERATIONS {
-        let arena = Arena::new();
+        let arena = ResponseArena::new();
 
         for i in 0..CHUNKS_PER_ITER {
             let chunk = HTML_CHUNKS[i % HTML_CHUNKS.len()];
@@ -102,7 +102,7 @@ fn bench_arena_vs_string() {
     // Arena allocator
     let start = Instant::now();
     for _ in 0..ITERATIONS {
-        let arena = Arena::new();
+        let arena = ResponseArena::new();
         let mut buffer = ResponseBuffer::new(&arena);
 
         for i in 0..CHUNKS_PER_ITER {
@@ -142,7 +142,7 @@ fn bench_arena_vs_string() {
 fn bench_arena_memory_usage() {
     const CHUNKS: usize = 10_000;
 
-    let arena = Arena::new();
+    let arena = ResponseArena::new();
     let mut buffer = ResponseBuffer::new(&arena);
 
     for i in 0..CHUNKS {
@@ -152,13 +152,11 @@ fn bench_arena_memory_usage() {
 
     let content = buffer.as_str();
     let allocated = arena.bytes_allocated();
-    let used = arena.bytes_used();
-    let chunks = arena.chunk_count();
+    let parts = buffer.part_count();
 
     println!("\n=== Memory Usage (10k chunks) ===");
     println!("Content size: {} bytes", content.len());
     println!("Arena allocated: {} bytes ({:.2} KB)", allocated, allocated as f64 / 1024.0);
-    println!("Arena used: {} bytes ({:.2} KB)", used, used as f64 / 1024.0);
-    println!("Chunks: {}", chunks);
-    println!("Overhead: {:.1}%", (allocated - used) as f64 / allocated as f64 * 100.0);
+    println!("Buffer parts: {}", parts);
+    println!("Content length: {} bytes ({:.2} KB)", content.len(), content.len() as f64 / 1024.0);
 }

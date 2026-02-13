@@ -135,6 +135,10 @@ enum Commands {
         /// Don't follow redirects (capture 302 response directly)
         #[arg(long)]
         no_redirect: bool,
+
+        /// Disable automatic SPA data extraction (Next.js, Nuxt, Redux, etc.)
+        #[arg(long)]
+        no_spa: bool,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -365,6 +369,7 @@ async fn main() -> Result<()> {
             data,
             capture_cookies,
             no_redirect,
+            no_spa,
         } => {
             cmd_fetch(
                 &url,
@@ -384,6 +389,7 @@ async fn main() -> Result<()> {
                 data.as_deref(),
                 capture_cookies,
                 no_redirect,
+                no_spa,
             )
             .await?;
         }
@@ -528,6 +534,7 @@ async fn cmd_fetch(
     data: Option<&str>,
     capture_cookies: bool,
     no_redirect: bool,
+    no_spa: bool,
 ) -> Result<()> {
     // Create client - with or without redirect following
     let client = if no_redirect {
@@ -653,7 +660,7 @@ async fn cmd_fetch(
     let status = response.status();
     let version = response.version();
 
-    // Extract Set-Cookie headers before consuming response
+    // Extract headers before consuming response body
     let set_cookies: Vec<String> = response
         .headers()
         .get_all("set-cookie")
@@ -661,23 +668,67 @@ async fn cmd_fetch(
         .filter_map(|v| v.to_str().ok().map(String::from))
         .collect();
 
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/html")
+        .to_string();
+
     // Output Set-Cookie headers if requested (for auth flows)
     if capture_cookies && !set_cookies.is_empty() {
         println!("🍪 Set-Cookie:");
         for cookie in &set_cookies {
-            // Parse cookie to extract name=value
             if let Some(name_value) = cookie.split(';').next() {
                 println!("   {name_value}");
             }
         }
     }
 
+    // Extract headers for Full format before consuming response
+    let response_headers: Vec<(String, String)> = if show_headers {
+        response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_string(),
+                    value.to_str().unwrap_or("<binary>").to_string(),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Get body as bytes (handles both text and binary content like PDF)
+    let body_bytes = response.bytes().await?;
+    let body_len = body_bytes.len();
+
+    // Keep raw text for link extraction (extract_links needs HTML, not markdown)
+    let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
+
+    // Convert body to text using content-type-aware routing
+    let body_text = if markdown && !links {
+        let router = nab::content::ContentRouter::new();
+        let ct = content_type.clone();
+        let bytes = body_bytes.to_vec();
+        let result = tokio::task::spawn_blocking(move || router.convert(&bytes, &ct)).await??;
+
+        if matches!(format, OutputFormat::Full) {
+            if let Some(pages) = result.page_count {
+                println!("   Pages: {pages}");
+                println!("   Conversion: {:.1}ms", result.elapsed_ms);
+            }
+        }
+        result.markdown
+    } else {
+        raw_text.clone()
+    };
+
     // Output based on format
     match format {
         OutputFormat::Compact => {
-            // Minimal: STATUS SIZE TIME
-            let body_text = response.text().await?;
-            let body_len = body_text.len();
             println!(
                 "{} {}B {:.0}ms",
                 status.as_u16(),
@@ -686,14 +737,13 @@ async fn cmd_fetch(
             );
 
             if show_body || output_file.is_some() || markdown || links {
-                output_body(&body_text, output_file, markdown, links, max_body)?;
+                output_body(&body_text, output_file, markdown, links, max_body, !no_spa)?;
             }
         }
         OutputFormat::Json => {
-            let body_text = response.text().await?;
             let output = serde_json::json!({
                 "status": status.as_u16(),
-                "size": body_text.len(),
+                "size": body_len,
                 "time_ms": elapsed.as_secs_f64() * 1000.0,
                 "url": url,
             });
@@ -727,16 +777,15 @@ async fn cmd_fetch(
 
             if show_headers {
                 println!("\n📋 Headers:");
-                for (name, value) in response.headers() {
-                    println!("   {}: {}", name, value.to_str().unwrap_or("<binary>"));
+                for (name, value) in &response_headers {
+                    println!("   {name}: {value}");
                 }
             }
 
-            let body_text = response.text().await?;
-            println!("\n📄 Body: {} bytes", body_text.len());
+            println!("\n📄 Body: {} bytes", body_len);
 
             if show_body || output_file.is_some() || markdown || links {
-                output_body(&body_text, output_file, markdown, links, max_body)?;
+                output_body(&body_text, output_file, markdown, links, max_body, !no_spa)?;
             }
         }
     }
@@ -747,19 +796,16 @@ async fn cmd_fetch(
 fn output_body(
     body: &str,
     output_file: Option<PathBuf>,
-    markdown: bool,
+    _markdown: bool,
     links: bool,
     max_body: usize,
+    _auto_spa: bool,
 ) -> Result<()> {
     // Save to file if requested (always full, no truncation)
     if let Some(path) = output_file {
         let mut file = File::create(&path)?;
-        if markdown {
-            let md = html_to_markdown(body);
-            file.write_all(md.as_bytes())?;
-        } else {
-            file.write_all(body.as_bytes())?;
-        }
+        // Body is already converted (via ContentRouter) when markdown mode is active
+        file.write_all(body.as_bytes())?;
         println!("💾 Saved {} bytes to {}", body.len(), path.display());
         return Ok(());
     }
@@ -778,12 +824,8 @@ fn output_body(
         return Ok(());
     }
 
-    // Convert to markdown if requested
-    let output = if markdown {
-        html_to_markdown(body)
-    } else {
-        body.to_string()
-    };
+    // Body is already converted (via ContentRouter) when markdown mode is active
+    let output = body;
 
     // Display with optional limit
     let limit = if max_body == 0 {
@@ -801,6 +843,7 @@ fn output_body(
     Ok(())
 }
 
+#[allow(dead_code)] // Migrated to content::html::HtmlHandler; kept during transition
 fn html_to_markdown(html: &str) -> String {
     // Use html2md for conversion
     let md = html2md::parse_html(html);
@@ -1348,6 +1391,46 @@ fn extract_script_json(html: &str, var_name: &str) -> Option<serde_json::Value> 
     }
 
     None
+}
+
+/// Lightweight SPA data extraction for auto-detection during `nab fetch`.
+/// Checks for common SPA data patterns and returns formatted markdown if found.
+/// This is the inline version — the full `nab spa` command has JS execution and more options.
+#[allow(dead_code)] // Currently unused; SPA extraction moved to content router pipeline
+fn extract_spa_data_inline(html: &str) -> Option<String> {
+    const SPA_PATTERNS: &[(&str, &str)] = &[
+        ("__NEXT_DATA__", "Next.js"),
+        ("__NUXT__", "Nuxt.js"),
+        ("__INITIAL_STATE__", "Redux/Vuex"),
+        ("__APOLLO_STATE__", "Apollo GraphQL"),
+        ("__RELAY_STORE__", "Relay"),
+        ("__PRELOADED_STATE__", "Redux"),
+    ];
+
+    let mut sections = Vec::new();
+
+    for (var_name, framework) in SPA_PATTERNS {
+        if let Some(data) = extract_script_json(html, var_name) {
+            // Truncate large data for LLM consumption (max 8KB per section)
+            let json_str = serde_json::to_string_pretty(&data).unwrap_or_default();
+            let truncated = if json_str.len() > 8192 {
+                format!(
+                    "```json\n{}\n... [{} more bytes]\n```",
+                    &json_str[..8192],
+                    json_str.len() - 8192
+                )
+            } else {
+                format!("```json\n{json_str}\n```")
+            };
+            sections.push(format!("### {framework} (`{var_name}`)\n\n{truncated}"));
+        }
+    }
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
+    }
 }
 
 fn extract_json_object(s: &str) -> Option<&str> {
