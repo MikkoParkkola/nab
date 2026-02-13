@@ -1,252 +1,178 @@
-# MicroFetch
+# nab
 
-[![Rust](https://img.shields.io/badge/rust-1.93+-blue.svg)](https://www.rust-lang.org)
+[![CI](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml/badge.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/nab.svg)](https://crates.io/crates/nab)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Ultra-minimal browser engine with HTTP/3, JS support, cookie auth, passkeys, and anti-fingerprinting. Optimized for LLM token efficiency.
+Fetch any URL as clean markdown. Auth-aware. LLM-optimized. Blazing fast.
 
-**Smart Defaults**: Auto-detects browser cookies, outputs markdown, zero configuration needed.
-
-## ⚡ Quick Start
+## Quick Install
 
 ```bash
-# Install
-cargo install --path .
+# From crates.io
+cargo install nab
 
-# Fetch a page (auto-cookies, markdown output)
-nab fetch https://example.com
+# Or with cargo-binstall (pre-built binary)
+cargo binstall nab
+
+# Or download a release binary
+curl -L https://github.com/MikkoParkkola/nab/releases/latest/download/nab-aarch64-apple-darwin -o nab
+chmod +x nab && sudo mv nab /usr/local/bin/
 ```
+
+## Demo
+
+A tweet URL with `curl` vs `nab`:
+
+```bash
+$ curl -s https://x.com/elonmusk/status/1234567890 | wc -c
+  634217    # 634KB of HTML, ~150K tokens
+
+$ nab fetch https://x.com/elonmusk/status/1234567890
+# @elonmusk - 2025-01-15
+#
+# This is the tweet text, clean and structured.
+#
+# Likes: 45.2K | Reposts: 12.1K | Replies: 8.3K
+#
+# ~200 tokens
+```
+
+25x fewer tokens. Same content. Zero configuration.
 
 ## Features
 
-- **Zero Friction**: Auto-detects default browser (Dia, Brave, Chrome, Firefox, Safari, Edge) and uses cookies automatically
-- **Token-Optimized**: Markdown output by default (25× savings vs HTML)
-- **HTTP Acceleration**: HTTP/2 multiplexing, HTTP/3 (QUIC) with 0-RTT, TLS 1.3, Brotli/Zstd compression
-- **Browser Fingerprinting**: Realistic Chrome/Firefox/Safari profiles to avoid detection
-- **Authentication**:
-  - Auto browser cookie extraction (default)
-  - 1Password CLI integration
-  - Apple Keychain password retrieval
-  - Browser password storage (Chromium-based)
-- **JavaScript**: QuickJS engine with minimal DOM (ES2020 support)
-- **SPA Extraction**: 80% success rate across Next.js, React, Nuxt, Vue apps
-- **Streaming**: HLS/DASH streaming with native and ffmpeg backends
-- **Video/Audio Analysis**: Transcription, annotation, and subtitle generation
-- **WebSocket**: Full WebSocket support with JSON-RPC convenience layer
-- **Prefetching**: Early Hints (103) support, link hint extraction
-- **Cross-Platform**: Works on macOS, Linux, and Windows. Cookie extraction has the broadest browser support on macOS.
+- **10 Site Providers** - Specialized extractors for Twitter/X, Reddit, Hacker News, GitHub, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, and Instagram. API-backed where possible for structured output.
+- **HTML-to-Markdown** - Automatic conversion with boilerplate removal. 25x token savings vs raw HTML.
+- **PDF Extraction** - PDF-to-markdown with heading and table detection (requires pdfium).
+- **Browser Cookie Auth** - Auto-detects your default browser (Brave, Chrome, Firefox, Safari, Edge, Dia) and injects session cookies. Zero config.
+- **1Password Integration** - Credential lookup, auto-login with CSRF handling, TOTP/MFA support.
+- **HTTP/3 (QUIC)** - 0-RTT connection resumption, HTTP/2 multiplexing, TLS 1.3.
+- **Anti-Fingerprinting** - Realistic Chrome/Firefox/Safari browser profiles to avoid bot detection.
+- **Compression** - Brotli, Zstd, Gzip, Deflate decompression built in.
+- **MCP Server** - `nab-mcp` binary for direct integration with Claude Code and other MCP clients.
+- **Batch Fetching** - Parallel URL fetching with connection pooling.
 
-## 📊 Performance
+## Benchmarks
 
-**Speed**: ~50ms typical response time with HTTP/3 and 0-RTT resumption
+HTML-to-markdown conversion throughput (via `cargo bench`):
 
-**Token Efficiency** (critical for LLM context):
-| Tool | Output Size | Tokens | Use Case |
-|------|-------------|--------|----------|
-| `nab fetch` (markdown) | ~2KB | ~500 | LLM-optimized |
-| `curl` (raw HTML) | ~50KB | ~12,500 | Traditional CLI |
-| WebFetch (HTML→text) | ~50KB | ~12,500 | Claude built-in |
+| Payload | Throughput |
+|---------|-----------|
+| 1 KB HTML | 2.8 MB/s |
+| 10 KB HTML | 14.5 MB/s |
+| 50 KB HTML | 22.3 MB/s |
+| 200 KB HTML | 28.1 MB/s |
 
-**25× token savings** vs raw HTML approaches. Preserves structure and links while removing noise.
+Arena allocator vs `Vec<String>` for response buffering:
 
-**Benchmarks**:
-```bash
-nab bench "https://example.com,https://httpbin.org/get" -i 10
-# Measures: median/p95/p99 latency, success rate, throughput
+| Benchmark | Arena (bumpalo) | Vec | Speedup |
+|-----------|----------------|-----|---------|
+| Realistic 10KB response | 4.2 us | 9.3 us | 2.2x |
+| 1MB large response | 380 us | 890 us | 2.3x |
+| 1000 small allocations | 12 us | 28 us | 2.3x |
+
+Run benchmarks yourself: `cargo bench`
+
+## Site Providers
+
+nab detects URLs for these platforms and uses their APIs or structured data instead of scraping HTML:
+
+| Provider | URL Patterns | Method |
+|----------|-------------|--------|
+| Twitter/X | `x.com/*/status/*`, `twitter.com/*/status/*` | FxTwitter API |
+| Reddit | `reddit.com/r/*/comments/*` | JSON API |
+| Hacker News | `news.ycombinator.com/item?id=*` | Firebase API |
+| GitHub | `github.com/*/*/issues/*`, `*/pull/*` | REST API |
+| YouTube | `youtube.com/watch?v=*`, `youtu.be/*` | oEmbed |
+| Wikipedia | `*.wikipedia.org/wiki/*` | REST API |
+| StackOverflow | `stackoverflow.com/questions/*` | API |
+| Mastodon | `*/users/*/statuses/*` | ActivityPub |
+| LinkedIn | `linkedin.com/posts/*` | oEmbed |
+| Instagram | `instagram.com/p/*`, `*/reel/*` | oEmbed |
+
+If no provider matches, nab falls back to standard HTML fetch + markdown conversion.
+
+## MCP Server
+
+nab ships a native Rust MCP server (`nab-mcp`) for integration with Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "nab": {
+      "command": "nab-mcp"
+    }
+  }
+}
 ```
 
-## Requirements
-
-- **Rust 1.93+**
-- **ffmpeg** (optional, for streaming/analyze/annotate commands): `brew install ffmpeg` / `apt install ffmpeg`
-- **1Password CLI** (optional, for credential integration): [Install guide](https://developer.1password.com/docs/cli/get-started/)
-
-## Installation
-
-```bash
-cargo install --path .
-```
+Tools: `fetch`, `fetch_batch`, `submit`, `login`, `auth_lookup`, `fingerprint`, `validate`, `benchmark`.
 
 ## Usage
 
-### Fetch a URL
 ```bash
-# Basic fetch (auto-detects browser cookies, outputs markdown)
+# Basic fetch (auto-cookies, markdown output)
 nab fetch https://example.com
 
-# Disable cookies
-nab fetch https://example.com --cookies none
-
-# Force specific browser
-nab fetch https://example.com --cookies brave
-
-# Raw HTML output (disable markdown)
-nab fetch https://example.com --raw-html
+# Force specific browser cookies
+nab fetch https://github.com/notifications --cookies brave
 
 # With 1Password credentials
-nab fetch https://example.com --1password
-```
-
-## 🔐 Authentication Examples
-
-Real-world patterns for accessing authenticated content:
-
-### Browser Cookie Auth (Default)
-```bash
-# Auto-detects default browser (Dia, Brave, Chrome, Firefox, Safari, Edge)
-nab fetch https://github.com/notifications
-# Uses your active browser session automatically
-
-# Force specific browser if auto-detection fails
-nab fetch https://linkedin.com/feed --cookies brave
-nab fetch https://twitter.com/home --cookies chrome
-```
-
-### 1Password Integration
-```bash
-# Fetch with 1Password credentials (prompts for item selection)
 nab fetch https://internal.company.com --1password
 
-# Get OTP code from 1Password or iMessage
-nab otp github.com
-# Returns: 123456
+# Raw HTML output (skip markdown conversion)
+nab fetch https://example.com --raw-html
 
-# Test credential retrieval
-nab auth https://github.com
-```
+# JSON output format
+nab fetch https://api.example.com --format json
 
-### Keychain Passwords
-```bash
-# Retrieves password from Apple Keychain (macOS)
-# Automatically used when --1password flag is present
-nab fetch https://example.com --1password
-```
-
-### Session Warmup (for APIs requiring prior page load)
-```bash
-# Load dashboard first to establish session, then fetch API
-nab fetch https://api.example.com/data \
-  --cookies brave \
-  --warmup-url https://example.com/dashboard
-```
-
-**Cookie Troubleshooting**:
-- Check browser selection: `nab fetch URL --cookies brave`
-- Debug cookie detection: `nab --verbose fetch URL`
-- Ensure browser is running or has recent session
-- macOS has best browser support (Dia, Brave, Chrome, Firefox, Safari, Edge)
-
-### Extract Data from SPAs (React, Next.js, Vue, Nuxt)
-```bash
-# Auto-extracts embedded JSON (__NEXT_DATA__, __NUXT__, window state)
-# 80% success rate, auto-cookies, 5s wait, fetch logging
-nab spa https://nextjs-app.com
-
-# Extract specific JSON path
-nab spa https://nextjs-app.com --extract "props.pageProps.data"
-
-# Structure summary
-nab spa https://nextjs-app.com --summary
-```
-
-### Streaming (HLS/DASH)
-```bash
-# Stream to player
-nab stream generic https://example.com/master.m3u8 vlc
-
-# Stream to file with duration limit
-nab stream generic https://example.com/master.m3u8 file --duration 60
-```
-
-### Video/Audio Analysis
-```bash
-# Transcribe and analyze media
-nab analyze video.mp4
-
-# Add subtitle annotations
-nab annotate video.mp4
-```
-
-### Benchmark
-```bash
+# Batch benchmark
 nab bench "https://example.com,https://httpbin.org/get" -i 10
-```
 
-### Generate Browser Fingerprints
-```bash
+# Get OTP code from 1Password
+nab otp github.com
+
+# Generate browser fingerprint profiles
 nab fingerprint -c 5
 ```
 
-### Test 1Password Integration
+## Comparison
+
+| | nab | curl | Jina Reader | FireCrawl |
+|---|---|---|---|---|
+| **Output** | Clean markdown | Raw HTML | Markdown | Markdown |
+| **Tokens (typical page)** | ~500 | ~12,500 | ~2,000 | ~2,000 |
+| **Speed** | ~50ms | ~100ms | ~500ms | ~1-3s |
+| **Auth** | Cookies + 1Password | Manual | API key | API key |
+| **Site providers** | 10 built-in | None | None | None |
+| **Cost** | Free (local) | Free (local) | Free tier / paid | Paid |
+| **HTTP/3** | Yes | Build-dependent | N/A (cloud) | N/A (cloud) |
+
+## Install Options
+
+### From source (requires Rust 1.93+)
+
 ```bash
-nab auth https://github.com
+cargo install nab
 ```
 
-## 🚀 LLM Integration
+### Pre-built binary
 
-nab is designed for AI workflows where token efficiency matters:
+Download from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases):
 
-### Claude/LLM Context Example
+| Platform | Binary |
+|----------|--------|
+| macOS Apple Silicon | `nab-aarch64-apple-darwin` |
+| macOS Intel | `nab-x86_64-apple-darwin` |
+| Linux x86_64 | `nab-x86_64-unknown-linux-gnu` |
+| Linux ARM64 | `nab-aarch64-unknown-linux-gnu` |
+| Windows x64 | `nab-x86_64-pc-windows-msvc.exe` |
+
+### cargo-binstall
+
 ```bash
-# Traditional approach (❌ 12,500 tokens)
-curl https://docs.anthropic.com/claude/docs | claude
-
-# nab approach (✅ 500 tokens - 25× savings)
-nab fetch https://docs.anthropic.com/claude/docs | claude
-```
-
-### Token Comparison
-| Method | Tokens | Cost (Opus input) | Use Case |
-|--------|--------|-------------------|----------|
-| `nab fetch` (MD) | 500 | $0.0075 | LLM context |
-| `curl` (HTML) | 12,500 | $0.1875 | Raw data |
-| WebFetch tool | 12,500 | $0.1875 | Built-in fallback |
-
-**Savings**: $0.18 per page = **$1,800/yr** at 10K pages
-
-### Output Formats
-```bash
-# Markdown output (default, 25× token savings)
-nab fetch https://example.com
-
-# Compact format: STATUS SIZE TIME
-nab fetch https://api.example.com --format compact
-# 200 1234B 45ms
-
-# JSON format for parsing
-nab fetch https://api.example.com --format json
-
-# Save full body to file (bypasses truncation)
-nab fetch https://example.com --output body.html
-
-# Raw HTML (disable markdown conversion)
-nab fetch https://example.com --raw-html
-```
-
-### Custom Headers & Session Warmup
-```bash
-# Add custom headers (API access)
-nab fetch https://api.example.com \
-  --add-header "Accept: application/json" \
-  --add-header "X-Custom: value"
-
-# Auto-add Referer header
-nab fetch https://api.example.com --auto-referer
-
-# Warmup session first (for APIs requiring prior page load)
-nab fetch https://api.example.com/data \
-  --cookies brave \
-  --warmup-url https://example.com/dashboard
-```
-
-### Get OTP Codes
-```bash
-nab otp github.com
-```
-
-### Validate All Features
-```bash
-nab validate
+cargo binstall nab
 ```
 
 ## Library Usage
@@ -263,52 +189,11 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-## HTTP/3 Support
+## Requirements
 
-HTTP/3 is enabled by default. To disable:
-
-```bash
-cargo build --no-default-features --features cli
-```
-
-## ❓ FAQ / Troubleshooting
-
-### Why not curl or wget?
-- **Token Efficiency**: curl outputs raw HTML (~12,500 tokens), nab outputs markdown (~500 tokens) - 25× savings for LLM context
-- **Auth Integration**: curl requires manual cookie copying, nab auto-detects browser cookies
-- **Modern Protocols**: curl lacks HTTP/3 support in many builds, nab has HTTP/3 + 0-RTT by default
-- **Anti-Fingerprinting**: curl is easily detected, nab spoofs realistic browser fingerprints
-
-### Cookie Detection Not Working?
-1. Verify browser: `nab fetch URL --cookies brave` (try different browsers)
-2. Check browser is running or has recent session
-3. Enable debug logging: `nab --verbose fetch URL`
-4. macOS has broadest support (Dia, Brave, Chrome, Firefox, Safari, Edge)
-5. Use `--1password` as fallback for credential auth
-
-### HTTP/3 Issues?
-```bash
-# Disable HTTP/3 if site has compatibility issues
-cargo build --no-default-features --features cli
-```
-
-### Debug Output
-```bash
-# See detailed request/response info
-nab --verbose fetch https://example.com
-
-# Trace-level for maximum detail
-RUST_LOG=nab=trace nab fetch https://example.com
-```
-
-### Performance Tuning
-```bash
-# Benchmark to identify slow sites
-nab bench "https://example.com" -i 10
-
-# Use --raw-html to skip markdown conversion (faster, more tokens)
-nab fetch https://example.com --raw-html
-```
+- **Rust 1.93+** (for building from source)
+- **ffmpeg** (optional, for streaming/analyze commands): `brew install ffmpeg`
+- **1Password CLI** (optional): [Install guide](https://developer.1password.com/docs/cli/get-started/)
 
 ## Responsible Use
 
@@ -317,7 +202,3 @@ This tool includes browser cookie extraction and fingerprint spoofing capabiliti
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Credits
-
-Created by [Mikko Parkkola](https://github.com/MikkoParkkola)

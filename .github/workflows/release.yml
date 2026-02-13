@@ -8,6 +8,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -16,27 +19,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS Apple Silicon
           - os: macos-14
             target: aarch64-apple-darwin
             suffix: ''
-          # macOS Intel
-          - os: macos-15
+          - os: macos-13
             target: x86_64-apple-darwin
             suffix: ''
-          # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             suffix: ''
-          # Linux ARM64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             suffix: ''
             cross: true
-          # Windows
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            suffix: '.exe'
 
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +41,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
       - name: Install cross-compilation tools
         if: matrix.cross
         run: |
@@ -53,27 +52,35 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: Build release binary
+      - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Rename binary
+      - name: Rename binaries
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          mv nab${{ matrix.suffix }} nab-${{ matrix.target }}${{ matrix.suffix }}
+          cp nab${{ matrix.suffix }} nab-${{ matrix.target }}${{ matrix.suffix }}
+          if [ -f nab-mcp${{ matrix.suffix }} ]; then
+            cp nab-mcp${{ matrix.suffix }} nab-mcp-${{ matrix.target }}${{ matrix.suffix }}
+          fi
 
-      - name: Upload artifact
+      - name: Upload nab artifact
         uses: actions/upload-artifact@v4
         with:
           name: nab-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/nab-${{ matrix.target }}${{ matrix.suffix }}
 
+      - name: Upload nab-mcp artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nab-mcp-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/nab-mcp-${{ matrix.target }}${{ matrix.suffix }}
+          if-no-files-found: ignore
+
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -86,16 +93,14 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          # Each artifact is in a subdirectory with the same name
-          # Structure: artifacts/nab-target/nab-target[.exe]
-          for dir in artifacts/nab-*/; do
+          for dir in artifacts/*/; do
             if [ -d "$dir" ]; then
-              cp "$dir"/* release/ 2>/dev/null || true
+              cp "$dir"* release/ 2>/dev/null || true
             fi
           done
           cd release
           ls -la
-          sha256sum nab-* > checksums-sha256.txt
+          sha256sum nab-* > checksums-sha256.txt 2>/dev/null || shasum -a 256 nab-* > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Create GitHub Release
