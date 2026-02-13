@@ -8,7 +8,7 @@
 //! - Parallel segment fetching
 //! - Retry on segment failure
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -152,12 +152,21 @@ impl NativeHlsBackend {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let resp = req.send().await?;
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("Failed to fetch playlist from {url}"))?;
         if !resp.status().is_success() {
-            return Err(anyhow!("Failed to fetch playlist: {}", resp.status()));
+            return Err(anyhow!(
+                "Playlist fetch returned HTTP {}: {}",
+                resp.status(),
+                url
+            ));
         }
 
-        Ok(resp.text().await?)
+        resp.text()
+            .await
+            .with_context(|| format!("Failed to read playlist body from {url}"))
     }
 
     async fn fetch_segment(&self, url: &str, headers: &HashMap<String, String>) -> Result<Vec<u8>> {
@@ -171,13 +180,22 @@ impl NativeHlsBackend {
 
             match req.send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    return Ok(resp.bytes().await?.to_vec());
+                    return resp
+                        .bytes()
+                        .await
+                        .map(|b| b.to_vec())
+                        .with_context(|| format!("Failed to read segment body from {url}"));
                 }
                 Ok(resp) => {
-                    last_error = Some(anyhow!("Segment fetch failed: {}", resp.status()));
+                    last_error = Some(anyhow!(
+                        "Segment fetch returned HTTP {}: {}",
+                        resp.status(),
+                        url
+                    ));
                 }
                 Err(e) => {
-                    last_error = Some(e.into());
+                    last_error =
+                        Some(anyhow::Error::new(e).context(format!("Segment request failed: {url}")));
                 }
             }
 
@@ -186,7 +204,7 @@ impl NativeHlsBackend {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("Unknown segment fetch error")))
+        Err(last_error.unwrap_or_else(|| anyhow!("Segment fetch exhausted all retries: {url}")))
     }
 
     fn parse_attributes(attr_str: &str) -> HashMap<String, String> {
@@ -509,15 +527,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_resolve_url() {
+    fn test_resolve_url_relative() {
         assert_eq!(
             NativeHlsBackend::resolve_url("https://example.com/path", "video.ts"),
             "https://example.com/path/video.ts"
         );
+    }
+
+    #[test]
+    fn test_resolve_url_absolute_path() {
         assert_eq!(
             NativeHlsBackend::resolve_url("https://example.com/path", "/video.ts"),
             "https://example.com/video.ts"
         );
+    }
+
+    #[test]
+    fn test_resolve_url_full_url() {
         assert_eq!(
             NativeHlsBackend::resolve_url(
                 "https://example.com/path",
@@ -528,17 +554,155 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_url_http() {
+        assert_eq!(
+            NativeHlsBackend::resolve_url(
+                "http://example.com/path",
+                "http://cdn.example.com/video.ts"
+            ),
+            "http://cdn.example.com/video.ts"
+        );
+    }
+
+    #[test]
+    fn test_resolve_url_absolute_path_no_trailing_slash() {
+        assert_eq!(
+            NativeHlsBackend::resolve_url("https://example.com", "/video.ts"),
+            "https://example.com/video.ts"
+        );
+    }
+
+    #[test]
     fn test_parse_attributes() {
         let attrs = NativeHlsBackend::parse_attributes("BANDWIDTH=1280000,RESOLUTION=720x480");
         assert_eq!(attrs.get("BANDWIDTH"), Some(&"1280000".to_string()));
         assert_eq!(attrs.get("RESOLUTION"), Some(&"720x480".to_string()));
+    }
 
-        let attrs2 = NativeHlsBackend::parse_attributes(
+    #[test]
+    fn test_parse_attributes_quoted_codecs() {
+        let attrs = NativeHlsBackend::parse_attributes(
             "CODECS=\"avc1.4d401f,mp4a.40.2\",BANDWIDTH=2000000",
         );
         assert_eq!(
-            attrs2.get("CODECS"),
+            attrs.get("CODECS"),
             Some(&"avc1.4d401f,mp4a.40.2".to_string())
         );
+        assert_eq!(attrs.get("BANDWIDTH"), Some(&"2000000".to_string()));
+    }
+
+    #[test]
+    fn test_parse_attributes_empty() {
+        let attrs = NativeHlsBackend::parse_attributes("");
+        assert!(attrs.is_empty());
+    }
+
+    #[test]
+    fn test_select_variant_best() {
+        let backend = NativeHlsBackend::new().unwrap();
+        let variants = vec![
+            HlsVariant {
+                bandwidth: 5_000_000,
+                height: 1080,
+                codecs: None,
+                uri: "1080p.m3u8".into(),
+            },
+            HlsVariant {
+                bandwidth: 2_000_000,
+                height: 720,
+                codecs: None,
+                uri: "720p.m3u8".into(),
+            },
+            HlsVariant {
+                bandwidth: 500_000,
+                height: 360,
+                codecs: None,
+                uri: "360p.m3u8".into(),
+            },
+        ];
+
+        let best = backend.select_variant(&variants, &StreamQuality::Best).unwrap();
+        assert_eq!(best.height, 1080);
+    }
+
+    #[test]
+    fn test_select_variant_worst() {
+        let backend = NativeHlsBackend::new().unwrap();
+        let variants = vec![
+            HlsVariant {
+                bandwidth: 5_000_000,
+                height: 1080,
+                codecs: None,
+                uri: "1080p.m3u8".into(),
+            },
+            HlsVariant {
+                bandwidth: 500_000,
+                height: 360,
+                codecs: None,
+                uri: "360p.m3u8".into(),
+            },
+        ];
+
+        let worst = backend.select_variant(&variants, &StreamQuality::Worst).unwrap();
+        assert_eq!(worst.height, 360);
+    }
+
+    #[test]
+    fn test_select_variant_specific() {
+        let backend = NativeHlsBackend::new().unwrap();
+        let variants = vec![
+            HlsVariant {
+                bandwidth: 5_000_000,
+                height: 1080,
+                codecs: None,
+                uri: "1080p.m3u8".into(),
+            },
+            HlsVariant {
+                bandwidth: 2_000_000,
+                height: 720,
+                codecs: None,
+                uri: "720p.m3u8".into(),
+            },
+            HlsVariant {
+                bandwidth: 500_000,
+                height: 360,
+                codecs: None,
+                uri: "360p.m3u8".into(),
+            },
+        ];
+
+        let specific = backend
+            .select_variant(&variants, &StreamQuality::Specific(700))
+            .unwrap();
+        assert_eq!(specific.height, 720, "should pick closest to 700p");
+    }
+
+    #[test]
+    fn test_select_variant_empty() {
+        let backend = NativeHlsBackend::new().unwrap();
+        let variants: Vec<HlsVariant> = vec![];
+        assert!(backend.select_variant(&variants, &StreamQuality::Best).is_none());
+    }
+
+    #[test]
+    fn test_can_handle_hls() {
+        let backend = NativeHlsBackend::new().unwrap();
+        assert!(backend.can_handle("https://example.com/stream.m3u8", false));
+    }
+
+    #[test]
+    fn test_can_handle_encrypted_rejected() {
+        let backend = NativeHlsBackend::new().unwrap();
+        assert!(
+            !backend.can_handle("https://example.com/stream.m3u8", true),
+            "native backend should not handle encrypted streams"
+        );
+    }
+
+    #[test]
+    fn test_can_handle_non_hls() {
+        let backend = NativeHlsBackend::new().unwrap();
+        assert!(!backend.can_handle("https://example.com/stream.mpd", false));
+        assert!(!backend.can_handle("https://example.com/video.mp4", false));
     }
 }

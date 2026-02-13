@@ -1,6 +1,6 @@
 //! NRK (Norwegian) streaming provider
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -95,7 +95,6 @@ impl NrkProvider {
     }
 
     async fn fetch_playback_manifest(&self, program_id: &str) -> Result<NrkPlaybackResponse> {
-        // NRK uses different endpoints for different content types
         let url = format!("{NRK_PLAYBACK_BASE}/manifest/program/{program_id}");
 
         let resp = self
@@ -103,14 +102,20 @@ impl NrkProvider {
             .get(&url)
             .header("Accept", "application/json")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("NRK playback API request failed for {program_id}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("NRK Playback API error: {}", resp.status()));
+            return Err(anyhow!(
+                "NRK Playback API error: {} for program {}",
+                resp.status(),
+                program_id
+            ));
         }
 
-        let data: NrkPlaybackResponse = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse NRK playback API response")
     }
 
     async fn fetch_program_metadata(&self, program_id: &str) -> Result<NrkProgramMetadata> {
@@ -121,14 +126,20 @@ impl NrkProvider {
             .get(&url)
             .header("Accept", "application/json")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("NRK PSAPI request failed for {program_id}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("NRK PSAPI error: {}", resp.status()));
+            return Err(anyhow!(
+                "NRK PSAPI error: {} for program {}",
+                resp.status(),
+                program_id
+            ));
         }
 
-        let data: NrkProgramMetadata = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse NRK program metadata response")
     }
 
     async fn fetch_series(&self, series_id: &str) -> Result<NrkSeriesResponse> {
@@ -139,14 +150,20 @@ impl NrkProvider {
             .get(&url)
             .header("Accept", "application/json")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("NRK series API request failed for {series_id}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("NRK Series API error: {}", resp.status()));
+            return Err(anyhow!(
+                "NRK Series API error: {} for series {}",
+                resp.status(),
+                series_id
+            ));
         }
 
-        let data: NrkSeriesResponse = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse NRK series API response")
     }
 }
 
@@ -391,6 +408,22 @@ mod tests {
         assert_eq!(parse_iso8601_duration("PT30M"), Some(1800));
         assert_eq!(parse_iso8601_duration("PT1H30M"), Some(5400));
         assert_eq!(parse_iso8601_duration("PT45M30S"), Some(2730));
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration_seconds_only() {
+        assert_eq!(parse_iso8601_duration("PT90S"), Some(90));
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration_full() {
+        assert_eq!(parse_iso8601_duration("PT2H15M30S"), Some(8130));
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration_empty() {
+        assert_eq!(parse_iso8601_duration("PT"), None);
+        assert_eq!(parse_iso8601_duration("PT0S"), None);
     }
 
     #[test]

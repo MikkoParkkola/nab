@@ -1,6 +1,6 @@
 //! DR (Danish) streaming provider
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -89,19 +89,30 @@ impl DrProvider {
             .get(&url)
             .header("Accept", "application/json")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("DR MU API request failed for {product_number}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("DR MU API error: {}", resp.status()));
+            return Err(anyhow!(
+                "DR MU API error: {} for program {}",
+                resp.status(),
+                product_number
+            ));
         }
 
-        let data: DrProgramCard = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse DR program card response")
     }
 
     async fn fetch_manifest(&self, program_id: &str) -> Result<DrManifestResponse> {
-        // First get an anonymous token
-        let token_resp = self.client.get(DR_TOKEN_API).send().await?;
+        // First get an anonymous token (best-effort, not required)
+        let token_resp = self
+            .client
+            .get(DR_TOKEN_API)
+            .send()
+            .await
+            .context("DR token API request failed")?;
 
         let _token: Option<String> = if token_resp.status().is_success() {
             token_resp.json().await.ok()
@@ -117,14 +128,20 @@ impl DrProvider {
             .get(&url)
             .header("Accept", "application/json")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("DR manifest API request failed for {program_id}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("DR Manifest API error: {}", resp.status()));
+            return Err(anyhow!(
+                "DR Manifest API error: {} for program {}",
+                resp.status(),
+                program_id
+            ));
         }
 
-        let data: DrManifestResponse = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse DR manifest response")
     }
 
     async fn fetch_series(&self, series_slug: &str) -> Result<DrSeriesResponse> {
@@ -136,14 +153,20 @@ impl DrProvider {
             .get(&url)
             .header("Accept", "application/json")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("DR series API request failed for {series_slug}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("DR Series API error: {}", resp.status()));
+            return Err(anyhow!(
+                "DR Series API error: {} for series {}",
+                resp.status(),
+                series_slug
+            ));
         }
 
-        let data: DrSeriesResponse = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse DR series response")
     }
 }
 

@@ -1,6 +1,6 @@
 //! Yle Areena streaming provider
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -52,14 +52,20 @@ impl YleProvider {
             .header("Referer", "https://areena.yle.fi")
             .header("Origin", "https://areena.yle.fi")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("Yle preview API request failed for {program_id}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("Yle API error: {}", resp.status()));
+            return Err(anyhow!(
+                "Yle API error: {} for program {}",
+                resp.status(),
+                program_id
+            ));
         }
 
-        let data: YlePreviewResponse = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse Yle preview API response")
     }
 
     fn parse_episodes_from_next_data(&self, data: &serde_json::Value) -> Vec<EpisodeInfo> {

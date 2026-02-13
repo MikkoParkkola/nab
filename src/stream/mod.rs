@@ -1,7 +1,14 @@
-//! Streaming media support for nab
+//! Streaming media support for nab.
 //!
-//! Supports multiple providers (Yle, `YouTube`, generic HLS) with
-//! native and ffmpeg backends.
+//! This module provides a two-layer architecture:
+//!
+//! - **Providers** ([`StreamProvider`]) know how to extract metadata
+//!   (manifest URLs, titles, durations) from streaming services like
+//!   Yle Areena, SVT Play, NRK TV, DR TV, or generic HLS/DASH URLs.
+//!
+//! - **Backends** ([`StreamBackend`]) handle the actual data transfer:
+//!   a pure-Rust native HLS fetcher, an ffmpeg bridge, or a streamlink
+//!   bridge for sites with complex DRM.
 
 pub mod backend;
 pub mod backends;

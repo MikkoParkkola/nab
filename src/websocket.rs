@@ -24,7 +24,11 @@ use tracing::{debug, info};
 
 use crate::fingerprint::BrowserProfile;
 
-/// WebSocket connection wrapper
+/// WebSocket connection with TLS support and automatic ping/pong.
+///
+/// Wraps a `tokio-tungstenite` stream with browser-like headers and
+/// transparent keep-alive handling. Ping frames received from the
+/// server are automatically answered with Pong.
 pub struct WebSocket {
     stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     url: String,
@@ -95,13 +99,14 @@ impl WebSocket {
         Ok(())
     }
 
-    /// Send a binary message
+    /// Send a binary message.
     pub async fn send_binary(&mut self, data: Vec<u8>) -> Result<()> {
+        let len = data.len();
         self.stream
-            .send(Message::Binary(data.clone()))
+            .send(Message::Binary(data))
             .await
             .context("Failed to send binary message")?;
-        debug!("Sent binary: {} bytes", data.len());
+        debug!("Sent binary: {} bytes", len);
         Ok(())
     }
 
@@ -114,7 +119,11 @@ impl WebSocket {
         Ok(())
     }
 
-    /// Receive the next message
+    /// Receive the next application-level message.
+    ///
+    /// Ping frames are answered automatically with Pong. Pong and raw
+    /// Frame messages are silently consumed so the caller only sees
+    /// Text, Binary, or Close messages.
     pub async fn recv(&mut self) -> Result<Option<WebSocketMessage>> {
         loop {
             match self.stream.next().await {
@@ -124,11 +133,11 @@ impl WebSocket {
                     Message::Ping(data) => {
                         // Auto-respond with pong
                         let _ = self.stream.send(Message::Pong(data)).await;
-                        continue; // Get next actual message
+                        continue;
                     }
                     Message::Pong(_) => {
                         debug!("Received pong");
-                        continue; // Get next actual message
+                        continue;
                     }
                     Message::Close(frame) => {
                         info!("WebSocket closed: {:?}", frame);
@@ -136,7 +145,9 @@ impl WebSocket {
                     }
                     Message::Frame(_) => continue,
                 },
-                Some(Err(e)) => return Err(anyhow::anyhow!("WebSocket error: {e}")),
+                Some(Err(e)) => {
+                    return Err(anyhow::Error::new(e).context("WebSocket receive failed"))
+                }
                 None => return Ok(None),
             }
         }
@@ -167,54 +178,77 @@ impl WebSocket {
     }
 }
 
-/// WebSocket message types
-#[derive(Debug, Clone)]
+/// Application-level WebSocket message types.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebSocketMessage {
+    /// UTF-8 text frame.
     Text(String),
+    /// Binary data frame.
     Binary(Vec<u8>),
+    /// Connection close frame.
     Close,
 }
 
 impl WebSocketMessage {
-    /// Check if this is a text message
+    /// Returns `true` if this is a [`Text`](WebSocketMessage::Text) message.
     #[must_use]
     pub fn is_text(&self) -> bool {
-        matches!(self, WebSocketMessage::Text(_))
+        matches!(self, Self::Text(_))
     }
 
-    /// Get as text if applicable
+    /// Returns `true` if this is a [`Binary`](WebSocketMessage::Binary) message.
+    #[must_use]
+    pub fn is_binary(&self) -> bool {
+        matches!(self, Self::Binary(_))
+    }
+
+    /// Returns `true` if this is a [`Close`](WebSocketMessage::Close) message.
+    #[must_use]
+    pub fn is_close(&self) -> bool {
+        matches!(self, Self::Close)
+    }
+
+    /// Borrow the text payload, if this is a text message.
     #[must_use]
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            WebSocketMessage::Text(s) => Some(s),
+            Self::Text(s) => Some(s),
             _ => None,
         }
     }
 
-    /// Get as binary if applicable
+    /// Borrow the binary payload, if this is a binary message.
     #[must_use]
     pub fn as_binary(&self) -> Option<&[u8]> {
         match self {
-            WebSocketMessage::Binary(b) => Some(b),
+            Self::Binary(b) => Some(b),
             _ => None,
         }
     }
 }
 
-/// WebSocket client for JSON-RPC style communication
+/// JSON-RPC 2.0 client layered on top of a [`WebSocket`].
+///
+/// Assigns auto-incrementing request IDs and correlates responses by ID
+/// within a caller-supplied timeout.
 pub struct JsonRpcWebSocket {
     ws: WebSocket,
     request_id: u64,
 }
 
 impl JsonRpcWebSocket {
-    /// Connect to a JSON-RPC WebSocket endpoint
+    /// Connect to a JSON-RPC WebSocket endpoint.
     pub async fn connect(url: &str, profile: &BrowserProfile) -> Result<Self> {
-        let ws = WebSocket::connect(url, profile).await?;
+        let ws = WebSocket::connect(url, profile)
+            .await
+            .context("JSON-RPC WebSocket connection failed")?;
         Ok(Self { ws, request_id: 0 })
     }
 
-    /// Send a JSON-RPC request and wait for response
+    /// Send a JSON-RPC 2.0 request and wait for the matching response.
+    ///
+    /// Returns the deserialized `result` field on success or an error if
+    /// the response contains an `error` field or the timeout expires.
     pub async fn call<P: serde::Serialize, R: serde::de::DeserializeOwned>(
         &mut self,
         method: &str,
@@ -231,7 +265,10 @@ impl JsonRpcWebSocket {
             "params": params
         });
 
-        self.ws.send_text(&request.to_string()).await?;
+        self.ws
+            .send_text(&request.to_string())
+            .await
+            .with_context(|| format!("Failed to send JSON-RPC request for method '{method}'"))?;
 
         // Wait for matching response
         let deadline = tokio::time::Instant::now() + timeout;
@@ -239,22 +276,26 @@ impl JsonRpcWebSocket {
             if let Some(WebSocketMessage::Text(text)) =
                 self.ws.recv_timeout(Duration::from_millis(100)).await?
             {
-                let response: serde_json::Value = serde_json::from_str(&text)?;
+                let response: serde_json::Value =
+                    serde_json::from_str(&text).context("Invalid JSON in JSON-RPC response")?;
                 if response.get("id") == Some(&serde_json::json!(id)) {
                     if let Some(error) = response.get("error") {
                         return Err(anyhow::anyhow!("JSON-RPC error: {error}"));
                     }
                     if let Some(result) = response.get("result") {
-                        return Ok(serde_json::from_value(result.clone())?);
+                        return serde_json::from_value(result.clone())
+                            .context("Failed to deserialize JSON-RPC result");
                     }
                 }
             }
         }
 
-        Err(anyhow::anyhow!("Timeout waiting for JSON-RPC response"))
+        Err(anyhow::anyhow!(
+            "Timeout ({timeout:?}) waiting for JSON-RPC response to method '{method}'"
+        ))
     }
 
-    /// Close the connection
+    /// Close the underlying WebSocket connection.
     pub async fn close(&mut self) -> Result<()> {
         self.ws.close().await
     }
@@ -264,6 +305,72 @@ impl JsonRpcWebSocket {
 mod tests {
     use super::*;
     use crate::fingerprint::chrome_profile;
+
+    // -- WebSocketMessage unit tests (no network) --
+
+    #[test]
+    fn test_message_text_accessors() {
+        let msg = WebSocketMessage::Text("hello".to_string());
+        assert!(msg.is_text());
+        assert!(!msg.is_binary());
+        assert!(!msg.is_close());
+        assert_eq!(msg.as_text(), Some("hello"));
+        assert_eq!(msg.as_binary(), None);
+    }
+
+    #[test]
+    fn test_message_binary_accessors() {
+        let msg = WebSocketMessage::Binary(vec![1, 2, 3]);
+        assert!(!msg.is_text());
+        assert!(msg.is_binary());
+        assert!(!msg.is_close());
+        assert_eq!(msg.as_text(), None);
+        assert_eq!(msg.as_binary(), Some(&[1u8, 2, 3][..]));
+    }
+
+    #[test]
+    fn test_message_close_accessors() {
+        let msg = WebSocketMessage::Close;
+        assert!(!msg.is_text());
+        assert!(!msg.is_binary());
+        assert!(msg.is_close());
+        assert_eq!(msg.as_text(), None);
+        assert_eq!(msg.as_binary(), None);
+    }
+
+    #[test]
+    fn test_message_equality() {
+        assert_eq!(
+            WebSocketMessage::Text("a".into()),
+            WebSocketMessage::Text("a".into())
+        );
+        assert_ne!(
+            WebSocketMessage::Text("a".into()),
+            WebSocketMessage::Text("b".into())
+        );
+        assert_ne!(
+            WebSocketMessage::Text("a".into()),
+            WebSocketMessage::Binary(b"a".to_vec())
+        );
+        assert_eq!(WebSocketMessage::Close, WebSocketMessage::Close);
+    }
+
+    #[test]
+    fn test_message_clone() {
+        let msg = WebSocketMessage::Binary(vec![42; 100]);
+        let cloned = msg.clone();
+        assert_eq!(msg, cloned);
+    }
+
+    #[test]
+    fn test_message_debug() {
+        let msg = WebSocketMessage::Text("test".to_string());
+        let debug = format!("{msg:?}");
+        assert!(debug.contains("Text"));
+        assert!(debug.contains("test"));
+    }
+
+    // -- Integration test (network-dependent) --
 
     #[tokio::test]
     async fn test_websocket_echo() {

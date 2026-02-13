@@ -1,6 +1,6 @@
 //! SVT Play (Swedish) streaming provider
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -79,14 +79,20 @@ impl SvtProvider {
             .get(&url)
             .header("Accept", "application/json")
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("SVT video API request failed for {video_id}"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("SVT API error: {}", resp.status()));
+            return Err(anyhow!(
+                "SVT API error: {} for video {}",
+                resp.status(),
+                video_id
+            ));
         }
 
-        let data: SvtVideoResponse = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse SVT video API response")
     }
 
     async fn fetch_series_info(&self, slug: &str) -> Result<SvtGraphQLResponse> {
@@ -133,14 +139,20 @@ impl SvtProvider {
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("SVT GraphQL request failed for series '{slug}'"))?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!("SVT GraphQL error: {}", resp.status()));
+            return Err(anyhow!(
+                "SVT GraphQL error: {} for series '{}'",
+                resp.status(),
+                slug
+            ));
         }
 
-        let data: SvtGraphQLResponse = resp.json().await?;
-        Ok(data)
+        resp.json()
+            .await
+            .context("Failed to parse SVT GraphQL response")
     }
 }
 

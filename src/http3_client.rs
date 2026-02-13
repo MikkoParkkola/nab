@@ -18,13 +18,15 @@
 //! - **Connection Migration**: Seamless network changes (`WiFi` → cellular)
 //! - **UDP-based**: Better performance on lossy networks
 
-/// HTTP/3 is not available - feature not enabled
+/// HTTP/3 stub when the feature is not enabled.
+///
+/// All methods return errors or defaults indicating the feature is unavailable.
 #[cfg(not(feature = "http3"))]
 pub struct Http3Client;
 
 #[cfg(not(feature = "http3"))]
 impl Http3Client {
-    /// HTTP/3 disabled - rebuild with default features
+    /// HTTP/3 disabled -- rebuild with default features.
     ///
     /// This binary was built without HTTP/3 support.
     /// Rebuild with: `cargo build` (http3 is default)
@@ -34,19 +36,20 @@ impl Http3Client {
         ))
     }
 
-    /// Check if a server advertises HTTP/3 support via Alt-Svc header
+    /// Check if a server advertises HTTP/3 support via Alt-Svc header.
+    ///
+    /// Performs a HEAD request and inspects the `alt-svc` response header.
     pub async fn supports_h3(url: &str) -> bool {
-        // Check Alt-Svc header via HTTP/2
-        if let Ok(client) = reqwest::Client::builder().build() {
-            if let Ok(resp) = client.head(url).send().await {
-                if let Some(alt_svc) = resp.headers().get("alt-svc") {
-                    if let Ok(value) = alt_svc.to_str() {
-                        return value.contains("h3");
-                    }
-                }
-            }
-        }
-        false
+        let Ok(client) = reqwest::Client::builder().build() else {
+            return false;
+        };
+        let Ok(resp) = client.head(url).send().await else {
+            return false;
+        };
+        resp.headers()
+            .get("alt-svc")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.contains("h3"))
     }
 }
 
@@ -113,7 +116,10 @@ impl Http3Client {
         Ok(Self { endpoint, profile })
     }
 
-    /// Fetch a URL using HTTP/3
+    /// Fetch a URL using HTTP/3 over QUIC.
+    ///
+    /// Performs DNS resolution, establishes a QUIC connection, upgrades to
+    /// HTTP/3, sends a GET request, and returns the complete response.
     pub async fn fetch(&self, url: &str) -> Result<Http3Response> {
         let uri: http::Uri = url.parse().context("Invalid URL")?;
         let host = uri.host().context("No host in URL")?;
@@ -123,14 +129,16 @@ impl Http3Client {
 
         // DNS resolution
         let addr = tokio::net::lookup_host(format!("{host}:{port}"))
-            .await?
+            .await
+            .context("DNS lookup failed for host")?
             .next()
-            .context("DNS resolution failed")?;
+            .context("DNS resolution returned no addresses")?;
 
         // QUIC connection
         let connection = self
             .endpoint
-            .connect(addr, host)?
+            .connect(addr, host)
+            .context("Failed to initiate QUIC connection")?
             .await
             .context("QUIC handshake failed")?;
 
@@ -142,7 +150,7 @@ impl Http3Client {
         // HTTP/3 layer
         let (mut driver, mut send_request) = h3::client::new(h3_quinn::Connection::new(connection))
             .await
-            .context("H3 connection failed")?;
+            .context("H3 connection setup failed")?;
 
         // Spawn driver task
         tokio::spawn(async move {
@@ -150,7 +158,7 @@ impl Http3Client {
             debug!("H3 driver closed: {:?}", err);
         });
 
-        // Build request
+        // Build request with browser-like headers
         let request = http::Request::builder()
             .method("GET")
             .uri(url)
@@ -163,29 +171,36 @@ impl Http3Client {
             .header("Accept-Language", &self.profile.accept_language)
             .header("Accept-Encoding", "gzip, deflate, br")
             .body(())
-            .context("Failed to build request")?;
+            .context("Failed to build HTTP/3 request")?;
 
         // Send request
         let mut stream = send_request
             .send_request(request)
             .await
-            .context("Failed to send request")?;
+            .context("Failed to send HTTP/3 request")?;
 
-        stream.finish().await.context("Failed to finish request")?;
+        stream
+            .finish()
+            .await
+            .context("Failed to finish HTTP/3 request stream")?;
 
         // Receive response
         let response = stream
             .recv_response()
             .await
-            .context("Failed to receive response")?;
+            .context("Failed to receive HTTP/3 response")?;
         let status = response.status();
         let headers = response.headers().clone();
 
         info!("HTTP/3 response: {} from {}", status, url);
 
-        // Read body
+        // Read body chunks
         let mut body = Vec::new();
-        while let Some(mut chunk) = stream.recv_data().await? {
+        while let Some(mut chunk) = stream
+            .recv_data()
+            .await
+            .context("Failed to read HTTP/3 response body")?
+        {
             while chunk.has_remaining() {
                 body.extend_from_slice(chunk.chunk());
                 chunk.advance(chunk.chunk().len());
@@ -199,41 +214,44 @@ impl Http3Client {
         })
     }
 
-    /// Check if a server advertises HTTP/3 support via Alt-Svc header
+    /// Check if a server advertises HTTP/3 support via Alt-Svc header.
+    ///
+    /// Performs a HEAD request and inspects the `alt-svc` response header.
     pub async fn supports_h3(url: &str) -> bool {
-        if let Ok(client) = reqwest::Client::builder().build() {
-            if let Ok(resp) = client.head(url).send().await {
-                if let Some(alt_svc) = resp.headers().get("alt-svc") {
-                    if let Ok(value) = alt_svc.to_str() {
-                        return value.contains("h3");
-                    }
-                }
-            }
-        }
-        false
+        let Ok(client) = reqwest::Client::builder().build() else {
+            return false;
+        };
+        let Ok(resp) = client.head(url).send().await else {
+            return false;
+        };
+        resp.headers()
+            .get("alt-svc")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.contains("h3"))
     }
 }
 
-/// HTTP/3 response
+/// HTTP/3 response containing status, headers, and body.
 #[cfg(feature = "http3")]
 #[derive(Debug)]
 pub struct Http3Response {
-    /// HTTP status code
+    /// HTTP status code (e.g., 200, 404).
     pub status: u16,
-    /// Response headers
+    /// Response headers.
     pub headers: http::HeaderMap,
-    /// Response body
+    /// Response body bytes.
     pub body: Bytes,
 }
 
 #[cfg(feature = "http3")]
 impl Http3Response {
-    /// Get body as text
+    /// Decode the body as UTF-8 text.
     pub fn text(&self) -> Result<String> {
-        Ok(String::from_utf8(self.body.to_vec())?)
+        String::from_utf8(self.body.to_vec()).context("Response body is not valid UTF-8")
     }
 
-    /// Check if successful (2xx)
+    /// Returns `true` if the status code is in the 2xx range.
+    #[must_use]
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
     }
@@ -267,5 +285,73 @@ mod tests {
                 println!("H3 fetch failed (may be network): {}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_response_is_success_2xx() {
+        let resp = Http3Response {
+            status: 200,
+            headers: http::HeaderMap::new(),
+            body: Bytes::from("ok"),
+        };
+        assert!(resp.is_success());
+
+        let resp_204 = Http3Response {
+            status: 204,
+            headers: http::HeaderMap::new(),
+            body: Bytes::new(),
+        };
+        assert!(resp_204.is_success());
+    }
+
+    #[test]
+    fn test_response_is_success_non_2xx() {
+        let resp_404 = Http3Response {
+            status: 404,
+            headers: http::HeaderMap::new(),
+            body: Bytes::from("not found"),
+        };
+        assert!(!resp_404.is_success());
+
+        let resp_500 = Http3Response {
+            status: 500,
+            headers: http::HeaderMap::new(),
+            body: Bytes::new(),
+        };
+        assert!(!resp_500.is_success());
+
+        let resp_301 = Http3Response {
+            status: 301,
+            headers: http::HeaderMap::new(),
+            body: Bytes::new(),
+        };
+        assert!(!resp_301.is_success());
+    }
+
+    #[test]
+    fn test_response_text_valid_utf8() {
+        let resp = Http3Response {
+            status: 200,
+            headers: http::HeaderMap::new(),
+            body: Bytes::from("Hello, world!"),
+        };
+        assert_eq!(resp.text().unwrap(), "Hello, world!");
+    }
+
+    #[test]
+    fn test_response_text_invalid_utf8() {
+        let resp = Http3Response {
+            status: 200,
+            headers: http::HeaderMap::new(),
+            body: Bytes::from_static(&[0xff, 0xfe]),
+        };
+        assert!(resp.text().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_client_creation() {
+        let profile = chrome_profile();
+        let client = Http3Client::new(profile);
+        assert!(client.is_ok(), "Http3Client::new failed: {:?}", client.err());
     }
 }

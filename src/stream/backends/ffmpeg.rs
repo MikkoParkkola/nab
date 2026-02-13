@@ -6,7 +6,7 @@
 //! - Transcoding
 //! - Complex format handling
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::path::Path;
 use std::process::Stdio;
@@ -222,7 +222,8 @@ impl FfmpegBackend {
             .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .context("Failed to spawn ffmpeg process")?;
 
         let stdout = child
             .stdout
@@ -253,7 +254,7 @@ impl FfmpegBackend {
             }
         }
 
-        let status = child.wait().await?;
+        let status = child.wait().await.context("Failed to wait for ffmpeg")?;
 
         if !status.success() {
             // Duration limit often causes ffmpeg to exit with signal, which is ok
@@ -293,7 +294,8 @@ impl StreamBackend for FfmpegBackend {
             .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .context("Failed to spawn ffmpeg process")?;
 
         let stdout = child
             .stdout
@@ -352,7 +354,10 @@ impl StreamBackend for FfmpegBackend {
         }
 
         // Wait for process to complete
-        let status = child.wait().await?;
+        let status = child
+            .wait()
+            .await
+            .context("Failed to wait for ffmpeg process")?;
         stderr_handle.abort(); // Stop stderr reader
 
         if !status.success() {
@@ -381,7 +386,8 @@ impl StreamBackend for FfmpegBackend {
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .context("Failed to spawn ffmpeg process")?;
 
         let stderr = child
             .stderr
@@ -411,7 +417,10 @@ impl StreamBackend for FfmpegBackend {
             }
         }
 
-        let status = child.wait().await?;
+        let status = child
+            .wait()
+            .await
+            .context("Failed to wait for ffmpeg process")?;
 
         if !status.success() {
             return Err(anyhow!("ffmpeg exited with status: {status}"));

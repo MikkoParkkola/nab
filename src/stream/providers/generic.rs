@@ -1,10 +1,15 @@
-//! Generic HLS/DASH provider for direct URLs
+//! Generic HLS/DASH provider for direct manifest URLs.
+//!
+//! This provider matches any URL ending in `.m3u8` or `.mpd` and
+//! returns it verbatim as the manifest URL. It does not perform any
+//! API calls -- the manifest URL is used directly by the backends.
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 
 use crate::stream::provider::{SeriesInfo, StreamInfo, StreamProvider};
 
+/// Provider for direct HLS `.m3u8` and DASH `.mpd` URLs.
 pub struct GenericHlsProvider;
 
 impl GenericHlsProvider {
@@ -66,6 +71,20 @@ mod tests {
         assert!(!provider.matches("https://example.com"));
     }
 
+    #[test]
+    fn test_does_not_match_ordinary_urls() {
+        let provider = GenericHlsProvider::new();
+        assert!(!provider.matches("https://example.com/page.html"));
+        assert!(!provider.matches("https://example.com/video.ts"));
+        assert!(!provider.matches("https://example.com"));
+    }
+
+    #[test]
+    fn test_name() {
+        let provider = GenericHlsProvider::new();
+        assert_eq!(provider.name(), "generic");
+    }
+
     #[tokio::test]
     async fn test_get_stream_info() {
         let provider = GenericHlsProvider::new();
@@ -75,6 +94,18 @@ mod tests {
             .unwrap();
         assert_eq!(info.manifest_url, "https://example.com/stream.m3u8");
         assert_eq!(info.title, "Direct Stream");
+        assert!(!info.is_live);
+        assert!(info.qualities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_stream_info_uses_url_as_id() {
+        let provider = GenericHlsProvider::new();
+        let info = provider
+            .get_stream_info("https://cdn.example.com/live.mpd")
+            .await
+            .unwrap();
+        assert_eq!(info.id, "https://cdn.example.com/live.mpd");
     }
 
     #[tokio::test]
@@ -82,5 +113,11 @@ mod tests {
         let provider = GenericHlsProvider::new();
         let result = provider.list_series("test").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default() {
+        let provider = GenericHlsProvider;
+        assert_eq!(provider.name(), "generic");
     }
 }

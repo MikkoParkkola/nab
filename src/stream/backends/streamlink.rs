@@ -5,7 +5,7 @@
 //! - HLS/DASH streams with site-specific extraction
 //! - Live streams with real-time output
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::path::Path;
 use std::process::Stdio;
@@ -255,7 +255,8 @@ impl StreamBackend for StreamlinkBackend {
             .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .context("Failed to spawn streamlink process")?;
 
         let stdout = child
             .stdout
@@ -307,7 +308,10 @@ impl StreamBackend for StreamlinkBackend {
         }
 
         // Wait for process to complete
-        let status = child.wait().await?;
+        let status = child
+            .wait()
+            .await
+            .context("Failed to wait for streamlink process")?;
         stderr_handle.abort(); // Stop stderr reader
 
         if !status.success() {
@@ -336,7 +340,8 @@ impl StreamBackend for StreamlinkBackend {
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .context("Failed to spawn streamlink process")?;
 
         let stderr = child
             .stderr
@@ -366,7 +371,10 @@ impl StreamBackend for StreamlinkBackend {
             }
         }
 
-        let status = child.wait().await?;
+        let status = child
+            .wait()
+            .await
+            .context("Failed to wait for streamlink process")?;
 
         if !status.success() {
             return Err(anyhow!("streamlink exited with status: {status}"));

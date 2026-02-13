@@ -10,17 +10,20 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::http_client::AcceleratedClient;
 
-/// Prefetch manager for connection warming
+/// Prefetch manager for connection warming.
+///
+/// Performs DNS + TCP + TLS handshakes ahead of time so subsequent
+/// requests to the same host benefit from a warm connection pool.
 pub struct PrefetchManager {
-    /// Warmed connections (hosts that have been preconnected)
+    /// Hosts that have already been preconnected.
     warmed: Arc<RwLock<HashSet<String>>>,
-    /// HTTP client for warming
+    /// HTTP client used for warming HEAD requests.
     client: AcceleratedClient,
 }
 
@@ -66,7 +69,8 @@ impl PrefetchManager {
             .head(&url)
             .timeout(Duration::from_secs(5))
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("Preconnect HEAD request failed for {host}"))?;
 
         let elapsed = start.elapsed();
 
@@ -117,26 +121,28 @@ impl Default for PrefetchManager {
     }
 }
 
-/// Early Hints (103) response parser
+/// Early Hints (103) response parser.
 ///
-/// Early Hints allow servers to send headers before the final response,
-/// enabling preloading of resources.
+/// Early Hints (RFC 8297) allow servers to send Link headers before the
+/// final response, enabling clients to preload resources (stylesheets,
+/// scripts, fonts) or preconnect to origins in parallel with server
+/// processing.
 #[derive(Debug, Clone)]
 pub struct EarlyHints {
-    /// Link headers with preload hints
+    /// Parsed link entries from one or more Link headers.
     pub links: Vec<EarlyHintLink>,
 }
 
-/// A single Early Hint link
+/// A single parsed Link header entry.
 #[derive(Debug, Clone)]
 pub struct EarlyHintLink {
-    /// URL to preload
+    /// Target URL of the link.
     pub url: String,
-    /// Relationship (preload, preconnect, dns-prefetch, etc.)
+    /// Link relation type (`preload`, `preconnect`, `dns-prefetch`, etc.).
     pub rel: String,
-    /// Resource type (script, style, image, font, etc.)
+    /// `as` attribute indicating resource type (`script`, `style`, `image`, `font`).
     pub as_type: Option<String>,
-    /// Crossorigin attribute
+    /// `crossorigin` attribute value (`anonymous` or `use-credentials`).
     pub crossorigin: Option<String>,
 }
 
@@ -315,6 +321,61 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_link_header_empty() {
+        let headers: Vec<&str> = vec![];
+        let hints = EarlyHints::parse(&headers);
+        assert!(hints.links.is_empty());
+    }
+
+    #[test]
+    fn test_parse_link_header_missing_rel() {
+        let headers = vec!["</style.css>; as=style"];
+        let hints = EarlyHints::parse(&headers);
+        assert!(hints.links.is_empty(), "link without rel should be skipped");
+    }
+
+    #[test]
+    fn test_parse_link_header_empty_url() {
+        let headers = vec!["<>; rel=preload"];
+        let hints = EarlyHints::parse(&headers);
+        assert!(hints.links.is_empty(), "empty URL should be skipped");
+    }
+
+    #[test]
+    fn test_parse_link_header_quoted_values() {
+        let headers = vec!["</font.woff2>; rel=\"preload\"; as=\"font\"; crossorigin=\"anonymous\""];
+        let hints = EarlyHints::parse(&headers);
+        assert_eq!(hints.links.len(), 1);
+        assert_eq!(hints.links[0].rel, "preload");
+        assert_eq!(hints.links[0].as_type.as_deref(), Some("font"));
+        assert_eq!(hints.links[0].crossorigin.as_deref(), Some("anonymous"));
+    }
+
+    #[test]
+    fn test_parse_link_header_crossorigin_bare() {
+        let headers = vec!["</script.js>; rel=preload; crossorigin"];
+        let hints = EarlyHints::parse(&headers);
+        assert_eq!(hints.links.len(), 1);
+        assert_eq!(
+            hints.links[0].crossorigin.as_deref(),
+            Some("anonymous"),
+            "bare crossorigin should default to 'anonymous'"
+        );
+    }
+
+    #[test]
+    fn test_dns_prefetches() {
+        let headers = vec![
+            "<//cdn.example.com>; rel=dns-prefetch",
+            "<//img.example.com>; rel=dns-prefetch",
+            "<https://api.example.com>; rel=preconnect",
+        ];
+        let hints = EarlyHints::parse(&headers);
+        assert_eq!(hints.dns_prefetches().len(), 2);
+        assert_eq!(hints.preconnects().len(), 1);
+    }
+
+    #[test]
     fn test_extract_link_hints() {
         let html = r#"
             <head>
@@ -327,6 +388,52 @@ mod tests {
 
         let hints = extract_link_hints(html);
         assert_eq!(hints.len(), 3); // preconnect, dns-prefetch, preload (not stylesheet)
+    }
+
+    #[test]
+    fn test_extract_link_hints_empty_html() {
+        let hints = extract_link_hints("");
+        assert!(hints.is_empty());
+    }
+
+    #[test]
+    fn test_extract_link_hints_no_link_tags() {
+        let html = "<html><head><title>Test</title></head><body></body></html>";
+        let hints = extract_link_hints(html);
+        assert!(hints.is_empty());
+    }
+
+    #[test]
+    fn test_extract_link_hints_prefetch_rel() {
+        let html = r#"<link rel="prefetch" href="/next-page.js">"#;
+        let hints = extract_link_hints(html);
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].rel, "prefetch");
+    }
+
+    #[test]
+    fn test_extract_link_hints_with_crossorigin() {
+        let html = r#"<link rel="preload" href="/font.woff2" as="font" crossorigin="anonymous">"#;
+        let hints = extract_link_hints(html);
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].crossorigin.as_deref(), Some("anonymous"));
+        assert_eq!(hints[0].as_type.as_deref(), Some("font"));
+    }
+
+    #[test]
+    fn test_extract_attr_unquoted() {
+        let tag = r#"<link rel=preconnect href=https://cdn.example.com>"#;
+        assert_eq!(extract_attr(tag, "rel"), Some("preconnect".to_string()));
+        assert_eq!(
+            extract_attr(tag, "href"),
+            Some("https://cdn.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_attr_missing() {
+        let tag = r#"<link rel="preconnect" href="https://cdn.example.com">"#;
+        assert_eq!(extract_attr(tag, "as"), None);
     }
 
     #[tokio::test]
@@ -342,5 +449,35 @@ mod tests {
         let result2 = manager.preconnect("example.com").await;
         assert!(result2.is_ok());
         assert_eq!(result2.unwrap(), Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn test_clear_removes_warmed() {
+        let manager = PrefetchManager::new().unwrap();
+
+        // Warm a host
+        let _ = manager.preconnect("example.com").await;
+        assert!(manager.is_warmed("example.com").await);
+
+        // Clear
+        manager.clear().await;
+        assert!(
+            !manager.is_warmed("example.com").await,
+            "cleared host should no longer be warmed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_is_warmed_unknown_host() {
+        let manager = PrefetchManager::new().unwrap();
+        assert!(!manager.is_warmed("never-connected.example.com").await);
+    }
+
+    #[tokio::test]
+    async fn test_preconnect_with_scheme() {
+        let manager = PrefetchManager::new().unwrap();
+        let result = manager.preconnect("https://example.com").await;
+        assert!(result.is_ok());
+        assert!(manager.is_warmed("https://example.com").await);
     }
 }
