@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nab-loader"
+version = "0.1.0"
+description = "LangChain and LlamaIndex document loaders powered by nab"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+keywords = ["langchain", "llamaindex", "llm", "web-scraping", "markdown"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = []
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.1"]
+llamaindex = ["llama-index-core>=0.10"]
+all = ["langchain-core>=0.1", "llama-index-core>=0.10"]
+
+[project.urls]
+Homepage = "https://github.com/MikkoParkkola/nab"
+Repository = "https://github.com/MikkoParkkola/nab"
+Issues = "https://github.com/MikkoParkkola/nab/issues"

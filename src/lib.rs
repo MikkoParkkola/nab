@@ -36,6 +36,7 @@ pub mod http_client;
 pub mod js_engine;
 pub mod login;
 pub mod mfa;
+pub mod plugin;
 pub mod prefetch;
 pub mod site;
 pub mod stream;
