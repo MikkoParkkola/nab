@@ -29,8 +29,12 @@
 pub mod github;
 pub mod hackernews;
 pub mod instagram;
+pub mod linkedin;
+pub mod mastodon;
 pub mod reddit;
+pub mod stackoverflow;
 mod twitter;
+pub mod wikipedia;
 pub mod youtube;
 
 use anyhow::Result;
@@ -100,6 +104,10 @@ impl SiteRouter {
             Box::new(github::GitHubProvider),
             Box::new(instagram::InstagramProvider),
             Box::new(youtube::YouTubeProvider),
+            Box::new(wikipedia::WikipediaProvider),
+            Box::new(stackoverflow::StackOverflowProvider),
+            Box::new(mastodon::MastodonProvider),
+            Box::new(linkedin::LinkedInProvider),
         ];
 
         Self { providers }
@@ -149,13 +157,17 @@ mod tests {
     #[test]
     fn router_registers_all_providers() {
         let router = SiteRouter::new();
-        assert_eq!(router.providers.len(), 6);
+        assert_eq!(router.providers.len(), 10);
         assert_eq!(router.providers[0].name(), "twitter");
         assert_eq!(router.providers[1].name(), "reddit");
         assert_eq!(router.providers[2].name(), "hackernews");
         assert_eq!(router.providers[3].name(), "github");
         assert_eq!(router.providers[4].name(), "instagram");
         assert_eq!(router.providers[5].name(), "youtube");
+        assert_eq!(router.providers[6].name(), "wikipedia");
+        assert_eq!(router.providers[7].name(), "stackoverflow");
+        assert_eq!(router.providers[8].name(), "mastodon");
+        assert_eq!(router.providers[9].name(), "linkedin");
     }
 
     #[test]
