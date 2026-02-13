@@ -29,6 +29,7 @@ use nab::{
     chrome_profile, firefox_profile, random_profile, safari_profile, AcceleratedClient,
     CookieSource, CredentialRetriever, OnePasswordAuth,
 };
+use nab::content::ContentRouter;
 
 // Global shared client (initialized once)
 static CLIENT: OnceCell<AcceleratedClient> = OnceCell::const_new();
@@ -142,17 +143,45 @@ impl FetchTool {
             }
         }
 
-        let body_text = response
-            .text()
+        // Extract Content-Type before consuming response body
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("text/html")
+            .to_string();
+
+        let body_bytes = response
+            .bytes()
             .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
-        output.push_str(&format!("\n📄 Body: {} bytes\n", body_text.len()));
+
+        output.push_str(&format!("\n📄 Body: {} bytes\n", body_bytes.len()));
+
+        // Route through ContentRouter for markdown conversion
+        let router = ContentRouter::new();
+        let bytes_clone = body_bytes.to_vec();
+        let ct_clone = content_type.clone();
+        let conversion = tokio::task::spawn_blocking(move || {
+            router.convert(&bytes_clone, &ct_clone)
+        })
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        if let Some(pages) = conversion.page_count {
+            output.push_str(&format!(
+                "📑 Pages: {} | Conversion: {:.1}ms\n",
+                pages, conversion.elapsed_ms
+            ));
+        }
 
         if self.body {
+            let body_text = &conversion.markdown;
             let truncated = if body_text.len() > 4000 {
                 format!("{}\n\n... [truncated]", &body_text[..4000])
             } else {
-                body_text
+                body_text.to_string()
             };
             output.push_str(&format!("\n{truncated}"));
         }

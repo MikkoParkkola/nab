@@ -135,6 +135,10 @@ enum Commands {
         /// Don't follow redirects (capture 302 response directly)
         #[arg(long)]
         no_redirect: bool,
+
+        /// Disable automatic SPA data extraction (Next.js, Nuxt, Redux, etc.)
+        #[arg(long)]
+        no_spa: bool,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -330,6 +334,62 @@ enum Commands {
         #[arg(long)]
         hwaccel: bool,
     },
+
+    /// Submit a form with smart field extraction (hidden fields, CSRF tokens)
+    Submit {
+        /// URL of the form page
+        url: String,
+
+        /// Form fields as "name=value" pairs (can be repeated)
+        #[arg(short, long = "field", action = clap::ArgAction::Append)]
+        fields: Vec<String>,
+
+        /// Extract CSRF token from specific selector (e.g., "input[name=_token]")
+        #[arg(long)]
+        csrf_from: Option<String>,
+
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
+
+        /// Use 1Password credentials
+        #[arg(long = "1password", visible_alias = "op")]
+        use_1password: bool,
+
+        /// Show response headers
+        #[arg(short = 'H', long)]
+        headers: bool,
+
+        /// Output format: full, compact, json
+        #[arg(short = 'f', long, default_value = "full")]
+        format: OutputFormat,
+    },
+
+    /// Auto-login to a website using 1Password credentials
+    Login {
+        /// URL of the login page or target page (will find login form)
+        url: String,
+
+        /// Use 1Password credentials (required)
+        #[arg(long = "1password", visible_alias = "op", default_value = "true")]
+        use_1password: bool,
+
+        /// Save session cookies for future requests
+        #[arg(long)]
+        save_session: bool,
+
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
+
+        /// Show response headers
+        #[arg(short = 'H', long)]
+        headers: bool,
+
+        /// Output format: full, compact, json
+        #[arg(short = 'f', long, default_value = "full")]
+        format: OutputFormat,
+    },
 }
 
 #[tokio::main]
@@ -365,6 +425,7 @@ async fn main() -> Result<()> {
             data,
             capture_cookies,
             no_redirect,
+            no_spa,
         } => {
             cmd_fetch(
                 &url,
@@ -384,6 +445,7 @@ async fn main() -> Result<()> {
                 data.as_deref(),
                 capture_cookies,
                 no_redirect,
+                no_spa,
             )
             .await?;
         }
@@ -504,6 +566,44 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Commands::Submit {
+            url,
+            fields,
+            csrf_from,
+            cookies,
+            use_1password,
+            headers,
+            format,
+        } => {
+            cmd_submit(
+                &url,
+                &fields,
+                csrf_from.as_deref(),
+                &cookies,
+                use_1password,
+                headers,
+                format,
+            )
+            .await?;
+        }
+        Commands::Login {
+            url,
+            use_1password,
+            save_session,
+            cookies,
+            headers,
+            format,
+        } => {
+            cmd_login(
+                &url,
+                use_1password,
+                save_session,
+                &cookies,
+                headers,
+                format,
+            )
+            .await?;
+        }
     }
 
     Ok(())
@@ -528,6 +628,7 @@ async fn cmd_fetch(
     data: Option<&str>,
     capture_cookies: bool,
     no_redirect: bool,
+    no_spa: bool,
 ) -> Result<()> {
     // Create client - with or without redirect following
     let client = if no_redirect {
@@ -653,7 +754,7 @@ async fn cmd_fetch(
     let status = response.status();
     let version = response.version();
 
-    // Extract Set-Cookie headers before consuming response
+    // Extract headers before consuming response body
     let set_cookies: Vec<String> = response
         .headers()
         .get_all("set-cookie")
@@ -661,23 +762,67 @@ async fn cmd_fetch(
         .filter_map(|v| v.to_str().ok().map(String::from))
         .collect();
 
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/html")
+        .to_string();
+
     // Output Set-Cookie headers if requested (for auth flows)
     if capture_cookies && !set_cookies.is_empty() {
         println!("🍪 Set-Cookie:");
         for cookie in &set_cookies {
-            // Parse cookie to extract name=value
             if let Some(name_value) = cookie.split(';').next() {
                 println!("   {name_value}");
             }
         }
     }
 
+    // Extract headers for Full format before consuming response
+    let response_headers: Vec<(String, String)> = if show_headers {
+        response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_string(),
+                    value.to_str().unwrap_or("<binary>").to_string(),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Get body as bytes (handles both text and binary content like PDF)
+    let body_bytes = response.bytes().await?;
+    let body_len = body_bytes.len();
+
+    // Keep raw text for link extraction (extract_links needs HTML, not markdown)
+    let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
+
+    // Convert body to text using content-type-aware routing
+    let body_text = if markdown && !links {
+        let router = nab::content::ContentRouter::new();
+        let ct = content_type.clone();
+        let bytes = body_bytes.to_vec();
+        let result = tokio::task::spawn_blocking(move || router.convert(&bytes, &ct)).await??;
+
+        if matches!(format, OutputFormat::Full) {
+            if let Some(pages) = result.page_count {
+                println!("   Pages: {pages}");
+                println!("   Conversion: {:.1}ms", result.elapsed_ms);
+            }
+        }
+        result.markdown
+    } else {
+        raw_text.clone()
+    };
+
     // Output based on format
     match format {
         OutputFormat::Compact => {
-            // Minimal: STATUS SIZE TIME
-            let body_text = response.text().await?;
-            let body_len = body_text.len();
             println!(
                 "{} {}B {:.0}ms",
                 status.as_u16(),
@@ -686,14 +831,13 @@ async fn cmd_fetch(
             );
 
             if show_body || output_file.is_some() || markdown || links {
-                output_body(&body_text, output_file, markdown, links, max_body)?;
+                output_body(&body_text, output_file, markdown, links, max_body, !no_spa)?;
             }
         }
         OutputFormat::Json => {
-            let body_text = response.text().await?;
             let output = serde_json::json!({
                 "status": status.as_u16(),
-                "size": body_text.len(),
+                "size": body_len,
                 "time_ms": elapsed.as_secs_f64() * 1000.0,
                 "url": url,
             });
@@ -727,16 +871,15 @@ async fn cmd_fetch(
 
             if show_headers {
                 println!("\n📋 Headers:");
-                for (name, value) in response.headers() {
-                    println!("   {}: {}", name, value.to_str().unwrap_or("<binary>"));
+                for (name, value) in &response_headers {
+                    println!("   {name}: {value}");
                 }
             }
 
-            let body_text = response.text().await?;
-            println!("\n📄 Body: {} bytes", body_text.len());
+            println!("\n📄 Body: {} bytes", body_len);
 
             if show_body || output_file.is_some() || markdown || links {
-                output_body(&body_text, output_file, markdown, links, max_body)?;
+                output_body(&body_text, output_file, markdown, links, max_body, !no_spa)?;
             }
         }
     }
@@ -747,19 +890,16 @@ async fn cmd_fetch(
 fn output_body(
     body: &str,
     output_file: Option<PathBuf>,
-    markdown: bool,
+    _markdown: bool,
     links: bool,
     max_body: usize,
+    _auto_spa: bool,
 ) -> Result<()> {
     // Save to file if requested (always full, no truncation)
     if let Some(path) = output_file {
         let mut file = File::create(&path)?;
-        if markdown {
-            let md = html_to_markdown(body);
-            file.write_all(md.as_bytes())?;
-        } else {
-            file.write_all(body.as_bytes())?;
-        }
+        // Body is already converted (via ContentRouter) when markdown mode is active
+        file.write_all(body.as_bytes())?;
         println!("💾 Saved {} bytes to {}", body.len(), path.display());
         return Ok(());
     }
@@ -778,12 +918,8 @@ fn output_body(
         return Ok(());
     }
 
-    // Convert to markdown if requested
-    let output = if markdown {
-        html_to_markdown(body)
-    } else {
-        body.to_string()
-    };
+    // Body is already converted (via ContentRouter) when markdown mode is active
+    let output = body;
 
     // Display with optional limit
     let limit = if max_body == 0 {
@@ -799,38 +935,6 @@ fn output_body(
     }
 
     Ok(())
-}
-
-fn html_to_markdown(html: &str) -> String {
-    // Use html2md for conversion
-    let md = html2md::parse_html(html);
-
-    // Post-process: remove excessive whitespace and clutter
-    let lines: Vec<&str> = md
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .filter(|l| !is_boilerplate(l))
-        .collect();
-
-    lines.join("\n")
-}
-
-fn is_boilerplate(line: &str) -> bool {
-    // Preserve markdown links - never filter lines containing link syntax
-    if line.contains("](") {
-        return false;
-    }
-
-    let lower = line.to_lowercase();
-    // Skip common navigation/boilerplate patterns
-    lower.contains("skip to content")
-        || lower.contains("cookie")
-        || lower.contains("privacy policy")
-        || lower.contains("terms of service")
-        || lower.starts_with("©")
-        || lower.starts_with("copyright")
-        || (lower.len() < 3 && !lower.chars().any(char::is_alphanumeric))
 }
 
 fn extract_links(html: &str) -> Vec<(String, String)> {
@@ -1348,6 +1452,46 @@ fn extract_script_json(html: &str, var_name: &str) -> Option<serde_json::Value> 
     }
 
     None
+}
+
+/// Lightweight SPA data extraction for auto-detection during `nab fetch`.
+/// Checks for common SPA data patterns and returns formatted markdown if found.
+/// This is the inline version — the full `nab spa` command has JS execution and more options.
+#[allow(dead_code)] // Currently unused; SPA extraction moved to content router pipeline
+fn extract_spa_data_inline(html: &str) -> Option<String> {
+    const SPA_PATTERNS: &[(&str, &str)] = &[
+        ("__NEXT_DATA__", "Next.js"),
+        ("__NUXT__", "Nuxt.js"),
+        ("__INITIAL_STATE__", "Redux/Vuex"),
+        ("__APOLLO_STATE__", "Apollo GraphQL"),
+        ("__RELAY_STORE__", "Relay"),
+        ("__PRELOADED_STATE__", "Redux"),
+    ];
+
+    let mut sections = Vec::new();
+
+    for (var_name, framework) in SPA_PATTERNS {
+        if let Some(data) = extract_script_json(html, var_name) {
+            // Truncate large data for LLM consumption (max 8KB per section)
+            let json_str = serde_json::to_string_pretty(&data).unwrap_or_default();
+            let truncated = if json_str.len() > 8192 {
+                format!(
+                    "```json\n{}\n... [{} more bytes]\n```",
+                    &json_str[..8192],
+                    json_str.len() - 8192
+                )
+            } else {
+                format!("```json\n{json_str}\n```")
+            };
+            sections.push(format!("### {framework} (`{var_name}`)\n\n{truncated}"));
+        }
+    }
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
+    }
 }
 
 fn extract_json_object(s: &str) -> Option<&str> {
@@ -2387,6 +2531,200 @@ async fn cmd_annotate(
 
     if let Some(ref lang) = result.detected_language {
         eprintln!("   Language: {lang}");
+    }
+
+    Ok(())
+}
+
+/// Submit command handler
+#[allow(clippy::too_many_arguments)]
+async fn cmd_submit(
+    url: &str,
+    field_args: &[String],
+    csrf_from: Option<&str>,
+    cookies: &str,
+    use_1password: bool,
+    show_headers: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    use nab::{parse_field_args, Form};
+
+    // Create HTTP client with cookie support
+    let client = create_client_with_cookies(cookies, use_1password, url).await?;
+
+    // Fetch the form page
+    println!("Fetching form page: {url}");
+    let page_html = client.fetch_text(url).await?;
+
+    // Parse forms from the page
+    let mut forms = Form::parse_all(&page_html)?;
+
+    if forms.is_empty() {
+        anyhow::bail!("No forms found on page");
+    }
+
+    // Use the first form (TODO: allow user to select which form)
+    let mut form = forms.remove(0);
+    println!("Found form: {} {}", form.method, form.action);
+    println!("  Hidden fields: {}", form.hidden_fields.len());
+
+    // Extract CSRF token if requested
+    if let Some(selector) = csrf_from {
+        if let Some(token) = Form::extract_csrf_token(&page_html, selector)? {
+            println!("  CSRF token extracted: {}", &token[..token.len().min(20)]);
+            // Determine CSRF field name from selector
+            let field_name = if selector.contains("name=") {
+                selector.split("name=").nth(1)
+                    .and_then(|s| s.split(']').next())
+                    .unwrap_or("csrf_token")
+            } else {
+                "csrf_token"
+            };
+            form.fields.insert(field_name.to_string(), token);
+        } else {
+            anyhow::bail!("CSRF token not found with selector: {}", selector);
+        }
+    }
+
+    // Parse and merge user-provided fields
+    let user_fields = parse_field_args(field_args)?;
+    println!("  User fields: {}", user_fields.len());
+    form.merge_fields(&user_fields);
+
+    // Resolve form action URL
+    let action_url = form.resolve_action(url)?;
+    println!("Submitting to: {action_url}");
+
+    // Submit the form
+    let form_data = form.encode_urlencoded();
+    let response = client
+        .inner()
+        .post(&action_url)
+        .header("Content-Type", form.content_type())
+        .body(form_data)
+        .send()
+        .await?;
+
+    // Output response
+    output_response(response, show_headers, true, format, None, false, false, 0).await?;
+
+    Ok(())
+}
+
+/// Login command handler
+#[allow(clippy::too_many_arguments)]
+async fn cmd_login(
+    url: &str,
+    use_1password: bool,
+    save_session: bool,
+    cookies: &str,
+    _show_headers: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    use nab::LoginFlow;
+
+    if !use_1password {
+        anyhow::bail!("Login requires 1Password integration. Use --1password flag.");
+    }
+
+    // Check if 1Password is available
+    if !nab::OnePasswordAuth::is_available() {
+        anyhow::bail!(
+            "1Password CLI not available. Install with: brew install 1password-cli\n\
+             Then authenticate with: op account add"
+        );
+    }
+
+    println!("🔐 Starting auto-login for: {url}");
+
+    // Create HTTP client with cookie support
+    let client = create_client_with_cookies(cookies, false, url).await?;
+
+    // Create login flow
+    let login_flow = LoginFlow::new(client, use_1password);
+
+    // Execute login
+    let result = login_flow.login(url).await?;
+
+    // Save session if requested
+    if save_session {
+        login_flow.save_session(url, save_session)?;
+        println!("✅ Session saved");
+    }
+
+    println!("\n✅ Login successful!");
+    println!("   Final URL: {}", result.final_url);
+
+    // Output the final page
+    if matches!(format, OutputFormat::Full) {
+        println!("\n📄 Final page content:");
+    }
+
+    // Convert to markdown using ContentRouter
+    let router = nab::content::ContentRouter::new();
+    let content_type = if result.body.starts_with('<') {
+        "text/html"
+    } else {
+        "text/plain"
+    };
+    let conversion = router.convert(result.body.as_bytes(), content_type)?;
+
+    output_body(
+        &conversion.markdown,
+        None,
+        true,
+        false,
+        0,
+        false,
+    )?;
+
+    Ok(())
+}
+
+/// Create HTTP client with cookie support
+async fn create_client_with_cookies(
+    _cookies: &str,
+    _use_1password: bool,
+    _url: &str,
+) -> Result<AcceleratedClient> {
+    // Create client with cookie store enabled
+    // Cookies will be automatically managed by the reqwest cookie store
+    AcceleratedClient::new()
+}
+
+/// Output response helper
+#[allow(clippy::too_many_arguments)]
+async fn output_response(
+    response: reqwest::Response,
+    show_headers: bool,
+    show_body: bool,
+    _format: OutputFormat,
+    output_file: Option<PathBuf>,
+    raw_html: bool,
+    links: bool,
+    max_body: usize,
+) -> Result<()> {
+    // Show headers if requested
+    if show_headers {
+        println!("\nResponse Headers:");
+        for (key, value) in response.headers() {
+            println!("  {}: {}", key, value.to_str().unwrap_or("<binary>"));
+        }
+    }
+
+    // Get response body
+    let body_text = response.text().await?;
+
+    // Show body if requested
+    if show_body {
+        let markdown = if raw_html {
+            body_text.clone()
+        } else {
+            let router = nab::content::ContentRouter::new();
+            router.convert(body_text.as_bytes(), "text/html")?.markdown
+        };
+
+        output_body(&markdown, output_file, !raw_html, links, max_body, false)?;
     }
 
     Ok(())

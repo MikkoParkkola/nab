@@ -104,6 +104,10 @@ serde_json = "1"
 # ═══════════════════════════════════════════════════════════════════════════════
 html2md = "0.2"                     # HTML to Markdown
 url = "2"                           # URL parsing
+urlencoding = "2"                   # URL encoding for forms
+
+# PDF extraction (optional - requires pdfium dynamic library)
+pdfium-render = { version = "0.8", default-features = true, optional = true }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ERROR HANDLING & LOGGING
@@ -120,6 +124,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ARENA ALLOCATION (for HTTP response buffering)
+# ═══════════════════════════════════════════════════════════════════════════════
+bumpalo = { version = "3.16", features = ["collections"] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CLI (for testing)
 # ═══════════════════════════════════════════════════════════════════════════════
 clap = { version = "4", features = ["derive"], optional = true }
@@ -134,6 +143,9 @@ cli = ["clap"]
 # HTTP/3 + QUIC - enabled by default for maximum performance
 # Disable with: cargo build --no-default-features --features cli
 http3 = ["quinn", "h3", "h3-quinn"]
+# PDF to Markdown conversion via pdfium (Chromium's PDF library)
+# Requires pdfium dynamic library on the system
+pdf = ["pdfium-render"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -150,10 +162,9 @@ required-features = ["cli"]
 name = "nab-mcp"
 path = "src/bin/mcp_server.rs"
 
-# Benchmarks disabled until core functionality validated
-# [[bench]]
-# name = "fetch_benchmark"
-# harness = false
+[[bench]]
+name = "arena_benchmark"
+harness = false
 
 [profile.release]
 lto = true
