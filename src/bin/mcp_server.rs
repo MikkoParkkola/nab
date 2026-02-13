@@ -46,16 +46,21 @@ async fn get_client() -> &'static AcceleratedClient {
 
 #[mcp_tool(
     name = "fetch",
-    description = "Fetch a URL with HTTP/3, fingerprint spoofing, and compression.
+    description = "Fetch a URL and convert to clean markdown for LLM consumption.
 
-Features:
+Content conversion (automatic by Content-Type):
+- HTML → clean markdown (boilerplate removed, links preserved)
+- PDF → markdown with headings and table detection (requires pdf feature)
+- JSON/plain text → passthrough
+- SPA data auto-extracted (__NEXT_DATA__, __NUXT__, __APOLLO_STATE__, etc.)
+
+Network features:
 - HTTP/2 multiplexing, HTTP/3 (QUIC) with 0-RTT
-- TLS 1.3 with session resumption
-- Brotli/Zstd/Gzip auto-decompression
+- TLS 1.3, Brotli/Zstd/Gzip decompression
 - Realistic browser fingerprints (Chrome/Firefox/Safari)
-- Happy Eyeballs (IPv4/IPv6 racing), DNS caching
+- Browser cookie injection (Brave/Chrome/Firefox/Safari)
 
-Returns: Response body with timing info.",
+Returns: Markdown-converted body with timing info.",
     read_only_hint = true,
     open_world_hint = true
 )]
@@ -540,12 +545,180 @@ impl BenchmarkTool {
     }
 }
 
+#[mcp_tool(
+    name = "submit",
+    description = "Submit a web form with smart field extraction.
+
+Fetches a page, parses all forms, extracts hidden fields and CSRF tokens,
+merges user-provided fields, and submits via POST.
+
+Use for: login forms, search forms, API interactions behind HTML pages.
+
+Returns: Response body (markdown-converted) after form submission.",
+    read_only_hint = false,
+    open_world_hint = true
+)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SubmitTool {
+    /// URL of the page containing the form
+    url: String,
+    /// Fields to submit as key=value pairs (e.g. ["username=admin", "q=search term"])
+    fields: Vec<String>,
+    /// CSS selector to extract CSRF token from (e.g. "input[name=csrf_token]")
+    #[serde(default)]
+    csrf_selector: Option<String>,
+    /// Browser cookies to use (brave, chrome, firefox, safari)
+    #[serde(default)]
+    cookies: Option<String>,
+}
+
+impl SubmitTool {
+    pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
+        let client = get_client().await;
+        let mut output = format!("📝 Submitting form on: {}\n", self.url);
+
+        // Fetch the form page
+        let page_html = client
+            .fetch_text(&self.url)
+            .await
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        // Parse forms
+        let mut forms = nab::Form::parse_all(&page_html)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        if forms.is_empty() {
+            return Err(CallToolError::from_message("No forms found on page"));
+        }
+
+        let mut form = forms.remove(0);
+        output.push_str(&format!("   Form: {} {}\n", form.method, form.action));
+
+        // Extract CSRF if requested
+        if let Some(ref selector) = self.csrf_selector {
+            if let Ok(Some(token)) = nab::Form::extract_csrf_token(&page_html, selector) {
+                let field_name = if selector.contains("name=") {
+                    selector.split("name=").nth(1)
+                        .and_then(|s| s.split(']').next())
+                        .unwrap_or("csrf_token")
+                } else {
+                    "csrf_token"
+                };
+                form.fields.insert(field_name.to_string(), token);
+                output.push_str("   CSRF: extracted\n");
+            }
+        }
+
+        // Merge user fields
+        let user_fields = nab::parse_field_args(&self.fields)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        form.merge_fields(&user_fields);
+
+        // Submit
+        let action_url = form.resolve_action(&self.url)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let form_data = form.encode_urlencoded();
+
+        let response = client
+            .inner()
+            .post(&action_url)
+            .header("Content-Type", form.content_type())
+            .body(form_data)
+            .send()
+            .await
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        let status = response.status();
+        let body = response.text().await
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        output.push_str(&format!("   Status: {status}\n\n"));
+
+        // Convert response to markdown
+        let router = ContentRouter::new();
+        let conversion = router.convert(body.as_bytes(), "text/html")
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        let truncated = if conversion.markdown.len() > 4000 {
+            format!("{}\n\n... [truncated]", &conversion.markdown[..4000])
+        } else {
+            conversion.markdown
+        };
+        output.push_str(&truncated);
+
+        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+    }
+}
+
+#[mcp_tool(
+    name = "login",
+    description = "Auto-login to a website using 1Password credentials.
+
+Detects login form, retrieves credentials from 1Password, fills and submits,
+handles MFA/2FA with TOTP. Returns the authenticated page content.
+
+Requires: 1Password CLI (op) installed and authenticated.
+
+Returns: Final page content after login (markdown-converted).",
+    read_only_hint = false,
+    open_world_hint = true
+)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct LoginTool {
+    /// URL of the login page
+    url: String,
+    /// Browser cookies to use (brave, chrome, firefox, safari)
+    #[serde(default)]
+    cookies: Option<String>,
+}
+
+impl LoginTool {
+    pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
+        use nab::LoginFlow;
+
+        let mut output = format!("🔐 Auto-login: {}\n", self.url);
+
+        if !OnePasswordAuth::is_available() {
+            return Err(CallToolError::from_message(
+                "1Password CLI not available. Install: brew install 1password-cli"
+            ));
+        }
+
+        let client = AcceleratedClient::new()
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let login_flow = LoginFlow::new(client, true);
+
+        let result = login_flow.login(&self.url).await
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        output.push_str(&format!("   Final URL: {}\n", result.final_url));
+        output.push_str("   Status: ✅ Login successful\n\n");
+
+        // Convert to markdown
+        let router = ContentRouter::new();
+        let content_type = if result.body.starts_with('<') { "text/html" } else { "text/plain" };
+        let conversion = router.convert(result.body.as_bytes(), content_type)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        let truncated = if conversion.markdown.len() > 4000 {
+            format!("{}\n\n... [truncated]", &conversion.markdown[..4000])
+        } else {
+            conversion.markdown
+        };
+        output.push_str(&truncated);
+
+        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+    }
+}
+
 // Generate the tools enum
 tool_box!(
     MicroFetchTools,
     [
         FetchTool,
         FetchBatchTool,
+        SubmitTool,
+        LoginTool,
         AuthLookupTool,
         FingerprintTool,
         ValidateTool,
@@ -584,6 +757,8 @@ impl ServerHandler for MicroFetchHandler {
         match tool {
             MicroFetchTools::FetchTool(t) => t.run().await,
             MicroFetchTools::FetchBatchTool(t) => t.run().await,
+            MicroFetchTools::SubmitTool(t) => t.run().await,
+            MicroFetchTools::LoginTool(t) => t.run().await,
             MicroFetchTools::AuthLookupTool(t) => t.run(),
             MicroFetchTools::FingerprintTool(t) => t.run(),
             MicroFetchTools::ValidateTool(t) => t.run().await,
@@ -620,7 +795,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         meta: None,
         instructions: Some(
-            "MicroFetch provides ultra-fast web fetching with HTTP/3, browser fingerprinting, and 1Password authentication support.".into(),
+            "nab provides ultra-fast web fetching with automatic content conversion (HTML/PDF→markdown), \
+             SPA data extraction, form submission with CSRF handling, auto-login via 1Password, \
+             HTTP/3, and browser fingerprinting.".into(),
         ),
         protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
     };
