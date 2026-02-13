@@ -166,6 +166,14 @@ path = "src/bin/mcp_server.rs"
 name = "arena_benchmark"
 harness = false
 
+[[bench]]
+name = "content_bench"
+harness = false
+
+[[bench]]
+name = "router_bench"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
