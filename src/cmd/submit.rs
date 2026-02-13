@@ -2,8 +2,8 @@ use anyhow::Result;
 
 use nab::AcceleratedClient;
 
-use crate::OutputFormat;
 use super::output::output_response;
+use crate::OutputFormat;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_submit(

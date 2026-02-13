@@ -153,9 +153,7 @@ impl ApiDiscovery {
             // Internal data endpoints: /data/, /api/v*, /_ah/
             EndpointPattern {
                 name: "internal_data",
-                regex: Regex::new(
-                    r#"["'`](/(?:data|_ah|api/v\d+)/[^"'`]+)["'`]"#,
-                )?,
+                regex: Regex::new(r#"["'`](/(?:data|_ah|api/v\d+)/[^"'`]+)["'`]"#)?,
                 url_group: 1,
                 method_group: None,
             },

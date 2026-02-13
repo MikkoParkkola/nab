@@ -420,7 +420,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging based on --verbose flag
-    let log_level = if cli.verbose { Level::DEBUG } else { Level::INFO };
+    let log_level = if cli.verbose {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
 
     FmtSubscriber::builder()
         .with_max_level(log_level)
@@ -622,15 +626,7 @@ async fn main() -> Result<()> {
             headers,
             format,
         } => {
-            cmd::cmd_login(
-                &url,
-                use_1password,
-                save_session,
-                &cookies,
-                headers,
-                format,
-            )
-            .await?;
+            cmd::cmd_login(&url, use_1password, save_session, &cookies, headers, format).await?;
         }
         Commands::Cookies { action } => match action {
             CookiesAction::Export { domain, cookies } => {

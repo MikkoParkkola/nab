@@ -534,8 +534,7 @@ impl CookieSource {
         }
 
         // Copy database to temp file (browser may have it locked)
-        let temp_dir =
-            std::env::temp_dir().join(format!("nab_cookies_{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!("nab_cookies_{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir)?;
         let temp_db = temp_dir.join("Cookies");
 
@@ -846,8 +845,7 @@ impl CredentialRetriever {
         }
 
         // Copy to temp file (browser locks it)
-        let temp_dir =
-            std::env::temp_dir().join(format!("nab_logins_{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!("nab_logins_{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir)?;
         let temp_db = temp_dir.join("Login Data");
         std::fs::copy(&login_data_path, &temp_db)?;

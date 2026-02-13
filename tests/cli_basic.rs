@@ -95,7 +95,9 @@ fn spa_help() {
         .args(["spa", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Extract data from JavaScript-heavy SPA pages"))
+        .stdout(predicate::str::contains(
+            "Extract data from JavaScript-heavy SPA pages",
+        ))
         .stdout(predicate::str::contains("<URL>"))
         .stdout(predicate::str::contains("--extract"))
         .stdout(predicate::str::contains("--summary"));

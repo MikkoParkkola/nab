@@ -34,10 +34,7 @@ impl FetchClient {
     #[must_use]
     pub fn new(cookies: Option<String>, base_url: Option<String>) -> Self {
         Self {
-            client: Client::builder()
-                .user_agent("nab/1.0")
-                .build()
-                .unwrap(),
+            client: Client::builder().user_agent("nab/1.0").build().unwrap(),
             cookie_header: cookies.unwrap_or_default(),
             base_url: base_url.unwrap_or_default(),
             fetch_log: Arc::new(Mutex::new(Vec::new())),

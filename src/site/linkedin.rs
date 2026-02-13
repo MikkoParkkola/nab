@@ -70,10 +70,7 @@ impl SiteProvider for LinkedInProvider {
             title: oembed.title.clone(),
             published: None,
             platform: "LinkedIn".to_string(),
-            canonical_url: oembed
-                .author_url
-                .clone()
-                .unwrap_or_else(|| url.to_string()),
+            canonical_url: oembed.author_url.clone().unwrap_or_else(|| url.to_string()),
             media_urls: oembed
                 .thumbnail_url
                 .as_ref()
@@ -172,9 +169,9 @@ mod tests {
     #[test]
     fn matches_linkedin_posts_urls() {
         let provider = LinkedInProvider;
-        assert!(provider.matches(
-            "https://www.linkedin.com/posts/someuser_topic-activity-123456789"
-        ));
+        assert!(
+            provider.matches("https://www.linkedin.com/posts/someuser_topic-activity-123456789")
+        );
         assert!(provider.matches("https://LINKEDIN.COM/POSTS/user_title-123"));
     }
 
@@ -188,17 +185,14 @@ mod tests {
     #[test]
     fn matches_linkedin_feed_update_urls() {
         let provider = LinkedInProvider;
-        assert!(provider.matches(
-            "https://www.linkedin.com/feed/update/urn:li:activity:7654321098765432109"
-        ));
+        assert!(provider
+            .matches("https://www.linkedin.com/feed/update/urn:li:activity:7654321098765432109"));
     }
 
     #[test]
     fn matches_urls_with_query_params() {
         let provider = LinkedInProvider;
-        assert!(provider.matches(
-            "https://www.linkedin.com/posts/user_title-123?utm_source=share"
-        ));
+        assert!(provider.matches("https://www.linkedin.com/posts/user_title-123?utm_source=share"));
     }
 
     #[test]

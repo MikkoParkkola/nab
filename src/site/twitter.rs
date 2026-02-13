@@ -89,12 +89,7 @@ impl SiteProvider for TwitterProvider {
             media_urls: tweet
                 .media
                 .as_ref()
-                .map(|m| {
-                    m.all
-                        .iter()
-                        .filter_map(|item| item.url.clone())
-                        .collect()
-                })
+                .map(|m| m.all.iter().filter_map(|item| item.url.clone()).collect())
                 .unwrap_or_default(),
             engagement: Some(engagement),
         };
@@ -153,12 +148,7 @@ fn format_tweet_markdown(tweet: &Tweet) -> String {
     }
 
     // Engagement metrics
-    let metrics = format_engagement(
-        tweet.likes,
-        tweet.retweets,
-        tweet.replies,
-        tweet.views,
-    );
+    let metrics = format_engagement(tweet.likes, tweet.retweets, tweet.replies, tweet.views);
     md.push_str(&metrics);
 
     // Timestamp
@@ -340,7 +330,10 @@ mod tests {
     #[test]
     fn format_engagement_combines_all_metrics() {
         let result = format_engagement(Some(8_800), Some(1_000), Some(344), Some(3_800_000));
-        assert_eq!(result, "📊 8.8K likes · 1.0K reposts · 344 replies · 3.8M views\n");
+        assert_eq!(
+            result,
+            "📊 8.8K likes · 1.0K reposts · 344 replies · 3.8M views\n"
+        );
     }
 
     #[test]

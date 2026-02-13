@@ -32,23 +32,16 @@ impl Form {
     pub fn parse_all(html: &str) -> Result<Vec<Self>> {
         let document = Html::parse_document(html);
         let form_selector = Selector::parse("form").map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let input_selector =
-            Selector::parse("input").map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let select_selector =
-            Selector::parse("select").map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let input_selector = Selector::parse("input").map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let select_selector = Selector::parse("select").map_err(|e| anyhow::anyhow!("{:?}", e))?;
         let textarea_selector =
             Selector::parse("textarea").map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let option_selector =
-            Selector::parse("option").map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let option_selector = Selector::parse("option").map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
         let mut forms = Vec::new();
 
         for form_elem in document.select(&form_selector) {
-            let action = form_elem
-                .value()
-                .attr("action")
-                .unwrap_or("")
-                .to_string();
+            let action = form_elem.value().attr("action").unwrap_or("").to_string();
             let method = form_elem
                 .value()
                 .attr("method")
@@ -133,9 +126,7 @@ impl Form {
     /// Find a form by action URL pattern
     pub fn find_by_action(html: &str, pattern: &str) -> Result<Option<Self>> {
         let forms = Self::parse_all(html)?;
-        Ok(forms
-            .into_iter()
-            .find(|f| f.action.contains(pattern)))
+        Ok(forms.into_iter().find(|f| f.action.contains(pattern)))
     }
 
     /// Merge user-provided fields into the form
@@ -170,13 +161,7 @@ impl Form {
         let mut pairs: Vec<String> = self
             .fields
             .iter()
-            .map(|(k, v)| {
-                format!(
-                    "{}={}",
-                    urlencoding::encode(k),
-                    urlencoding::encode(v)
-                )
-            })
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
             .collect();
         pairs.sort(); // Stable encoding for tests
         pairs.join("&")
@@ -194,7 +179,9 @@ impl Form {
         }
 
         let base = url::Url::parse(base_url).context("Invalid base URL")?;
-        let resolved = base.join(&self.action).context("Failed to resolve action URL")?;
+        let resolved = base
+            .join(&self.action)
+            .context("Failed to resolve action URL")?;
         Ok(resolved.to_string())
     }
 }
@@ -278,8 +265,10 @@ mod tests {
             is_login_form: false,
         };
 
-        form.fields.insert("name".to_string(), "John Doe".to_string());
-        form.fields.insert("email".to_string(), "john@example.com".to_string());
+        form.fields
+            .insert("name".to_string(), "John Doe".to_string());
+        form.fields
+            .insert("email".to_string(), "john@example.com".to_string());
 
         let encoded = form.encode_urlencoded();
         // Should be sorted
@@ -289,10 +278,7 @@ mod tests {
 
     #[test]
     fn test_parse_field_args() {
-        let args = vec![
-            "username=admin".to_string(),
-            "password=secret".to_string(),
-        ];
+        let args = vec!["username=admin".to_string(), "password=secret".to_string()];
 
         let fields = parse_field_args(&args).unwrap();
         assert_eq!(fields.get("username"), Some(&"admin".to_string()));
@@ -309,9 +295,7 @@ mod tests {
                 ("csrf".to_string(), "token123".to_string()),
                 ("username".to_string(), "".to_string()),
             ]),
-            hidden_fields: HashMap::from([
-                ("csrf".to_string(), "token123".to_string()),
-            ]),
+            hidden_fields: HashMap::from([("csrf".to_string(), "token123".to_string())]),
             is_login_form: false,
         };
 

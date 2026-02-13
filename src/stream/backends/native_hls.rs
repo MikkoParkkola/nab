@@ -194,8 +194,9 @@ impl NativeHlsBackend {
                     ));
                 }
                 Err(e) => {
-                    last_error =
-                        Some(anyhow::Error::new(e).context(format!("Segment request failed: {url}")));
+                    last_error = Some(
+                        anyhow::Error::new(e).context(format!("Segment request failed: {url}")),
+                    );
                 }
             }
 
@@ -621,7 +622,9 @@ mod tests {
             },
         ];
 
-        let best = backend.select_variant(&variants, &StreamQuality::Best).unwrap();
+        let best = backend
+            .select_variant(&variants, &StreamQuality::Best)
+            .unwrap();
         assert_eq!(best.height, 1080);
     }
 
@@ -643,7 +646,9 @@ mod tests {
             },
         ];
 
-        let worst = backend.select_variant(&variants, &StreamQuality::Worst).unwrap();
+        let worst = backend
+            .select_variant(&variants, &StreamQuality::Worst)
+            .unwrap();
         assert_eq!(worst.height, 360);
     }
 
@@ -681,7 +686,9 @@ mod tests {
     fn test_select_variant_empty() {
         let backend = NativeHlsBackend::new().unwrap();
         let variants: Vec<HlsVariant> = vec![];
-        assert!(backend.select_variant(&variants, &StreamQuality::Best).is_none());
+        assert!(backend
+            .select_variant(&variants, &StreamQuality::Best)
+            .is_none());
     }
 
     #[test]

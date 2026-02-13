@@ -118,11 +118,7 @@ impl SiteRouter {
     /// Returns `None` if:
     /// - No provider matches the URL
     /// - Provider extraction fails (logged as warning)
-    pub async fn try_extract(
-        &self,
-        url: &str,
-        client: &AcceleratedClient,
-    ) -> Option<SiteContent> {
+    pub async fn try_extract(&self, url: &str, client: &AcceleratedClient) -> Option<SiteContent> {
         for provider in &self.providers {
             if provider.matches(url) {
                 tracing::debug!("Matched site provider: {}", provider.name());

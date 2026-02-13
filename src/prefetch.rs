@@ -343,7 +343,8 @@ mod tests {
 
     #[test]
     fn test_parse_link_header_quoted_values() {
-        let headers = vec!["</font.woff2>; rel=\"preload\"; as=\"font\"; crossorigin=\"anonymous\""];
+        let headers =
+            vec!["</font.woff2>; rel=\"preload\"; as=\"font\"; crossorigin=\"anonymous\""];
         let hints = EarlyHints::parse(&headers);
         assert_eq!(hints.links.len(), 1);
         assert_eq!(hints.links[0].rel, "preload");

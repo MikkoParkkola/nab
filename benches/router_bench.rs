@@ -63,14 +63,14 @@ const NON_MATCHING_URLS: &[&str] = &[
 
 /// URLs with patterns that could cause false positives.
 const EDGE_CASE_URLS: &[&str] = &[
-    "https://x.com/naval",                         // Twitter profile, not status
-    "https://reddit.com/r/rust",                    // Subreddit, not comments
-    "https://github.com/rust-lang/rust",            // Repo root, not issue
-    "https://instagram.com/username",               // Profile, not post
-    "https://youtube.com/channel/UCxyz",            // Channel, not video
-    "https://news.ycombinator.com/",                // HN front page, not item
-    "https://example.com/status/fake",              // "status" in wrong context
-    "https://not-github.com/owner/repo/issues/1",  // Similar path, wrong domain
+    "https://x.com/naval",                        // Twitter profile, not status
+    "https://reddit.com/r/rust",                  // Subreddit, not comments
+    "https://github.com/rust-lang/rust",          // Repo root, not issue
+    "https://instagram.com/username",             // Profile, not post
+    "https://youtube.com/channel/UCxyz",          // Channel, not video
+    "https://news.ycombinator.com/",              // HN front page, not item
+    "https://example.com/status/fake",            // "status" in wrong context
+    "https://not-github.com/owner/repo/issues/1", // Similar path, wrong domain
 ];
 
 // ---------------------------------------------------------------------------
@@ -280,7 +280,13 @@ fn bench_content_dispatch_overhead(c: &mut Criterion) {
 
     group.bench_function("router_html_dispatch", |b| {
         let router = ContentRouter::new();
-        b.iter(|| black_box(router.convert(black_box(small_html.as_slice()), "text/html").unwrap()));
+        b.iter(|| {
+            black_box(
+                router
+                    .convert(black_box(small_html.as_slice()), "text/html")
+                    .unwrap(),
+            )
+        });
     });
 
     group.bench_function("router_plain_dispatch", |b| {
@@ -297,7 +303,13 @@ fn bench_content_dispatch_overhead(c: &mut Criterion) {
     // Mime type parsing overhead: simple vs with parameters
     group.bench_function("mime_simple", |b| {
         let router = ContentRouter::new();
-        b.iter(|| black_box(router.convert(black_box(small_html.as_slice()), "text/html").unwrap()));
+        b.iter(|| {
+            black_box(
+                router
+                    .convert(black_box(small_html.as_slice()), "text/html")
+                    .unwrap(),
+            )
+        });
     });
 
     group.bench_function("mime_with_params", |b| {

@@ -171,13 +171,7 @@ fn example_string_interning() {
     println!("Headers with interning:");
     for (i, (name, value)) in response.headers.iter().enumerate() {
         let name_ptr = *name as *const str;
-        println!(
-            "  {}: {} = {} (ptr: {:p})",
-            i + 1,
-            name,
-            value,
-            name_ptr
-        );
+        println!("  {}: {} = {} (ptr: {:p})", i + 1, name, value, name_ptr);
     }
 
     // Verify that common headers share the same pointer

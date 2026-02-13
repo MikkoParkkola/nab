@@ -95,23 +95,19 @@ fn bench_html_buffering(c: &mut Criterion) {
     for size in [10, 100, 1000].iter() {
         group.throughput(Throughput::Elements(*size as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("bumpalo_arena", size),
-            size,
-            |b, &size| {
-                b.iter(|| {
-                    let arena = ResponseArena::new();
-                    let mut buffer = ResponseBuffer::new(&arena);
+        group.bench_with_input(BenchmarkId::new("bumpalo_arena", size), size, |b, &size| {
+            b.iter(|| {
+                let arena = ResponseArena::new();
+                let mut buffer = ResponseBuffer::new(&arena);
 
-                    for i in 0..size {
-                        let chunk = HTML_CHUNKS[i % HTML_CHUNKS.len()];
-                        buffer.push_str(black_box(chunk));
-                    }
+                for i in 0..size {
+                    let chunk = HTML_CHUNKS[i % HTML_CHUNKS.len()];
+                    buffer.push_str(black_box(chunk));
+                }
 
-                    black_box(buffer.as_str())
-                });
-            },
-        );
+                black_box(buffer.as_str())
+            });
+        });
 
         group.bench_with_input(BenchmarkId::new("vec", size), size, |b, &size| {
             b.iter(|| {
@@ -149,23 +145,19 @@ fn bench_markdown_conversion(c: &mut Criterion) {
     for size in [10, 100, 500].iter() {
         group.throughput(Throughput::Elements(*size as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("bumpalo_arena", size),
-            size,
-            |b, &size| {
-                b.iter(|| {
-                    let arena = ResponseArena::new();
-                    let mut buffer = ResponseBuffer::new(&arena);
+        group.bench_with_input(BenchmarkId::new("bumpalo_arena", size), size, |b, &size| {
+            b.iter(|| {
+                let arena = ResponseArena::new();
+                let mut buffer = ResponseBuffer::new(&arena);
 
-                    for i in 0..size {
-                        let chunk = MARKDOWN_CHUNKS[i % MARKDOWN_CHUNKS.len()];
-                        buffer.push_str(black_box(chunk));
-                    }
+                for i in 0..size {
+                    let chunk = MARKDOWN_CHUNKS[i % MARKDOWN_CHUNKS.len()];
+                    buffer.push_str(black_box(chunk));
+                }
 
-                    black_box(buffer.as_str())
-                });
-            },
-        );
+                black_box(buffer.as_str())
+            });
+        });
 
         group.bench_with_input(BenchmarkId::new("vec", size), size, |b, &size| {
             b.iter(|| {

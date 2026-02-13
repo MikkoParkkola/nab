@@ -61,10 +61,7 @@ fn otp_runs_without_crash() {
         .timeout(std::time::Duration::from_secs(10))
         .assert()
         .success()
-        .stdout(
-            predicate::str::contains("OTP")
-                .or(predicate::str::contains("Searching")),
-        );
+        .stdout(predicate::str::contains("OTP").or(predicate::str::contains("Searching")));
 }
 
 #[test]

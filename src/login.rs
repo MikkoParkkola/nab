@@ -148,11 +148,18 @@ impl LoginFlow {
         ];
 
         let html_lower = html.to_lowercase();
-        mfa_indicators.iter().any(|indicator| html_lower.contains(indicator))
+        mfa_indicators
+            .iter()
+            .any(|indicator| html_lower.contains(indicator))
     }
 
     /// Handle MFA challenge
-    async fn handle_mfa(&self, base_url: &str, html: &str, credential: &Credential) -> Result<String> {
+    async fn handle_mfa(
+        &self,
+        base_url: &str,
+        html: &str,
+        credential: &Credential,
+    ) -> Result<String> {
         // Try to get OTP code
         let otp_code = if credential.has_totp {
             // Try 1Password TOTP first
@@ -190,7 +197,10 @@ impl LoginFlow {
         // Fill OTP code
         for key in mfa_form.fields.clone().keys() {
             let key_lower = key.to_lowercase();
-            if key_lower.contains("code") || key_lower.contains("otp") || key_lower.contains("token") {
+            if key_lower.contains("code")
+                || key_lower.contains("otp")
+                || key_lower.contains("token")
+            {
                 debug!("Filling MFA field: {}", key);
                 mfa_form.fields.insert(key.clone(), otp_code.clone());
                 break;
@@ -312,7 +322,8 @@ mod tests {
             passkey_credential_id: None,
         };
 
-        flow.fill_form_with_credential(&mut form, &credential).unwrap();
+        flow.fill_form_with_credential(&mut form, &credential)
+            .unwrap();
 
         assert_eq!(form.fields.get("username"), Some(&"testuser".to_string()));
         assert_eq!(form.fields.get("password"), Some(&"testpass".to_string()));

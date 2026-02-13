@@ -38,16 +38,14 @@ impl PdfHandler {
     /// Searches: standard dlopen paths, /usr/local/lib, homebrew, pypdfium2.
     fn load_pdfium() -> Result<Pdfium> {
         // Try standard dlopen first (respects DYLD_LIBRARY_PATH)
-        if let Ok(bindings) = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("")) {
+        if let Ok(bindings) =
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(""))
+        {
             return Ok(Pdfium::new(bindings));
         }
 
         // Search common paths
-        let search_paths = [
-            "/usr/local/lib",
-            "/opt/homebrew/lib",
-            "/usr/lib",
-        ];
+        let search_paths = ["/usr/local/lib", "/opt/homebrew/lib", "/usr/lib"];
 
         for path in &search_paths {
             let lib_path = format!("{path}/libpdfium.dylib");
@@ -165,14 +163,8 @@ impl PdfHandler {
         sorted.sort_by(|a, b| {
             a.page
                 .cmp(&b.page)
-                .then(
-                    b.y.partial_cmp(&a.y)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
-                .then(
-                    a.x.partial_cmp(&b.x)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
+                .then(b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Equal))
+                .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
         });
 
         let mut lines: Vec<TextLine> = Vec::new();
@@ -204,8 +196,7 @@ impl PdfHandler {
     /// (common in LaTeX-generated documents).
     fn build_line(chars: &[PdfChar]) -> TextLine {
         let mut text = String::new();
-        let avg_char_width =
-            chars.iter().map(|c| c.width).sum::<f32>() / chars.len() as f32;
+        let avg_char_width = chars.iter().map(|c| c.width).sum::<f32>() / chars.len() as f32;
         // Use 50% of average char width as space threshold (was 30%).
         // 30% was too aggressive for LaTeX PDFs with tight kerning.
         let space_threshold = (avg_char_width * 0.5).max(1.0);
@@ -321,9 +312,7 @@ impl ContentHandler for PdfHandler {
         // Char-by-char extraction produces garbled output for many PDFs
         // (LaTeX, RFC, etc.) due to font encoding issues. text.all() is reliable.
         // TODO: Re-enable table detection with segment-based API (not per-char).
-        let markdown = {
-            simple_text
-        };
+        let markdown = { simple_text };
 
         Ok(ConversionResult {
             markdown,
@@ -362,10 +351,31 @@ mod tests {
     #[test]
     fn reconstruct_lines_inserts_spaces() {
         let chars = vec![
-            PdfChar { ch: 'H', x: 10.0, y: 100.0, width: 6.0, height: 12.0, page: 0 },
-            PdfChar { ch: 'i', x: 16.0, y: 100.0, width: 3.0, height: 12.0, page: 0 },
+            PdfChar {
+                ch: 'H',
+                x: 10.0,
+                y: 100.0,
+                width: 6.0,
+                height: 12.0,
+                page: 0,
+            },
+            PdfChar {
+                ch: 'i',
+                x: 16.0,
+                y: 100.0,
+                width: 3.0,
+                height: 12.0,
+                page: 0,
+            },
             // Gap of 11 points (> 0.3 * avg_width)
-            PdfChar { ch: 'W', x: 30.0, y: 100.0, width: 8.0, height: 12.0, page: 0 },
+            PdfChar {
+                ch: 'W',
+                x: 30.0,
+                y: 100.0,
+                width: 8.0,
+                height: 12.0,
+                page: 0,
+            },
         ];
         let lines = PdfHandler::reconstruct_lines(&chars);
         assert_eq!(lines.len(), 1);
@@ -375,8 +385,22 @@ mod tests {
     #[test]
     fn reconstruct_lines_separates_by_y() {
         let chars = vec![
-            PdfChar { ch: 'A', x: 10.0, y: 100.0, width: 6.0, height: 12.0, page: 0 },
-            PdfChar { ch: 'B', x: 10.0, y: 80.0, width: 6.0, height: 12.0, page: 0 },
+            PdfChar {
+                ch: 'A',
+                x: 10.0,
+                y: 100.0,
+                width: 6.0,
+                height: 12.0,
+                page: 0,
+            },
+            PdfChar {
+                ch: 'B',
+                x: 10.0,
+                y: 80.0,
+                width: 6.0,
+                height: 12.0,
+                page: 0,
+            },
         ];
         let lines = PdfHandler::reconstruct_lines(&chars);
         assert_eq!(lines.len(), 2);
@@ -385,8 +409,22 @@ mod tests {
     #[test]
     fn reconstruct_lines_separates_by_page() {
         let chars = vec![
-            PdfChar { ch: 'A', x: 10.0, y: 100.0, width: 6.0, height: 12.0, page: 0 },
-            PdfChar { ch: 'B', x: 10.0, y: 100.0, width: 6.0, height: 12.0, page: 1 },
+            PdfChar {
+                ch: 'A',
+                x: 10.0,
+                y: 100.0,
+                width: 6.0,
+                height: 12.0,
+                page: 0,
+            },
+            PdfChar {
+                ch: 'B',
+                x: 10.0,
+                y: 100.0,
+                width: 6.0,
+                height: 12.0,
+                page: 1,
+            },
         ];
         let lines = PdfHandler::reconstruct_lines(&chars);
         assert_eq!(lines.len(), 2);

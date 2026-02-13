@@ -58,7 +58,10 @@ impl SiteProvider for WikipediaProvider {
         let response = client
             .inner()
             .get(&api_url)
-            .header("User-Agent", "nab/0.3.0 (https://github.com/MikkoParkkola/nab)")
+            .header(
+                "User-Agent",
+                "nab/0.3.0 (https://github.com/MikkoParkkola/nab)",
+            )
             .send()
             .await
             .context("Failed to fetch from Wikipedia API")?
@@ -235,18 +238,16 @@ mod tests {
 
     #[test]
     fn parse_wikipedia_url_extracts_lang_and_title() {
-        let (lang, title) = parse_wikipedia_url(
-            "https://en.wikipedia.org/wiki/Rust_(programming_language)",
-        )
-        .unwrap();
+        let (lang, title) =
+            parse_wikipedia_url("https://en.wikipedia.org/wiki/Rust_(programming_language)")
+                .unwrap();
         assert_eq!(lang, "en");
         assert_eq!(title, "Rust_(programming_language)");
     }
 
     #[test]
     fn parse_wikipedia_url_handles_finnish() {
-        let (lang, title) =
-            parse_wikipedia_url("https://fi.wikipedia.org/wiki/Helsinki").unwrap();
+        let (lang, title) = parse_wikipedia_url("https://fi.wikipedia.org/wiki/Helsinki").unwrap();
         assert_eq!(lang, "fi");
         assert_eq!(title, "Helsinki");
     }
@@ -281,7 +282,9 @@ mod tests {
         assert!(md.contains("## Rust (programming language)"));
         assert!(md.contains("*General-purpose programming language*"));
         assert!(md.contains("Rust is a multi-paradigm programming language."));
-        assert!(md.contains("![Rust (programming language)](https://upload.wikimedia.org/rust_logo.png)"));
+        assert!(md.contains(
+            "![Rust (programming language)](https://upload.wikimedia.org/rust_logo.png)"
+        ));
         assert!(md.contains("[Read full article on Wikipedia]"));
     }
 

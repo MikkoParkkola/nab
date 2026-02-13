@@ -64,11 +64,7 @@ impl SiteProvider for InstagramProvider {
 
 impl InstagramProvider {
     /// Try extracting content via Instagram's oEmbed API.
-    async fn try_oembed(
-        &self,
-        url: &str,
-        client: &AcceleratedClient,
-    ) -> Result<SiteContent> {
+    async fn try_oembed(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
         let oembed_url = format!(
             "https://api.instagram.com/oembed?url={}",
             urlencoding::encode(url)
@@ -103,11 +99,7 @@ impl InstagramProvider {
     /// Instagram HTML includes og:title, og:description, and og:image meta tags
     /// even though the page content is JS-rendered. This provides basic metadata
     /// when the oEmbed API is unavailable.
-    async fn try_og_meta(
-        &self,
-        url: &str,
-        client: &AcceleratedClient,
-    ) -> Result<SiteContent> {
+    async fn try_og_meta(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
         tracing::debug!("Fetching Instagram HTML for og:meta extraction: {}", url);
 
         let html = client

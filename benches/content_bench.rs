@@ -39,7 +39,8 @@ fn generate_html(target_bytes: usize) -> String {
 
     let heading = "<h2>Section Heading</h2>\n";
 
-    let link_block = r#"<p>See <a href="https://example.com/article">this article</a> for more details.</p>"#;
+    let link_block =
+        r#"<p>See <a href="https://example.com/article">this article</a> for more details.</p>"#;
 
     let list_block = "<ul>\n\
         <li>First item with some text</li>\n\
@@ -50,7 +51,9 @@ fn generate_html(target_bytes: usize) -> String {
     let mut html = String::with_capacity(target_bytes + 1024);
     html.push_str(boilerplate_header);
 
-    let blocks = [heading, paragraph, paragraph, link_block, "\n", list_block, paragraph];
+    let blocks = [
+        heading, paragraph, paragraph, link_block, "\n", list_block, paragraph,
+    ];
     let mut block_idx = 0;
 
     while html.len() < target_bytes {
@@ -102,7 +105,13 @@ fn bench_content_router_dispatch(c: &mut Criterion) {
 
     group.bench_function("html_50kb", |b| {
         let router = ContentRouter::new();
-        b.iter(|| black_box(router.convert(black_box(medium_bytes), "text/html").unwrap()));
+        b.iter(|| {
+            black_box(
+                router
+                    .convert(black_box(medium_bytes), "text/html")
+                    .unwrap(),
+            )
+        });
     });
 
     // Plain text (passthrough, baseline)

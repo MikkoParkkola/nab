@@ -352,6 +352,10 @@ mod tests {
     async fn test_client_creation() {
         let profile = chrome_profile();
         let client = Http3Client::new(profile);
-        assert!(client.is_ok(), "Http3Client::new failed: {:?}", client.err());
+        assert!(
+            client.is_ok(),
+            "Http3Client::new failed: {:?}",
+            client.err()
+        );
     }
 }

@@ -169,7 +169,15 @@ pub async fn cmd_spa(
                 elapsed.as_secs_f64() * 1000.0
             );
             println!("\n✅ __NEXT_DATA__ found:");
-            output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+            output_spa_data(
+                &data,
+                output,
+                extract_path,
+                summary,
+                minify,
+                max_array,
+                max_depth,
+            )?;
             found_data = true;
         }
     }
@@ -182,7 +190,15 @@ pub async fn cmd_spa(
             );
         }
         println!("\n✅ __INITIAL_STATE__ found:");
-        output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+        output_spa_data(
+            &data,
+            output,
+            extract_path,
+            summary,
+            minify,
+            max_array,
+            max_depth,
+        )?;
         found_data = true;
     }
 
@@ -194,7 +210,15 @@ pub async fn cmd_spa(
             );
         }
         println!("\n✅ __NUXT__ found:");
-        output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+        output_spa_data(
+            &data,
+            output,
+            extract_path,
+            summary,
+            minify,
+            max_array,
+            max_depth,
+        )?;
         found_data = true;
     }
 
@@ -206,7 +230,15 @@ pub async fn cmd_spa(
             );
         }
         println!("\n✅ __PRELOADED_STATE__ found:");
-        output_spa_data(&data, output, extract_path, summary, minify, max_array, max_depth)?;
+        output_spa_data(
+            &data,
+            output,
+            extract_path,
+            summary,
+            minify,
+            max_array,
+            max_depth,
+        )?;
         found_data = true;
     }
 

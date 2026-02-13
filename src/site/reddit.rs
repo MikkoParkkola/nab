@@ -294,7 +294,8 @@ mod tests {
 
     #[test]
     fn parse_reddit_url_strips_query() {
-        let result = parse_reddit_url("https://reddit.com/r/rust/comments/abc123?utm_source=x").unwrap();
+        let result =
+            parse_reddit_url("https://reddit.com/r/rust/comments/abc123?utm_source=x").unwrap();
         assert_eq!(result, "https://reddit.com/r/rust/comments/abc123.json");
     }
 
@@ -365,21 +366,19 @@ mod tests {
             is_self: true,
             body: None,
         };
-        let comments = vec![
-            RedditChild {
-                data: RedditPost {
-                    title: String::new(),
-                    author: "commenter1".to_string(),
-                    score: 8,
-                    num_comments: 0,
-                    created_utc: 1_700_000_100.0,
-                    selftext: None,
-                    url: String::new(),
-                    is_self: false,
-                    body: Some("Great post!".to_string()),
-                },
+        let comments = vec![RedditChild {
+            data: RedditPost {
+                title: String::new(),
+                author: "commenter1".to_string(),
+                score: 8,
+                num_comments: 0,
+                created_utc: 1_700_000_100.0,
+                selftext: None,
+                url: String::new(),
+                is_self: false,
+                body: Some("Great post!".to_string()),
             },
-        ];
+        }];
         let md = format_reddit_markdown(&post, &comments);
         assert!(md.contains("### Top Comments"));
         assert!(md.contains("u/commenter1"));
@@ -434,7 +433,10 @@ mod tests {
         let parsed: Vec<RedditListing> = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].data.children[0].data.title, "Test");
-        assert_eq!(parsed[1].data.children[0].data.body.as_deref(), Some("Nice post!"));
+        assert_eq!(
+            parsed[1].data.children[0].data.body.as_deref(),
+            Some("Nice post!")
+        );
     }
 
     #[test]

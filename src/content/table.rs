@@ -129,12 +129,7 @@ pub fn detect_tables(lines: &[TextLine]) -> Vec<Table> {
                         .fold(f32::INFINITY, f32::min),
                     x_max: table_lines
                         .iter()
-                        .map(|l| {
-                            l.chars
-                                .last()
-                                .map(|c| c.x + c.width)
-                                .unwrap_or(l.x)
-                        })
+                        .map(|l| l.chars.last().map(|c| c.x + c.width).unwrap_or(l.x))
                         .fold(f32::NEG_INFINITY, f32::max),
                     y_min: table_lines
                         .iter()
@@ -164,8 +159,7 @@ fn find_column_boundaries(line: &TextLine) -> Vec<f32> {
         return Vec::new();
     }
 
-    let avg_width: f32 =
-        line.chars.iter().map(|c| c.width).sum::<f32>() / line.chars.len() as f32;
+    let avg_width: f32 = line.chars.iter().map(|c| c.width).sum::<f32>() / line.chars.len() as f32;
     let gap_threshold = avg_width * 2.0;
 
     let mut boundaries = Vec::new();
@@ -206,8 +200,8 @@ fn split_at_boundaries(line: &TextLine, boundaries: &[f32]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::PdfChar;
+    use super::*;
 
     fn make_char(ch: char, x: f32, y: f32, width: f32, page: usize) -> PdfChar {
         PdfChar {
@@ -235,13 +229,7 @@ mod tests {
         }
     }
 
-    fn make_table_line(
-        cells: &[&str],
-        y: f32,
-        page: usize,
-        col_width: f32,
-        gap: f32,
-    ) -> TextLine {
+    fn make_table_line(cells: &[&str], y: f32, page: usize, col_width: f32, gap: f32) -> TextLine {
         let char_w = 6.0;
         let mut chars = Vec::new();
         let mut full_text = String::new();
@@ -350,7 +338,10 @@ mod tests {
         ];
 
         let tables = detect_tables(&lines);
-        assert!(tables.is_empty(), "Plain text should not be detected as table");
+        assert!(
+            tables.is_empty(),
+            "Plain text should not be detected as table"
+        );
     }
 
     #[test]

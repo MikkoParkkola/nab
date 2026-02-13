@@ -190,7 +190,10 @@ fn format_github_markdown(issue: &GitHubIssue, comments: &[GitHubComment]) -> St
                 break;
             }
 
-            md.push_str(&format!("**@{}**:\n\n{}\n\n---\n\n", comment.user.login, comment.body));
+            md.push_str(&format!(
+                "**@{}**:\n\n{}\n\n---\n\n",
+                comment.user.login, comment.body
+            ));
         }
     }
 

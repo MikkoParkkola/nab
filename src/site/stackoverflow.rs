@@ -85,7 +85,9 @@ impl SiteProvider for StackOverflowProvider {
             .context("No question found in response")?;
 
         // Fetch top answers
-        let answers = fetch_answers(client, &question_id).await.unwrap_or_default();
+        let answers = fetch_answers(client, &question_id)
+            .await
+            .unwrap_or_default();
 
         let markdown = format_stackoverflow_markdown(question, &answers);
 
@@ -135,10 +137,7 @@ fn parse_stackoverflow_url(url: &str) -> Result<String> {
 }
 
 /// Fetch top answers for a question.
-async fn fetch_answers(
-    client: &AcceleratedClient,
-    question_id: &str,
-) -> Result<Vec<SEAnswer>> {
+async fn fetch_answers(client: &AcceleratedClient, question_id: &str) -> Result<Vec<SEAnswer>> {
     let api_url = format!(
         "https://api.stackexchange.com/2.3/questions/{}/answers?site=stackoverflow&filter=withbody&order=desc&sort=votes&pagesize=3",
         question_id
@@ -222,7 +221,11 @@ fn format_stackoverflow_markdown(question: &SEQuestion, answers: &[SEAnswer]) ->
         md.push_str("### Top Answers\n\n");
 
         for answer in answers {
-            let accepted = if answer.is_accepted { " [ACCEPTED]" } else { "" };
+            let accepted = if answer.is_accepted {
+                " [ACCEPTED]"
+            } else {
+                ""
+            };
             md.push_str(&format!(
                 "**{}** ({} votes){}\n\n",
                 answer.owner.display_name,
@@ -331,9 +334,7 @@ mod tests {
     #[test]
     fn matches_stackoverflow_urls_with_query_params() {
         let provider = StackOverflowProvider;
-        assert!(provider.matches(
-            "https://stackoverflow.com/questions/26946646/title?noredirect=1"
-        ));
+        assert!(provider.matches("https://stackoverflow.com/questions/26946646/title?noredirect=1"));
     }
 
     #[test]
@@ -354,10 +355,9 @@ mod tests {
 
     #[test]
     fn parse_stackoverflow_url_extracts_id() {
-        let id = parse_stackoverflow_url(
-            "https://stackoverflow.com/questions/26946646/how-do-i-do-x",
-        )
-        .unwrap();
+        let id =
+            parse_stackoverflow_url("https://stackoverflow.com/questions/26946646/how-do-i-do-x")
+                .unwrap();
         assert_eq!(id, "26946646");
     }
 
@@ -390,7 +390,10 @@ mod tests {
 
     #[test]
     fn html_decode_handles_common_entities() {
-        assert_eq!(html_decode("How to use &amp; in Rust?"), "How to use & in Rust?");
+        assert_eq!(
+            html_decode("How to use &amp; in Rust?"),
+            "How to use & in Rust?"
+        );
         assert_eq!(html_decode("Vec&lt;T&gt;"), "Vec<T>");
     }
 

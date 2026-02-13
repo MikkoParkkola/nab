@@ -93,13 +93,7 @@ fn fetch_with_headers_flag() {
     }
 
     nab()
-        .args([
-            "fetch",
-            "-H",
-            "--cookies",
-            "none",
-            "https://example.com",
-        ])
+        .args(["fetch", "-H", "--cookies", "none", "https://example.com"])
         .timeout(std::time::Duration::from_secs(30))
         .assert()
         .success()
@@ -203,7 +197,10 @@ fn fetch_output_to_file() {
         content.contains("Example Domain"),
         "saved file should contain page content"
     );
-    assert!(content.len() > 100, "saved file should have substantial content");
+    assert!(
+        content.len() > 100,
+        "saved file should have substantial content"
+    );
 
     // Clean up
     let _ = fs::remove_file(&tmp);

@@ -25,11 +25,11 @@ use rust_mcp_sdk::{tool_box, McpServer, StdioTransport, TransportOptions};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
+use nab::content::ContentRouter;
 use nab::{
     chrome_profile, firefox_profile, random_profile, safari_profile, AcceleratedClient,
     CookieSource, CredentialRetriever, OnePasswordAuth,
 };
-use nab::content::ContentRouter;
 
 // Global shared client (initialized once)
 static CLIENT: OnceCell<AcceleratedClient> = OnceCell::const_new();
@@ -178,12 +178,11 @@ impl FetchTool {
         let router = ContentRouter::new();
         let bytes_clone = body_bytes.to_vec();
         let ct_clone = content_type.clone();
-        let conversion = tokio::task::spawn_blocking(move || {
-            router.convert(&bytes_clone, &ct_clone)
-        })
-        .await
-        .map_err(|e| CallToolError::from_message(e.to_string()))?
-        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let conversion =
+            tokio::task::spawn_blocking(move || router.convert(&bytes_clone, &ct_clone))
+                .await
+                .map_err(|e| CallToolError::from_message(e.to_string()))?
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         if let Some(pages) = conversion.page_count {
             output.push_str(&format!(
@@ -609,7 +608,9 @@ impl SubmitTool {
         if let Some(ref selector) = self.csrf_selector {
             if let Ok(Some(token)) = nab::Form::extract_csrf_token(&page_html, selector) {
                 let field_name = if selector.contains("name=") {
-                    selector.split("name=").nth(1)
+                    selector
+                        .split("name=")
+                        .nth(1)
                         .and_then(|s| s.split(']').next())
                         .unwrap_or("csrf_token")
                 } else {
@@ -626,7 +627,8 @@ impl SubmitTool {
         form.merge_fields(&user_fields);
 
         // Submit
-        let action_url = form.resolve_action(&self.url)
+        let action_url = form
+            .resolve_action(&self.url)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
         let form_data = form.encode_urlencoded();
 
@@ -640,14 +642,17 @@ impl SubmitTool {
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         let status = response.status();
-        let body = response.text().await
+        let body = response
+            .text()
+            .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         output.push_str(&format!("   Status: {status}\n\n"));
 
         // Convert response to markdown
         let router = ContentRouter::new();
-        let conversion = router.convert(body.as_bytes(), "text/html")
+        let conversion = router
+            .convert(body.as_bytes(), "text/html")
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         let truncated = if conversion.markdown.len() > 4000 {
@@ -657,7 +662,9 @@ impl SubmitTool {
         };
         output.push_str(&truncated);
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -691,15 +698,17 @@ impl LoginTool {
 
         if !OnePasswordAuth::is_available() {
             return Err(CallToolError::from_message(
-                "1Password CLI not available. Install: brew install 1password-cli"
+                "1Password CLI not available. Install: brew install 1password-cli",
             ));
         }
 
-        let client = AcceleratedClient::new()
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let client =
+            AcceleratedClient::new().map_err(|e| CallToolError::from_message(e.to_string()))?;
         let login_flow = LoginFlow::new(client, true);
 
-        let result = login_flow.login(&self.url).await
+        let result = login_flow
+            .login(&self.url)
+            .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         output.push_str(&format!("   Final URL: {}\n", result.final_url));
@@ -707,8 +716,13 @@ impl LoginTool {
 
         // Convert to markdown
         let router = ContentRouter::new();
-        let content_type = if result.body.starts_with('<') { "text/html" } else { "text/plain" };
-        let conversion = router.convert(result.body.as_bytes(), content_type)
+        let content_type = if result.body.starts_with('<') {
+            "text/html"
+        } else {
+            "text/plain"
+        };
+        let conversion = router
+            .convert(result.body.as_bytes(), content_type)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         let truncated = if conversion.markdown.len() > 4000 {
@@ -718,7 +732,9 @@ impl LoginTool {
         };
         output.push_str(&truncated);
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 

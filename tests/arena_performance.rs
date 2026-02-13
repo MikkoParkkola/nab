@@ -50,9 +50,20 @@ fn bench_arena_vs_vec_small() {
     let vec_time = start.elapsed();
 
     println!("\n=== Small Response (100 chunks, allocation only) ===");
-    println!("Arena: {:?} ({:.2} ops/sec)", arena_time, ITERATIONS as f64 / arena_time.as_secs_f64());
-    println!("Vec:   {:?} ({:.2} ops/sec)", vec_time, ITERATIONS as f64 / vec_time.as_secs_f64());
-    println!("Speedup: {:.2}×", vec_time.as_secs_f64() / arena_time.as_secs_f64());
+    println!(
+        "Arena: {:?} ({:.2} ops/sec)",
+        arena_time,
+        ITERATIONS as f64 / arena_time.as_secs_f64()
+    );
+    println!(
+        "Vec:   {:?} ({:.2} ops/sec)",
+        vec_time,
+        ITERATIONS as f64 / vec_time.as_secs_f64()
+    );
+    println!(
+        "Speedup: {:.2}×",
+        vec_time.as_secs_f64() / arena_time.as_secs_f64()
+    );
     println!("Note: Arena wins on allocation overhead; Vec needs separate String per chunk");
 }
 
@@ -87,9 +98,20 @@ fn bench_arena_vs_vec_large() {
     let vec_time = start.elapsed();
 
     println!("\n=== Large Response (10k chunks, ~1MB, allocation only) ===");
-    println!("Arena: {:?} ({:.2} ops/sec)", arena_time, ITERATIONS as f64 / arena_time.as_secs_f64());
-    println!("Vec:   {:?} ({:.2} ops/sec)", vec_time, ITERATIONS as f64 / vec_time.as_secs_f64());
-    println!("Speedup: {:.2}×", vec_time.as_secs_f64() / arena_time.as_secs_f64());
+    println!(
+        "Arena: {:?} ({:.2} ops/sec)",
+        arena_time,
+        ITERATIONS as f64 / arena_time.as_secs_f64()
+    );
+    println!(
+        "Vec:   {:?} ({:.2} ops/sec)",
+        vec_time,
+        ITERATIONS as f64 / vec_time.as_secs_f64()
+    );
+    println!(
+        "Speedup: {:.2}×",
+        vec_time.as_secs_f64() / arena_time.as_secs_f64()
+    );
     println!("Note: Arena excels at bulk allocation with single deallocation");
 }
 
@@ -129,9 +151,20 @@ fn bench_arena_vs_string() {
     let string_time = start.elapsed();
 
     println!("\n=== Arena vs String::push_str (1000 chunks) ===");
-    println!("Arena:  {:?} ({:.2} ops/sec)", arena_time, ITERATIONS as f64 / arena_time.as_secs_f64());
-    println!("String: {:?} ({:.2} ops/sec)", string_time, ITERATIONS as f64 / string_time.as_secs_f64());
-    println!("Ratio: {:.2}×", arena_time.as_secs_f64() / string_time.as_secs_f64());
+    println!(
+        "Arena:  {:?} ({:.2} ops/sec)",
+        arena_time,
+        ITERATIONS as f64 / arena_time.as_secs_f64()
+    );
+    println!(
+        "String: {:?} ({:.2} ops/sec)",
+        string_time,
+        ITERATIONS as f64 / string_time.as_secs_f64()
+    );
+    println!(
+        "Ratio: {:.2}×",
+        arena_time.as_secs_f64() / string_time.as_secs_f64()
+    );
 
     // Note: String might be faster for this use case - it's highly optimized
     // Arena wins when you need to keep individual strings alive separately
@@ -156,7 +189,15 @@ fn bench_arena_memory_usage() {
 
     println!("\n=== Memory Usage (10k chunks) ===");
     println!("Content size: {} bytes", content.len());
-    println!("Arena allocated: {} bytes ({:.2} KB)", allocated, allocated as f64 / 1024.0);
+    println!(
+        "Arena allocated: {} bytes ({:.2} KB)",
+        allocated,
+        allocated as f64 / 1024.0
+    );
     println!("Buffer parts: {}", parts);
-    println!("Content length: {} bytes ({:.2} KB)", content.len(), content.len() as f64 / 1024.0);
+    println!(
+        "Content length: {} bytes ({:.2} KB)",
+        content.len(),
+        content.len() as f64 / 1024.0
+    );
 }

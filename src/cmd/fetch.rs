@@ -7,8 +7,8 @@ use anyhow::Result;
 
 use nab::{AcceleratedClient, CookieSource, OnePasswordAuth};
 
-use crate::OutputFormat;
 use super::output::output_body;
+use crate::OutputFormat;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_fetch(
@@ -353,8 +353,8 @@ async fn cmd_fetch_batch(
     _no_spa: bool,
     proxy: Option<&str>,
 ) -> Result<()> {
-    use tokio::sync::Semaphore;
     use std::sync::Arc;
+    use tokio::sync::Semaphore;
 
     let contents = std::fs::read_to_string(file_path)
         .map_err(|e| anyhow::anyhow!("Failed to read batch file '{}': {}", file_path, e))?;
@@ -370,7 +370,11 @@ async fn cmd_fetch_batch(
         anyhow::bail!("No URLs found in batch file: {}", file_path);
     }
 
-    eprintln!("📦 Batch fetching {} URLs (concurrency: {})", urls.len(), parallel);
+    eprintln!(
+        "📦 Batch fetching {} URLs (concurrency: {})",
+        urls.len(),
+        parallel
+    );
 
     let semaphore = Arc::new(Semaphore::new(parallel));
     let mut handles = Vec::new();
@@ -526,7 +530,11 @@ async fn cmd_fetch_batch(
         OutputFormat::Compact => {
             for r in &results {
                 if let Some(err) = r.get("error") {
-                    println!("ERR {} {}", r.get("url").and_then(|u| u.as_str()).unwrap_or("?"), err);
+                    println!(
+                        "ERR {} {}",
+                        r.get("url").and_then(|u| u.as_str()).unwrap_or("?"),
+                        err
+                    );
                 } else {
                     println!(
                         "{} {}B {:.0}ms {}",

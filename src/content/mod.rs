@@ -85,10 +85,8 @@ impl ContentRouter {
         ];
 
         #[cfg(not(feature = "pdf"))]
-        let handlers: Vec<Box<dyn ContentHandler>> = vec![
-            Box::new(html::HtmlHandler),
-            Box::new(plain::PlainHandler),
-        ];
+        let handlers: Vec<Box<dyn ContentHandler>> =
+            vec![Box::new(html::HtmlHandler), Box::new(plain::PlainHandler)];
 
         Self { handlers }
     }
@@ -113,8 +111,7 @@ impl ContentRouter {
         }
 
         // Fallback: if bytes look like HTML (common for missing Content-Type)
-        if bytes.starts_with(b"<!") || bytes.starts_with(b"<html") || bytes.starts_with(b"<HTML")
-        {
+        if bytes.starts_with(b"<!") || bytes.starts_with(b"<html") || bytes.starts_with(b"<HTML") {
             return self
                 .handlers
                 .iter()
@@ -177,9 +174,7 @@ mod tests {
     fn router_handles_content_type_with_charset() {
         let router = ContentRouter::new();
         let html = b"<html><body>Charset test</body></html>";
-        let result = router
-            .convert(html, "text/html; charset=utf-8")
-            .unwrap();
+        let result = router.convert(html, "text/html; charset=utf-8").unwrap();
         assert!(result.markdown.contains("Charset test"));
     }
 
@@ -187,9 +182,7 @@ mod tests {
     fn router_falls_back_to_html_for_html_like_bytes() {
         let router = ContentRouter::new();
         let html = b"<!DOCTYPE html><html><body>Fallback</body></html>";
-        let result = router
-            .convert(html, "application/octet-stream")
-            .unwrap();
+        let result = router.convert(html, "application/octet-stream").unwrap();
         assert!(result.markdown.contains("Fallback"));
     }
 
@@ -197,9 +190,7 @@ mod tests {
     fn router_falls_back_to_plain_for_unknown() {
         let router = ContentRouter::new();
         let data = b"Some unknown binary-ish data";
-        let result = router
-            .convert(data, "application/octet-stream")
-            .unwrap();
+        let result = router.convert(data, "application/octet-stream").unwrap();
         assert!(result.markdown.contains("unknown binary"));
     }
 }

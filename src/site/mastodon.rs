@@ -155,7 +155,9 @@ fn parse_mastodon_url(url: &str) -> Result<(String, String)> {
         .to_string();
 
     // Extract status ID: last numeric segment after /@user/
-    let at_pos = url.find("/@").context("URL does not contain /@user/ pattern")?;
+    let at_pos = url
+        .find("/@")
+        .context("URL does not contain /@user/ pattern")?;
     let after_at = &url[at_pos + 2..];
     let slash_pos = after_at
         .find('/')
@@ -385,8 +387,7 @@ mod tests {
 
     #[test]
     fn parse_mastodon_url_extracts_instance_and_id() {
-        let (instance, id) =
-            parse_mastodon_url("https://mastodon.social/@user/123456789").unwrap();
+        let (instance, id) = parse_mastodon_url("https://mastodon.social/@user/123456789").unwrap();
         assert_eq!(instance, "mastodon.social");
         assert_eq!(id, "123456789");
     }
@@ -425,14 +426,18 @@ mod tests {
 
     #[test]
     fn has_status_pattern_detects_valid_patterns() {
-        assert!(has_status_pattern("https://mastodon.social/@user/123456789"));
+        assert!(has_status_pattern(
+            "https://mastodon.social/@user/123456789"
+        ));
         assert!(has_status_pattern("https://hachyderm.io/@test/999"));
     }
 
     #[test]
     fn has_status_pattern_rejects_profile_urls() {
         assert!(!has_status_pattern("https://mastodon.social/@user"));
-        assert!(!has_status_pattern("https://mastodon.social/@user/followers"));
+        assert!(!has_status_pattern(
+            "https://mastodon.social/@user/followers"
+        ));
     }
 
     #[test]
