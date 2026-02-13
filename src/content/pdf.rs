@@ -16,32 +16,12 @@ use anyhow::{Context, Result};
 use pdfium_render::prelude::*;
 
 use super::table::{detect_tables, Table};
+use super::types::{PdfChar, TextLine};
 use super::{ContentHandler, ConversionResult};
 
-/// A positioned character extracted from a PDF page.
-#[derive(Debug, Clone)]
-pub struct PdfChar {
-    pub ch: char,
-    /// Left edge in PDF points (1pt = 1/72 inch).
-    pub x: f32,
-    /// Baseline Y position (bottom-up coordinate system).
-    pub y: f32,
-    pub width: f32,
-    /// Font size approximation (character height).
-    pub height: f32,
-    /// Page index (0-based).
-    pub page: usize,
-}
-
-/// A reconstructed text line from grouped characters.
-#[derive(Debug, Clone)]
-pub struct TextLine {
-    pub text: String,
-    pub x: f32,
-    pub y: f32,
-    pub chars: Vec<PdfChar>,
-    pub page: usize,
-}
+/// Maximum PDF input size (50 MB). Prevents excessive memory usage
+/// from accidentally huge or malicious PDFs.
+const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;
 
 /// Converts PDF responses to markdown with table detection.
 #[derive(Default)]
@@ -57,9 +37,16 @@ impl PdfHandler {
     #[allow(deprecated)] // PdfRect field access deprecated in 0.8.28, removed in 0.9.0
     fn extract_chars(bytes: &[u8]) -> Result<(Vec<PdfChar>, usize)> {
         let pdfium = Pdfium::default();
-        let doc = pdfium
-            .load_pdf_from_byte_slice(bytes, None)
-            .context("Failed to parse PDF")?;
+        let doc = match pdfium.load_pdf_from_byte_slice(bytes, None) {
+            Ok(doc) => doc,
+            Err(e) => {
+                let err_str = format!("{e}");
+                if err_str.contains("password") || err_str.contains("encrypt") {
+                    anyhow::bail!("PDF is password-protected. Provide a decrypted version.");
+                }
+                return Err(e).context("Failed to parse PDF");
+            }
+        };
         let page_count = doc.pages().len() as usize;
         let mut chars = Vec::new();
 
@@ -212,6 +199,15 @@ impl ContentHandler for PdfHandler {
 
     fn to_markdown(&self, bytes: &[u8], content_type: &str) -> Result<ConversionResult> {
         let start = std::time::Instant::now();
+
+        // P6: Reject oversized PDFs
+        if bytes.len() > MAX_PDF_SIZE {
+            anyhow::bail!(
+                "PDF too large ({:.1} MB, max {:.0} MB). Use a smaller document.",
+                bytes.len() as f64 / (1024.0 * 1024.0),
+                MAX_PDF_SIZE as f64 / (1024.0 * 1024.0),
+            );
+        }
 
         let (chars, page_count) = Self::extract_chars(bytes)?;
 

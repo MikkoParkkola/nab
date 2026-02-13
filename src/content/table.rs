@@ -10,7 +10,7 @@
 //!
 //! Complexity: O(L * C) where L = lines, C = max columns per line.
 
-use super::pdf::TextLine;
+use super::types::TextLine;
 
 /// A detected table region in the document.
 #[derive(Debug, Clone)]
@@ -207,7 +207,7 @@ fn split_at_boundaries(line: &TextLine, boundaries: &[f32]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::pdf::PdfChar;
+    use super::super::types::PdfChar;
 
     fn make_char(ch: char, x: f32, y: f32, width: f32, page: usize) -> PdfChar {
         PdfChar {

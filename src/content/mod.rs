@@ -29,6 +29,8 @@ pub mod pdf;
 pub mod plain;
 #[cfg(feature = "pdf")]
 pub mod table;
+#[cfg(feature = "pdf")]
+pub mod types;
 
 use anyhow::Result;
 

@@ -937,39 +937,6 @@ fn output_body(
     Ok(())
 }
 
-#[allow(dead_code)] // Migrated to content::html::HtmlHandler; kept during transition
-fn html_to_markdown(html: &str) -> String {
-    // Use html2md for conversion
-    let md = html2md::parse_html(html);
-
-    // Post-process: remove excessive whitespace and clutter
-    let lines: Vec<&str> = md
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .filter(|l| !is_boilerplate(l))
-        .collect();
-
-    lines.join("\n")
-}
-
-fn is_boilerplate(line: &str) -> bool {
-    // Preserve markdown links - never filter lines containing link syntax
-    if line.contains("](") {
-        return false;
-    }
-
-    let lower = line.to_lowercase();
-    // Skip common navigation/boilerplate patterns
-    lower.contains("skip to content")
-        || lower.contains("cookie")
-        || lower.contains("privacy policy")
-        || lower.contains("terms of service")
-        || lower.starts_with("©")
-        || lower.starts_with("copyright")
-        || (lower.len() < 3 && !lower.chars().any(char::is_alphanumeric))
-}
-
 fn extract_links(html: &str) -> Vec<(String, String)> {
     let document = Html::parse_document(html);
     let selector = Selector::parse("a[href]").unwrap();
@@ -2693,15 +2660,17 @@ async fn cmd_login(
         println!("\n📄 Final page content:");
     }
 
-    // Convert to markdown
-    let markdown = if result.body.starts_with('<') {
-        html_to_markdown(&result.body)
+    // Convert to markdown using ContentRouter
+    let router = nab::content::ContentRouter::new();
+    let content_type = if result.body.starts_with('<') {
+        "text/html"
     } else {
-        result.body.clone()
+        "text/plain"
     };
+    let conversion = router.convert(result.body.as_bytes(), content_type)?;
 
     output_body(
-        &markdown,
+        &conversion.markdown,
         None,
         true,
         false,
@@ -2751,7 +2720,8 @@ async fn output_response(
         let markdown = if raw_html {
             body_text.clone()
         } else {
-            html_to_markdown(&body_text)
+            let router = nab::content::ContentRouter::new();
+            router.convert(body_text.as_bytes(), "text/html")?.markdown
         };
 
         output_body(&markdown, output_file, !raw_html, links, max_body, false)?;
