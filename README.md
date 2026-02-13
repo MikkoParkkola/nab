@@ -25,21 +25,7 @@ cd nab && cargo install --path .
 
 ## Demo
 
-A tweet URL with `curl` vs `nab`:
-
-```bash
-$ curl -s https://x.com/elonmusk/status/1234567890 | wc -c
-  634217    # 634KB of HTML, ~150K tokens
-
-$ nab fetch https://x.com/elonmusk/status/1234567890
-# @elonmusk - 2025-01-15
-#
-# This is the tweet text, clean and structured.
-#
-# Likes: 45.2K | Reposts: 12.1K | Replies: 8.3K
-#
-# ~200 tokens
-```
+![nab demo](demo.gif)
 
 25x fewer tokens. Same content. Zero configuration.
 
