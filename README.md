@@ -9,15 +9,18 @@ Fetch any URL as clean markdown. Auth-aware. LLM-optimized. Blazing fast.
 ## Quick Install
 
 ```bash
+# Homebrew (macOS/Linux)
+brew install MikkoParkkola/tap/nab
+
 # From crates.io
 cargo install nab
 
-# Or with cargo-binstall (pre-built binary)
+# Pre-built binary (cargo-binstall)
 cargo binstall nab
 
-# Or download a release binary
-curl -L https://github.com/MikkoParkkola/nab/releases/latest/download/nab-aarch64-apple-darwin -o nab
-chmod +x nab && sudo mv nab /usr/local/bin/
+# From source
+git clone https://github.com/MikkoParkkola/nab.git
+cd nab && cargo install --path .
 ```
 
 ## Demo
@@ -151,15 +154,26 @@ nab fingerprint -c 5
 
 ## Install Options
 
-### From source (requires Rust 1.93+)
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap MikkoParkkola/tap
+brew install nab
+```
+
+### From crates.io (requires Rust 1.93+)
 
 ```bash
 cargo install nab
 ```
 
-### Pre-built binary
+### Pre-built binary (cargo-binstall)
 
-Download from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases):
+```bash
+cargo binstall nab
+```
+
+Or download directly from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases):
 
 | Platform | Binary |
 |----------|--------|
@@ -169,10 +183,11 @@ Download from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases):
 | Linux ARM64 | `nab-aarch64-unknown-linux-gnu` |
 | Windows x64 | `nab-x86_64-pc-windows-msvc.exe` |
 
-### cargo-binstall
+### From source
 
 ```bash
-cargo binstall nab
+git clone https://github.com/MikkoParkkola/nab.git
+cd nab && cargo install --path .
 ```
 
 ## Library Usage

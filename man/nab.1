@@ -1,0 +1,176 @@
+.TH NAB 1 "2026-02-13" "nab 0.3.0" "User Commands"
+.SH NAME
+nab \- token-optimized HTTP client for LLMs
+.SH SYNOPSIS
+.B nab
+[\fB\-v\fR]
+\fIcommand\fR
+[\fIoptions\fR]
+[\fIargs\fR]
+.SH DESCRIPTION
+.B nab
+fetches any URL and converts it to clean markdown optimized for LLM consumption.
+It includes specialized extractors for 10 major platforms (Twitter/X, Reddit,
+Hacker News, GitHub, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn,
+Instagram), browser cookie authentication, 1Password integration, HTTP/3 with
+QUIC, and anti-fingerprinting.
+.PP
+Typical token savings are 25x compared to raw HTML.
+.SH COMMANDS
+.TP
+.B fetch \fIurl\fR
+Fetch a URL and output token-optimized markdown. Supports custom headers,
+cookie injection, 1Password credentials, and various output formats.
+.TP
+.B spa \fIurl\fR
+Extract data from JavaScript-heavy single-page applications. Executes
+JavaScript via QuickJS and captures hydrated state (Next.js, Nuxt, Redux).
+.TP
+.B stream \fIsource\fR \fIid\fR
+Stream media from providers (Yle Areena, YouTube) or direct URLs.
+Supports quality selection, duration limits, and piping to media players.
+.TP
+.B submit \fIurl\fR
+Submit a form with smart field extraction. Automatically handles hidden
+fields and CSRF tokens.
+.TP
+.B login \fIurl\fR
+Auto-login to a website using 1Password credentials with CSRF handling
+and TOTP/MFA support.
+.TP
+.B otp \fIdomain\fR
+Retrieve a one-time password from 1Password for the given domain.
+.TP
+.B fingerprint
+Generate browser fingerprint profiles for anti-bot evasion.
+.TP
+.B validate
+Run validation tests against real websites to verify connectivity and
+provider functionality.
+.TP
+.B bench \fIurls\fR
+Benchmark fetching multiple URLs with configurable iterations.
+.TP
+.B analyze \fIvideo\fR
+Analyze video with multimodal pipeline (transcription + vision).
+Supports speaker diarization and DGX Spark offloading.
+.TP
+.B annotate \fIvideo\fR \fIoutput\fR
+Add overlays to video: subtitles, speaker labels, and analysis.
+Supports hardware acceleration via VideoToolbox on macOS.
+.TP
+.B auth \fIurl\fR
+Test 1Password credential lookup for a given URL.
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-verbose
+Enable verbose debug logging (global, applies to all commands).
+.TP
+.BR \-\-version
+Print version information.
+.SS Fetch Options
+.TP
+.BR \-H ", " \-\-headers
+Show response headers.
+.TP
+.BR \-b ", " \-\-body
+Show body content.
+.TP
+.BR \-f ", " \-\-format " " \fIFORMAT\fR
+Output format: \fBfull\fR (default), \fBcompact\fR, \fBjson\fR.
+.TP
+.BR \-o ", " \-\-output " " \fIFILE\fR
+Save body to file (bypasses truncation).
+.TP
+.BR \-c ", " \-\-cookies " " \fISOURCE\fR
+Cookie source: \fBauto\fR (default), \fBbrave\fR, \fBchrome\fR, \fBfirefox\fR,
+\fBsafari\fR, \fBedge\fR, \fBnone\fR.
+.TP
+.BR \-\-1password
+Use 1Password credentials for this URL.
+.TP
+.BR \-\-raw\-html
+Output raw HTML instead of markdown.
+.TP
+.BR \-l ", " \-\-links
+Extract links only.
+.TP
+.BR \-X ", " \-\-method " " \fIMETHOD\fR
+HTTP method: GET (default), POST, PUT, DELETE, PATCH.
+.TP
+.BR \-d ", " \-\-data " " \fIDATA\fR
+Request body data (for POST/PUT/PATCH).
+.TP
+.BR \-\-add\-header " " \fIHEADER\fR
+Add custom request header (repeatable).
+.TP
+.BR \-\-no\-spa
+Disable automatic SPA data extraction.
+.TP
+.BR \-\-no\-redirect
+Don't follow redirects.
+.SH EXAMPLES
+Fetch a page as clean markdown:
+.PP
+.RS
+.nf
+nab fetch https://example.com
+.fi
+.RE
+.PP
+Fetch with browser cookies from Brave:
+.PP
+.RS
+.nf
+nab fetch https://github.com/notifications \-\-cookies brave
+.fi
+.RE
+.PP
+Login and fetch authenticated content:
+.PP
+.RS
+.nf
+nab fetch https://internal.company.com \-\-1password
+.fi
+.RE
+.PP
+Benchmark multiple URLs:
+.PP
+.RS
+.nf
+nab bench "https://example.com,https://httpbin.org/get" \-i 10
+.fi
+.RE
+.SH ENVIRONMENT
+.TP
+.B HTTP_PROXY
+HTTP proxy URL.
+.TP
+.B HTTPS_PROXY
+HTTPS proxy URL.
+.TP
+.B ANTHROPIC_API_KEY
+Claude API key for video vision analysis (\fBanalyze\fR command).
+.SH FILES
+.TP
+.I ~/.config/nab/
+Configuration directory.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful completion.
+.TP
+.B 1
+General error (network failure, parse error, etc.).
+.TP
+.B 2
+Invalid usage (bad arguments, unknown command).
+.SH SEE ALSO
+.BR curl (1),
+.BR wget (1)
+.PP
+Project homepage: <https://github.com/MikkoParkkola/nab>
+.SH AUTHORS
+Mikko Parkkola
+.SH LICENSE
+MIT License

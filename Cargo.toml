@@ -3,7 +3,7 @@ name = "nab"
 version = "0.3.0"
 edition = "2021"
 authors = ["Mikko Parkkola"]
-description = "Ultra-minimal browser engine with JS support, HTTP/3, cookie auth, passkeys, and anti-fingerprinting"
+description = "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown"
 license = "MIT"
 rust-version = "1.93"
 repository = "https://github.com/MikkoParkkola/nab"
@@ -12,6 +12,7 @@ documentation = "https://docs.rs/nab"
 readme = "README.md"
 keywords = ["http3", "quic", "llm", "markdown", "browser"]
 categories = ["web-programming::http-client", "command-line-utilities", "development-tools"]
+exclude = ["benches/", "tests/", ".github/", ".claude/", "HomebrewFormula/", "python/", "man/"]
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
