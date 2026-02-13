@@ -33,10 +33,92 @@ impl PdfHandler {
         Self
     }
 
+    /// Try to load pdfium from common library paths.
+    ///
+    /// Searches: standard dlopen paths, /usr/local/lib, homebrew, pypdfium2.
+    fn load_pdfium() -> Result<Pdfium> {
+        // Try standard dlopen first (respects DYLD_LIBRARY_PATH)
+        if let Ok(bindings) = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("")) {
+            return Ok(Pdfium::new(bindings));
+        }
+
+        // Search common paths
+        let search_paths = [
+            "/usr/local/lib",
+            "/opt/homebrew/lib",
+            "/usr/lib",
+        ];
+
+        for path in &search_paths {
+            let lib_path = format!("{path}/libpdfium.dylib");
+            if std::path::Path::new(&lib_path).exists() {
+                if let Ok(bindings) = Pdfium::bind_to_library(&lib_path) {
+                    return Ok(Pdfium::new(bindings));
+                }
+            }
+        }
+
+        // Try finding pypdfium2 (Python package ships the library)
+        if let Ok(output) = std::process::Command::new("python3")
+            .args(["-c", "import pypdfium2; import os; print(os.path.join(os.path.dirname(pypdfium2.__file__), '..', 'pypdfium2_raw', 'libpdfium.dylib'))"])
+            .output()
+        {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if std::path::Path::new(&path).exists() {
+                if let Ok(bindings) = Pdfium::bind_to_library(&path) {
+                    return Ok(Pdfium::new(bindings));
+                }
+            }
+        }
+
+        anyhow::bail!(
+            "pdfium library not found. Install via: pip3 install pypdfium2, \
+             then symlink: ln -s $(python3 -c \"import pypdfium2, os; \
+             print(os.path.join(os.path.dirname(pypdfium2.__file__), '..', \
+             'pypdfium2_raw', 'libpdfium.dylib'))\") /usr/local/lib/libpdfium.dylib"
+        )
+    }
+
+    /// Extract text using pdfium's built-in text reconstruction (`text.all()`).
+    ///
+    /// This is the primary extraction path. Pdfium handles character ordering,
+    /// ligatures, and font encoding internally — producing much better results
+    /// than manual character-by-character reconstruction for most PDFs.
+    fn extract_text_simple(bytes: &[u8]) -> Result<(String, usize)> {
+        let pdfium = Self::load_pdfium()?;
+        let doc = match pdfium.load_pdf_from_byte_slice(bytes, None) {
+            Ok(doc) => doc,
+            Err(e) => {
+                let err_str = format!("{e}");
+                if err_str.contains("password") || err_str.contains("encrypt") {
+                    anyhow::bail!("PDF is password-protected. Provide a decrypted version.");
+                }
+                return Err(e).context("Failed to parse PDF");
+            }
+        };
+        let page_count = doc.pages().len() as usize;
+        let mut full_text = String::new();
+
+        for (page_idx, page) in doc.pages().iter().enumerate() {
+            let text = page.text().context("Failed to extract text from page")?;
+            let page_text = text.all();
+            if !page_text.is_empty() {
+                if page_idx > 0 {
+                    full_text.push_str("\n\n---\n\n");
+                }
+                full_text.push_str(&page_text);
+            }
+        }
+
+        Ok((full_text, page_count))
+    }
+
     /// Extract all characters with their bounding rectangles from the document.
+    ///
+    /// Used for table detection which needs positional data.
     #[allow(deprecated)] // PdfRect field access deprecated in 0.8.28, removed in 0.9.0
     fn extract_chars(bytes: &[u8]) -> Result<(Vec<PdfChar>, usize)> {
-        let pdfium = Pdfium::default();
+        let pdfium = Self::load_pdfium()?;
         let doc = match pdfium.load_pdf_from_byte_slice(bytes, None) {
             Ok(doc) => doc,
             Err(e) => {
@@ -116,17 +198,26 @@ impl PdfHandler {
     }
 
     /// Build a [`TextLine`] from grouped characters, inserting spaces at gaps.
+    ///
+    /// Uses adaptive space detection: the threshold scales with character width
+    /// to avoid inserting spurious spaces in PDFs with tight glyph spacing
+    /// (common in LaTeX-generated documents).
     fn build_line(chars: &[PdfChar]) -> TextLine {
         let mut text = String::new();
         let avg_char_width =
             chars.iter().map(|c| c.width).sum::<f32>() / chars.len() as f32;
-        let space_threshold = avg_char_width * 0.3;
+        // Use 50% of average char width as space threshold (was 30%).
+        // 30% was too aggressive for LaTeX PDFs with tight kerning.
+        let space_threshold = (avg_char_width * 0.5).max(1.0);
 
         for (i, ch) in chars.iter().enumerate() {
             if i > 0 {
-                let gap = ch.x - (chars[i - 1].x + chars[i - 1].width);
+                let prev = &chars[i - 1];
+                let gap = ch.x - (prev.x + prev.width);
                 if gap > space_threshold {
                     text.push(' ');
+                } else if gap < -prev.width * 0.3 {
+                    // Overlapping characters (ligatures, accents) — skip space
                 }
             }
             text.push(ch.ch);
@@ -209,10 +300,12 @@ impl ContentHandler for PdfHandler {
             );
         }
 
-        let (chars, page_count) = Self::extract_chars(bytes)?;
+        // Primary path: use pdfium's built-in text reconstruction.
+        // This handles font encoding, ligatures, and character ordering correctly.
+        let (simple_text, page_count) = Self::extract_text_simple(bytes)?;
 
         // Handle scanned PDFs (images without text layer)
-        if chars.is_empty() && page_count > 0 {
+        if simple_text.trim().is_empty() && page_count > 0 {
             return Ok(ConversionResult {
                 markdown: format!(
                     "*Scanned PDF ({page_count} pages) -- no text layer detected. \
@@ -224,9 +317,21 @@ impl ContentHandler for PdfHandler {
             });
         }
 
-        let lines = Self::reconstruct_lines(&chars);
-        let tables = detect_tables(&lines);
-        let markdown = Self::render_markdown(&lines, &tables);
+        // Try char-by-char extraction for table detection (adds markdown tables).
+        // If it fails or finds no tables, just use the simple text.
+        let markdown = if let Ok((chars, _)) = Self::extract_chars(bytes) {
+            let lines = Self::reconstruct_lines(&chars);
+            let tables = detect_tables(&lines);
+            if tables.is_empty() {
+                // No tables detected — use pdfium's cleaner text reconstruction
+                simple_text
+            } else {
+                // Tables found — use positional rendering for table formatting
+                Self::render_markdown(&lines, &tables)
+            }
+        } else {
+            simple_text
+        };
 
         Ok(ConversionResult {
             markdown,
