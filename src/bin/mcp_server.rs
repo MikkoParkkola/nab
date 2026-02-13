@@ -91,6 +91,17 @@ impl FetchTool {
             profile.user_agent.split('/').next().unwrap_or("Unknown")
         ));
 
+        // Try site-specific providers first (e.g., Twitter via FxTwitter API)
+        let site_router = nab::site::SiteRouter::new();
+        if let Some(site_content) = site_router.try_extract(&self.url, client).await {
+            output.push_str("\n📄 Content (from specialized provider):\n\n");
+            output.push_str(&site_content.markdown);
+
+            return Ok(CallToolResult::text_content(vec![TextContent::from(
+                output,
+            )]));
+        }
+
         // Get cookies if requested
         let cookie_header = if let Some(browser) = &self.cookies {
             let source = match browser.to_lowercase().as_str() {

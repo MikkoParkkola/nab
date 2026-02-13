@@ -638,6 +638,22 @@ async fn cmd_fetch(
     };
     let profile = client.profile().await;
 
+    // Try site-specific providers first (e.g., Twitter via FxTwitter API)
+    let site_router = nab::site::SiteRouter::new();
+    if let Some(site_content) = site_router.try_extract(url, &client).await {
+        // Convert raw_html flag to markdown (default is markdown unless --raw-html)
+        let markdown = !raw_html;
+        output_body(
+            &site_content.markdown,
+            output_file,
+            markdown,
+            links,
+            max_body,
+            !no_spa,
+        )?;
+        return Ok(());
+    }
+
     // Extract domain from URL
     let domain = url::Url::parse(url)
         .ok()
