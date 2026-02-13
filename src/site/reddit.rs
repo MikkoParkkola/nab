@@ -47,15 +47,28 @@ impl SiteProvider for RedditProvider {
             && normalized.contains("/comments/")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
+    async fn extract(&self, url: &str, _client: &AcceleratedClient) -> Result<SiteContent> {
         // Normalize URL and append .json
         let json_url = parse_reddit_url(url)?;
         tracing::debug!("Fetching from Reddit: {}", json_url);
 
-        let response = client
-            .inner()
+        // Build a fresh client without http2_prior_knowledge. The AcceleratedClient
+        // forces H2 without ALPN negotiation, which causes Reddit to return HTML
+        // instead of JSON. A standard client negotiates the protocol via TLS ALPN.
+        let reddit_client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .gzip(true)
+            .brotli(true)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .context("Failed to build Reddit HTTP client")?;
+
+        let response = reddit_client
             .get(&json_url)
-            .header("User-Agent", "nab/0.3.0")
+            .header("User-Agent", "nab/0.3.0 (by /u/nab-cli)")
+            .header("Accept", "application/json")
             .send()
             .await
             .context("Failed to fetch from Reddit API")?
@@ -80,8 +93,9 @@ impl SiteProvider for RedditProvider {
 
         let markdown = format_reddit_markdown(&post_data.data, comments_data);
 
+        #[allow(clippy::cast_sign_loss)]
         let engagement = Engagement {
-            likes: Some(post_data.data.score),
+            likes: Some(post_data.data.score.max(0) as u64),
             reposts: None,
             replies: Some(post_data.data.num_comments),
             views: None,
@@ -127,7 +141,7 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
     md.push_str(&format!(
         "by u/{} · {} points · {} comments\n\n",
         post.author,
-        format_number(post.score),
+        format_score(post.score),
         format_number(post.num_comments)
     ));
 
@@ -160,7 +174,7 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
                 md.push_str(&format!(
                     "**u/{}** ({} points):\n\n{}\n\n---\n\n",
                     comment.data.author,
-                    format_number(comment.data.score),
+                    format_score(comment.data.score),
                     body
                 ));
                 count += 1;
@@ -172,17 +186,25 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
 }
 
 /// Format Unix timestamp as human-readable string.
-fn format_timestamp(timestamp: u64) -> String {
+fn format_timestamp(timestamp: f64) -> String {
     use std::time::UNIX_EPOCH;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let duration = std::time::Duration::from_secs(timestamp);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let secs = timestamp as u64;
+    let duration = std::time::Duration::from_secs(secs);
     let datetime = UNIX_EPOCH + duration;
 
     datetime
         .duration_since(UNIX_EPOCH)
         .map(|d| format!("{} seconds since epoch", d.as_secs()))
         .unwrap_or_else(|_| "Unknown".to_string())
+}
+
+/// Format signed score values with K/M suffixes.
+fn format_score(n: i64) -> String {
+    let sign = if n < 0 { "-" } else { "" };
+    let abs = n.unsigned_abs();
+    format!("{sign}{}", format_number(abs))
 }
 
 /// Format large numbers with K/M suffixes.
@@ -218,14 +240,23 @@ struct RedditChild {
 
 #[derive(Debug, Deserialize)]
 struct RedditPost {
+    #[serde(default)]
     title: String,
+    #[serde(default)]
     author: String,
-    score: u64,
+    #[serde(default)]
+    score: i64,
+    #[serde(default)]
     num_comments: u64,
-    created_utc: u64,
+    #[serde(default)]
+    created_utc: f64,
+    #[serde(default)]
     selftext: Option<String>,
+    #[serde(default)]
     url: String,
+    #[serde(default)]
     is_self: bool,
+    #[serde(default)]
     body: Option<String>, // For comments
 }
 
@@ -278,5 +309,155 @@ mod tests {
     fn format_number_uses_m_suffix() {
         assert_eq!(format_number(1_000_000), "1.0M");
         assert_eq!(format_number(3_800_000), "3.8M");
+    }
+
+    #[test]
+    fn format_reddit_markdown_self_post() {
+        let post = RedditPost {
+            title: "Test Post".to_string(),
+            author: "testuser".to_string(),
+            score: 42,
+            num_comments: 5,
+            created_utc: 1_700_000_000.0,
+            selftext: Some("Hello world".to_string()),
+            url: "https://reddit.com/r/test/comments/abc".to_string(),
+            is_self: true,
+            body: None,
+        };
+        let md = format_reddit_markdown(&post, &[]);
+        assert!(md.contains("## Test Post"));
+        assert!(md.contains("u/testuser"));
+        assert!(md.contains("42 points"));
+        assert!(md.contains("Hello world"));
+        assert!(!md.contains("\u{1f517}")); // no link emoji for self posts
+    }
+
+    #[test]
+    fn format_reddit_markdown_link_post() {
+        let post = RedditPost {
+            title: "Cool Link".to_string(),
+            author: "linkposter".to_string(),
+            score: 1_500,
+            num_comments: 200,
+            created_utc: 1_700_000_000.0,
+            selftext: None,
+            url: "https://example.com/article".to_string(),
+            is_self: false,
+            body: None,
+        };
+        let md = format_reddit_markdown(&post, &[]);
+        assert!(md.contains("## Cool Link"));
+        assert!(md.contains("1.5K points"));
+        assert!(md.contains("200 comments"));
+        assert!(md.contains("https://example.com/article"));
+    }
+
+    #[test]
+    fn format_reddit_markdown_with_comments() {
+        let post = RedditPost {
+            title: "Discussion".to_string(),
+            author: "op".to_string(),
+            score: 10,
+            num_comments: 2,
+            created_utc: 1_700_000_000.0,
+            selftext: None,
+            url: "https://reddit.com/r/test/comments/x".to_string(),
+            is_self: true,
+            body: None,
+        };
+        let comments = vec![
+            RedditChild {
+                data: RedditPost {
+                    title: String::new(),
+                    author: "commenter1".to_string(),
+                    score: 8,
+                    num_comments: 0,
+                    created_utc: 1_700_000_100.0,
+                    selftext: None,
+                    url: String::new(),
+                    is_self: false,
+                    body: Some("Great post!".to_string()),
+                },
+            },
+        ];
+        let md = format_reddit_markdown(&post, &comments);
+        assert!(md.contains("### Top Comments"));
+        assert!(md.contains("u/commenter1"));
+        assert!(md.contains("Great post!"));
+    }
+
+    #[test]
+    fn format_score_handles_negative() {
+        assert_eq!(format_score(-5), "-5");
+        assert_eq!(format_score(-1_500), "-1.5K");
+        assert_eq!(format_score(42), "42");
+        assert_eq!(format_score(0), "0");
+    }
+
+    #[test]
+    fn deserialize_reddit_api_response() {
+        let json = r#"[
+            {
+                "data": {
+                    "children": [{
+                        "data": {
+                            "title": "Test",
+                            "author": "user",
+                            "score": 100,
+                            "num_comments": 10,
+                            "created_utc": 1700000000.0,
+                            "selftext": "body text",
+                            "url": "https://reddit.com/r/test/comments/abc",
+                            "is_self": true
+                        }
+                    }]
+                }
+            },
+            {
+                "data": {
+                    "children": [{
+                        "data": {
+                            "title": "",
+                            "author": "replier",
+                            "score": 5,
+                            "num_comments": 0,
+                            "created_utc": 1700000100.0,
+                            "selftext": null,
+                            "url": "",
+                            "is_self": false,
+                            "body": "Nice post!"
+                        }
+                    }]
+                }
+            }
+        ]"#;
+        let parsed: Vec<RedditListing> = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].data.children[0].data.title, "Test");
+        assert_eq!(parsed[1].data.children[0].data.body.as_deref(), Some("Nice post!"));
+    }
+
+    #[test]
+    fn deserialize_reddit_api_with_float_timestamps() {
+        // Reddit API returns created_utc as floats (e.g., 1770617951.0)
+        let json = r#"[{
+            "data": {
+                "children": [{
+                    "data": {
+                        "title": "Float Test",
+                        "author": "user",
+                        "score": -3,
+                        "num_comments": 0,
+                        "created_utc": 1770617951.0,
+                        "url": "https://reddit.com/r/test/comments/x",
+                        "is_self": true
+                    }
+                }]
+            }
+        }]"#;
+        let parsed: Vec<RedditListing> = serde_json::from_str(json).unwrap();
+        let post = &parsed[0].data.children[0].data;
+        assert_eq!(post.score, -3);
+        assert!((post.created_utc - 1_770_617_951.0).abs() < f64::EPSILON);
     }
 }
