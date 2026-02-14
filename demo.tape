@@ -16,18 +16,12 @@ Sleep 800ms
 
 Type `nab fetch https://httpbin.org/html`
 Enter
-Sleep 3s
-
-Type ""
+Sleep 200ms
+Hide
+Type `/tmp/demo-nab.sh`
 Enter
 Sleep 500ms
-
-Type `# With browser cookies (zero config):`
-Enter
-Sleep 500ms
-
-Type `nab fetch https://httpbin.org/cookies --cookies brave`
-Enter
-Sleep 3s
+Show
+Sleep 4s
 
 Sleep 2s
