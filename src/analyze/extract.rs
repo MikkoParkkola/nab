@@ -68,7 +68,12 @@ impl FrameExtractor {
                 "1",
                 "-q:v",
                 "2", // High quality JPEG
-                output_pattern.to_str().unwrap(),
+                output_pattern.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid output pattern path",
+                    ))
+                })?,
                 "-y", // Overwrite
             ])
             .stdout(Stdio::piped())
@@ -106,7 +111,12 @@ impl FrameExtractor {
                 "json",
                 "-show_format",
                 "-show_streams",
-                video_path.to_str().unwrap(),
+                video_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid video path",
+                    ))
+                })?,
             ])
             .output()
             .await?;
@@ -207,12 +217,22 @@ impl FrameExtractor {
                 "-ss",
                 &format!("{timestamp:.3}"),
                 "-i",
-                video_path.to_str().unwrap(),
+                video_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid video path",
+                    ))
+                })?,
                 "-frames:v",
                 "1",
                 "-q:v",
                 "2",
-                output_path.to_str().unwrap(),
+                output_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid output path",
+                    ))
+                })?,
                 "-y",
             ])
             .status()
@@ -247,7 +267,12 @@ impl AudioExtractor {
         let status = Command::new("ffmpeg")
             .args([
                 "-i",
-                video_path.to_str().unwrap(),
+                video_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid video path",
+                    ))
+                })?,
                 "-vn", // No video
                 "-acodec",
                 "pcm_s16le", // 16-bit PCM
@@ -255,7 +280,12 @@ impl AudioExtractor {
                 "16000", // 16kHz sample rate (Whisper optimal)
                 "-ac",
                 "1", // Mono
-                output_path.to_str().unwrap(),
+                output_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid output path",
+                    ))
+                })?,
                 "-y",
             ])
             .status()
@@ -285,7 +315,12 @@ impl AudioExtractor {
                 "-t",
                 &format!("{duration:.3}"),
                 "-i",
-                video_path.to_str().unwrap(),
+                video_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid video path",
+                    ))
+                })?,
                 "-vn",
                 "-acodec",
                 "pcm_s16le",
@@ -293,7 +328,12 @@ impl AudioExtractor {
                 "16000",
                 "-ac",
                 "1",
-                output_path.to_str().unwrap(),
+                output_path.to_str().ok_or_else(|| {
+                    AnalysisError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Invalid output path",
+                    ))
+                })?,
                 "-y",
             ])
             .status()

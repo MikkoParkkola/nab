@@ -90,8 +90,6 @@ cargo build --no-default-features --features cli
 
 ## Module Organization
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
-
 Key modules:
 - `http_client`: HTTP/2 client with connection pooling
 - `http3_client`: HTTP/3 (QUIC) implementation

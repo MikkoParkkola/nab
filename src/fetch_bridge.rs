@@ -34,7 +34,10 @@ impl FetchClient {
     #[must_use]
     pub fn new(cookies: Option<String>, base_url: Option<String>) -> Self {
         Self {
-            client: Client::builder().user_agent("nab/1.0").build().unwrap(),
+            client: Client::builder()
+                .user_agent("nab/1.0")
+                .build()
+                .expect("HTTP client builder should succeed with default config"),
             cookie_header: cookies.unwrap_or_default(),
             base_url: base_url.unwrap_or_default(),
             fetch_log: Arc::new(Mutex::new(Vec::new())),
@@ -44,7 +47,10 @@ impl FetchClient {
     /// Get the list of all fetched URLs
     #[must_use]
     pub fn get_fetch_log(&self) -> Vec<String> {
-        self.fetch_log.lock().unwrap().clone()
+        self.fetch_log
+            .lock()
+            .expect("Fetch log mutex should not be poisoned")
+            .clone()
     }
 
     /// Fetch a URL and return the response body as text
@@ -234,3 +240,35 @@ pub fn inject_fetch_sync(ctx: &Context, client: FetchClient) -> Result<()> {
         Ok(())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fetch_client_new() {
+        let client = FetchClient::new(None, None);
+        assert!(client.cookie_header.is_empty());
+        assert!(client.base_url.is_empty());
+    }
+
+    #[test]
+    fn test_fetch_client_with_cookies() {
+        let client = FetchClient::new(Some("session=abc123".to_string()), None);
+        assert_eq!(client.cookie_header, "session=abc123");
+    }
+
+    #[test]
+    fn test_fetch_client_with_base_url() {
+        let client = FetchClient::new(None, Some("https://example.com".to_string()));
+        assert_eq!(client.base_url, "https://example.com");
+    }
+
+    #[test]
+    fn test_fetch_log_empty_initially() {
+        let client = FetchClient::new(None, None);
+        let log = client.get_fetch_log();
+        assert!(log.is_empty());
+    }
+}
+

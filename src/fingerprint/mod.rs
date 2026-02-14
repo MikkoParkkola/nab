@@ -78,7 +78,10 @@ impl Platform {
 pub fn chrome_profile() -> BrowserProfile {
     let mut rng = rand::thread_rng();
     let platform = Platform::random();
-    let (major, full) = BROWSER_VERSIONS.chrome.choose(&mut rng).unwrap();
+    let (major, full) = BROWSER_VERSIONS
+        .chrome
+        .choose(&mut rng)
+        .expect("Chrome versions list should not be empty");
 
     let user_agent = format!(
         "Mozilla/5.0 ({}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{} Safari/537.36",
@@ -113,7 +116,10 @@ pub fn chrome_profile() -> BrowserProfile {
 pub fn firefox_profile() -> BrowserProfile {
     let mut rng = rand::thread_rng();
     let platform = Platform::random();
-    let version = BROWSER_VERSIONS.firefox.choose(&mut rng).unwrap();
+    let version = BROWSER_VERSIONS
+        .firefox
+        .choose(&mut rng)
+        .expect("Firefox versions list should not be empty");
 
     let user_agent = format!(
         "Mozilla/5.0 ({}; rv:{}) Gecko/20100101 Firefox/{}",
@@ -144,7 +150,10 @@ pub fn firefox_profile() -> BrowserProfile {
 #[must_use]
 pub fn safari_profile() -> BrowserProfile {
     let mut rng = rand::thread_rng();
-    let (version, webkit) = BROWSER_VERSIONS.safari.choose(&mut rng).unwrap();
+    let (version, webkit) = BROWSER_VERSIONS
+        .safari
+        .choose(&mut rng)
+        .expect("Safari versions list should not be empty");
 
     // Safari only runs on macOS/iOS - always use macOS for desktop
     let user_agent = format!(
@@ -194,7 +203,10 @@ fn random_accept_language() -> String {
         "en-US,en;q=0.9,ja;q=0.8",
         "fi-FI,fi;q=0.9,en;q=0.8",
     ];
-    (*languages.choose(&mut rng).unwrap()).to_string()
+    languages
+        .choose(&mut rng)
+        .expect("Languages list should not be empty")
+        .to_string()
 }
 
 impl BrowserProfile {
@@ -202,46 +214,67 @@ impl BrowserProfile {
     pub fn to_headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
 
-        headers.insert(USER_AGENT, HeaderValue::from_str(&self.user_agent).unwrap());
-        headers.insert(ACCEPT, HeaderValue::from_str(&self.accept).unwrap());
+        // These header values are generated from known-good static strings or controlled values,
+        // so unwrap is safe here. In production code, these should never fail.
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_str(&self.user_agent)
+                .expect("User agent should be valid header value"),
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_str(&self.accept).expect("Accept should be valid header value"),
+        );
         headers.insert(
             ACCEPT_LANGUAGE,
-            HeaderValue::from_str(&self.accept_language).unwrap(),
+            HeaderValue::from_str(&self.accept_language)
+                .expect("Accept-Language should be valid header value"),
         );
         headers.insert(
             ACCEPT_ENCODING,
-            HeaderValue::from_str(&self.accept_encoding).unwrap(),
+            HeaderValue::from_str(&self.accept_encoding)
+                .expect("Accept-Encoding should be valid header value"),
         );
 
         // Add Sec-CH-UA headers for Chrome
         if !self.sec_ch_ua.is_empty() {
-            headers.insert("Sec-CH-UA", HeaderValue::from_str(&self.sec_ch_ua).unwrap());
+            headers.insert(
+                "Sec-CH-UA",
+                HeaderValue::from_str(&self.sec_ch_ua)
+                    .expect("Sec-CH-UA should be valid header value"),
+            );
             headers.insert(
                 "Sec-CH-UA-Mobile",
-                HeaderValue::from_str(&self.sec_ch_ua_mobile).unwrap(),
+                HeaderValue::from_str(&self.sec_ch_ua_mobile)
+                    .expect("Sec-CH-UA-Mobile should be valid header value"),
             );
             headers.insert(
                 "Sec-CH-UA-Platform",
-                HeaderValue::from_str(&self.sec_ch_ua_platform).unwrap(),
+                HeaderValue::from_str(&self.sec_ch_ua_platform)
+                    .expect("Sec-CH-UA-Platform should be valid header value"),
             );
         }
 
         // Sec-Fetch headers (all modern browsers)
         headers.insert(
             "Sec-Fetch-Dest",
-            HeaderValue::from_str(&self.sec_fetch_dest).unwrap(),
+            HeaderValue::from_str(&self.sec_fetch_dest)
+                .expect("Sec-Fetch-Dest should be valid header value"),
         );
         headers.insert(
             "Sec-Fetch-Mode",
-            HeaderValue::from_str(&self.sec_fetch_mode).unwrap(),
+            HeaderValue::from_str(&self.sec_fetch_mode)
+                .expect("Sec-Fetch-Mode should be valid header value"),
         );
         headers.insert(
             "Sec-Fetch-Site",
-            HeaderValue::from_str(&self.sec_fetch_site).unwrap(),
+            HeaderValue::from_str(&self.sec_fetch_site)
+                .expect("Sec-Fetch-Site should be valid header value"),
         );
         headers.insert(
             "Sec-Fetch-User",
-            HeaderValue::from_str(&self.sec_fetch_user).unwrap(),
+            HeaderValue::from_str(&self.sec_fetch_user)
+                .expect("Sec-Fetch-User should be valid header value"),
         );
 
         // Additional headers that real browsers send
@@ -283,5 +316,65 @@ mod tests {
         let headers = profile.to_headers();
         assert!(headers.contains_key(USER_AGENT));
         assert!(headers.contains_key(ACCEPT));
+    }
+
+    #[test]
+    fn test_browser_versions_not_empty() {
+        let versions = &*BROWSER_VERSIONS;
+        assert!(!versions.chrome.is_empty(), "Chrome versions should not be empty");
+        assert!(!versions.firefox.is_empty(), "Firefox versions should not be empty");
+        assert!(!versions.safari.is_empty(), "Safari versions should not be empty");
+    }
+
+    #[test]
+    fn test_chrome_versions_format() {
+        let versions = &*BROWSER_VERSIONS;
+        for (major, full) in &versions.chrome {
+            assert!(!major.is_empty(), "Major version should not be empty");
+            assert!(!full.is_empty(), "Full version should not be empty");
+            assert!(full.starts_with(major), "Full version should start with major");
+        }
+    }
+
+    #[test]
+    fn test_random_profile_deterministic_structure() {
+        let profile = random_profile();
+        assert!(!profile.user_agent.is_empty());
+        assert!(!profile.accept.is_empty());
+        assert!(!profile.accept_language.is_empty());
+        assert!(!profile.accept_encoding.is_empty());
+    }
+
+    #[test]
+    fn test_profile_to_headers_includes_required() {
+        let profile = chrome_profile();
+        let headers = profile.to_headers();
+
+        assert!(headers.contains_key("user-agent"));
+        assert!(headers.contains_key("accept"));
+        assert!(headers.contains_key("accept-language"));
+        assert!(headers.contains_key("accept-encoding"));
+    }
+
+    #[test]
+    fn test_firefox_no_sec_ch_ua() {
+        let profile = firefox_profile();
+        assert!(profile.sec_ch_ua.is_empty());
+        assert!(profile.sec_ch_ua_mobile.is_empty());
+        assert!(profile.sec_ch_ua_platform.is_empty());
+    }
+
+    #[test]
+    fn test_safari_only_macos() {
+        let profile = safari_profile();
+        assert!(profile.user_agent.contains("Macintosh"));
+        assert!(profile.user_agent.contains("Safari"));
+    }
+
+    #[test]
+    fn test_platform_os_string_not_empty() {
+        assert!(!Platform::MacOS.os_string().is_empty());
+        assert!(!Platform::Windows.os_string().is_empty());
+        assert!(!Platform::Linux.os_string().is_empty());
     }
 }

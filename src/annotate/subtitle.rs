@@ -395,17 +395,21 @@ impl AssGenerator {
         let mut header = String::new();
 
         // Script Info section
-        writeln!(header, "[Script Info]").unwrap();
-        writeln!(header, "Title: {}", self.title).unwrap();
-        writeln!(header, "ScriptType: v4.00+").unwrap();
-        writeln!(header, "PlayResX: {}", self.play_res_x).unwrap();
-        writeln!(header, "PlayResY: {}", self.play_res_y).unwrap();
-        writeln!(header, "ScaledBorderAndShadow: yes").unwrap();
-        writeln!(header, "YCbCr Matrix: TV.709").unwrap();
-        writeln!(header).unwrap();
+        // Writing to String never fails, so unwrap is safe
+        writeln!(header, "[Script Info]").expect("Writing to String should not fail");
+        writeln!(header, "Title: {}", self.title).expect("Writing to String should not fail");
+        writeln!(header, "ScriptType: v4.00+").expect("Writing to String should not fail");
+        writeln!(header, "PlayResX: {}", self.play_res_x)
+            .expect("Writing to String should not fail");
+        writeln!(header, "PlayResY: {}", self.play_res_y)
+            .expect("Writing to String should not fail");
+        writeln!(header, "ScaledBorderAndShadow: yes")
+            .expect("Writing to String should not fail");
+        writeln!(header, "YCbCr Matrix: TV.709").expect("Writing to String should not fail");
+        writeln!(header).expect("Writing to String should not fail");
 
         // Styles section
-        writeln!(header, "[V4+ Styles]").unwrap();
+        writeln!(header, "[V4+ Styles]").expect("Writing to String should not fail");
         writeln!(
             header,
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, \
@@ -413,20 +417,20 @@ impl AssGenerator {
              ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, \
              MarginL, MarginR, MarginV, Encoding"
         )
-        .unwrap();
+        .expect("Writing to String should not fail");
 
         for style in &self.styles {
-            writeln!(header, "{}", style.to_ass_line()).unwrap();
+            writeln!(header, "{}", style.to_ass_line()).expect("Writing to String should not fail");
         }
-        writeln!(header).unwrap();
+        writeln!(header).expect("Writing to String should not fail");
 
         // Events section header
-        writeln!(header, "[Events]").unwrap();
+        writeln!(header, "[Events]").expect("Writing to String should not fail");
         writeln!(
             header,
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         )
-        .unwrap();
+        .expect("Writing to String should not fail");
 
         header
     }

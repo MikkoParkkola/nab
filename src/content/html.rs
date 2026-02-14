@@ -115,4 +115,37 @@ mod tests {
         let result = handler.to_markdown(bytes, "text/html; charset=iso-8859-1");
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_is_boilerplate_detects_common_patterns() {
+        assert!(is_boilerplate("Skip to content"));
+        assert!(is_boilerplate("Cookie Policy"));
+        assert!(is_boilerplate("Privacy Policy"));
+        assert!(is_boilerplate("Terms of Service"));
+        assert!(is_boilerplate("© 2025 Company"));
+        assert!(is_boilerplate("Copyright 2025"));
+    }
+
+    #[test]
+    fn test_is_boilerplate_preserves_content() {
+        assert!(!is_boilerplate("This is actual content"));
+        assert!(!is_boilerplate("Welcome to our site"));
+        assert!(!is_boilerplate("[Link](https://example.com)"));
+    }
+
+    #[test]
+    fn test_html_to_markdown_removes_excess_whitespace() {
+        let html = "<html><body><p>Line 1</p>\n\n\n<p>Line 2</p></body></html>";
+        let md = html_to_markdown(html);
+        // Should collapse multiple newlines
+        assert!(!md.contains("\n\n\n"));
+    }
+
+    #[test]
+    fn test_handler_supported_types() {
+        let handler = HtmlHandler;
+        let types = handler.supported_types();
+        assert!(types.contains(&"text/html"));
+        assert!(types.contains(&"application/xhtml+xml"));
+    }
 }
