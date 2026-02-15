@@ -393,6 +393,11 @@ enum Commands {
         /// Output format: full, compact, json
         #[arg(short = 'f', long, default_value = "full")]
         format: OutputFormat,
+
+        /// Use browser automation for SPA login and CAPTCHA handling (requires --features browser)
+        #[cfg(feature = "browser")]
+        #[arg(long)]
+        browser: bool,
     },
 
     /// Export or manage browser cookies
@@ -625,8 +630,20 @@ async fn main() -> Result<()> {
             cookies,
             headers,
             format,
+            #[cfg(feature = "browser")]
+            browser,
         } => {
-            cmd::cmd_login(&url, use_1password, save_session, &cookies, headers, format).await?;
+            cmd::cmd_login(
+                &url,
+                use_1password,
+                save_session,
+                &cookies,
+                headers,
+                format,
+                #[cfg(feature = "browser")]
+                browser,
+            )
+            .await?;
         }
         Commands::Cookies { action } => match action {
             CookiesAction::Export { domain, cookies } => {

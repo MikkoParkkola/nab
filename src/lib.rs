@@ -26,6 +26,8 @@ pub mod annotate;
 pub mod api_discovery;
 pub mod arena;
 pub mod auth;
+#[cfg(feature = "browser")]
+pub mod browser;
 pub mod browser_detect;
 pub mod content;
 pub mod fetch_bridge;
@@ -57,6 +59,8 @@ pub use auth::{
     CookieSource, Credential, CredentialRetriever, CredentialSource, OnePasswordAuth, OtpCode,
     OtpRetriever, OtpSource,
 };
+#[cfg(feature = "browser")]
+pub use browser::{BrowserLogin, Cookie};
 pub use browser_detect::{detect_default_browser, BrowserType};
 pub use fetch_bridge::{inject_fetch_sync, FetchClient};
 pub use fingerprint::{

@@ -111,6 +111,9 @@ urlencoding = "2"                   # URL encoding for forms
 # PDF extraction (optional - requires pdfium dynamic library)
 pdfium-render = { version = "0.8", default-features = true, optional = true }
 
+# Browser automation via Chrome DevTools Protocol (optional)
+chromiumoxide = { version = "0.7", optional = true, default-features = false, features = ["tokio-runtime"] }
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ERROR HANDLING & LOGGING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -148,6 +151,9 @@ http3 = ["quinn", "h3", "h3-quinn"]
 # PDF to Markdown conversion via pdfium (Chromium's PDF library)
 # Requires pdfium dynamic library on the system
 pdf = ["pdfium-render"]
+# Browser automation for SPA login and CAPTCHA handling (optional)
+# Requires running Chrome/Chromium with --remote-debugging-port=9222
+browser = ["chromiumoxide"]
 
 [dev-dependencies]
 criterion = "0.5"

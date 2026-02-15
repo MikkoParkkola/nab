@@ -704,7 +704,7 @@ impl LoginTool {
 
         let client =
             AcceleratedClient::new().map_err(|e| CallToolError::from_message(e.to_string()))?;
-        let login_flow = LoginFlow::new(client, true);
+        let login_flow = LoginFlow::new(client, true, None);
 
         let result = login_flow
             .login(&self.url)

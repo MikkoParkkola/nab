@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use nab::AcceleratedClient;
+use nab::{AcceleratedClient, CookieSource};
 
 use super::output::output_body;
 use crate::OutputFormat;
@@ -13,6 +13,8 @@ pub async fn cmd_login(
     cookies: &str,
     _show_headers: bool,
     format: OutputFormat,
+    #[cfg(feature = "browser")]
+    use_browser: bool,
 ) -> Result<()> {
     use nab::LoginFlow;
 
@@ -29,9 +31,19 @@ pub async fn cmd_login(
 
     println!("🔐 Starting auto-login for: {url}");
 
-    let client = create_client_with_cookies(cookies, false, url).await?;
+    let (client, cookie_header) = create_client_with_cookies(cookies, url).await?;
 
-    let login_flow = LoginFlow::new(client, use_1password);
+    #[cfg(feature = "browser")]
+    let login_flow = {
+        let mut flow = LoginFlow::new(client, use_1password, cookie_header);
+        if use_browser {
+            flow = flow.with_browser(true);
+        }
+        flow
+    };
+
+    #[cfg(not(feature = "browser"))]
+    let login_flow = LoginFlow::new(client, use_1password, cookie_header);
 
     let result = login_flow.login(url).await?;
 
@@ -60,11 +72,58 @@ pub async fn cmd_login(
     Ok(())
 }
 
-/// Create HTTP client with cookie support
+/// Create HTTP client with cookie support and return cookie header
 async fn create_client_with_cookies(
-    _cookies: &str,
-    _use_1password: bool,
-    _url: &str,
-) -> Result<AcceleratedClient> {
-    AcceleratedClient::new()
+    cookies: &str,
+    url: &str,
+) -> Result<(AcceleratedClient, Option<String>)> {
+    let client = AcceleratedClient::new()?;
+
+    // Extract domain from URL
+    let domain = url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
+        .unwrap_or_default();
+
+    // Get cookies (auto-detect by default, unless "none")
+    let mut cookie_header = None;
+    let browser_name = resolve_browser_name(cookies);
+
+    if let Some(browser) = &browser_name {
+        let source = resolve_cookie_source(browser);
+        let header = source.get_cookie_header(&domain).unwrap_or_default();
+        if !header.is_empty() {
+            println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
+            cookie_header = Some(header);
+        }
+    }
+
+    Ok((client, cookie_header))
+}
+
+/// Resolve browser name from cookies parameter
+fn resolve_browser_name(cookies: &str) -> Option<String> {
+    if cookies.to_lowercase() == "none" {
+        None
+    } else if cookies.to_lowercase() == "auto" {
+        if let Ok(detected) = nab::detect_default_browser() {
+            Some(detected.as_str().to_string())
+        } else {
+            Some("chrome".to_string()) // fallback
+        }
+    } else {
+        Some(cookies.to_string())
+    }
+}
+
+/// Resolve CookieSource from browser name string
+fn resolve_cookie_source(browser: &str) -> CookieSource {
+    match browser.to_lowercase().as_str() {
+        "brave" => CookieSource::Brave,
+        "chrome" => CookieSource::Chrome,
+        "firefox" => CookieSource::Firefox,
+        "safari" => CookieSource::Safari,
+        "edge" => CookieSource::Chrome,
+        _ => CookieSource::Chrome,
+    }
 }

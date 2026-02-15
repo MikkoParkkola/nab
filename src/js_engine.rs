@@ -224,6 +224,116 @@ impl JsEngine {
     pub fn context(&self) -> &Context {
         &self.context
     }
+
+    /// Execute inline scripts from HTML and extract rendered DOM
+    ///
+    /// Parses HTML for inline `<script>` tags (not external src=), executes them
+    /// in QuickJS with minimal DOM shim, then returns `document.body.innerHTML`.
+    ///
+    /// # Arguments
+    /// * `html` - Raw HTML containing inline scripts
+    ///
+    /// # Returns
+    /// Rendered HTML after script execution, or original if no scripts found
+    ///
+    /// # Errors
+    /// Returns error if script execution fails
+    pub fn execute_and_extract_forms(&self, html: &str) -> Result<String> {
+        use scraper::{Html, Selector};
+
+        debug!("Parsing HTML for inline scripts");
+        let document = Html::parse_document(html);
+
+        // Find all inline script tags (no src attribute)
+        let script_selector = Selector::parse("script").map_err(|e| {
+            anyhow::anyhow!("Failed to parse script selector: {:?}", e)
+        })?;
+
+        let mut inline_scripts = Vec::new();
+        for script_elem in document.select(&script_selector) {
+            // Skip external scripts (those with src attribute)
+            if script_elem.value().attr("src").is_some() {
+                debug!("Skipping external script with src attribute");
+                continue;
+            }
+
+            // Collect inline script content
+            let script_text = script_elem.text().collect::<String>();
+            if !script_text.trim().is_empty() {
+                debug!("Found inline script: {} chars", script_text.len());
+                inline_scripts.push(script_text);
+            }
+        }
+
+        if inline_scripts.is_empty() {
+            debug!("No inline scripts found, returning original HTML");
+            return Ok(html.to_string());
+        }
+
+        // Inject minimal DOM before executing scripts
+        self.inject_minimal_dom()?;
+
+        // Parse HTML structure into DOM
+        debug!("Injecting HTML structure into DOM");
+        self.inject_html_into_dom(html)?;
+
+        // Execute all inline scripts
+        debug!("Executing {} inline scripts", inline_scripts.len());
+        for (idx, script) in inline_scripts.iter().enumerate() {
+            debug!("Executing script {}/{}", idx + 1, inline_scripts.len());
+            // Execute but don't fail on script errors (SPA scripts may expect browser APIs)
+            if let Err(e) = self.eval(script) {
+                debug!("Script {} execution warning: {}", idx + 1, e);
+                // Continue with next script - partial execution may still render forms
+            }
+        }
+
+        // Extract rendered HTML from document.body.innerHTML
+        debug!("Extracting rendered HTML from document.body");
+        let rendered_html = self.eval("document.body.innerHTML")
+            .unwrap_or_else(|_| html.to_string());
+
+        Ok(rendered_html)
+    }
+
+    /// Inject parsed HTML structure into the DOM shim
+    fn inject_html_into_dom(&self, html: &str) -> Result<()> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+
+        // Build a simplified innerHTML string from body content
+        let body_selector = Selector::parse("body").map_err(|e| {
+            anyhow::anyhow!("Failed to parse body selector: {:?}", e)
+        })?;
+
+        if let Some(body_elem) = document.select(&body_selector).next() {
+            // Extract inner HTML of body (all child elements as text)
+            let body_html = body_elem.html();
+
+            // Inject into document.body.innerHTML
+            let js_code = format!(
+                "document.body.innerHTML = {};",
+                serde_json::to_string(&body_html)?
+            );
+
+            self.context.with(|ctx| {
+                ctx.eval::<(), _>(js_code.as_str())?;
+                Ok(())
+            })
+        } else {
+            // No body tag, inject entire HTML
+            let js_code = format!(
+                "document.body.innerHTML = {};",
+                serde_json::to_string(html)?
+            );
+
+            self.context.with(|ctx| {
+                ctx.eval::<(), _>(js_code.as_str())?;
+                Ok(())
+            })
+        }
+    }
 }
 
 impl Default for JsEngine {
@@ -369,5 +479,136 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn test_execute_and_extract_forms_no_scripts() {
+        let engine = JsEngine::new().unwrap();
+
+        let html = r#"
+            <html>
+                <body>
+                    <form>
+                        <input name="username">
+                    </form>
+                </body>
+            </html>
+        "#;
+
+        let result = engine.execute_and_extract_forms(html).unwrap();
+        // Should return original HTML when no inline scripts
+        assert!(result.contains("username"));
+    }
+
+    #[test]
+    fn test_execute_and_extract_forms_with_inline_script() {
+        let engine = JsEngine::new().unwrap();
+
+        let html = r#"
+            <html>
+                <body>
+                    <div id="root"></div>
+                    <script>
+                        var form = document.createElement('form');
+                        form.innerHTML = '<input name="email" type="text"><input name="password" type="password">';
+                        document.body.appendChild(form);
+                    </script>
+                </body>
+            </html>
+        "#;
+
+        let result = engine.execute_and_extract_forms(html).unwrap();
+        // After script execution, should contain the dynamically created form
+        assert!(result.contains("email") || result.contains("password"),
+            "Rendered HTML should contain form fields: {}", result);
+    }
+
+    #[test]
+    fn test_execute_and_extract_forms_skip_external_scripts() {
+        let engine = JsEngine::new().unwrap();
+
+        let html = r#"
+            <html>
+                <body>
+                    <div id="app"></div>
+                    <script src="https://example.com/bundle.js"></script>
+                    <script>
+                        document.body.innerHTML += '<form><input name="test"></form>';
+                    </script>
+                </body>
+            </html>
+        "#;
+
+        let result = engine.execute_and_extract_forms(html).unwrap();
+        // Should execute inline script but skip external src
+        assert!(result.contains("test"), "Should contain form from inline script");
+    }
+
+    #[test]
+    fn test_execute_and_extract_forms_spa_login() {
+        let engine = JsEngine::new().unwrap();
+
+        // Simulates a SPA login page that renders form via JavaScript
+        let html = r#"
+            <html>
+                <head><title>Login</title></head>
+                <body>
+                    <div id="root"></div>
+                    <script>
+                        // Simulate SPA form rendering
+                        var loginForm = document.createElement('form');
+                        loginForm.setAttribute('action', '/api/login');
+                        loginForm.setAttribute('method', 'POST');
+
+                        var usernameInput = document.createElement('input');
+                        usernameInput.setAttribute('name', 'username');
+                        usernameInput.setAttribute('type', 'text');
+
+                        var passwordInput = document.createElement('input');
+                        passwordInput.setAttribute('name', 'password');
+                        passwordInput.setAttribute('type', 'password');
+
+                        loginForm.appendChild(usernameInput);
+                        loginForm.appendChild(passwordInput);
+
+                        var root = document.getElementById('root');
+                        if (root) {
+                            root.appendChild(loginForm);
+                        } else {
+                            document.body.appendChild(loginForm);
+                        }
+                    </script>
+                </body>
+            </html>
+        "#;
+
+        let result = engine.execute_and_extract_forms(html).unwrap();
+        assert!(result.contains("username"), "Should find username field: {}", result);
+        assert!(result.contains("password"), "Should find password field: {}", result);
+    }
+
+    #[test]
+    fn test_execute_and_extract_forms_script_error_handling() {
+        let engine = JsEngine::new().unwrap();
+
+        // Test graceful handling of script errors
+        let html = r#"
+            <html>
+                <body>
+                    <script>
+                        // This will fail (nonexistent function)
+                        nonExistentFunction();
+                    </script>
+                    <script>
+                        // This should still execute
+                        document.body.innerHTML += '<div id="success">OK</div>';
+                    </script>
+                </body>
+            </html>
+        "#;
+
+        // Should not fail completely - partial execution is acceptable
+        let result = engine.execute_and_extract_forms(html);
+        assert!(result.is_ok(), "Should handle script errors gracefully");
     }
 }
