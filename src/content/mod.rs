@@ -27,6 +27,7 @@ pub mod html;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 pub mod plain;
+pub mod readability;
 #[cfg(feature = "pdf")]
 pub mod table;
 #[cfg(feature = "pdf")]
@@ -184,6 +185,15 @@ mod tests {
         let html = b"<!DOCTYPE html><html><body>Fallback</body></html>";
         let result = router.convert(html, "application/octet-stream").unwrap();
         assert!(result.markdown.contains("Fallback"));
+    }
+
+    #[test]
+    fn router_dispatches_markdown_to_plain_handler() {
+        let router = ContentRouter::new();
+        let md = b"# Title\n\nParagraph with **bold**.";
+        let result = router.convert(md, "text/markdown").unwrap();
+        assert!(result.markdown.contains("# Title"));
+        assert!(result.markdown.contains("**bold**"));
     }
 
     #[test]

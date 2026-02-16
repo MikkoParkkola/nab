@@ -1,10 +1,19 @@
 //! HTML to Markdown conversion handler.
 //!
-//! Wraps `html2md` with post-processing to remove boilerplate (cookie notices,
-//! navigation bars, privacy footers) and clean up excessive whitespace.
+//! Uses Mozilla-style readability extraction to extract clean article content
+//! before converting to markdown. Falls back to raw html2md for non-article pages.
+//!
+//! # Pipeline
+//!
+//! 1. **Readability extraction** (default): Extract main article content, strip boilerplate
+//! 2. **Fallback to raw html2md**: If extraction fails, use raw HTML with basic filtering
+//!
+//! The readability step significantly improves output quality by removing navigation,
+//! footers, ads, and other noise before markdown conversion.
 
 use anyhow::Result;
 
+use super::readability;
 use super::{ContentHandler, ConversionResult};
 
 /// Converts HTML responses to clean markdown.
@@ -18,7 +27,7 @@ impl ContentHandler for HtmlHandler {
     fn to_markdown(&self, bytes: &[u8], content_type: &str) -> Result<ConversionResult> {
         let start = std::time::Instant::now();
         let html = String::from_utf8_lossy(bytes);
-        let markdown = html_to_markdown(&html);
+        let markdown = html_to_markdown_with_readability(&html);
 
         Ok(ConversionResult {
             markdown,
@@ -29,7 +38,37 @@ impl ContentHandler for HtmlHandler {
     }
 }
 
-/// Convert HTML to markdown with boilerplate filtering.
+/// Convert HTML to markdown with readability extraction.
+///
+/// # Pipeline
+///
+/// 1. **Try readability extraction**: Extract main article content
+/// 2. **Convert to markdown**: Use `html2md` on extracted content
+/// 3. **Fallback**: If extraction fails, use raw HTML with basic filtering
+///
+/// This provides the cleanest output by removing navigation, footers, and ads
+/// before markdown conversion.
+pub fn html_to_markdown_with_readability(html: &str) -> String {
+    // Try readability extraction first (use empty URL as we don't always have it)
+    if let Some(article) = readability::extract_article(html, "https://example.com") {
+        // Convert the extracted clean HTML to markdown
+        let md = html2md::parse_html(&article.content_html);
+
+        // Basic cleanup of the markdown
+        let lines: Vec<&str> = md
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        return lines.join("\n");
+    }
+
+    // Fallback to raw html2md with filtering if readability fails
+    html_to_markdown(html)
+}
+
+/// Convert HTML to markdown with boilerplate filtering (fallback).
 ///
 /// Uses `html2md` for the heavy lifting, then post-processes to remove
 /// common web boilerplate (cookie notices, navigation, privacy footers)
@@ -147,5 +186,84 @@ mod tests {
         let types = handler.supported_types();
         assert!(types.contains(&"text/html"));
         assert!(types.contains(&"application/xhtml+xml"));
+    }
+
+    #[test]
+    fn test_readability_extraction_removes_boilerplate() {
+        let html = r#"
+            <html>
+            <head><title>Article Title</title></head>
+            <body>
+                <nav>
+                    <a href="/">Home</a>
+                    <a href="/about">About</a>
+                </nav>
+                <main>
+                    <article>
+                        <h1>Main Article</h1>
+                        <p>This is the main article content that should be extracted.</p>
+                        <p>It contains important information for the reader.</p>
+                    </article>
+                </main>
+                <aside class="sidebar">
+                    <h3>Related Articles</h3>
+                    <ul><li>Related 1</li></ul>
+                </aside>
+                <footer>
+                    <p>© 2025 Company</p>
+                    <p>Privacy Policy | Terms of Service</p>
+                </footer>
+            </body>
+            </html>
+        "#;
+
+        let markdown = html_to_markdown_with_readability(html);
+
+        // Should contain main article content (case-insensitive check)
+        let markdown_lower = markdown.to_lowercase();
+        assert!(
+            markdown_lower.contains("main article") || markdown_lower.contains("article content"),
+            "Expected article content, got: {}",
+            markdown
+        );
+        assert!(markdown.contains("main article content"));
+
+        // Should NOT contain navigation or footer boilerplate
+        assert!(!markdown.contains("Home") || !markdown.contains("About"));
+        assert!(!markdown.contains("2025 Company"));
+        assert!(!markdown.contains("Privacy Policy"));
+    }
+
+    #[test]
+    fn test_readability_fallback_for_non_article_pages() {
+        let html = "<html><body><div>Simple page</div></body></html>";
+        let markdown = html_to_markdown_with_readability(html);
+
+        // Should still convert to markdown (fallback path)
+        assert!(markdown.contains("Simple page"));
+    }
+
+    #[test]
+    fn test_readability_with_semantic_html() {
+        let html = r#"
+            <html>
+            <body>
+                <header>Header content</header>
+                <main>
+                    <h1>Article Title</h1>
+                    <p>This is the main content area with substantial text.</p>
+                    <p>Multiple paragraphs ensure proper extraction.</p>
+                </main>
+                <footer>Footer content</footer>
+            </body>
+            </html>
+        "#;
+
+        let markdown = html_to_markdown_with_readability(html);
+
+        assert!(markdown.contains("Article Title"));
+        assert!(markdown.contains("main content area"));
+        assert!(!markdown.contains("Header content"));
+        assert!(!markdown.contains("Footer content"));
     }
 }
