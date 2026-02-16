@@ -28,7 +28,7 @@ use tokio::sync::OnceCell;
 use nab::content::ContentRouter;
 use nab::{
     chrome_profile, firefox_profile, random_profile, safari_profile, AcceleratedClient,
-    CookieSource, CredentialRetriever, OnePasswordAuth,
+    CookieSource, CredentialRetriever, OnePasswordAuth, SafeFetchConfig,
 };
 
 // Global shared client (initialized once)
@@ -120,29 +120,55 @@ impl FetchTool {
             String::new()
         };
 
-        // Fetch with or without cookies
-        let response = if cookie_header.is_empty() {
-            client.fetch(&self.url).await
+        // Fetch with SSRF protection via fetch_safe (or manual request for cookie path)
+        let config = SafeFetchConfig::default();
+
+        let (status, content_type, response_headers, body_bytes, elapsed) = if cookie_header
+            .is_empty()
+        {
+            let safe_resp = client
+                .fetch_safe(&self.url, &config)
+                .await
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            let elapsed = start.elapsed();
+            (
+                safe_resp.status,
+                safe_resp.content_type.clone(),
+                safe_resp.headers.clone(),
+                safe_resp.body,
+                elapsed,
+            )
         } else {
-            client
+            let response = client
                 .inner()
                 .get(&self.url)
                 .header("Cookie", &cookie_header)
                 .headers(profile.to_headers())
                 .send()
                 .await
-                .map_err(anyhow::Error::from)
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            let elapsed_val = start.elapsed();
+            let status = response.status();
+            let ct = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/html")
+                .to_string();
+            let hdrs: Vec<(String, String)> = response
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
+                .collect();
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            (status, ct, hdrs, bytes, elapsed_val)
         };
-
-        let response = response.map_err(|e| CallToolError::from_message(e.to_string()))?;
-
-        let elapsed = start.elapsed();
-        let status = response.status();
-        let version = format!("{:?}", response.version());
 
         output.push_str("\n📊 Response:\n");
         output.push_str(&format!("   Status: {status}\n"));
-        output.push_str(&format!("   Version: {version}\n"));
         output.push_str(&format!(
             "   Time: {:.2}ms\n",
             elapsed.as_secs_f64() * 1000.0
@@ -150,27 +176,10 @@ impl FetchTool {
 
         if self.headers {
             output.push_str("\n📋 Headers:\n");
-            for (name, value) in response.headers() {
-                output.push_str(&format!(
-                    "   {}: {}\n",
-                    name,
-                    value.to_str().unwrap_or("<binary>")
-                ));
+            for (name, value) in &response_headers {
+                output.push_str(&format!("   {name}: {value}\n"));
             }
         }
-
-        // Extract Content-Type before consuming response body
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("text/html")
-            .to_string();
-
-        let body_bytes = response
-            .bytes()
-            .await
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         output.push_str(&format!("\n📄 Body: {} bytes\n", body_bytes.len()));
 

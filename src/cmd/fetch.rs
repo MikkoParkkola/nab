@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use nab::{AcceleratedClient, CookieSource, OnePasswordAuth};
+use nab::{AcceleratedClient, CookieSource, OnePasswordAuth, SafeFetchConfig};
 
 use super::output::output_body;
 use crate::OutputFormat;
@@ -125,72 +125,139 @@ pub async fn cmd_fetch(
 
     let start = Instant::now();
 
-    // Build request based on HTTP method
-    let mut request = match method.to_uppercase().as_str() {
-        "POST" => client.inner().post(url),
-        "PUT" => client.inner().put(url),
-        "PATCH" => client.inner().patch(url),
-        "DELETE" => client.inner().delete(url),
-        "HEAD" => client.inner().head(url),
-        _ => client.inner().get(url),
-    };
+    // Use fetch_safe for simple GET requests (SSRF protection, DNS pinning, body size cap).
+    // Fall back to manual request building for custom methods, cookies, headers, or data.
+    let is_simple_get = method.eq_ignore_ascii_case("GET")
+        && cookie_header.is_empty()
+        && custom_headers.is_empty()
+        && data.is_none()
+        && !auto_referer
+        && !no_redirect;
 
-    // Add request body for methods that support it
-    if let Some(body_data) = data {
-        request = request.body(body_data.to_owned());
-        // Default to JSON content type if not specified
-        if !custom_headers
-            .iter()
-            .any(|h| h.to_lowercase().starts_with("content-type"))
-        {
-            request = request.header("Content-Type", "application/json");
-        }
-    }
+    let (status, version, set_cookies, content_type, response_headers, body_bytes) =
+        if is_simple_get {
+            let config = SafeFetchConfig::default();
+            let safe_resp = client.fetch_safe(url, &config).await?;
 
-    // Add fingerprint headers
-    request = request.headers(profile.to_headers());
+            let set_cookies: Vec<String> = safe_resp
+                .headers
+                .iter()
+                .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+                .map(|(_, v)| v.clone())
+                .collect();
 
-    // Add cookies if present
-    if !cookie_header.is_empty() {
-        request = request.header("Cookie", &cookie_header);
-    }
+            let resp_headers: Vec<(String, String)> = if show_headers {
+                safe_resp.headers.clone()
+            } else {
+                Vec::new()
+            };
 
-    // Add auto-referer if requested (domain origin)
-    if auto_referer {
-        if let Ok(parsed) = url::Url::parse(url) {
-            let referer = format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
-            request = request.header("Referer", referer);
-        }
-    }
+            // SafeFetchResponse doesn't expose the HTTP version
+            let version_str = String::from("HTTP/2");
 
-    // Add custom headers (--add-header "Name: Value")
-    for header_str in custom_headers {
-        let parts: Vec<&str> = header_str.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            request = request.header(parts[0].trim(), parts[1].trim());
-        }
-    }
+            (
+                safe_resp.status,
+                version_str,
+                set_cookies,
+                safe_resp.content_type.clone(),
+                resp_headers,
+                safe_resp.body,
+            )
+        } else {
+            // Manual request building for complex cases
+            let mut request = match method.to_uppercase().as_str() {
+                "POST" => client.inner().post(url),
+                "PUT" => client.inner().put(url),
+                "PATCH" => client.inner().patch(url),
+                "DELETE" => client.inner().delete(url),
+                "HEAD" => client.inner().head(url),
+                _ => client.inner().get(url),
+            };
 
-    let response = request.send().await?;
+            // Add request body for methods that support it
+            if let Some(body_data) = data {
+                request = request.body(body_data.to_owned());
+                // Default to JSON content type if not specified
+                if !custom_headers
+                    .iter()
+                    .any(|h| h.to_lowercase().starts_with("content-type"))
+                {
+                    request = request.header("Content-Type", "application/json");
+                }
+            }
+
+            // Add fingerprint headers
+            request = request.headers(profile.to_headers());
+
+            // Add cookies if present
+            if !cookie_header.is_empty() {
+                request = request.header("Cookie", &cookie_header);
+            }
+
+            // Add auto-referer if requested (domain origin)
+            if auto_referer {
+                if let Ok(parsed) = url::Url::parse(url) {
+                    let referer =
+                        format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
+                    request = request.header("Referer", referer);
+                }
+            }
+
+            // Add custom headers (--add-header "Name: Value")
+            for header_str in custom_headers {
+                let parts: Vec<&str> = header_str.splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    request = request.header(parts[0].trim(), parts[1].trim());
+                }
+            }
+
+            let response = request.send().await?;
+
+            let status = response.status();
+            let version_str = format!("{:?}", response.version());
+
+            let set_cookies: Vec<String> = response
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .filter_map(|v| v.to_str().ok().map(String::from))
+                .collect();
+
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/html")
+                .to_string();
+
+            let resp_headers: Vec<(String, String)> = if show_headers {
+                response
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.to_string(),
+                            value.to_str().unwrap_or("<binary>").to_string(),
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let bytes = response.bytes().await?;
+
+            (
+                status,
+                version_str,
+                set_cookies,
+                content_type,
+                resp_headers,
+                bytes,
+            )
+        };
 
     let elapsed = start.elapsed();
-    let status = response.status();
-    let version = response.version();
-
-    // Extract headers before consuming response body
-    let set_cookies: Vec<String> = response
-        .headers()
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|v| v.to_str().ok().map(String::from))
-        .collect();
-
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("text/html")
-        .to_string();
 
     // Output Set-Cookie headers if requested (for auth flows)
     if capture_cookies && !set_cookies.is_empty() {
@@ -202,24 +269,6 @@ pub async fn cmd_fetch(
         }
     }
 
-    // Extract headers for Full format before consuming response
-    let response_headers: Vec<(String, String)> = if show_headers {
-        response
-            .headers()
-            .iter()
-            .map(|(name, value)| {
-                (
-                    name.to_string(),
-                    value.to_str().unwrap_or("<binary>").to_string(),
-                )
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    // Get body as bytes (handles both text and binary content like PDF)
-    let body_bytes = response.bytes().await?;
     let body_len = body_bytes.len();
 
     // Keep raw text for link extraction (extract_links needs HTML, not markdown)
@@ -301,7 +350,7 @@ pub async fn cmd_fetch(
 
             println!("\n📊 Response:");
             println!("   Status: {status}");
-            println!("   Version: {version:?}");
+            println!("   Version: {version}");
             println!("   Time: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
 
             if show_headers {

@@ -434,6 +434,7 @@ async fn main() -> Result<()> {
     FmtSubscriber::builder()
         .with_max_level(log_level)
         .with_target(false)
+        .with_writer(std::io::stderr)
         .compact()
         .init();
 

@@ -41,6 +41,7 @@ pub mod mfa;
 pub mod plugin;
 pub mod prefetch;
 pub mod site;
+pub mod ssrf;
 pub mod stream;
 pub mod websocket;
 
@@ -70,11 +71,15 @@ pub use form::{parse_field_args, Form};
 pub use http3_client::Http3Client;
 #[cfg(feature = "http3")]
 pub use http3_client::Http3Response;
-pub use http_client::AcceleratedClient;
+pub use http_client::{AcceleratedClient, SafeFetchConfig, SafeFetchResponse};
 pub use js_engine::JsEngine;
 pub use login::{get_session_dir, LoginFlow, LoginResult};
 pub use mfa::{detect_mfa_type, MfaHandler, MfaResult, MfaType, NotificationConfig};
 pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManager};
+pub use ssrf::{
+    validate_ip, validate_redirect_target, validate_url, DEFAULT_MAX_BODY_SIZE,
+    DEFAULT_MAX_REDIRECTS,
+};
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};
 pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 
