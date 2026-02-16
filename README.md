@@ -12,19 +12,20 @@ nab is a local, token-optimized HTTP client built for LLM pipelines. It converts
 
 ## Why nab?
 
-| Feature | nab | curl | wget | Playwright | Jina Reader |
-|---|---|---|---|---|---|
-| **Clean markdown output** | Built-in (25x savings) | Raw HTML | Raw HTML | Raw HTML | Markdown |
-| **Browser cookie auth** | Auto-detect (6 browsers) | Manual | Manual | Requires login script | API key |
-| **Anti-bot evasion** | Fingerprint spoofing | None | None | Full browser (heavy) | Cloud-side |
-| **JS rendering** | QuickJS (1MB, local) | None | None | Full Chromium (300MB+) | Cloud-side |
-| **Speed (typical page)** | ~50ms | ~100ms | ~150ms | ~2-5s | ~500ms |
-| **Token output (typical)** | ~500 | ~12,500 | ~12,500 | ~12,500 | ~2,000 |
-| **HTTP/3 (QUIC)** | Yes | Build-dependent | No | No | N/A |
-| **Site-specific APIs** | 10 built-in providers | None | None | None | None |
-| **1Password / Passkeys** | Native | None | None | Plugin | None |
-| **Cost** | Free (local) | Free (local) | Free (local) | Free (local) | Free tier / paid |
-| **Install size** | ~15MB binary | ~5MB | ~3MB | ~300MB+ | Cloud service |
+| Feature | nab | Firecrawl | Crawl4AI | Playwright | Jina Reader | curl |
+|---|---|---|---|---|---|---|
+| **Clean markdown output** | Built-in (25x savings) | Markdown | Markdown | Raw HTML | Markdown | Raw HTML |
+| **Browser cookie auth** | Auto-detect (6 browsers) | None | None | Requires login script | API key | Manual |
+| **Anti-bot evasion** | Fingerprint spoofing | Cloud proxy | Stealth plugin | Stealth plugin | Cloud-side | None |
+| **JS rendering** | QuickJS (1MB, local) | Cloud browser | Chromium (300MB+) | Chromium (300MB+) | Cloud-side | None |
+| **Speed (typical page)** | ~50ms | ~1-3s | ~2-5s | ~2-5s | ~500ms | ~100ms |
+| **Token output (typical)** | ~500 | ~1,500 | ~1,500 | ~12,500 | ~2,000 | ~12,500 |
+| **Runs locally** | Yes (single binary) | Cloud API | Yes (Python + Chrome) | Yes (Node + Chrome) | Cloud API | Yes |
+| **HTTP/3 (QUIC)** | Yes | No | No | No | N/A | Build-dependent |
+| **Site-specific APIs** | 10 built-in providers | None | None | None | None | None |
+| **1Password / Passkeys** | Native | None | None | None | None | None |
+| **Cost** | Free (local) | $0.004/page | Free (local) | Free (local) | Free tier / paid | Free (local) |
+| **Install size** | ~15MB binary | Cloud service | ~300MB+ | ~300MB+ | Cloud service | ~5MB |
 
 ## Quick Start
 
