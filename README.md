@@ -59,12 +59,6 @@ nab fetch https://protected-site.com
 
 nab ships with anti-fingerprinting by default: realistic TLS fingerprints, browser-accurate headers, and randomized profiles. Sites see a normal browser, not a scraping tool.
 
-## Demo
-
-![nab demo](demo.gif)
-
-25x fewer tokens. Same content. Zero configuration.
-
 ## Features
 
 - **10 Site Providers** — Specialized extractors for Twitter/X, Reddit, Hacker News, GitHub, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, and Instagram. API-backed where possible for structured output.
