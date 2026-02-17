@@ -3,9 +3,13 @@
 //! Exports documents via the Google export API using browser cookies for
 //! authentication. Supports:
 //! - Google Docs → HTML export (converted to markdown) + OOXML for comments/suggestions
-//!   - Auto-discovers and exports all tabs in multi-tab documents
-//! - Google Sheets → CSV export (formatted as markdown table) + OOXML for comments
-//!   - Auto-discovers and exports all sheets in a workbook
+//!   - Note: Multi-tab discovery is not supported — Google renders tab metadata via
+//!     JavaScript so it is absent from the initial HTML. The export API's `&tab=t.X`
+//!     parameter requires the opaque tab ID which is only available after JS execution.
+//!     Sequential IDs (`t.0`, `t.1`) do not exist; PDF/HTML without a tab parameter
+//!     exports only the default tab. The single-export path returns the first/default tab.
+//! - Google Sheets → XLSX export parsed to extract all sheets with proper names + cell data
+//!   - Falls back to CSV export if XLSX parsing fails
 //! - Google Slides → plain-text export + OOXML for comments
 //!
 //! Requires browser cookies (`--cookies brave` etc.). Without cookies the export
@@ -36,11 +40,9 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{Cursor, Read};
-use std::sync::LazyLock;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use regex::Regex;
 
 use super::{SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
@@ -49,25 +51,6 @@ use crate::http_client::AcceleratedClient;
 
 /// `WordprocessingML` namespace (used in `.docx` files).
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-
-// ─── Compiled Regexes ─────────────────────────────────────────────────────────
-
-/// Matches Google Docs tab entries like `"tab":"t.abc123"` and an optional
-/// nearby `"title":"Tab Name"` in the embedded JSON blob.
-static TAB_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""tab"\s*:\s*"(t\.[a-z0-9]+)""#).expect("valid regex"));
-
-/// Captures tab title near a tab id (within 300 chars before the tab id).
-static TAB_TITLE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""title"\s*:\s*"([^"]{1,80})""#).expect("valid regex"));
-
-/// Matches sheet gid entries like `"sheetId":12345` from the Sheets embedded JSON.
-static SHEET_GID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""sheetId"\s*:\s*(\d+)"#).expect("valid regex"));
-
-/// Matches sheet title entries like `"title":"Sheet1"` in Sheets embedded JSON.
-static SHEET_TITLE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""title"\s*:\s*"([^"]{1,80})""#).expect("valid regex"));
 
 // ─── URL Patterns ─────────────────────────────────────────────────────────────
 
@@ -240,116 +223,6 @@ async fn fetch_export(export_url: &str, cookie_header: &str) -> Result<bytes::By
 
 // ─── Tab discovery ────────────────────────────────────────────────────────────
 
-/// A tab found in a Google Doc.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct DocTab {
-    /// Tab ID as used in the export API, e.g. `t.abc123`.
-    id: String,
-    /// Human-readable tab title, or `"Tab N"` if not parseable.
-    title: String,
-}
-
-/// Fetch the Google Docs editor page and discover all tab IDs and titles.
-///
-/// Returns an empty `Vec` when the document has no tab metadata (single-tab
-/// docs, or when the editor HTML doesn't expose tab data).
-async fn discover_doc_tabs(id: &str, cookie_header: &str) -> Vec<DocTab> {
-    let edit_url = format!("https://docs.google.com/document/d/{id}/edit");
-    let Ok(bytes) = fetch_export(&edit_url, cookie_header).await else {
-        return vec![];
-    };
-    let html = String::from_utf8_lossy(&bytes);
-    parse_doc_tabs(&html)
-}
-
-/// Parse tab IDs and titles from a Google Docs editor page HTML.
-///
-/// Google embeds document metadata as a JSON blob inside a `<script>` tag.
-/// We extract tab entries with the pattern `"tab":"t.xxx"` and attempt to
-/// find an associated `"title":"..."` nearby.
-pub(crate) fn parse_doc_tabs(html: &str) -> Vec<DocTab> {
-    let mut tabs: Vec<DocTab> = Vec::new();
-    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for m in TAB_ID_RE.find_iter(html) {
-        // Extract the tab ID from the capture group
-        let Some(cap) = TAB_ID_RE.captures(m.as_str()) else {
-            continue;
-        };
-        let tab_id = cap[1].to_string();
-        if !seen_ids.insert(tab_id.clone()) {
-            continue; // deduplicate
-        }
-
-        // Search for a nearby `"title":"..."` within 300 chars before the match
-        let start = m.start().saturating_sub(300);
-        let snippet = &html[start..m.end()];
-        let n = tabs.len() + 1;
-        let title = TAB_TITLE_RE
-            .captures_iter(snippet)
-            .last()
-            .map_or_else(|| format!("Tab {n}"), |c| c[1].to_string());
-
-        tabs.push(DocTab { id: tab_id, title });
-    }
-
-    tabs
-}
-
-// ─── Sheet discovery ──────────────────────────────────────────────────────────
-
-/// A sheet found in a Google Spreadsheet.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct SheetInfo {
-    /// The sheet's numeric GID (grid ID).
-    gid: u64,
-    /// Human-readable sheet name, or `"Sheet N"` if not parseable.
-    name: String,
-}
-
-/// Fetch the Sheets editor page and discover all sheet GIDs and names.
-async fn discover_sheets(id: &str, cookie_header: &str) -> Vec<SheetInfo> {
-    let edit_url = format!("https://docs.google.com/spreadsheets/d/{id}/edit");
-    let Ok(bytes) = fetch_export(&edit_url, cookie_header).await else {
-        return vec![];
-    };
-    let html = String::from_utf8_lossy(&bytes);
-    parse_sheet_info(&html)
-}
-
-/// Parse sheet GIDs and names from a Google Sheets editor page HTML.
-///
-/// Google embeds sheet metadata in the page's JSON blob.
-/// We pair `"sheetId":N` with nearby `"title":"..."` entries.
-pub(crate) fn parse_sheet_info(html: &str) -> Vec<SheetInfo> {
-    let mut sheets: Vec<SheetInfo> = Vec::new();
-    let mut seen_gids: std::collections::HashSet<u64> = std::collections::HashSet::new();
-
-    for m in SHEET_GID_RE.find_iter(html) {
-        let Some(cap) = SHEET_GID_RE.captures(m.as_str()) else {
-            continue;
-        };
-        let Ok(gid) = cap[1].parse::<u64>() else {
-            continue;
-        };
-        if !seen_gids.insert(gid) {
-            continue;
-        }
-
-        // Search for `"title":"..."` within 200 chars after the gid match
-        let end = (m.end() + 200).min(html.len());
-        let snippet = &html[m.start()..end];
-        let n = sheets.len() + 1;
-        let name = SHEET_TITLE_RE
-            .captures(snippet)
-            .map_or_else(|| format!("Sheet {n}"), |c| c[1].to_string());
-
-        sheets.push(SheetInfo { gid, name });
-    }
-
-    sheets
-}
-
 // ─── Google Docs ──────────────────────────────────────────────────────────────
 
 async fn extract_doc(
@@ -357,14 +230,12 @@ async fn extract_doc(
     canonical_url: &str,
     cookie_header: &str,
 ) -> Result<SiteContent> {
-    // Discover tabs (multi-tab support). Falls back to single export when empty.
-    let tabs = discover_doc_tabs(id, cookie_header).await;
-
-    let (markdown_content, title) = if tabs.len() > 1 {
-        export_doc_tabs(id, cookie_header, &tabs).await?
-    } else {
-        export_doc_single(id, cookie_header).await?
-    };
+    // Multi-tab discovery is not supported: Google renders tab metadata via
+    // JavaScript so tab IDs are absent from the initial HTML. The export API's
+    // `&tab=t.X` parameter requires an opaque ID that cannot be enumerated
+    // (sequential IDs like `t.0`/`t.1` do not exist). PDF and HTML exports
+    // without an explicit tab parameter return only the default/first tab.
+    let (markdown_content, title) = export_doc_single(id, cookie_header).await?;
 
     // Fetch OOXML for comments and suggested edits (comment anchors included)
     let mut markdown = markdown_content;
@@ -399,47 +270,6 @@ async fn export_doc_single(id: &str, cookie_header: &str) -> Result<(String, Opt
     Ok((converted.markdown, title))
 }
 
-/// Export each tab of a multi-tab Google Doc, returning combined markdown.
-/// Returns `(markdown, title_from_first_tab)`.
-async fn export_doc_tabs(
-    id: &str,
-    cookie_header: &str,
-    tabs: &[DocTab],
-) -> Result<(String, Option<String>)> {
-    let mut combined = String::new();
-    let mut title: Option<String> = None;
-
-    for tab in tabs {
-        let html_url = format!(
-            "https://docs.google.com/document/d/{id}/export?format=html&tab={tab_id}",
-            tab_id = tab.id
-        );
-        let html_bytes = match fetch_export(&html_url, cookie_header).await {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!("Skipping tab '{}': {e}", tab.title);
-                continue;
-            }
-        };
-
-        if title.is_none() {
-            let html = String::from_utf8_lossy(&html_bytes);
-            title = extract_html_title(&html);
-        }
-
-        let content_router = crate::content::ContentRouter::new();
-        let converted = content_router
-            .convert(html_bytes.as_ref(), "text/html")
-            .context("Failed to convert tab HTML to markdown")?;
-
-        let _ = write!(combined, "## Tab: {}\n\n", tab.title);
-        combined.push_str(&converted.markdown);
-        combined.push_str("\n\n");
-    }
-
-    Ok((combined, title))
-}
-
 /// Fetch `.docx` and append parsed comments/suggestions to `markdown`.
 async fn append_doc_comments(id: &str, cookie_header: &str, markdown: &mut String) {
     let docx_url = format!("https://docs.google.com/document/d/{id}/export?format=docx");
@@ -470,22 +300,41 @@ fn extract_html_title(html: &str) -> Option<String> {
 
 // ─── Google Sheets ────────────────────────────────────────────────────────────
 
+/// A parsed sheet entry from `xl/workbook.xml`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct XlsxSheet {
+    /// Sheet name as declared in the workbook, e.g. `"Budget"`.
+    pub(crate) name: String,
+    /// 1-based sheet index matching the file `xl/worksheets/sheetN.xml`.
+    pub(crate) index: usize,
+}
+
 async fn extract_sheet(
     id: &str,
     canonical_url: &str,
     cookie_header: &str,
 ) -> Result<SiteContent> {
-    // Discover all sheets (multi-sheet support)
-    let sheets = discover_sheets(id, cookie_header).await;
+    // Download xlsx once — it contains all sheets, workbook metadata, shared
+    // strings, and comments. This avoids a separate "editor page" request whose
+    // data is only available after JavaScript execution.
+    let xlsx_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx");
+    let xlsx_bytes = fetch_export(&xlsx_url, cookie_header).await?;
 
-    let markdown_content = if sheets.len() > 1 {
-        export_all_sheets(id, cookie_header, &sheets).await?
-    } else {
-        export_sheet_default(id, cookie_header).await?
+    let markdown_content = match xlsx_to_all_sheets_markdown(&xlsx_bytes) {
+        Ok(md) if !md.is_empty() => md,
+        Ok(_) | Err(_) => {
+            // Fall back to CSV export for the default sheet when xlsx parsing fails.
+            tracing::debug!("xlsx parsing produced no content, falling back to CSV");
+            let csv_url =
+                format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv");
+            let csv_bytes = fetch_export(&csv_url, cookie_header).await?;
+            csv_to_markdown(&String::from_utf8_lossy(&csv_bytes))
+        }
     };
 
     let mut markdown = markdown_content;
-    append_sheet_comments(id, cookie_header, &mut markdown).await;
+    // Reuse the already-downloaded xlsx bytes for comments.
+    append_xlsx_comments_from_bytes(&xlsx_bytes, &mut markdown);
 
     let metadata = SiteMetadata {
         author: None,
@@ -500,60 +349,21 @@ async fn extract_sheet(
     Ok(SiteContent { markdown, metadata })
 }
 
-/// Export the default (first) sheet as CSV markdown.
-async fn export_sheet_default(id: &str, cookie_header: &str) -> Result<String> {
-    let csv_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv");
-    let csv_bytes = fetch_export(&csv_url, cookie_header).await?;
-    let csv_text = String::from_utf8_lossy(&csv_bytes).into_owned();
-    Ok(csv_to_markdown(&csv_text))
-}
-
-/// Export each sheet by GID, combining into one markdown document.
-async fn export_all_sheets(
-    id: &str,
-    cookie_header: &str,
-    sheets: &[SheetInfo],
-) -> Result<String> {
-    let mut combined = String::new();
-
-    for sheet in sheets {
-        let csv_url = format!(
-            "https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}",
-            gid = sheet.gid
-        );
-        let csv_bytes = match fetch_export(&csv_url, cookie_header).await {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!("Skipping sheet '{}': {e}", sheet.name);
-                continue;
+/// Append parsed xlsx comments to `markdown` from already-downloaded bytes.
+///
+/// Unlike `append_sheet_comments` this avoids a second HTTP request since the
+/// caller already holds the xlsx bytes.
+fn append_xlsx_comments_from_bytes(xlsx_bytes: &[u8], markdown: &mut String) {
+    match parse_xlsx_comments(xlsx_bytes) {
+        Ok(comments) if !comments.is_empty() => {
+            markdown.push_str("\n\n---\n\n## Comments\n\n");
+            for comment in &comments {
+                markdown.push_str(comment);
+                markdown.push('\n');
             }
-        };
-        let csv_text = String::from_utf8_lossy(&csv_bytes).into_owned();
-
-        let _ = write!(combined, "## Sheet: {}\n\n", sheet.name);
-        combined.push_str(&csv_to_markdown(&csv_text));
-        combined.push_str("\n\n");
-    }
-
-    Ok(combined)
-}
-
-/// Fetch `.xlsx` and append parsed comments to `markdown`.
-async fn append_sheet_comments(id: &str, cookie_header: &str, markdown: &mut String) {
-    let xlsx_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx");
-    match fetch_export(&xlsx_url, cookie_header).await {
-        Ok(xlsx_bytes) => match parse_xlsx_comments(&xlsx_bytes) {
-            Ok(comments) if !comments.is_empty() => {
-                markdown.push_str("\n\n---\n\n## Comments\n\n");
-                for comment in &comments {
-                    markdown.push_str(comment);
-                    markdown.push('\n');
-                }
-            }
-            Ok(_) => {}
-            Err(e) => tracing::warn!("Failed to parse .xlsx comments: {e}"),
-        },
-        Err(e) => tracing::debug!("Skipping .xlsx comments: {e}"),
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Failed to parse .xlsx comments: {e}"),
     }
 }
 
@@ -642,6 +452,250 @@ fn split_csv_line(line: &str) -> Vec<String> {
     }
     cells.push(current.trim().to_string());
     cells
+}
+
+// ─── XLSX sheet data parsing ──────────────────────────────────────────────────
+
+/// Parse `xl/workbook.xml` and return sheets in workbook order.
+///
+/// Returns every `<sheet name="..." sheetId="..."/>` element in document order.
+/// The `index` field is 1-based and corresponds to `xl/worksheets/sheetN.xml`.
+pub(crate) fn parse_xlsx_workbook(xml: &str) -> Vec<XlsxSheet> {
+    let Ok(doc) = roxmltree::Document::parse(xml) else {
+        return vec![];
+    };
+    doc.descendants()
+        .filter(|n| n.has_tag_name("sheet"))
+        .enumerate()
+        .map(|(i, node)| {
+            let name = node
+                .attribute("name")
+                .filter(|s| !s.is_empty())
+                .map_or_else(|| format!("Sheet {}", i + 1), str::to_owned);
+            XlsxSheet { name, index: i + 1 }
+        })
+        .collect()
+}
+
+/// Parse shared strings from `xl/sharedStrings.xml`.
+///
+/// Returns the ordered list of strings. Cells with `t="s"` contain a numeric
+/// index into this table.
+pub(crate) fn parse_shared_strings(xml: &str) -> Vec<String> {
+    let Ok(doc) = roxmltree::Document::parse(xml) else {
+        return vec![];
+    };
+    // Each <si> element is one entry; concatenate all <t> descendants.
+    doc.descendants()
+        .filter(|n| n.has_tag_name("si"))
+        .map(|si| {
+            si.descendants()
+                .filter(|n| n.has_tag_name("t"))
+                .filter_map(|n| n.text())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .collect()
+}
+
+/// Parse `xl/worksheets/sheetN.xml` into a 2-D grid of cell values.
+///
+/// Column letters (A, B, …, Z, AA, …) are converted to 0-based indices.
+/// Shared-string cells (`t="s"`) are resolved via `shared_strings`.
+pub(crate) fn parse_xlsx_sheet_xml(
+    xml: &str,
+    shared_strings: &[String],
+) -> Vec<Vec<String>> {
+    let Ok(doc) = roxmltree::Document::parse(xml) else {
+        return vec![];
+    };
+
+    // Collect all rows in document order, keying cells by (row_idx, col_idx).
+    let mut row_map: std::collections::BTreeMap<usize, std::collections::BTreeMap<usize, String>> =
+        std::collections::BTreeMap::new();
+
+    for row in doc.descendants().filter(|n| n.has_tag_name("row")) {
+        let row_idx = row
+            .attribute("r")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .saturating_sub(1); // convert 1-based to 0-based
+
+        for cell in row.children().filter(|n| n.has_tag_name("c")) {
+            let cell_ref = cell.attribute("r").unwrap_or("");
+            let col_idx = col_letter_to_index(cell_ref);
+            let cell_type = cell.attribute("t").unwrap_or("");
+
+            let value = resolve_cell_value(cell, cell_type, shared_strings);
+            if !value.is_empty() {
+                row_map.entry(row_idx).or_default().insert(col_idx, value);
+            }
+        }
+    }
+
+    if row_map.is_empty() {
+        return vec![];
+    }
+
+    // Determine bounding dimensions.
+    let max_row = *row_map.keys().max().unwrap_or(&0);
+    let max_col = row_map
+        .values()
+        .flat_map(|cols| cols.keys())
+        .max()
+        .copied()
+        .unwrap_or(0);
+
+    (0..=max_row)
+        .map(|r| {
+            (0..=max_col)
+                .map(|c| {
+                    row_map
+                        .get(&r)
+                        .and_then(|cols| cols.get(&c))
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Resolve the display value for a worksheet cell.
+fn resolve_cell_value(
+    cell: roxmltree::Node<'_, '_>,
+    cell_type: &str,
+    shared_strings: &[String],
+) -> String {
+    let raw = cell
+        .children()
+        .find(|n| n.has_tag_name("v"))
+        .and_then(|v| v.text())
+        .unwrap_or("");
+
+    match cell_type {
+        "s" => {
+            // Shared string index
+            raw.parse::<usize>()
+                .ok()
+                .and_then(|i| shared_strings.get(i))
+                .cloned()
+                .unwrap_or_else(|| raw.to_owned())
+        }
+        "b" => {
+            // Boolean: "1" → "TRUE", "0" → "FALSE"
+            if raw == "1" { "TRUE".to_owned() } else { "FALSE".to_owned() }
+        }
+        "inlineStr" => {
+            // Inline string stored in <is><t>...</t></is>
+            cell.descendants()
+                .filter(|n| n.has_tag_name("t"))
+                .filter_map(|n| n.text())
+                .collect::<Vec<_>>()
+                .join("")
+        }
+        _ => raw.to_owned(),
+    }
+}
+
+/// Convert a cell reference like `"C5"` or `"AA12"` to a 0-based column index.
+///
+/// Returns `0` when the reference contains no leading letters.
+fn col_letter_to_index(cell_ref: &str) -> usize {
+    cell_ref
+        .bytes()
+        .take_while(u8::is_ascii_alphabetic)
+        .fold(0usize, |acc, b| {
+            acc * 26 + (b.to_ascii_uppercase() - b'A') as usize + 1
+        })
+        .saturating_sub(1)
+}
+
+/// Convert a 2-D grid of cell values (rows × cols) to a GFM markdown table.
+///
+/// The first row is treated as the header. Returns an empty string for an
+/// empty grid.
+pub(crate) fn grid_to_markdown(grid: &[Vec<String>]) -> String {
+    if grid.is_empty() {
+        return String::new();
+    }
+    let col_count = grid.iter().map(Vec::len).max().unwrap_or(0);
+    if col_count == 0 {
+        return String::new();
+    }
+
+    let mut md = String::new();
+    render_table_row(&grid[0], col_count, &mut md);
+    // Separator line
+    md.push('|');
+    for _ in 0..col_count {
+        md.push_str(" --- |");
+    }
+    md.push('\n');
+    for row in grid.iter().skip(1) {
+        render_table_row(row, col_count, &mut md);
+    }
+    md
+}
+
+/// Write a single pipe-table row to `out`.
+fn render_table_row(cells: &[String], col_count: usize, out: &mut String) {
+    out.push('|');
+    for i in 0..col_count {
+        let cell = cells.get(i).map_or("", String::as_str);
+        out.push(' ');
+        out.push_str(&cell.replace('|', "\\|"));
+        out.push_str(" |");
+    }
+    out.push('\n');
+}
+
+/// Download and parse all sheets from an xlsx byte slice into combined markdown.
+///
+/// Returns a string with each sheet prefixed by `## Sheet: {name}` when there
+/// are multiple sheets, or the bare table when there is only one sheet.
+pub(crate) fn xlsx_to_all_sheets_markdown(bytes: &[u8]) -> Result<String> {
+    let mut archive = open_zip(bytes)?;
+
+    // Parse workbook to get ordered sheet names.
+    let workbook_xml = read_zip_entry(&mut archive, "xl/workbook.xml")?;
+    let sheets = parse_xlsx_workbook(&workbook_xml);
+
+    // Parse shared strings (may not exist in formula-only workbooks).
+    let shared_strings = read_zip_entry(&mut archive, "xl/sharedStrings.xml")
+        .ok()
+        .as_deref()
+        .map(parse_shared_strings)
+        .unwrap_or_default();
+
+    let multi = sheets.len() > 1;
+    let mut combined = String::new();
+
+    for sheet in &sheets {
+        let sheet_path = format!("xl/worksheets/sheet{}.xml", sheet.index);
+        let sheet_xml = match read_zip_entry(&mut archive, &sheet_path) {
+            Ok(xml) => xml,
+            Err(e) => {
+                tracing::warn!("Skipping sheet '{}': {e}", sheet.name);
+                continue;
+            }
+        };
+
+        let grid = parse_xlsx_sheet_xml(&sheet_xml, &shared_strings);
+        if grid.is_empty() {
+            continue;
+        }
+
+        if multi {
+            let _ = write!(combined, "## Sheet: {}\n\n", sheet.name);
+        }
+        combined.push_str(&grid_to_markdown(&grid));
+        if multi {
+            combined.push_str("\n\n");
+        }
+    }
+
+    Ok(combined)
 }
 
 // ─── Google Slides ────────────────────────────────────────────────────────────
@@ -1212,102 +1266,283 @@ mod tests {
         assert!(extract_html_title("<html><body>no title</body></html>").is_none());
     }
 
-    // ── Tab discovery ─────────────────────────────────────────────────────────
+    // ── XLSX workbook parsing ──────────────────────────────────────────────────
 
     #[test]
-    fn parse_doc_tabs_finds_single_tab() {
-        // Simulated snippet from Google Docs editor page JSON blob
-        let html = r#"var _docs_flag_initialData={"title":"My Doc","tab":"t.abc123","someOther":1};"#;
-        let tabs = parse_doc_tabs(html);
-        assert_eq!(tabs.len(), 1);
-        assert_eq!(tabs[0].id, "t.abc123");
-    }
-
-    #[test]
-    fn parse_doc_tabs_finds_multiple_tabs_with_titles() {
-        let html = r#"
-        {"title":"Introduction","tab":"t.aaa111","x":1}
-        {"title":"Appendix","tab":"t.bbb222","x":2}
-        "#;
-        let tabs = parse_doc_tabs(html);
-        assert_eq!(tabs.len(), 2);
-        assert_eq!(tabs[0].id, "t.aaa111");
-        assert_eq!(tabs[0].title, "Introduction");
-        assert_eq!(tabs[1].id, "t.bbb222");
-        assert_eq!(tabs[1].title, "Appendix");
-    }
-
-    #[test]
-    fn parse_doc_tabs_deduplicates_same_tab_id() {
-        let html = r#"{"tab":"t.aaa111"}{"tab":"t.aaa111"}{"tab":"t.bbb222"}"#;
-        let tabs = parse_doc_tabs(html);
-        assert_eq!(tabs.len(), 2);
-    }
-
-    #[test]
-    fn parse_doc_tabs_returns_empty_for_no_tabs() {
-        let html = "<html><body>no tab data here</body></html>";
-        let tabs = parse_doc_tabs(html);
-        assert!(tabs.is_empty());
-    }
-
-    #[test]
-    fn parse_doc_tabs_fallback_title_when_no_title_nearby() {
-        // Tab ID present but no title attribute in snippet
-        let html = r#"{"somekey":"somevalue","tab":"t.xyz789"}"#;
-        let tabs = parse_doc_tabs(html);
-        assert_eq!(tabs.len(), 1);
-        assert_eq!(tabs[0].id, "t.xyz789");
-        // Title should be generated fallback
-        assert!(tabs[0].title.starts_with("Tab"));
-    }
-
-    // ── Sheet discovery ───────────────────────────────────────────────────────
-
-    #[test]
-    fn parse_sheet_info_finds_single_sheet() {
-        let html = r#"{"sheetId":0,"title":"Sheet1","x":1}"#;
-        let sheets = parse_sheet_info(html);
-        assert_eq!(sheets.len(), 1);
-        assert_eq!(sheets[0].gid, 0);
-        assert_eq!(sheets[0].name, "Sheet1");
-    }
-
-    #[test]
-    fn parse_sheet_info_finds_multiple_sheets() {
-        let html = r#"
-        {"sheetId":0,"title":"Budget"}
-        {"sheetId":123456789,"title":"Summary"}
-        "#;
-        let sheets = parse_sheet_info(html);
+    fn parse_xlsx_workbook_extracts_sheet_names_in_order() {
+        // GIVEN: xl/workbook.xml with two named sheets
+        let xml = r#"<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheets>
+    <sheet name="Budget" sheetId="1" r:id="rId1"
+           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+    <sheet name="Summary" sheetId="2" r:id="rId2"
+           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+  </sheets>
+</workbook>"#;
+        // WHEN
+        let sheets = parse_xlsx_workbook(xml);
+        // THEN
         assert_eq!(sheets.len(), 2);
-        assert_eq!(sheets[0].gid, 0);
         assert_eq!(sheets[0].name, "Budget");
-        assert_eq!(sheets[1].gid, 123_456_789);
+        assert_eq!(sheets[0].index, 1);
         assert_eq!(sheets[1].name, "Summary");
+        assert_eq!(sheets[1].index, 2);
     }
 
     #[test]
-    fn parse_sheet_info_deduplicates_same_gid() {
-        let html = r#"{"sheetId":0,"title":"A"}{"sheetId":0,"title":"B"}{"sheetId":1,"title":"C"}"#;
-        let sheets = parse_sheet_info(html);
-        assert_eq!(sheets.len(), 2);
+    fn parse_xlsx_workbook_generates_fallback_name_for_empty_name_attr() {
+        // GIVEN: sheet element with empty name attribute
+        let xml = r#"<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheets>
+    <sheet name="" sheetId="1"
+           r:id="rId1"
+           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+  </sheets>
+</workbook>"#;
+        let sheets = parse_xlsx_workbook(xml);
+        assert_eq!(sheets.len(), 1);
+        assert!(sheets[0].name.starts_with("Sheet"), "expected fallback name, got '{}'", sheets[0].name);
     }
 
     #[test]
-    fn parse_sheet_info_returns_empty_for_no_sheets() {
-        let html = "<html><body>no sheet data</body></html>";
-        let sheets = parse_sheet_info(html);
+    fn parse_xlsx_workbook_returns_empty_for_invalid_xml() {
+        let sheets = parse_xlsx_workbook("<this is not valid xml<<<");
         assert!(sheets.is_empty());
     }
 
+    // ── XLSX shared strings ────────────────────────────────────────────────────
+
     #[test]
-    fn parse_sheet_info_fallback_name_when_no_title() {
-        let html = r#"{"sheetId":42,"otherKey":"val"}"#;
-        let sheets = parse_sheet_info(html);
-        assert_eq!(sheets.len(), 1);
-        assert_eq!(sheets[0].gid, 42);
-        assert!(sheets[0].name.starts_with("Sheet"));
+    fn parse_shared_strings_extracts_ordered_strings() {
+        // GIVEN: xl/sharedStrings.xml with two entries
+        let xml = r#"<?xml version="1.0"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="2" uniqueCount="2">
+  <si><t>Hello</t></si>
+  <si><t>World</t></si>
+</sst>"#;
+        // WHEN
+        let strings = parse_shared_strings(xml);
+        // THEN
+        assert_eq!(strings, vec!["Hello", "World"]);
+    }
+
+    #[test]
+    fn parse_shared_strings_concatenates_rich_text_runs() {
+        // GIVEN: rich-text <si> with multiple <r><t> runs
+        let xml = r#"<?xml version="1.0"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <si>
+    <r><rPr/><t>foo</t></r>
+    <r><rPr/><t>bar</t></r>
+  </si>
+</sst>"#;
+        let strings = parse_shared_strings(xml);
+        assert_eq!(strings, vec!["foobar"]);
+    }
+
+    #[test]
+    fn parse_shared_strings_returns_empty_for_invalid_xml() {
+        let strings = parse_shared_strings("not xml");
+        assert!(strings.is_empty());
+    }
+
+    // ── XLSX sheet cell parsing ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_xlsx_sheet_xml_reads_inline_numbers() {
+        // GIVEN: worksheet with numeric cells (no shared strings needed)
+        let xml = r#"<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>10</v></c>
+      <c r="B1"><v>20</v></c>
+    </row>
+    <row r="2">
+      <c r="A2"><v>30</v></c>
+      <c r="B2"><v>40</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+        // WHEN
+        let grid = parse_xlsx_sheet_xml(xml, &[]);
+        // THEN: 2 rows × 2 cols
+        assert_eq!(grid.len(), 2);
+        assert_eq!(grid[0], vec!["10", "20"]);
+        assert_eq!(grid[1], vec!["30", "40"]);
+    }
+
+    #[test]
+    fn parse_xlsx_sheet_xml_resolves_shared_strings() {
+        // GIVEN: worksheet with t="s" cells referencing shared strings
+        let xml = r#"<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="s"><v>0</v></c>
+      <c r="B1" t="s"><v>1</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+        let shared = vec!["Name".to_string(), "Value".to_string()];
+        // WHEN
+        let grid = parse_xlsx_sheet_xml(xml, &shared);
+        // THEN
+        assert_eq!(grid.len(), 1);
+        assert_eq!(grid[0], vec!["Name", "Value"]);
+    }
+
+    #[test]
+    fn parse_xlsx_sheet_xml_handles_boolean_cells() {
+        let xml = r#"<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="b"><v>1</v></c>
+      <c r="B1" t="b"><v>0</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+        let grid = parse_xlsx_sheet_xml(xml, &[]);
+        assert_eq!(grid[0], vec!["TRUE", "FALSE"]);
+    }
+
+    #[test]
+    fn parse_xlsx_sheet_xml_returns_empty_for_invalid_xml() {
+        let grid = parse_xlsx_sheet_xml("not xml", &[]);
+        assert!(grid.is_empty());
+    }
+
+    #[test]
+    fn parse_xlsx_sheet_xml_skips_cells_with_empty_values() {
+        // GIVEN: sparse sheet — B1 has no value node
+        let xml = r#"<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>hello</v></c>
+      <c r="C1"><v>world</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+        let grid = parse_xlsx_sheet_xml(xml, &[]);
+        assert_eq!(grid.len(), 1);
+        // B1 is empty, so col B should contain an empty string
+        assert_eq!(grid[0].len(), 3);
+        assert_eq!(grid[0][0], "hello");
+        assert_eq!(grid[0][1], "");
+        assert_eq!(grid[0][2], "world");
+    }
+
+    // ── col_letter_to_index ───────────────────────────────────────────────────
+
+    #[test]
+    fn col_letter_to_index_converts_single_letters() {
+        assert_eq!(col_letter_to_index("A1"), 0);
+        assert_eq!(col_letter_to_index("B5"), 1);
+        assert_eq!(col_letter_to_index("Z10"), 25);
+    }
+
+    #[test]
+    fn col_letter_to_index_converts_double_letters() {
+        assert_eq!(col_letter_to_index("AA1"), 26);
+        assert_eq!(col_letter_to_index("AB1"), 27);
+        assert_eq!(col_letter_to_index("AZ1"), 51);
+        assert_eq!(col_letter_to_index("BA1"), 52);
+    }
+
+    #[test]
+    fn col_letter_to_index_returns_zero_for_empty_ref() {
+        assert_eq!(col_letter_to_index(""), 0);
+        assert_eq!(col_letter_to_index("123"), 0);
+    }
+
+    // ── grid_to_markdown ──────────────────────────────────────────────────────
+
+    #[test]
+    fn grid_to_markdown_produces_gfm_pipe_table() {
+        // GIVEN: 2-row grid (header + data)
+        let grid = vec![
+            vec!["Name".to_string(), "Age".to_string()],
+            vec!["Alice".to_string(), "30".to_string()],
+        ];
+        // WHEN
+        let md = grid_to_markdown(&grid);
+        // THEN
+        assert!(md.contains("| Name | Age |"), "header row missing: {md}");
+        assert!(md.contains("| --- | --- |"), "separator missing: {md}");
+        assert!(md.contains("| Alice | 30 |"), "data row missing: {md}");
+    }
+
+    #[test]
+    fn grid_to_markdown_escapes_pipe_characters_in_cells() {
+        let grid = vec![
+            vec!["Col".to_string()],
+            vec!["A|B".to_string()],
+        ];
+        let md = grid_to_markdown(&grid);
+        assert!(md.contains("A\\|B"), "pipe must be escaped: {md}");
+    }
+
+    #[test]
+    fn grid_to_markdown_returns_empty_for_empty_grid() {
+        assert_eq!(grid_to_markdown(&[]), "");
+    }
+
+    // ── xlsx_to_all_sheets_markdown ───────────────────────────────────────────
+
+    #[test]
+    fn xlsx_to_all_sheets_markdown_single_sheet_no_header() {
+        // GIVEN: minimal xlsx with one sheet containing numeric data
+        let xlsx_bytes = create_minimal_xlsx(&[(
+            "Budget",
+            r#"<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1"><v>Revenue</v></c><c r="B1"><v>100</v></c></row>
+    <row r="2"><c r="A2"><v>Cost</v></c><c r="B2"><v>60</v></c></row>
+  </sheetData>
+</worksheet>"#,
+        )]);
+        // WHEN
+        let md = xlsx_to_all_sheets_markdown(&xlsx_bytes).unwrap();
+        // THEN: single sheet → no "## Sheet:" header prefix
+        assert!(!md.contains("## Sheet:"), "single sheet must not have section header");
+        assert!(md.contains("Revenue"), "cell data must appear: {md}");
+    }
+
+    #[test]
+    fn xlsx_to_all_sheets_markdown_multi_sheet_adds_section_headers() {
+        // GIVEN: xlsx with two sheets
+        let xlsx_bytes = create_minimal_xlsx(&[
+            (
+                "Alpha",
+                r#"<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData>
+</worksheet>"#,
+            ),
+            (
+                "Beta",
+                r#"<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData><row r="1"><c r="A1"><v>2</v></c></row></sheetData>
+</worksheet>"#,
+            ),
+        ]);
+        // WHEN
+        let md = xlsx_to_all_sheets_markdown(&xlsx_bytes).unwrap();
+        // THEN
+        assert!(md.contains("## Sheet: Alpha"), "first sheet header missing: {md}");
+        assert!(md.contains("## Sheet: Beta"), "second sheet header missing: {md}");
+    }
+
+    #[test]
+    fn xlsx_to_all_sheets_markdown_returns_error_for_non_zip() {
+        let result = xlsx_to_all_sheets_markdown(b"not a zip file");
+        assert!(result.is_err());
     }
 
     // ── Comment anchors ───────────────────────────────────────────────────────
@@ -1535,6 +1770,47 @@ mod tests {
             zip.start_file(*name, options).unwrap();
             zip.write_all(content.as_bytes()).unwrap();
         }
+        zip.finish().unwrap().into_inner()
+    }
+
+    /// Create a minimal in-memory xlsx archive for testing.
+    ///
+    /// `sheets` is a slice of `(sheet_name, worksheet_xml)` pairs.  The helper
+    /// generates a minimal `xl/workbook.xml` listing all sheets in order, and
+    /// writes each worksheet to `xl/worksheets/sheetN.xml`.
+    fn create_minimal_xlsx(sheets: &[(&str, &str)]) -> Vec<u8> {
+        use std::io::Write as _;
+
+        // Build workbook XML listing all sheets.
+        let mut workbook = String::from(
+            r#"<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>"#,
+        );
+        for (i, (name, _)) in sheets.iter().enumerate() {
+            let _ = write!(
+                workbook,
+                "\n    <sheet name=\"{name}\" sheetId=\"{id}\" r:id=\"rId{id}\"/>",
+                id = i + 1
+            );
+        }
+        workbook.push_str("\n  </sheets>\n</workbook>");
+
+        let buf = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(buf);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        zip.start_file("xl/workbook.xml", options).unwrap();
+        zip.write_all(workbook.as_bytes()).unwrap();
+
+        for (i, (_, sheet_xml)) in sheets.iter().enumerate() {
+            let path = format!("xl/worksheets/sheet{}.xml", i + 1);
+            zip.start_file(path, options).unwrap();
+            zip.write_all(sheet_xml.as_bytes()).unwrap();
+        }
+
         zip.finish().unwrap().into_inner()
     }
 }

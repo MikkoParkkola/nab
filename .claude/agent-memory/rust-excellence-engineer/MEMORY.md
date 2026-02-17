@@ -61,14 +61,32 @@
 **OOXML parsing** (zip + roxmltree):
 - `.docx`: comments in `word/comments.xml` (w:comment elements), suggestions in `word/document.xml` (w:ins/w:del)
 - `.xlsx`: modern in `xl/threadedComments/*.xml`, legacy in `xl/comments*.xml`
+- `.xlsx` sheet data: workbook in `xl/workbook.xml` (<sheet name="..." sheetId="N"/>), sheets in `xl/worksheets/sheetN.xml` (1-based), shared strings in `xl/sharedStrings.xml` (<si><t>string</t></si>)
+- `.xlsx` cell types: `t="s"` → shared string index in <v>; `t="b"` → boolean (1=TRUE, 0=FALSE); `t="inlineStr"` → text in <is><t>; default → numeric raw value in <v>
 - `.pptx`: comments in `ppt/comments/*.xml` (cm or comment elements)
 - Always use `let Ok(doc) = roxmltree::Document::parse(xml) else { return vec![]; }` (let-else)
+
+**Google Docs multi-tab limitation** (2026-02-17):
+- Tab IDs are opaque strings (e.g. `t.abc123`), rendered ONLY by JavaScript — absent from initial HTML
+- Sequential IDs (`t.0`, `t.1`) do not exist in the Google export API
+- PDF/HTML export without `&tab=` returns only the default/first tab
+- NO viable approach for multi-tab export without browser JS execution
+- Solution: always use single export path; document limitation in code comment
+
+**Google Sheets multi-sheet fix** (2026-02-17):
+- Old: `discover_sheets()` scraped editor HTML for `"sheetId":N` regex — never matched (JS-rendered)
+- New: download xlsx once, parse `xl/workbook.xml` for sheet names, parse each `xl/worksheets/sheetN.xml`
+- Benefit: single HTTP request (vs 1 editor + N CSV per sheet), correct sheet names, handles gaps in data
+- Fall back to CSV export only when xlsx parsing returns empty content
+- `xlsx_to_all_sheets_markdown()` is the main entry; reuses xlsx bytes for comment parsing too
 
 **Clippy pedantic patterns learned**:
 - `map_or(false, |x| ...)` → `.is_some_and(|x| ...)` (unnecessary_map_or)
 - `.ends_with(".xml")` → use `Path::extension().is_some_and(|e| e.eq_ignore_ascii_case("xml"))` (case_sensitive_file_extension_comparisons)
 - `match { Ok(d) => d, Err(_) => return vec![] }` → `let Ok(d) = ... else { return vec![]; }`
 - `format!(..)` appended to String → `push_str` + separate operations
+- `.filter_map(|x| Some(...))` that always returns Some → `.map(|x| ...)` (redundant_closures / unnecessary filter_map)
+- `.take_while(|b| b.is_ascii_alphabetic())` → `.take_while(u8::is_ascii_alphabetic)` (redundant_closure_for_method_calls)
 
 **Provider Bug Fixes** (2026-02-13):
 - **Reddit**: `AcceleratedClient` uses `http2_prior_knowledge()` which forces H2 without ALPN.
