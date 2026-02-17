@@ -54,7 +54,7 @@ impl SiteProvider for StackOverflowProvider {
                 })
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
+    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
         let question_id = parse_stackoverflow_url(url)?;
 
         // Fetch question with body and answers

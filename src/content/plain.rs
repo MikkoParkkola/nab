@@ -17,6 +17,7 @@ impl ContentHandler for PlainHandler {
     fn supported_types(&self) -> &[&str] {
         &[
             "text/plain",
+            "text/markdown",
             "application/json",
             "text/csv",
             "text/xml",
@@ -64,6 +65,15 @@ mod tests {
         let handler = PlainHandler;
         let result = handler.to_markdown(b"", "text/plain").unwrap();
         assert_eq!(result.markdown, "");
+    }
+
+    #[test]
+    fn passes_markdown_through() {
+        let handler = PlainHandler;
+        let md = b"# Heading\n\nSome **bold** text.";
+        let result = handler.to_markdown(md, "text/markdown").unwrap();
+        assert!(result.markdown.contains("# Heading"));
+        assert!(result.markdown.contains("**bold**"));
     }
 
     #[test]

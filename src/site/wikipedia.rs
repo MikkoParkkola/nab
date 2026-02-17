@@ -46,7 +46,7 @@ impl SiteProvider for WikipediaProvider {
         normalized.contains(".wikipedia.org/wiki/")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
+    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
         let (lang, title) = parse_wikipedia_url(url)?;
 
         let api_url = format!(

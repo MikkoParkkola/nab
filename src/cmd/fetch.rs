@@ -63,9 +63,34 @@ pub async fn cmd_fetch(
     let client = build_client(no_redirect, proxy)?;
     let profile = client.profile().await;
 
-    // Try site-specific providers first (e.g., Twitter via FxTwitter API)
+    // Extract domain from URL
+    let domain = url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
+        .unwrap_or_default();
+
+    // Get cookies (auto-detect by default, unless "none") — load before site providers
+    // so authenticated providers (e.g., Google Workspace) receive the cookie header.
+    let mut cookie_header = String::new();
+    let browser_name = resolve_browser_name(cookies);
+
+    if let Some(browser) = &browser_name {
+        let source = resolve_cookie_source(browser);
+        cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
+        if !cookie_header.is_empty() && matches!(format, OutputFormat::Full) {
+            println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
+        }
+    }
+
+    // Try site-specific providers first (e.g., Twitter via FxTwitter API).
+    // Cookies are passed so authenticated providers (e.g., Google Workspace) can use them.
     let site_router = nab::site::SiteRouter::new();
-    if let Some(site_content) = site_router.try_extract(url, &client).await {
+    let cookie_opt = if cookie_header.is_empty() {
+        None
+    } else {
+        Some(cookie_header.as_str())
+    };
+    if let Some(site_content) = site_router.try_extract(url, &client, cookie_opt).await {
         // Convert raw_html flag to markdown (default is markdown unless --raw-html)
         let markdown = !raw_html;
         output_body(
@@ -77,24 +102,6 @@ pub async fn cmd_fetch(
             !no_spa,
         )?;
         return Ok(());
-    }
-
-    // Extract domain from URL
-    let domain = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
-        .unwrap_or_default();
-
-    // Get cookies (auto-detect by default, unless "none")
-    let mut cookie_header = String::new();
-    let browser_name = resolve_browser_name(cookies);
-
-    if let Some(browser) = &browser_name {
-        let source = resolve_cookie_source(browser);
-        cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
-        if !cookie_header.is_empty() && matches!(format, OutputFormat::Full) {
-            println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
-        }
     }
 
     // Convert raw_html flag to markdown (default is markdown unless --raw-html)

@@ -47,7 +47,7 @@ impl SiteProvider for GitHubProvider {
             && (normalized.contains("/issues/") || normalized.contains("/pull/"))
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
+    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
         let (owner, repo, number) = parse_github_url(url)?;
 
         let api_url = format!("https://api.github.com/repos/{owner}/{repo}/issues/{number}");

@@ -403,8 +403,7 @@ impl AssGenerator {
             .expect("Writing to String should not fail");
         writeln!(header, "PlayResY: {}", self.play_res_y)
             .expect("Writing to String should not fail");
-        writeln!(header, "ScaledBorderAndShadow: yes")
-            .expect("Writing to String should not fail");
+        writeln!(header, "ScaledBorderAndShadow: yes").expect("Writing to String should not fail");
         writeln!(header, "YCbCr Matrix: TV.709").expect("Writing to String should not fail");
         writeln!(header).expect("Writing to String should not fail");
 

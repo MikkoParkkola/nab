@@ -321,9 +321,18 @@ mod tests {
     #[test]
     fn test_browser_versions_not_empty() {
         let versions = &*BROWSER_VERSIONS;
-        assert!(!versions.chrome.is_empty(), "Chrome versions should not be empty");
-        assert!(!versions.firefox.is_empty(), "Firefox versions should not be empty");
-        assert!(!versions.safari.is_empty(), "Safari versions should not be empty");
+        assert!(
+            !versions.chrome.is_empty(),
+            "Chrome versions should not be empty"
+        );
+        assert!(
+            !versions.firefox.is_empty(),
+            "Firefox versions should not be empty"
+        );
+        assert!(
+            !versions.safari.is_empty(),
+            "Safari versions should not be empty"
+        );
     }
 
     #[test]
@@ -332,7 +341,10 @@ mod tests {
         for (major, full) in &versions.chrome {
             assert!(!major.is_empty(), "Major version should not be empty");
             assert!(!full.is_empty(), "Full version should not be empty");
-            assert!(full.starts_with(major), "Full version should start with major");
+            assert!(
+                full.starts_with(major),
+                "Full version should start with major"
+            );
         }
     }
 

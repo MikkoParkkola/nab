@@ -25,7 +25,11 @@ pub struct LoginFlow {
 
 impl LoginFlow {
     /// Create a new login flow
-    pub fn new(client: AcceleratedClient, use_1password: bool, cookie_header: Option<String>) -> Self {
+    pub fn new(
+        client: AcceleratedClient,
+        use_1password: bool,
+        cookie_header: Option<String>,
+    ) -> Self {
         let one_password = if use_1password {
             Some(OnePasswordAuth::new(None))
         } else {
@@ -69,7 +73,9 @@ impl LoginFlow {
         debug!("Fetching login page...");
         let page_html = if let Some(ref cookie) = self.cookie_header {
             // Fetch with cookies using raw client
-            let response = self.client.inner()
+            let response = self
+                .client
+                .inner()
                 .get(url)
                 .header("Cookie", cookie)
                 .send()
@@ -85,8 +91,7 @@ impl LoginFlow {
 
         // Step 3: Detect login form
         debug!("Detecting login form...");
-        let form_result = Form::find_login_form(&page_html)
-            .context("Failed to parse forms")?;
+        let form_result = Form::find_login_form(&page_html).context("Failed to parse forms")?;
 
         // If no form found, try QuickJS execution for SPA forms
         let mut form = match form_result {
@@ -106,7 +111,9 @@ impl LoginFlow {
                                     debug!("QuickJS execution completed, re-parsing for forms...");
 
                                     // Try to find form in rendered HTML
-                                    if let Ok(Some(rendered_form)) = Form::find_login_form(&rendered_html) {
+                                    if let Ok(Some(rendered_form)) =
+                                        Form::find_login_form(&rendered_html)
+                                    {
                                         info!("✓ Found login form after JavaScript execution");
                                         rendered_form
                                     } else {
@@ -114,7 +121,9 @@ impl LoginFlow {
 
                                         // Try cookie-based auth as fallback
                                         if self.cookie_header.is_some() {
-                                            info!("Attempting cookie-based authentication instead...");
+                                            info!(
+                                                "Attempting cookie-based authentication instead..."
+                                            );
                                             return self.cookie_auth_fallback(url).await;
                                         }
 
@@ -163,7 +172,9 @@ impl LoginFlow {
                                 return self.cookie_auth_fallback(url).await;
                             }
 
-                            anyhow::bail!("No login form found and JavaScript engine initialization failed");
+                            anyhow::bail!(
+                                "No login form found and JavaScript engine initialization failed"
+                            );
                         }
                     }
                 } else {
@@ -280,7 +291,16 @@ impl LoginFlow {
     /// generic patterns (`login_email`).
     fn fill_form_with_credential(&self, form: &mut Form, credential: &Credential) -> Result<()> {
         // Common username field name patterns
-        let username_patterns = ["username", "user", "email", "login", "log", "user_name", "user_email", "email_address"];
+        let username_patterns = [
+            "username",
+            "user",
+            "email",
+            "login",
+            "log",
+            "user_name",
+            "user_email",
+            "email_address",
+        ];
         // Common password field name patterns
         let password_patterns = ["password", "pass", "passwd", "pwd"];
 
@@ -349,9 +369,12 @@ impl LoginFlow {
                         || k_lower.contains("2fa")
                         || k_lower.contains("verification_code")
                         || k_lower.contains("security_code")
-                        || (k_lower.contains("code") && !k_lower.contains("zip")
-                            && !k_lower.contains("postal") && !k_lower.contains("promo")
-                            && !k_lower.contains("discount") && !k_lower.contains("country"))
+                        || (k_lower.contains("code")
+                            && !k_lower.contains("zip")
+                            && !k_lower.contains("postal")
+                            && !k_lower.contains("promo")
+                            && !k_lower.contains("discount")
+                            && !k_lower.contains("country"))
                 })
             });
         }
@@ -487,10 +510,14 @@ impl LoginFlow {
 
     /// Fallback: use browser cookies to access the target URL directly
     async fn cookie_auth_fallback(&self, url: &str) -> Result<LoginResult> {
-        let cookie = self.cookie_header.as_ref()
+        let cookie = self
+            .cookie_header
+            .as_ref()
             .context("No browser cookies available for fallback")?;
 
-        let response = self.client.inner()
+        let response = self
+            .client
+            .inner()
             .get(url)
             .header("Cookie", cookie)
             .send()
@@ -548,7 +575,9 @@ impl LoginFlow {
         };
 
         // Perform browser login
-        let cookies = browser.login(url, credential.as_ref()).await
+        let cookies = browser
+            .login(url, credential.as_ref())
+            .await
             .context("Browser login failed")?;
 
         info!("Browser login successful, got {} cookies", cookies.len());
@@ -557,7 +586,9 @@ impl LoginFlow {
         let cookie_header = BrowserLogin::cookies_to_header(&cookies);
 
         // Fetch the page with the authenticated session
-        let response = self.client.inner()
+        let response = self
+            .client
+            .inner()
             .get(url)
             .header("Cookie", &cookie_header)
             .send()

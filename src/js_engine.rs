@@ -245,9 +245,8 @@ impl JsEngine {
         let document = Html::parse_document(html);
 
         // Find all inline script tags (no src attribute)
-        let script_selector = Selector::parse("script").map_err(|e| {
-            anyhow::anyhow!("Failed to parse script selector: {:?}", e)
-        })?;
+        let script_selector = Selector::parse("script")
+            .map_err(|e| anyhow::anyhow!("Failed to parse script selector: {:?}", e))?;
 
         let mut inline_scripts = Vec::new();
         for script_elem in document.select(&script_selector) {
@@ -290,7 +289,8 @@ impl JsEngine {
 
         // Extract rendered HTML from document.body.innerHTML
         debug!("Extracting rendered HTML from document.body");
-        let rendered_html = self.eval("document.body.innerHTML")
+        let rendered_html = self
+            .eval("document.body.innerHTML")
             .unwrap_or_else(|_| html.to_string());
 
         Ok(rendered_html)
@@ -303,9 +303,8 @@ impl JsEngine {
         let document = Html::parse_document(html);
 
         // Build a simplified innerHTML string from body content
-        let body_selector = Selector::parse("body").map_err(|e| {
-            anyhow::anyhow!("Failed to parse body selector: {:?}", e)
-        })?;
+        let body_selector = Selector::parse("body")
+            .map_err(|e| anyhow::anyhow!("Failed to parse body selector: {:?}", e))?;
 
         if let Some(body_elem) = document.select(&body_selector).next() {
             // Extract inner HTML of body (all child elements as text)
@@ -519,8 +518,11 @@ mod tests {
 
         let result = engine.execute_and_extract_forms(html).unwrap();
         // After script execution, should contain the dynamically created form
-        assert!(result.contains("email") || result.contains("password"),
-            "Rendered HTML should contain form fields: {}", result);
+        assert!(
+            result.contains("email") || result.contains("password"),
+            "Rendered HTML should contain form fields: {}",
+            result
+        );
     }
 
     #[test]
@@ -541,7 +543,10 @@ mod tests {
 
         let result = engine.execute_and_extract_forms(html).unwrap();
         // Should execute inline script but skip external src
-        assert!(result.contains("test"), "Should contain form from inline script");
+        assert!(
+            result.contains("test"),
+            "Should contain form from inline script"
+        );
     }
 
     #[test]
@@ -583,8 +588,16 @@ mod tests {
         "#;
 
         let result = engine.execute_and_extract_forms(html).unwrap();
-        assert!(result.contains("username"), "Should find username field: {}", result);
-        assert!(result.contains("password"), "Should find password field: {}", result);
+        assert!(
+            result.contains("username"),
+            "Should find username field: {}",
+            result
+        );
+        assert!(
+            result.contains("password"),
+            "Should find password field: {}",
+            result
+        );
     }
 
     #[test]

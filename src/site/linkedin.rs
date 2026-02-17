@@ -48,7 +48,7 @@ impl SiteProvider for LinkedInProvider {
             || normalized.contains("linkedin.com/feed/update/")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
+    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
         let oembed_url = format!(
             "https://www.linkedin.com/oembed?url={}&format=json",
             urlencoding::encode(url)

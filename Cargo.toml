@@ -109,6 +109,10 @@ url = "2"                           # URL parsing
 urlencoding = "2"                   # URL encoding for forms
 readability = { version = "0.3", default-features = false }  # Mozilla-style article extraction
 
+# OOXML parsing (Google Docs/Sheets/Slides export)
+zip = { version = "2", default-features = false, features = ["deflate"] }
+roxmltree = "0.20"
+
 # PDF extraction (optional - requires pdfium dynamic library)
 pdfium-render = { version = "0.8", default-features = true, optional = true }
 

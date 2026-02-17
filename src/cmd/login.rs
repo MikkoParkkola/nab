@@ -13,8 +13,7 @@ pub async fn cmd_login(
     cookies: &str,
     _show_headers: bool,
     format: OutputFormat,
-    #[cfg(feature = "browser")]
-    use_browser: bool,
+    #[cfg(feature = "browser")] use_browser: bool,
 ) -> Result<()> {
     use nab::LoginFlow;
 

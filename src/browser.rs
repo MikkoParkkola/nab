@@ -76,11 +76,15 @@ impl BrowserLogin {
         info!("Starting browser login for {}", url);
 
         // Create new page
-        let page = self.browser.new_page(url).await
+        let page = self
+            .browser
+            .new_page(url)
+            .await
             .context("Failed to create new browser page")?;
 
         // Wait for page load
-        page.wait_for_navigation().await
+        page.wait_for_navigation()
+            .await
             .context("Failed to navigate to login page")?;
 
         debug!("Page loaded: {}", url);
@@ -104,7 +108,10 @@ impl BrowserLogin {
         // Extract cookies after successful login
         let cookies = self.extract_cookies(&page).await?;
 
-        info!("Browser login complete, extracted {} cookies", cookies.len());
+        info!(
+            "Browser login complete, extracted {} cookies",
+            cookies.len()
+        );
         Ok(cookies)
     }
 
@@ -139,7 +146,9 @@ impl BrowserLogin {
                 if let Ok(element) = page.find_element(selector).await {
                     debug!("Found username field: {}", selector);
                     element.click().await?;
-                    element.type_str(username).await
+                    element
+                        .type_str(username)
+                        .await
                         .context("Failed to type username")?;
                     break;
                 }
@@ -152,7 +161,9 @@ impl BrowserLogin {
                 if let Ok(element) = page.find_element(selector).await {
                     debug!("Found password field: {}", selector);
                     element.click().await?;
-                    element.type_str(password).await
+                    element
+                        .type_str(password)
+                        .await
                         .context("Failed to type password")?;
                     break;
                 }
@@ -206,7 +217,9 @@ impl BrowserLogin {
     ///
     /// Returns all cookies for the current page's domain
     pub async fn extract_cookies(&self, page: &chromiumoxide::Page) -> Result<Vec<Cookie>> {
-        let cdp_cookies = page.get_cookies().await
+        let cdp_cookies = page
+            .get_cookies()
+            .await
             .context("Failed to get cookies from browser")?;
 
         let cookies = cdp_cookies

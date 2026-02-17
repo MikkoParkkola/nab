@@ -19,7 +19,7 @@
 //! let client = AcceleratedClient::new()?;
 //! let router = SiteRouter::new();
 //!
-//! if let Some(content) = router.try_extract("https://x.com/user/status/123", &client).await {
+//! if let Some(content) = router.try_extract("https://x.com/user/status/123", &client, None).await {
 //!     println!("{}", content.markdown);
 //! }
 //! # Ok(())
@@ -27,6 +27,7 @@
 //! ```
 
 pub mod github;
+pub mod google;
 pub mod hackernews;
 pub mod instagram;
 pub mod linkedin;
@@ -82,7 +83,15 @@ pub trait SiteProvider: Send + Sync {
     fn matches(&self, url: &str) -> bool;
 
     /// Extract content from the URL using the provider's API/method.
-    async fn extract(&self, url: &str, client: &AcceleratedClient) -> Result<SiteContent>;
+    ///
+    /// `cookies` carries the browser cookie header (e.g., `"SID=abc; HSID=def"`) for
+    /// providers that require authentication. Most providers ignore this parameter.
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        cookies: Option<&str>,
+    ) -> Result<SiteContent>;
 }
 
 /// Routes URLs to specialized site providers.
@@ -102,6 +111,7 @@ impl SiteRouter {
             Box::new(reddit::RedditProvider),
             Box::new(hackernews::HackerNewsProvider),
             Box::new(github::GitHubProvider),
+            Box::new(google::GoogleWorkspaceProvider),
             Box::new(instagram::InstagramProvider),
             Box::new(youtube::YouTubeProvider),
             Box::new(wikipedia::WikipediaProvider),
@@ -115,14 +125,22 @@ impl SiteRouter {
 
     /// Try to extract content using a specialized provider.
     ///
+    /// `cookies` is an optional browser cookie header (e.g., `"SID=abc; HSID=def"`) forwarded
+    /// to providers that require authentication (e.g., Google Workspace).
+    ///
     /// Returns `None` if:
     /// - No provider matches the URL
     /// - Provider extraction fails (logged as warning)
-    pub async fn try_extract(&self, url: &str, client: &AcceleratedClient) -> Option<SiteContent> {
+    pub async fn try_extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        cookies: Option<&str>,
+    ) -> Option<SiteContent> {
         for provider in &self.providers {
             if provider.matches(url) {
                 tracing::debug!("Matched site provider: {}", provider.name());
-                match provider.extract(url, client).await {
+                match provider.extract(url, client, cookies).await {
                     Ok(content) => return Some(content),
                     Err(e) => {
                         tracing::warn!(
@@ -153,17 +171,18 @@ mod tests {
     #[test]
     fn router_registers_all_providers() {
         let router = SiteRouter::new();
-        assert_eq!(router.providers.len(), 10);
+        assert_eq!(router.providers.len(), 11);
         assert_eq!(router.providers[0].name(), "twitter");
         assert_eq!(router.providers[1].name(), "reddit");
         assert_eq!(router.providers[2].name(), "hackernews");
         assert_eq!(router.providers[3].name(), "github");
-        assert_eq!(router.providers[4].name(), "instagram");
-        assert_eq!(router.providers[5].name(), "youtube");
-        assert_eq!(router.providers[6].name(), "wikipedia");
-        assert_eq!(router.providers[7].name(), "stackoverflow");
-        assert_eq!(router.providers[8].name(), "mastodon");
-        assert_eq!(router.providers[9].name(), "linkedin");
+        assert_eq!(router.providers[4].name(), "google-workspace");
+        assert_eq!(router.providers[5].name(), "instagram");
+        assert_eq!(router.providers[6].name(), "youtube");
+        assert_eq!(router.providers[7].name(), "wikipedia");
+        assert_eq!(router.providers[8].name(), "stackoverflow");
+        assert_eq!(router.providers[9].name(), "mastodon");
+        assert_eq!(router.providers[10].name(), "linkedin");
     }
 
     #[test]

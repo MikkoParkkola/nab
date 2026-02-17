@@ -47,7 +47,7 @@ impl SiteProvider for RedditProvider {
             && normalized.contains("/comments/")
     }
 
-    async fn extract(&self, url: &str, _client: &AcceleratedClient) -> Result<SiteContent> {
+    async fn extract(&self, url: &str, _client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
         // Normalize URL and append .json
         let json_url = parse_reddit_url(url)?;
         tracing::debug!("Fetching from Reddit: {}", json_url);
