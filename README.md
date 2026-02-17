@@ -22,7 +22,7 @@ nab is a local, token-optimized HTTP client built for LLM pipelines. It converts
 | **Token output (typical)** | ~500 | ~1,500 | ~1,500 | ~12,500 | ~2,000 | ~12,500 |
 | **Runs locally** | Yes (single binary) | Cloud API | Yes (Python + Chrome) | Yes (Node + Chrome) | Cloud API | Yes |
 | **HTTP/3 (QUIC)** | Yes | No | No | No | N/A | Build-dependent |
-| **Site-specific APIs** | 10 built-in providers | None | None | None | None | None |
+| **Site-specific APIs** | 11 built-in providers | None | None | None | None | None |
 | **1Password / Passkeys** | Native | None | None | None | None | None |
 | **Cost** | Free (local) | $0.004/page | Free (local) | Free (local) | Free tier / paid | Free (local) |
 | **Install size** | ~15MB binary | Cloud service | ~300MB+ | ~300MB+ | Cloud service | ~5MB |
@@ -62,7 +62,8 @@ nab ships with anti-fingerprinting by default: realistic TLS fingerprints, brows
 
 ## Features
 
-- **10 Site Providers** — Specialized extractors for Twitter/X, Reddit, Hacker News, GitHub, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, and Instagram. API-backed where possible for structured output.
+- **11 Site Providers** — Specialized extractors for Twitter/X, Reddit, Hacker News, GitHub, Google Workspace, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, and Instagram. API-backed where possible for structured output.
+- **Google Workspace Extraction** — Fetch Google Docs, Sheets, and Slides as clean markdown using browser cookies. Extracts comments and suggested edits from OOXML (docx/xlsx/pptx).
 - **HTML-to-Markdown** — Automatic conversion with boilerplate removal. 25x token savings vs raw HTML.
 - **PDF Extraction** — PDF-to-markdown with heading and table detection (requires pdfium).
 - **Browser Cookie Auth** — Auto-detects your default browser (Brave, Chrome, Firefox, Safari, Edge, Dia) and injects session cookies. Zero config.
@@ -85,6 +86,7 @@ nab detects URLs for these platforms and uses their APIs or structured data inst
 | Reddit | `reddit.com/r/*/comments/*` | JSON API |
 | Hacker News | `news.ycombinator.com/item?id=*` | Firebase API |
 | GitHub | `github.com/*/*/issues/*`, `*/pull/*` | REST API |
+| Google Workspace | `docs.google.com/document/d/*`, `*/spreadsheets/d/*`, `*/presentation/d/*` | Export API + OOXML |
 | YouTube | `youtube.com/watch?v=*`, `youtu.be/*` | oEmbed |
 | Wikipedia | `*.wikipedia.org/wiki/*` | REST API |
 | StackOverflow | `stackoverflow.com/questions/*` | API |
@@ -105,6 +107,15 @@ nab fetch https://github.com/notifications --cookies brave
 
 # With 1Password credentials
 nab fetch https://internal.company.com --1password
+
+# Google Docs (markdown with comments and suggested edits)
+nab fetch --cookies brave "https://docs.google.com/document/d/DOCID/edit"
+
+# Google Sheets (CSV rendered as markdown table)
+nab fetch --cookies brave "https://docs.google.com/spreadsheets/d/SHEETID/edit"
+
+# Google Slides (plain text with comments)
+nab fetch --cookies brave "https://docs.google.com/presentation/d/SLIDEID/edit"
 
 # Raw HTML output (skip markdown conversion)
 nab fetch https://example.com --raw-html

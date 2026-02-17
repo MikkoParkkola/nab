@@ -32,10 +32,43 @@
 - MCP: Same pattern, adds "from specialized provider" notice
 - Both use same `SiteRouter::new()` and `try_extract()` flow
 
-**10 Providers** (as of 2026-02-13):
-- Twitter (private mod), Reddit, HackerNews, GitHub, Instagram, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn
+**11 Providers** (as of 2026-02-17):
+- Twitter (private mod), Reddit, HackerNews, GitHub, GoogleWorkspace, Instagram, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn
 - Twitter module is `mod twitter` (NOT `pub mod`), so `TwitterProvider` not directly benchmarkable
 - All other providers are `pub mod`, structs accessible as `nab::site::<mod>::<Provider>`
+
+**Google Workspace Provider** (2026-02-17):
+- `src/site/google.rs` — Docs (HTML+OOXML), Sheets (CSV+OOXML), Slides (TXT+OOXML)
+- Requires browser cookies — fails fast with helpful error if none provided
+- `SiteProvider::extract()` signature extended: `cookies: Option<&str>` added (breaking change)
+- All 10 existing providers updated with `_cookies: Option<&str>`, `plugin/runner.rs` also updated
+- Cookie loading moved BEFORE `try_extract()` call in both `cmd/fetch.rs` and `mcp_server.rs`
+- `SiteRouter::try_extract()` now takes `cookies: Option<&str>`
+
+**LazyLock vs once_cell::Lazy (2026-02-17)**:
+- `clippy::non_std_lazy_statics` (pedantic) flags `once_cell::sync::Lazy` — use `std::sync::LazyLock` (stable Rust 1.80+)
+- Replace `Lazy::new(|| ...)` with `LazyLock::new(|| ...)`; import `use std::sync::LazyLock;` (drop `once_cell` import)
+
+**`format_push_string` clippy fix**:
+- `combined.push_str(&format!("## Tab: {}\n\n", name))` → `let _ = write!(combined, "## Tab: {}\n\n", name);`
+- Requires `use std::fmt::Write as _;` (underscore avoids collision with `std::io::Write`)
+
+**roxmltree namespace attribute gotcha**:
+- `node.attribute("w:author")` returns `None` for namespaced attributes
+- Must use `node.attribute(("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "author"))`
+- Pattern: try namespace-qualified first, fall back to unqualified: `.or_else(|| node.attribute("author"))`
+
+**OOXML parsing** (zip + roxmltree):
+- `.docx`: comments in `word/comments.xml` (w:comment elements), suggestions in `word/document.xml` (w:ins/w:del)
+- `.xlsx`: modern in `xl/threadedComments/*.xml`, legacy in `xl/comments*.xml`
+- `.pptx`: comments in `ppt/comments/*.xml` (cm or comment elements)
+- Always use `let Ok(doc) = roxmltree::Document::parse(xml) else { return vec![]; }` (let-else)
+
+**Clippy pedantic patterns learned**:
+- `map_or(false, |x| ...)` → `.is_some_and(|x| ...)` (unnecessary_map_or)
+- `.ends_with(".xml")` → use `Path::extension().is_some_and(|e| e.eq_ignore_ascii_case("xml"))` (case_sensitive_file_extension_comparisons)
+- `match { Ok(d) => d, Err(_) => return vec![] }` → `let Ok(d) = ... else { return vec![]; }`
+- `format!(..)` appended to String → `push_str` + separate operations
 
 **Provider Bug Fixes** (2026-02-13):
 - **Reddit**: `AcceleratedClient` uses `http2_prior_knowledge()` which forces H2 without ALPN.
@@ -95,3 +128,59 @@
 - **Providers** (`StreamProvider` trait): Yle, SVT, NRK, DR, Generic - extract metadata from APIs
 - **Backends** (`StreamBackend` trait): NativeHls, Ffmpeg, Streamlink - handle actual data transfer
 - Provider gets manifest URL -> Backend downloads segments
+
+### Browser Automation (Phase 3: CDP Integration - 2026-02-15)
+
+**Feature**: Optional Chrome DevTools Protocol integration for SPA login and CAPTCHA handling
+
+**Architecture**:
+- `src/browser.rs`: CDP client wrapper (330 lines, feature-gated)
+- `BrowserLogin::connect(port)` - Connect to Chrome on port 9222
+- `BrowserLogin::login(url, credential)` - Automated login with CAPTCHA detection
+- `BrowserLogin::extract_cookies()` - Get session cookies from browser
+- Integration: `src/login.rs` adds `with_browser()` and `browser_login()` methods
+- CLI: `--browser` flag in `src/cmd/login.rs` and `src/main.rs`
+
+**Key Patterns**:
+- Everything behind `#[cfg(feature = "browser")]` - zero impact when disabled
+- Default build unchanged: 11 MB, 320 tests pass
+- With browser: 15 MB (+4 MB), 326 tests pass
+- `chromiumoxide` crate for CDP via WebSocket
+- `futures::StreamExt` required for `handler.next().await`
+
+**Form Field Detection**:
+- Multiple CSS selectors tried for username/password (exact match first, then substring)
+- Arrays NOT references in for loops to avoid `&&str` type issues
+- `input[name='username']`, `input[type='email']`, etc. (6 patterns each)
+
+**CAPTCHA Detection**:
+- Checks for `.g-recaptcha`, `.h-captcha`, `.cf-turnstile`, iframes
+- 60-second pause when detected for manual solving
+- Error messages contextual: suggest `--browser` when feature enabled
+
+**Cookie Handling**:
+- Extract all cookies for domain from CDP
+- Convert to HTTP `Cookie` header format: `name1=value1; name2=value2`
+- Used for subsequent requests after login
+
+**Testing**:
+- 6 unit tests in browser module (all pass)
+- Test without feature: `cargo test --lib` (320 tests)
+- Test with feature: `cargo test --lib --features browser` (326 tests)
+- No actual Chrome needed for unit tests
+
+**Build Commands**:
+- Default: `cargo build --release --features pdf` (11 MB)
+- With browser: `cargo build --release --features pdf,browser` (15 MB)
+
+**Lessons Learned**:
+- Feature gating must cover struct fields, methods, use statements, CLI args
+- Iterator type matters: `for x in &array` gives `&&str`, `for x in array` gives `&str`
+- Conditional compilation in main.rs needs careful block scoping for variables
+- `#[cfg(not(feature = "browser"))]` useful for fallback paths
+- StreamExt trait must be in scope for `.next()` on futures
+- Doc comments should mention feature requirement: `/// (requires browser feature)`
+
+**Documentation**:
+- `docs/browser-automation.md` - Comprehensive guide (300+ lines)
+- `PHASE3_IMPLEMENTATION.md` - Implementation summary

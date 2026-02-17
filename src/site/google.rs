@@ -3,7 +3,9 @@
 //! Exports documents via the Google export API using browser cookies for
 //! authentication. Supports:
 //! - Google Docs → HTML export (converted to markdown) + OOXML for comments/suggestions
+//!   - Auto-discovers and exports all tabs in multi-tab documents
 //! - Google Sheets → CSV export (formatted as markdown table) + OOXML for comments
+//!   - Auto-discovers and exports all sheets in a workbook
 //! - Google Slides → plain-text export + OOXML for comments
 //!
 //! Requires browser cookies (`--cookies brave` etc.). Without cookies the export
@@ -31,10 +33,14 @@
 //! # }
 //! ```
 
+use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{Cursor, Read};
+use std::sync::LazyLock;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use regex::Regex;
 
 use super::{SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
@@ -43,6 +49,25 @@ use crate::http_client::AcceleratedClient;
 
 /// `WordprocessingML` namespace (used in `.docx` files).
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+// ─── Compiled Regexes ─────────────────────────────────────────────────────────
+
+/// Matches Google Docs tab entries like `"tab":"t.abc123"` and an optional
+/// nearby `"title":"Tab Name"` in the embedded JSON blob.
+static TAB_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""tab"\s*:\s*"(t\.[a-z0-9]+)""#).expect("valid regex"));
+
+/// Captures tab title near a tab id (within 300 chars before the tab id).
+static TAB_TITLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""title"\s*:\s*"([^"]{1,80})""#).expect("valid regex"));
+
+/// Matches sheet gid entries like `"sheetId":12345` from the Sheets embedded JSON.
+static SHEET_GID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""sheetId"\s*:\s*(\d+)"#).expect("valid regex"));
+
+/// Matches sheet title entries like `"title":"Sheet1"` in Sheets embedded JSON.
+static SHEET_TITLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""title"\s*:\s*"([^"]{1,80})""#).expect("valid regex"));
 
 // ─── URL Patterns ─────────────────────────────────────────────────────────────
 
@@ -213,6 +238,118 @@ async fn fetch_export(export_url: &str, cookie_header: &str) -> Result<bytes::By
         .context("Failed to read Google export response body")
 }
 
+// ─── Tab discovery ────────────────────────────────────────────────────────────
+
+/// A tab found in a Google Doc.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct DocTab {
+    /// Tab ID as used in the export API, e.g. `t.abc123`.
+    id: String,
+    /// Human-readable tab title, or `"Tab N"` if not parseable.
+    title: String,
+}
+
+/// Fetch the Google Docs editor page and discover all tab IDs and titles.
+///
+/// Returns an empty `Vec` when the document has no tab metadata (single-tab
+/// docs, or when the editor HTML doesn't expose tab data).
+async fn discover_doc_tabs(id: &str, cookie_header: &str) -> Vec<DocTab> {
+    let edit_url = format!("https://docs.google.com/document/d/{id}/edit");
+    let Ok(bytes) = fetch_export(&edit_url, cookie_header).await else {
+        return vec![];
+    };
+    let html = String::from_utf8_lossy(&bytes);
+    parse_doc_tabs(&html)
+}
+
+/// Parse tab IDs and titles from a Google Docs editor page HTML.
+///
+/// Google embeds document metadata as a JSON blob inside a `<script>` tag.
+/// We extract tab entries with the pattern `"tab":"t.xxx"` and attempt to
+/// find an associated `"title":"..."` nearby.
+pub(crate) fn parse_doc_tabs(html: &str) -> Vec<DocTab> {
+    let mut tabs: Vec<DocTab> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for m in TAB_ID_RE.find_iter(html) {
+        // Extract the tab ID from the capture group
+        let Some(cap) = TAB_ID_RE.captures(m.as_str()) else {
+            continue;
+        };
+        let tab_id = cap[1].to_string();
+        if !seen_ids.insert(tab_id.clone()) {
+            continue; // deduplicate
+        }
+
+        // Search for a nearby `"title":"..."` within 300 chars before the match
+        let start = m.start().saturating_sub(300);
+        let snippet = &html[start..m.end()];
+        let n = tabs.len() + 1;
+        let title = TAB_TITLE_RE
+            .captures_iter(snippet)
+            .last()
+            .map_or_else(|| format!("Tab {n}"), |c| c[1].to_string());
+
+        tabs.push(DocTab { id: tab_id, title });
+    }
+
+    tabs
+}
+
+// ─── Sheet discovery ──────────────────────────────────────────────────────────
+
+/// A sheet found in a Google Spreadsheet.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SheetInfo {
+    /// The sheet's numeric GID (grid ID).
+    gid: u64,
+    /// Human-readable sheet name, or `"Sheet N"` if not parseable.
+    name: String,
+}
+
+/// Fetch the Sheets editor page and discover all sheet GIDs and names.
+async fn discover_sheets(id: &str, cookie_header: &str) -> Vec<SheetInfo> {
+    let edit_url = format!("https://docs.google.com/spreadsheets/d/{id}/edit");
+    let Ok(bytes) = fetch_export(&edit_url, cookie_header).await else {
+        return vec![];
+    };
+    let html = String::from_utf8_lossy(&bytes);
+    parse_sheet_info(&html)
+}
+
+/// Parse sheet GIDs and names from a Google Sheets editor page HTML.
+///
+/// Google embeds sheet metadata in the page's JSON blob.
+/// We pair `"sheetId":N` with nearby `"title":"..."` entries.
+pub(crate) fn parse_sheet_info(html: &str) -> Vec<SheetInfo> {
+    let mut sheets: Vec<SheetInfo> = Vec::new();
+    let mut seen_gids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
+    for m in SHEET_GID_RE.find_iter(html) {
+        let Some(cap) = SHEET_GID_RE.captures(m.as_str()) else {
+            continue;
+        };
+        let Ok(gid) = cap[1].parse::<u64>() else {
+            continue;
+        };
+        if !seen_gids.insert(gid) {
+            continue;
+        }
+
+        // Search for `"title":"..."` within 200 chars after the gid match
+        let end = (m.end() + 200).min(html.len());
+        let snippet = &html[m.start()..end];
+        let n = sheets.len() + 1;
+        let name = SHEET_TITLE_RE
+            .captures(snippet)
+            .map_or_else(|| format!("Sheet {n}"), |c| c[1].to_string());
+
+        sheets.push(SheetInfo { gid, name });
+    }
+
+    sheets
+}
+
 // ─── Google Docs ──────────────────────────────────────────────────────────────
 
 async fn extract_doc(
@@ -220,51 +357,22 @@ async fn extract_doc(
     canonical_url: &str,
     cookie_header: &str,
 ) -> Result<SiteContent> {
-    // Fetch HTML export for main content
-    let html_url = format!(
-        "https://docs.google.com/document/d/{id}/export?format=html"
-    );
-    let html_bytes = fetch_export(&html_url, cookie_header).await?;
-    let html = String::from_utf8_lossy(&html_bytes);
+    // Discover tabs (multi-tab support). Falls back to single export when empty.
+    let tabs = discover_doc_tabs(id, cookie_header).await;
 
-    // Convert HTML to markdown using nab's ContentRouter
-    let content_router = crate::content::ContentRouter::new();
-    let converted = content_router
-        .convert(html_bytes.as_ref(), "text/html")
-        .context("Failed to convert Google Doc HTML to markdown")?;
-    let mut markdown = converted.markdown;
+    let (markdown_content, title) = if tabs.len() > 1 {
+        export_doc_tabs(id, cookie_header, &tabs).await?
+    } else {
+        export_doc_single(id, cookie_header).await?
+    };
 
-    // Fetch OOXML for comments and suggested edits
-    let docx_url = format!(
-        "https://docs.google.com/document/d/{id}/export?format=docx"
-    );
-    match fetch_export(&docx_url, cookie_header).await {
-        Ok(docx_bytes) => {
-            match parse_docx_comments(&docx_bytes) {
-                Ok(annotations) if !annotations.is_empty() => {
-                    markdown.push_str("\n\n---\n\n## Comments & Suggestions\n\n");
-                    for annotation in &annotations {
-                        markdown.push_str(annotation);
-                        markdown.push('\n');
-                    }
-                }
-                Ok(_) => {} // no comments found
-                Err(e) => {
-                    tracing::warn!("Failed to parse .docx comments: {e}");
-                }
-            }
-        }
-        Err(e) => {
-            tracing::debug!("Skipping .docx comments: {e}");
-        }
-    }
-
-    // Extract title from HTML <title> tag
-    let title = extract_html_title(&html);
+    // Fetch OOXML for comments and suggested edits (comment anchors included)
+    let mut markdown = markdown_content;
+    append_doc_comments(id, cookie_header, &mut markdown).await;
 
     let metadata = SiteMetadata {
         author: None,
-        title: title.clone(),
+        title,
         published: None,
         platform: DocKind::Doc.platform_label().to_string(),
         canonical_url: canonical_url.to_string(),
@@ -273,6 +381,82 @@ async fn extract_doc(
     };
 
     Ok(SiteContent { markdown, metadata })
+}
+
+/// Export a single-tab (or unknown-tab) Google Doc as HTML markdown.
+/// Returns `(markdown, title)`.
+async fn export_doc_single(id: &str, cookie_header: &str) -> Result<(String, Option<String>)> {
+    let html_url = format!("https://docs.google.com/document/d/{id}/export?format=html");
+    let html_bytes = fetch_export(&html_url, cookie_header).await?;
+    let html = String::from_utf8_lossy(&html_bytes);
+    let title = extract_html_title(&html);
+
+    let content_router = crate::content::ContentRouter::new();
+    let converted = content_router
+        .convert(html_bytes.as_ref(), "text/html")
+        .context("Failed to convert Google Doc HTML to markdown")?;
+
+    Ok((converted.markdown, title))
+}
+
+/// Export each tab of a multi-tab Google Doc, returning combined markdown.
+/// Returns `(markdown, title_from_first_tab)`.
+async fn export_doc_tabs(
+    id: &str,
+    cookie_header: &str,
+    tabs: &[DocTab],
+) -> Result<(String, Option<String>)> {
+    let mut combined = String::new();
+    let mut title: Option<String> = None;
+
+    for tab in tabs {
+        let html_url = format!(
+            "https://docs.google.com/document/d/{id}/export?format=html&tab={tab_id}",
+            tab_id = tab.id
+        );
+        let html_bytes = match fetch_export(&html_url, cookie_header).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("Skipping tab '{}': {e}", tab.title);
+                continue;
+            }
+        };
+
+        if title.is_none() {
+            let html = String::from_utf8_lossy(&html_bytes);
+            title = extract_html_title(&html);
+        }
+
+        let content_router = crate::content::ContentRouter::new();
+        let converted = content_router
+            .convert(html_bytes.as_ref(), "text/html")
+            .context("Failed to convert tab HTML to markdown")?;
+
+        let _ = write!(combined, "## Tab: {}\n\n", tab.title);
+        combined.push_str(&converted.markdown);
+        combined.push_str("\n\n");
+    }
+
+    Ok((combined, title))
+}
+
+/// Fetch `.docx` and append parsed comments/suggestions to `markdown`.
+async fn append_doc_comments(id: &str, cookie_header: &str, markdown: &mut String) {
+    let docx_url = format!("https://docs.google.com/document/d/{id}/export?format=docx");
+    match fetch_export(&docx_url, cookie_header).await {
+        Ok(docx_bytes) => match parse_docx_comments(&docx_bytes) {
+            Ok(annotations) if !annotations.is_empty() => {
+                markdown.push_str("\n\n---\n\n## Comments & Suggestions\n\n");
+                for annotation in &annotations {
+                    markdown.push_str(annotation);
+                    markdown.push('\n');
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Failed to parse .docx comments: {e}"),
+        },
+        Err(e) => tracing::debug!("Skipping .docx comments: {e}"),
+    }
 }
 
 /// Extract `<title>` content from HTML.
@@ -291,39 +475,17 @@ async fn extract_sheet(
     canonical_url: &str,
     cookie_header: &str,
 ) -> Result<SiteContent> {
-    // Fetch CSV for the first (default) sheet
-    let csv_url = format!(
-        "https://docs.google.com/spreadsheets/d/{id}/export?format=csv"
-    );
-    let csv_bytes = fetch_export(&csv_url, cookie_header).await?;
-    let csv_text = String::from_utf8_lossy(&csv_bytes).into_owned();
+    // Discover all sheets (multi-sheet support)
+    let sheets = discover_sheets(id, cookie_header).await;
 
-    let mut markdown = csv_to_markdown(&csv_text);
+    let markdown_content = if sheets.len() > 1 {
+        export_all_sheets(id, cookie_header, &sheets).await?
+    } else {
+        export_sheet_default(id, cookie_header).await?
+    };
 
-    // Fetch OOXML for comments
-    let xlsx_url = format!(
-        "https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx"
-    );
-    match fetch_export(&xlsx_url, cookie_header).await {
-        Ok(xlsx_bytes) => {
-            match parse_xlsx_comments(&xlsx_bytes) {
-                Ok(comments) if !comments.is_empty() => {
-                    markdown.push_str("\n\n---\n\n## Comments\n\n");
-                    for comment in &comments {
-                        markdown.push_str(comment);
-                        markdown.push('\n');
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!("Failed to parse .xlsx comments: {e}");
-                }
-            }
-        }
-        Err(e) => {
-            tracing::debug!("Skipping .xlsx comments: {e}");
-        }
-    }
+    let mut markdown = markdown_content;
+    append_sheet_comments(id, cookie_header, &mut markdown).await;
 
     let metadata = SiteMetadata {
         author: None,
@@ -336,6 +498,63 @@ async fn extract_sheet(
     };
 
     Ok(SiteContent { markdown, metadata })
+}
+
+/// Export the default (first) sheet as CSV markdown.
+async fn export_sheet_default(id: &str, cookie_header: &str) -> Result<String> {
+    let csv_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv");
+    let csv_bytes = fetch_export(&csv_url, cookie_header).await?;
+    let csv_text = String::from_utf8_lossy(&csv_bytes).into_owned();
+    Ok(csv_to_markdown(&csv_text))
+}
+
+/// Export each sheet by GID, combining into one markdown document.
+async fn export_all_sheets(
+    id: &str,
+    cookie_header: &str,
+    sheets: &[SheetInfo],
+) -> Result<String> {
+    let mut combined = String::new();
+
+    for sheet in sheets {
+        let csv_url = format!(
+            "https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}",
+            gid = sheet.gid
+        );
+        let csv_bytes = match fetch_export(&csv_url, cookie_header).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("Skipping sheet '{}': {e}", sheet.name);
+                continue;
+            }
+        };
+        let csv_text = String::from_utf8_lossy(&csv_bytes).into_owned();
+
+        let _ = write!(combined, "## Sheet: {}\n\n", sheet.name);
+        combined.push_str(&csv_to_markdown(&csv_text));
+        combined.push_str("\n\n");
+    }
+
+    Ok(combined)
+}
+
+/// Fetch `.xlsx` and append parsed comments to `markdown`.
+async fn append_sheet_comments(id: &str, cookie_header: &str, markdown: &mut String) {
+    let xlsx_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx");
+    match fetch_export(&xlsx_url, cookie_header).await {
+        Ok(xlsx_bytes) => match parse_xlsx_comments(&xlsx_bytes) {
+            Ok(comments) if !comments.is_empty() => {
+                markdown.push_str("\n\n---\n\n## Comments\n\n");
+                for comment in &comments {
+                    markdown.push_str(comment);
+                    markdown.push('\n');
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Failed to parse .xlsx comments: {e}"),
+        },
+        Err(e) => tracing::debug!("Skipping .xlsx comments: {e}"),
+    }
 }
 
 /// Convert CSV text to a markdown table.
@@ -502,28 +721,96 @@ fn read_zip_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> R
 /// Extract comments and suggested edits from a `.docx` file.
 ///
 /// Returns formatted annotation strings like:
-/// - `"💬 Author (date): "text""`
+/// - `"💬 Author (date): "text" → on: "anchored snippet""`
 /// - `"✏️ suggestion by Author: delete "old" → insert "new""`
 pub(crate) fn parse_docx_comments(bytes: &[u8]) -> Result<Vec<String>> {
     let mut archive = open_zip(bytes)?;
 
     let mut results = Vec::new();
 
-    // Parse comments from word/comments.xml
-    if let Ok(xml) = read_zip_entry(&mut archive, "word/comments.xml") {
-        results.extend(parse_docx_comment_xml(&xml));
-    }
+    // Build comment-anchor map from document.xml first
+    let anchors = if let Ok(xml) = read_zip_entry(&mut archive, "word/document.xml") {
+        let suggestions = parse_docx_suggestions(&xml);
+        results.extend(suggestions);
+        parse_comment_anchors(&xml)
+    } else {
+        HashMap::new()
+    };
 
-    // Parse suggested edits from word/document.xml
-    if let Ok(xml) = read_zip_entry(&mut archive, "word/document.xml") {
-        results.extend(parse_docx_suggestions(&xml));
+    // Parse comments from word/comments.xml (with anchors)
+    if let Ok(xml) = read_zip_entry(&mut archive, "word/comments.xml") {
+        results.extend(parse_docx_comment_xml(&xml, &anchors));
     }
 
     Ok(results)
 }
 
+/// Build a map of `comment_id → anchored_text` by scanning `word/document.xml`
+/// for `<w:commentRangeStart>` / `<w:commentRangeEnd>` pairs and collecting
+/// the text between them.
+///
+/// Returns a `HashMap<comment_id_string, snippet>`.
+pub(crate) fn parse_comment_anchors(xml: &str) -> HashMap<String, String> {
+    let Ok(doc) = roxmltree::Document::parse(xml) else {
+        return HashMap::new();
+    };
+
+    // First pass: collect all nodes in document order with their positions.
+    let nodes: Vec<roxmltree::Node<'_, '_>> = doc.descendants().collect();
+
+    // Map from comment ID → index of its commentRangeStart in `nodes`
+    let mut range_starts: HashMap<String, usize> = HashMap::new();
+    let mut anchors: HashMap<String, String> = HashMap::new();
+
+    for (idx, node) in nodes.iter().enumerate() {
+        if node.has_tag_name("commentRangeStart") {
+            if let Some(cid) = comment_id_attr(node) {
+                range_starts.insert(cid, idx);
+            }
+        } else if node.has_tag_name("commentRangeEnd") {
+            if let Some(cid) = comment_id_attr(node) {
+                if let Some(&start_idx) = range_starts.get(&cid) {
+                    let snippet = collect_text_in_range(&nodes, start_idx, idx);
+                    if !snippet.is_empty() {
+                        anchors.insert(cid, snippet);
+                    }
+                }
+            }
+        }
+    }
+
+    anchors
+}
+
+/// Extract the comment `w:id` attribute value from a node.
+fn comment_id_attr(node: &roxmltree::Node<'_, '_>) -> Option<String> {
+    node.attribute((W_NS, "id"))
+        .or_else(|| node.attribute("id"))
+        .map(String::from)
+}
+
+/// Collect all `w:t` text within `nodes[start_idx..end_idx]`, joining with spaces.
+fn collect_text_in_range(
+    nodes: &[roxmltree::Node<'_, '_>],
+    start_idx: usize,
+    end_idx: usize,
+) -> String {
+    nodes[start_idx..end_idx.min(nodes.len())]
+        .iter()
+        .filter(|n| n.has_tag_name("t"))
+        .filter_map(roxmltree::Node::text)
+        .filter(|t| !t.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("")
+        .trim()
+        .to_string()
+}
+
 /// Parse `word/comments.xml` and return formatted comment strings.
-fn parse_docx_comment_xml(xml: &str) -> Vec<String> {
+///
+/// When a comment has a matching anchor in the provided map, the output
+/// includes `→ on: "anchored text"` to show what text the comment refers to.
+fn parse_docx_comment_xml(xml: &str, anchors: &HashMap<String, String>) -> Vec<String> {
     let Ok(doc) = roxmltree::Document::parse(xml) else {
         return vec![];
     };
@@ -547,7 +834,20 @@ fn parse_docx_comment_xml(xml: &str) -> Vec<String> {
                 return None;
             }
 
-            Some(format!("💬 **{author}** ({date_short}): \"{text}\""))
+            // Attach anchor if available
+            let id = comment
+                .attribute((W_NS, "id"))
+                .or_else(|| comment.attribute("id"))
+                .unwrap_or("");
+
+            let anchor_suffix = anchors
+                .get(id)
+                .map(|a| format!(" → on: \"{a}\""))
+                .unwrap_or_default();
+
+            Some(format!(
+                "💬 **{author}** ({date_short}): \"{text}\"{anchor_suffix}"
+            ))
         })
         .collect()
 }
@@ -912,6 +1212,192 @@ mod tests {
         assert!(extract_html_title("<html><body>no title</body></html>").is_none());
     }
 
+    // ── Tab discovery ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_doc_tabs_finds_single_tab() {
+        // Simulated snippet from Google Docs editor page JSON blob
+        let html = r#"var _docs_flag_initialData={"title":"My Doc","tab":"t.abc123","someOther":1};"#;
+        let tabs = parse_doc_tabs(html);
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].id, "t.abc123");
+    }
+
+    #[test]
+    fn parse_doc_tabs_finds_multiple_tabs_with_titles() {
+        let html = r#"
+        {"title":"Introduction","tab":"t.aaa111","x":1}
+        {"title":"Appendix","tab":"t.bbb222","x":2}
+        "#;
+        let tabs = parse_doc_tabs(html);
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0].id, "t.aaa111");
+        assert_eq!(tabs[0].title, "Introduction");
+        assert_eq!(tabs[1].id, "t.bbb222");
+        assert_eq!(tabs[1].title, "Appendix");
+    }
+
+    #[test]
+    fn parse_doc_tabs_deduplicates_same_tab_id() {
+        let html = r#"{"tab":"t.aaa111"}{"tab":"t.aaa111"}{"tab":"t.bbb222"}"#;
+        let tabs = parse_doc_tabs(html);
+        assert_eq!(tabs.len(), 2);
+    }
+
+    #[test]
+    fn parse_doc_tabs_returns_empty_for_no_tabs() {
+        let html = "<html><body>no tab data here</body></html>";
+        let tabs = parse_doc_tabs(html);
+        assert!(tabs.is_empty());
+    }
+
+    #[test]
+    fn parse_doc_tabs_fallback_title_when_no_title_nearby() {
+        // Tab ID present but no title attribute in snippet
+        let html = r#"{"somekey":"somevalue","tab":"t.xyz789"}"#;
+        let tabs = parse_doc_tabs(html);
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].id, "t.xyz789");
+        // Title should be generated fallback
+        assert!(tabs[0].title.starts_with("Tab"));
+    }
+
+    // ── Sheet discovery ───────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_sheet_info_finds_single_sheet() {
+        let html = r#"{"sheetId":0,"title":"Sheet1","x":1}"#;
+        let sheets = parse_sheet_info(html);
+        assert_eq!(sheets.len(), 1);
+        assert_eq!(sheets[0].gid, 0);
+        assert_eq!(sheets[0].name, "Sheet1");
+    }
+
+    #[test]
+    fn parse_sheet_info_finds_multiple_sheets() {
+        let html = r#"
+        {"sheetId":0,"title":"Budget"}
+        {"sheetId":123456789,"title":"Summary"}
+        "#;
+        let sheets = parse_sheet_info(html);
+        assert_eq!(sheets.len(), 2);
+        assert_eq!(sheets[0].gid, 0);
+        assert_eq!(sheets[0].name, "Budget");
+        assert_eq!(sheets[1].gid, 123_456_789);
+        assert_eq!(sheets[1].name, "Summary");
+    }
+
+    #[test]
+    fn parse_sheet_info_deduplicates_same_gid() {
+        let html = r#"{"sheetId":0,"title":"A"}{"sheetId":0,"title":"B"}{"sheetId":1,"title":"C"}"#;
+        let sheets = parse_sheet_info(html);
+        assert_eq!(sheets.len(), 2);
+    }
+
+    #[test]
+    fn parse_sheet_info_returns_empty_for_no_sheets() {
+        let html = "<html><body>no sheet data</body></html>";
+        let sheets = parse_sheet_info(html);
+        assert!(sheets.is_empty());
+    }
+
+    #[test]
+    fn parse_sheet_info_fallback_name_when_no_title() {
+        let html = r#"{"sheetId":42,"otherKey":"val"}"#;
+        let sheets = parse_sheet_info(html);
+        assert_eq!(sheets.len(), 1);
+        assert_eq!(sheets[0].gid, 42);
+        assert!(sheets[0].name.starts_with("Sheet"));
+    }
+
+    // ── Comment anchors ───────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_comment_anchors_extracts_text_between_range_markers() {
+        // GIVEN: document.xml with a commentRangeStart/End pair wrapping "important text"
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:commentRangeStart w:id="1"/>
+      <w:r><w:t>important text</w:t></w:r>
+      <w:commentRangeEnd w:id="1"/>
+      <w:r><w:t>other text</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+        // WHEN
+        let anchors = parse_comment_anchors(xml);
+        // THEN
+        assert_eq!(anchors.get("1").map(String::as_str), Some("important text"));
+    }
+
+    #[test]
+    fn parse_comment_anchors_handles_multiple_comments() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:commentRangeStart w:id="1"/>
+      <w:r><w:t>first anchor</w:t></w:r>
+      <w:commentRangeEnd w:id="1"/>
+      <w:commentRangeStart w:id="2"/>
+      <w:r><w:t>second anchor</w:t></w:r>
+      <w:commentRangeEnd w:id="2"/>
+    </w:p>
+  </w:body>
+</w:document>"#;
+        let anchors = parse_comment_anchors(xml);
+        assert_eq!(anchors.get("1").map(String::as_str), Some("first anchor"));
+        assert_eq!(anchors.get("2").map(String::as_str), Some("second anchor"));
+    }
+
+    #[test]
+    fn parse_comment_anchors_returns_empty_for_no_markers() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>no comments here</w:t></w:r></w:p></w:body>
+</w:document>"#;
+        let anchors = parse_comment_anchors(xml);
+        assert!(anchors.is_empty());
+    }
+
+    #[test]
+    fn parse_docx_comment_xml_includes_anchor_when_available() {
+        // GIVEN: comment XML + anchor map
+        let xml = r#"<?xml version="1.0"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:comment w:author="Alice" w:date="2025-03-01T10:00:00Z" w:id="1">
+    <w:p><w:r><w:t>Please clarify this</w:t></w:r></w:p>
+  </w:comment>
+</w:comments>"#;
+        let mut anchors = HashMap::new();
+        anchors.insert("1".to_string(), "important phrase".to_string());
+
+        // WHEN
+        let comments = parse_docx_comment_xml(xml, &anchors);
+
+        // THEN
+        assert_eq!(comments.len(), 1);
+        assert!(comments[0].contains("Alice"));
+        assert!(comments[0].contains("Please clarify this"));
+        assert!(comments[0].contains("→ on: \"important phrase\""));
+    }
+
+    #[test]
+    fn parse_docx_comment_xml_omits_anchor_suffix_when_no_anchor() {
+        let xml = r#"<?xml version="1.0"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:comment w:author="Bob" w:date="2025-04-01T00:00:00Z" w:id="99">
+    <w:p><w:r><w:t>Good point</w:t></w:r></w:p>
+  </w:comment>
+</w:comments>"#;
+        let anchors = HashMap::new();
+        let comments = parse_docx_comment_xml(xml, &anchors);
+        assert_eq!(comments.len(), 1);
+        assert!(!comments[0].contains("→ on:"));
+    }
+
     // ── OOXML stubs (using minimal valid ZIP/XML fixtures) ────────────────────
 
     #[test]
@@ -930,7 +1416,7 @@ mod tests {
     <w:p><w:r><w:t>This needs revision</w:t></w:r></w:p>
   </w:comment>
 </w:comments>"#;
-        let comments = parse_docx_comment_xml(xml);
+        let comments = parse_docx_comment_xml(xml, &HashMap::new());
         assert_eq!(comments.len(), 1);
         assert!(comments[0].contains("Alice"));
         assert!(comments[0].contains("2025-01-15"));
