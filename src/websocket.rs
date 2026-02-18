@@ -12,13 +12,12 @@ use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    connect_async_tls_with_config,
+    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
     tungstenite::{
+        Message,
         handshake::client::generate_key,
         http::{Request, Uri},
-        Message,
     },
-    Connector, MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, info};
 
@@ -146,7 +145,7 @@ impl WebSocket {
                     Message::Frame(_) => continue,
                 },
                 Some(Err(e)) => {
-                    return Err(anyhow::Error::new(e).context("WebSocket receive failed"))
+                    return Err(anyhow::Error::new(e).context("WebSocket receive failed"));
                 }
                 None => return Ok(None),
             }

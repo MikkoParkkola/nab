@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,12 @@ impl SiteProvider for PluginRunner {
         self.patterns.iter().any(|re| re.is_match(url))
     }
 
-    async fn extract(&self, url: &str, _client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        _client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         let binary = &self.config.binary;
         let plugin_name = &self.config.name;
 

@@ -258,7 +258,7 @@ impl FusionEngine {
             if same_speaker && small_gap && same_emotion {
                 // Merge
                 current.end = seg.end;
-                if let (Some(ref mut t1), Some(t2)) = (&mut current.transcript, seg.transcript) {
+                if let (Some(t1), Some(t2)) = (&mut current.transcript, seg.transcript) {
                     t1.push(' ');
                     t1.push_str(&t2);
                 }

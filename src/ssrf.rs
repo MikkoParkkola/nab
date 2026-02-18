@@ -19,7 +19,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use tracing::warn;
 use url::Url;
 

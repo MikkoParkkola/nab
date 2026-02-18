@@ -1,6 +1,6 @@
 //! NRK (Norwegian) streaming provider
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -289,11 +289,7 @@ fn parse_iso8601_duration(duration: &str) -> Option<u64> {
         }
     }
 
-    if seconds > 0 {
-        Some(seconds)
-    } else {
-        None
-    }
+    if seconds > 0 { Some(seconds) } else { None }
 }
 
 // Serde structures for NRK API responses

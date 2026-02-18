@@ -15,7 +15,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://en.wikipedia.org/wiki/Rust_(programming_language)",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -46,7 +47,12 @@ impl SiteProvider for WikipediaProvider {
         normalized.contains(".wikipedia.org/wiki/")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         let (lang, title) = parse_wikipedia_url(url)?;
 
         let api_url = format!(

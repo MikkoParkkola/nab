@@ -16,7 +16,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://instagram.com/p/ABC123xyz",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -48,7 +49,12 @@ impl SiteProvider for InstagramProvider {
             && (normalized.contains("/p/") || normalized.contains("/reel/"))
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         // Try oEmbed first, fall back to og:meta tags from HTML
         match self.try_oembed(url, client).await {
             Ok(content) => Ok(content),

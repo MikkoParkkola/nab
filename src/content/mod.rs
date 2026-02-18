@@ -61,6 +61,10 @@ pub trait ContentHandler: Send + Sync {
     ///
     /// `content_type` is the full `Content-Type` header value (may include
     /// charset parameters like `; charset=utf-8`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if conversion fails (e.g., corrupted PDF, decoding error).
     fn to_markdown(&self, bytes: &[u8], content_type: &str) -> Result<ConversionResult>;
 }
 
@@ -77,6 +81,7 @@ impl ContentRouter {
     /// Create a router with all available handlers.
     ///
     /// PDF handler is included only when the `pdf` feature flag is enabled.
+    #[must_use]
     pub fn new() -> Self {
         #[cfg(feature = "pdf")]
         let handlers: Vec<Box<dyn ContentHandler>> = vec![
@@ -97,13 +102,51 @@ impl ContentRouter {
     /// Falls back to HTML if the bytes look like HTML (common for responses
     /// with missing or incorrect `Content-Type`). Ultimate fallback is
     /// [`PlainHandler`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the chosen handler fails (e.g., corrupted PDF data).
     pub fn convert(&self, bytes: &[u8], content_type: &str) -> Result<ConversionResult> {
+        self.convert_with_url(bytes, content_type, None)
+    }
+
+    /// Convert bytes to markdown with the real fetch URL for improved extraction.
+    ///
+    /// Passing `url` enables URL-aware readability heuristics, which significantly
+    /// improves extraction quality for complex sites (`LessWrong`, `Ghost CMS`, `Next.js`
+    /// applications). For HTML content the URL is forwarded to [`HtmlHandler`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the chosen handler fails (e.g., corrupted PDF data).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use nab::content::ContentRouter;
+    ///
+    /// let router = ContentRouter::new();
+    /// let html = b"<html><body><article><h1>Article</h1><p>Body text.</p></article></body></html>";
+    /// let result = router.convert_with_url(html, "text/html", Some("https://example.com/article")).unwrap();
+    /// assert!(result.markdown.contains("Article"));
+    /// ```
+    pub fn convert_with_url(
+        &self,
+        bytes: &[u8],
+        content_type: &str,
+        url: Option<&str>,
+    ) -> Result<ConversionResult> {
         let mime = content_type
             .split(';')
             .next()
             .unwrap_or(content_type)
             .trim()
             .to_lowercase();
+
+        // Route HTML through the URL-aware path
+        if mime == "text/html" || mime == "application/xhtml+xml" {
+            return html::HtmlHandler.to_markdown_with_url(bytes, content_type, url);
+        }
 
         for handler in &self.handlers {
             if handler.supported_types().iter().any(|t| *t == mime) {
@@ -113,12 +156,7 @@ impl ContentRouter {
 
         // Fallback: if bytes look like HTML (common for missing Content-Type)
         if bytes.starts_with(b"<!") || bytes.starts_with(b"<html") || bytes.starts_with(b"<HTML") {
-            return self
-                .handlers
-                .iter()
-                .find(|h| h.supported_types().contains(&"text/html"))
-                .expect("HtmlHandler always registered")
-                .to_markdown(bytes, "text/html");
+            return html::HtmlHandler.to_markdown_with_url(bytes, "text/html", url);
         }
 
         // Ultimate fallback: plain text passthrough

@@ -101,7 +101,9 @@ impl LoginFlow {
                 let has_inline_scripts = Self::has_inline_scripts(&page_html);
 
                 if has_inline_scripts && is_spa {
-                    info!("No static form found, but inline scripts detected. Attempting QuickJS execution...");
+                    info!(
+                        "No static form found, but inline scripts detected. Attempting QuickJS execution..."
+                    );
 
                     // Try to execute inline scripts and extract rendered DOM
                     match JsEngine::new() {
@@ -117,7 +119,9 @@ impl LoginFlow {
                                         info!("✓ Found login form after JavaScript execution");
                                         rendered_form
                                     } else {
-                                        warn!("JavaScript executed but no login form found in rendered output");
+                                        warn!(
+                                            "JavaScript executed but no login form found in rendered output"
+                                        );
 
                                         // Try cookie-based auth as fallback
                                         if self.cookie_header.is_some() {
@@ -180,7 +184,9 @@ impl LoginFlow {
                 } else {
                     if is_spa {
                         warn!("No login form found — this appears to be a SPA (React/Vue/Angular)");
-                        warn!("SPA login forms are rendered client-side and not visible to HTTP requests");
+                        warn!(
+                            "SPA login forms are rendered client-side and not visible to HTTP requests"
+                        );
                     }
 
                     // Try cookie-based auth as fallback

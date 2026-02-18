@@ -8,7 +8,7 @@
 //! - Parallel segment fetching
 //! - Retry on segment failure
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -16,10 +16,10 @@ use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, info};
 
+use super::super::StreamQuality;
 use super::super::backend::{
     BackendType, ProgressCallback, StreamBackend, StreamConfig, StreamProgress,
 };
-use super::super::StreamQuality;
 
 /// Native HLS streaming backend
 pub struct NativeHlsBackend {
@@ -318,7 +318,7 @@ impl NativeHlsBackend {
 
                     output.write_all(&data).await?;
 
-                    if let Some(ref cb) = progress {
+                    if let Some(cb) = &progress {
                         cb(StreamProgress {
                             bytes_downloaded,
                             segments_completed,
@@ -443,7 +443,7 @@ impl NativeHlsBackend {
 
                     output.write_all(&data).await?;
 
-                    if let Some(ref cb) = progress {
+                    if let Some(cb) = &progress {
                         cb(StreamProgress {
                             bytes_downloaded,
                             segments_completed,
@@ -686,9 +686,11 @@ mod tests {
     fn test_select_variant_empty() {
         let backend = NativeHlsBackend::new().unwrap();
         let variants: Vec<HlsVariant> = vec![];
-        assert!(backend
-            .select_variant(&variants, &StreamQuality::Best)
-            .is_none());
+        assert!(
+            backend
+                .select_variant(&variants, &StreamQuality::Best)
+                .is_none()
+        );
     }
 
     #[test]

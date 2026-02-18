@@ -15,7 +15,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://reddit.com/r/rust/comments/abc123",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -47,7 +48,12 @@ impl SiteProvider for RedditProvider {
             && normalized.contains("/comments/")
     }
 
-    async fn extract(&self, url: &str, _client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        _client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         // Normalize URL and append .json
         let json_url = parse_reddit_url(url)?;
         tracing::debug!("Fetching from Reddit: {}", json_url);
@@ -268,7 +274,9 @@ mod tests {
     fn matches_reddit_dot_com_comments_urls() {
         let provider = RedditProvider;
         assert!(provider.matches("https://reddit.com/r/rust/comments/abc123"));
-        assert!(provider.matches("https://www.reddit.com/r/programming/comments/xyz789/some_title"));
+        assert!(
+            provider.matches("https://www.reddit.com/r/programming/comments/xyz789/some_title")
+        );
     }
 
     #[test]

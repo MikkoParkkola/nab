@@ -4,7 +4,7 @@
 
 #![allow(dead_code)] // VTT format support reserved for future
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as FmtWrite;
 use std::path::Path;
@@ -590,13 +590,13 @@ mod tests {
 
     #[test]
     fn test_srt_generation() {
-        let gen = SrtGenerator::new();
+        let generator = SrtGenerator::new();
         let entries = vec![
             SubtitleEntry::new(0, 2000, "Hello, world!"),
             SubtitleEntry::new(2500, 4000, "This is a test."),
         ];
 
-        let output = gen.generate(&entries).unwrap();
+        let output = generator.generate(&entries).unwrap();
 
         assert!(output.contains("1\n"));
         assert!(output.contains("00:00:00,000 --> 00:00:02,000"));
@@ -607,10 +607,10 @@ mod tests {
 
     #[test]
     fn test_ass_generation() {
-        let gen = AssGenerator::new();
+        let generator = AssGenerator::new();
         let entries = vec![SubtitleEntry::new(0, 2000, "Hello, world!")];
 
-        let output = gen.generate(&entries).unwrap();
+        let output = generator.generate(&entries).unwrap();
 
         assert!(output.contains("[Script Info]"));
         assert!(output.contains("[V4+ Styles]"));
@@ -641,10 +641,10 @@ With multiple lines.
 
     #[test]
     fn test_srt_with_speaker() {
-        let gen = SrtGenerator::new().with_speaker_labels();
+        let generator = SrtGenerator::new().with_speaker_labels();
         let entries = vec![SubtitleEntry::new(0, 2000, "Hello!").with_speaker("John")];
 
-        let output = gen.generate(&entries).unwrap();
+        let output = generator.generate(&entries).unwrap();
 
         assert!(output.contains("[John] Hello!"));
     }

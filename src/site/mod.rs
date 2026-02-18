@@ -34,7 +34,7 @@ pub mod linkedin;
 pub mod mastodon;
 pub mod reddit;
 pub mod stackoverflow;
-mod twitter;
+pub mod twitter;
 pub mod wikipedia;
 pub mod youtube;
 

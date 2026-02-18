@@ -47,11 +47,8 @@ pub fn extract_article(html: &str, url: &str) -> Option<Article> {
 /// Extract using the readability crate.
 fn extract_with_readability_crate(html: &str, url: &str) -> Option<Article> {
     // Parse with readability crate
-    let product = readability::extractor::extract(
-        &mut html.as_bytes(),
-        &url::Url::parse(url).ok()?,
-    )
-    .ok()?;
+    let product =
+        readability::extractor::extract(&mut html.as_bytes(), &url::Url::parse(url).ok()?).ok()?;
 
     // Verify we got meaningful content (at least 100 chars)
     let text_content = strip_html_tags(&product.content);
@@ -88,11 +85,7 @@ fn extract_h1_from_html(html: &str) -> Option<String> {
     let h1_selector = Selector::parse("h1").ok()?;
     let h1 = document.select(&h1_selector).next()?;
     let title = h1.text().collect::<Vec<_>>().join(" ").trim().to_string();
-    if title.is_empty() {
-        None
-    } else {
-        Some(title)
-    }
+    if title.is_empty() { None } else { Some(title) }
 }
 
 /// Fallback extraction using scraper and basic heuristics.
@@ -205,10 +198,7 @@ fn find_main_content_by_density(document: &Html) -> Option<Article> {
     // Take the highest-scoring element
     if let Some((_, element, text)) = scored_elements.first() {
         let title = extract_title(document);
-        let text_content = text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let text_content = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let excerpt = text_content
             .chars()
             .take(200)
@@ -260,7 +250,12 @@ fn extract_title(document: &Html) -> String {
     // Try <title>
     if let Ok(title_selector) = Selector::parse("title") {
         if let Some(title) = document.select(&title_selector).next() {
-            let title = title.text().collect::<Vec<_>>().join(" ").trim().to_string();
+            let title = title
+                .text()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string();
             if !title.is_empty() {
                 return title;
             }

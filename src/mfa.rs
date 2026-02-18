@@ -532,13 +532,17 @@ mod tests {
         assert!(MfaType::Totp.is_automatable());
         assert!(MfaType::SmsOtp.is_automatable());
         assert!(MfaType::Passkey.is_automatable());
-        assert!(!MfaType::MobileAppPush {
-            app_name: "Test".to_string()
-        }
-        .is_automatable());
-        assert!(!MfaType::MobileCertificate {
-            provider: "Test".to_string()
-        }
-        .is_automatable());
+        assert!(
+            !MfaType::MobileAppPush {
+                app_name: "Test".to_string()
+            }
+            .is_automatable()
+        );
+        assert!(
+            !MfaType::MobileCertificate {
+                provider: "Test".to_string()
+            }
+            .is_automatable()
+        );
     }
 }

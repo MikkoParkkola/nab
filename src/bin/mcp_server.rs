@@ -14,21 +14,21 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use rust_mcp_sdk::macros::{mcp_tool, JsonSchema};
-use rust_mcp_sdk::mcp_server::{server_runtime, ServerHandler};
+use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
+use rust_mcp_sdk::mcp_server::{ServerHandler, server_runtime};
 use rust_mcp_sdk::schema::{
-    schema_utils::CallToolError, CallToolRequest, CallToolResult, Implementation, InitializeResult,
+    CallToolRequest, CallToolResult, Implementation, InitializeResult, LATEST_PROTOCOL_VERSION,
     ListToolsRequest, ListToolsResult, RpcError, ServerCapabilities, ServerCapabilitiesTools,
-    TextContent, LATEST_PROTOCOL_VERSION,
+    TextContent, schema_utils::CallToolError,
 };
-use rust_mcp_sdk::{tool_box, McpServer, StdioTransport, TransportOptions};
+use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
 use nab::content::ContentRouter;
 use nab::{
-    chrome_profile, firefox_profile, random_profile, safari_profile, AcceleratedClient,
-    CookieSource, CredentialRetriever, OnePasswordAuth, SafeFetchConfig,
+    AcceleratedClient, CookieSource, CredentialRetriever, OnePasswordAuth, SafeFetchConfig,
+    chrome_profile, firefox_profile, random_profile, safari_profile,
 };
 
 // Global shared client (initialized once)
@@ -130,49 +130,48 @@ impl FetchTool {
         // Fetch with SSRF protection via fetch_safe (or manual request for cookie path)
         let config = SafeFetchConfig::default();
 
-        let (status, content_type, response_headers, body_bytes, elapsed) = if cookie_header
-            .is_empty()
-        {
-            let safe_resp = client
-                .fetch_safe(&self.url, &config)
-                .await
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
-            let elapsed = start.elapsed();
-            (
-                safe_resp.status,
-                safe_resp.content_type.clone(),
-                safe_resp.headers.clone(),
-                safe_resp.body,
-                elapsed,
-            )
-        } else {
-            let response = client
-                .inner()
-                .get(&self.url)
-                .header("Cookie", &cookie_header)
-                .headers(profile.to_headers())
-                .send()
-                .await
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
-            let elapsed_val = start.elapsed();
-            let status = response.status();
-            let ct = response
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("text/html")
-                .to_string();
-            let hdrs: Vec<(String, String)> = response
-                .headers()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
-                .collect();
-            let bytes = response
-                .bytes()
-                .await
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
-            (status, ct, hdrs, bytes, elapsed_val)
-        };
+        let (status, content_type, response_headers, body_bytes, elapsed) =
+            if cookie_header.is_empty() {
+                let safe_resp = client
+                    .fetch_safe(&self.url, &config)
+                    .await
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                let elapsed = start.elapsed();
+                (
+                    safe_resp.status,
+                    safe_resp.content_type.clone(),
+                    safe_resp.headers.clone(),
+                    safe_resp.body,
+                    elapsed,
+                )
+            } else {
+                let response = client
+                    .inner()
+                    .get(&self.url)
+                    .header("Cookie", &cookie_header)
+                    .headers(profile.to_headers())
+                    .send()
+                    .await
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                let elapsed_val = start.elapsed();
+                let status = response.status();
+                let ct = response
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("text/html")
+                    .to_string();
+                let hdrs: Vec<(String, String)> = response
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
+                    .collect();
+                let bytes = response
+                    .bytes()
+                    .await
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                (status, ct, hdrs, bytes, elapsed_val)
+            };
 
         output.push_str("\n📊 Response:\n");
         output.push_str(&format!("   Status: {status}\n"));
@@ -191,14 +190,17 @@ impl FetchTool {
         output.push_str(&format!("\n📄 Body: {} bytes\n", body_bytes.len()));
 
         // Route through ContentRouter for markdown conversion
+        // Pass the real URL so readability uses site-specific heuristics
         let router = ContentRouter::new();
         let bytes_clone = body_bytes.to_vec();
         let ct_clone = content_type.clone();
-        let conversion =
-            tokio::task::spawn_blocking(move || router.convert(&bytes_clone, &ct_clone))
-                .await
-                .map_err(|e| CallToolError::from_message(e.to_string()))?
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let url_clone = self.url.clone();
+        let conversion = tokio::task::spawn_blocking(move || {
+            router.convert_with_url(&bytes_clone, &ct_clone, Some(&url_clone))
+        })
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         if let Some(pages) = conversion.page_count {
             output.push_str(&format!(

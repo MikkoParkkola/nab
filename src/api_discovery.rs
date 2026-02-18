@@ -310,15 +310,21 @@ mod tests {
         "#;
 
         let endpoints = discovery.discover(code);
-        assert!(endpoints
-            .iter()
-            .any(|e| e.url == "/api/users" && e.method == Some("GET".to_string())));
-        assert!(endpoints
-            .iter()
-            .any(|e| e.url == "/api/users" && e.method == Some("POST".to_string())));
-        assert!(endpoints
-            .iter()
-            .any(|e| e.url == "/api/settings" && e.method == Some("GET".to_string())));
+        assert!(
+            endpoints
+                .iter()
+                .any(|e| e.url == "/api/users" && e.method == Some("GET".to_string()))
+        );
+        assert!(
+            endpoints
+                .iter()
+                .any(|e| e.url == "/api/users" && e.method == Some("POST".to_string()))
+        );
+        assert!(
+            endpoints
+                .iter()
+                .any(|e| e.url == "/api/settings" && e.method == Some("GET".to_string()))
+        );
     }
 
     #[test]

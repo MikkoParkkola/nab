@@ -15,7 +15,7 @@ pub async fn cmd_submit(
     show_headers: bool,
     format: OutputFormat,
 ) -> Result<()> {
-    use nab::{parse_field_args, Form};
+    use nab::{Form, parse_field_args};
 
     let client = create_client_with_cookies(cookies, use_1password, url).await?;
 

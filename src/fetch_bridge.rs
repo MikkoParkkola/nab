@@ -14,7 +14,7 @@
 //! JavaScript:  Returns response text
 //! ```
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use reqwest::blocking::Client;
 use reqwest::header::LOCATION;
 use rquickjs::{Context, Function};
@@ -465,11 +465,7 @@ mod tests {
     fn fetch_sync_allows_public_url() {
         let client = FetchClient::new(None, None);
         let result = client.fetch_sync("https://httpbin.org/get".to_string());
-        assert!(
-            result.is_ok(),
-            "Public URL should be allowed: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "Public URL should be allowed: {:?}", result);
         let body = result.unwrap();
         assert!(
             body.contains("httpbin") || body.contains("headers"),

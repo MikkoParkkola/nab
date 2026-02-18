@@ -2,9 +2,9 @@
 //!
 //! Run with: `cargo bench --bench content_bench`
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use nab::content::html::html_to_markdown;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use nab::content::ContentRouter;
+use nab::content::html::html_to_markdown;
 
 /// Generate a realistic HTML document of approximately `target_bytes`.
 ///

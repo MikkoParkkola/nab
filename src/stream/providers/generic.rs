@@ -4,7 +4,7 @@
 //! returns it verbatim as the manifest URL. It does not perform any
 //! API calls -- the manifest URL is used directly by the backends.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 
 use crate::stream::provider::{SeriesInfo, StreamInfo, StreamProvider};

@@ -15,7 +15,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://youtube.com/watch?v=dQw4w9WgXcQ",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -46,7 +47,12 @@ impl SiteProvider for YouTubeProvider {
         normalized.contains("youtube.com/watch") || normalized.contains("youtu.be/")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         // Use oEmbed endpoint
         let oembed_url = format!(
             "https://www.youtube.com/oembed?url={}&format=json",

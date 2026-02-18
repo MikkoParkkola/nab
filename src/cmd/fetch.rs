@@ -266,6 +266,16 @@ pub async fn cmd_fetch(
 
     let elapsed = start.elapsed();
 
+    // Keep raw text for link extraction and bot-challenge detection.
+    // Computed once here to avoid double allocation.
+    let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
+
+    // Detect bot challenge pages (Vercel, Cloudflare) before content conversion.
+    // Emits an actionable warning to stderr but continues with best-effort output.
+    if let Some(warning) = detect_bot_challenge(status.as_u16(), &raw_text) {
+        eprintln!("⚠️  {warning}");
+    }
+
     // Output Set-Cookie headers if requested (for auth flows)
     if capture_cookies && !set_cookies.is_empty() {
         println!("🍪 Set-Cookie:");
@@ -278,17 +288,19 @@ pub async fn cmd_fetch(
 
     let body_len = body_bytes.len();
 
-    // Keep raw text for link extraction (extract_links needs HTML, not markdown)
-    let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
-
     // Convert body to text using content-type-aware routing
     let body_text = if markdown && !links {
         let router = nab::content::ContentRouter::new();
         let ct = content_type.clone();
         let bytes = body_bytes.to_vec();
+        // Pass the real URL so readability can use site-specific heuristics
+        // and resolve relative links correctly (fixes LessWrong/Ghost CMS extraction)
+        let fetch_url = url.to_string();
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(60),
-            tokio::task::spawn_blocking(move || router.convert(&bytes, &ct)),
+            tokio::task::spawn_blocking(move || {
+                router.convert_with_url(&bytes, &ct, Some(&fetch_url))
+            }),
         )
         .await
         .map_err(|_| anyhow::anyhow!("Content conversion timed out after 60s"))???;
@@ -385,6 +397,42 @@ fn extract_title(html: &str) -> Option<String> {
     doc.select(&sel)
         .next()
         .map(|el| el.text().collect::<String>().trim().to_string())
+}
+
+/// Detect bot-challenge pages that nab cannot solve automatically.
+///
+/// Returns an actionable warning message when a known challenge is detected,
+/// or `None` when the response appears to be regular content.
+///
+/// Currently detects:
+/// - Vercel Security Checkpoint (HTTP 429)
+/// - Cloudflare browser verification (HTTP 403/503)
+fn detect_bot_challenge(status: u16, body: &str) -> Option<String> {
+    // Vercel Security Checkpoint
+    if status == 429
+        && (body.contains("Vercel Security Checkpoint")
+            || body.contains("We're verifying your browser"))
+    {
+        return Some(
+            "Vercel Security Checkpoint detected. This site requires JavaScript challenge solving.\n\
+             Workarounds:\n\
+             1. Visit the URL in your browser first to set challenge cookies, then retry with --cookies\n\
+             2. Try an alternative URL (e.g., lesswrong.com instead of alignmentforum.org)\n\
+             3. Use a proxy service"
+                .to_string(),
+        );
+    }
+
+    // Cloudflare browser verification
+    if matches!(status, 403 | 503) && body.contains("cf-browser-verification") {
+        return Some(
+            "Cloudflare browser verification detected. \
+             Visit the URL in your browser first, then retry with --cookies."
+                .to_string(),
+        );
+    }
+
+    None
 }
 
 /// Batch fetch: read URLs from file, fetch with concurrency control
@@ -702,5 +750,123 @@ pub fn resolve_cookie_source(browser: &str) -> CookieSource {
         "safari" => CookieSource::Safari,
         "edge" => CookieSource::Chrome,
         _ => CookieSource::Chrome,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_bot_challenge;
+
+    // ── Vercel Security Checkpoint ──────────────────────────────────────────
+
+    #[test]
+    fn detect_bot_challenge_vercel_checkpoint_keyword_returns_warning() {
+        // GIVEN: A 429 response with the canonical Vercel challenge heading
+        let body = "<html><body>Vercel Security Checkpoint</body></html>";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(429, body);
+        // THEN: a non-empty warning mentioning Vercel is returned
+        let warning = result.expect("expected a warning for Vercel checkpoint");
+        assert!(
+            warning.contains("Vercel"),
+            "warning should mention Vercel, got: {warning}"
+        );
+        assert!(
+            warning.contains("--cookies"),
+            "warning should suggest --cookies workaround, got: {warning}"
+        );
+    }
+
+    #[test]
+    fn detect_bot_challenge_vercel_browser_verification_phrase_returns_warning() {
+        // GIVEN: A 429 response with the alternative Vercel challenge phrase
+        let body = "We're verifying your browser. Please wait…";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(429, body);
+        // THEN: a warning is returned
+        assert!(
+            result.is_some(),
+            "expected a warning for 'verifying your browser' phrase"
+        );
+    }
+
+    #[test]
+    fn detect_bot_challenge_vercel_wrong_status_no_warning() {
+        // GIVEN: The Vercel challenge body but a 200 status (not a real challenge)
+        let body = "Vercel Security Checkpoint";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(200, body);
+        // THEN: no warning (status mismatch)
+        assert!(result.is_none(), "should not warn when status is 200");
+    }
+
+    // ── Cloudflare browser verification ────────────────────────────────────
+
+    #[test]
+    fn detect_bot_challenge_cloudflare_403_returns_warning() {
+        // GIVEN: A 403 response containing the Cloudflare verification marker
+        let body = "<div id='cf-browser-verification'>Please wait…</div>";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(403, body);
+        // THEN: a warning mentioning Cloudflare is returned
+        let warning = result.expect("expected a warning for Cloudflare 403");
+        assert!(
+            warning.contains("Cloudflare"),
+            "warning should mention Cloudflare, got: {warning}"
+        );
+    }
+
+    #[test]
+    fn detect_bot_challenge_cloudflare_503_returns_warning() {
+        // GIVEN: A 503 response containing the Cloudflare verification marker
+        let body = "cf-browser-verification required";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(503, body);
+        // THEN: a warning is returned
+        assert!(result.is_some(), "expected a warning for Cloudflare 503");
+    }
+
+    #[test]
+    fn detect_bot_challenge_cloudflare_wrong_status_no_warning() {
+        // GIVEN: Cloudflare marker in body but benign status code
+        let body = "cf-browser-verification";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(200, body);
+        // THEN: no warning (status mismatch)
+        assert!(
+            result.is_none(),
+            "should not warn for status 200 with CF body"
+        );
+    }
+
+    // ── Normal responses ────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_bot_challenge_normal_200_html_no_warning() {
+        // GIVEN: A perfectly ordinary HTML page
+        let body = "<html><body><h1>Hello world</h1></body></html>";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(200, body);
+        // THEN: no warning
+        assert!(result.is_none(), "should not warn for normal 200 response");
+    }
+
+    #[test]
+    fn detect_bot_challenge_empty_body_no_warning() {
+        // GIVEN: An empty response body with a 200 status
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(200, "");
+        // THEN: no warning
+        assert!(result.is_none(), "should not warn for empty body");
+    }
+
+    #[test]
+    fn detect_bot_challenge_429_unrelated_body_no_warning() {
+        // GIVEN: A 429 Too Many Requests with a rate-limit message (not Vercel)
+        let body = "Rate limit exceeded. Please slow down.";
+        // WHEN: we check for a bot challenge
+        let result = detect_bot_challenge(429, body);
+        // THEN: no warning (not a Vercel challenge)
+        assert!(result.is_none(), "should not warn for generic 429");
     }
 }

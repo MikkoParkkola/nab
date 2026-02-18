@@ -14,14 +14,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bytes::Bytes;
 use reqwest::{Client, Response, StatusCode};
 use tokio::sync::RwLock;
 use tracing::{debug, info, instrument, warn};
 use url::Url;
 
-use crate::fingerprint::{random_profile, BrowserProfile};
+use crate::fingerprint::{BrowserProfile, random_profile};
 use crate::ssrf::{self, DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS};
 
 /// HTTP client with all acceleration features

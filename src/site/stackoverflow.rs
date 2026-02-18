@@ -15,7 +15,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://stackoverflow.com/questions/26946646/how-do-i-do-x-in-rust",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -54,7 +55,12 @@ impl SiteProvider for StackOverflowProvider {
                 })
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         let question_id = parse_stackoverflow_url(url)?;
 
         // Fetch question with body and answers
@@ -334,7 +340,9 @@ mod tests {
     #[test]
     fn matches_stackoverflow_urls_with_query_params() {
         let provider = StackOverflowProvider;
-        assert!(provider.matches("https://stackoverflow.com/questions/26946646/title?noredirect=1"));
+        assert!(
+            provider.matches("https://stackoverflow.com/questions/26946646/title?noredirect=1")
+        );
     }
 
     #[test]

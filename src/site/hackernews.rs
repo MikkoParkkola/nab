@@ -15,7 +15,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://news.ycombinator.com/item?id=38471822",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -46,7 +47,12 @@ impl SiteProvider for HackerNewsProvider {
         normalized.contains("news.ycombinator.com/item")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         let item_id = parse_hn_url(url)?;
 
         let api_url = format!("https://hn.algolia.com/api/v1/items/{item_id}");

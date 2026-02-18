@@ -62,23 +62,23 @@ pub use auth::{
 };
 #[cfg(feature = "browser")]
 pub use browser::{BrowserLogin, Cookie};
-pub use browser_detect::{detect_default_browser, BrowserType};
-pub use fetch_bridge::{inject_fetch_sync, FetchClient};
+pub use browser_detect::{BrowserType, detect_default_browser};
+pub use fetch_bridge::{FetchClient, inject_fetch_sync};
 pub use fingerprint::{
-    chrome_profile, firefox_profile, random_profile, safari_profile, BrowserProfile,
+    BrowserProfile, chrome_profile, firefox_profile, random_profile, safari_profile,
 };
-pub use form::{parse_field_args, Form};
+pub use form::{Form, parse_field_args};
+pub use http_client::{AcceleratedClient, SafeFetchConfig, SafeFetchResponse};
 pub use http3_client::Http3Client;
 #[cfg(feature = "http3")]
 pub use http3_client::Http3Response;
-pub use http_client::{AcceleratedClient, SafeFetchConfig, SafeFetchResponse};
 pub use js_engine::JsEngine;
-pub use login::{get_session_dir, LoginFlow, LoginResult};
-pub use mfa::{detect_mfa_type, MfaHandler, MfaResult, MfaType, NotificationConfig};
-pub use prefetch::{extract_link_hints, EarlyHintLink, EarlyHints, PrefetchManager};
+pub use login::{LoginFlow, LoginResult, get_session_dir};
+pub use mfa::{MfaHandler, MfaResult, MfaType, NotificationConfig, detect_mfa_type};
+pub use prefetch::{EarlyHintLink, EarlyHints, PrefetchManager, extract_link_hints};
 pub use ssrf::{
-    validate_ip, validate_redirect_target, validate_url, DEFAULT_MAX_BODY_SIZE,
-    DEFAULT_MAX_REDIRECTS,
+    DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS, validate_ip, validate_redirect_target,
+    validate_url,
 };
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};
 pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};

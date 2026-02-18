@@ -5,7 +5,7 @@
 //! - HLS/DASH streams with site-specific extraction
 //! - Live streams with real-time output
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use std::path::Path;
 use std::process::Stdio;
@@ -13,10 +13,10 @@ use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
+use crate::stream::StreamQuality;
 use crate::stream::backend::{
     BackendType, ProgressCallback, StreamBackend, StreamConfig, StreamProgress,
 };
-use crate::stream::StreamQuality;
 
 /// Streamlink-based streaming backend
 pub struct StreamlinkBackend {

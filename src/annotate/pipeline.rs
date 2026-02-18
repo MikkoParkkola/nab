@@ -4,7 +4,7 @@
 
 #![allow(dead_code)] // Whisper output fields reserved for word-level timestamps
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

@@ -14,8 +14,8 @@ pub async fn cmd_analyze(
     api_key: Option<&str>,
 ) -> Result<()> {
     use nab::analyze::{
-        report::{AnalysisReport, ReportFormat},
         AnalysisPipeline, PipelineConfig as AnalysisConfig, VisionBackend,
+        report::{AnalysisReport, ReportFormat},
     };
 
     eprintln!("🎬 Analyzing: {video}");

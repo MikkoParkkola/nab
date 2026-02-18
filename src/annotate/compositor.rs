@@ -6,7 +6,7 @@
 //! - Real-time streaming mode
 //! - Batch file processing
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};

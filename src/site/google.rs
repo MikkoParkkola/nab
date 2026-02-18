@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{Cursor, Read};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 
 use super::{SiteContent, SiteMetadata, SiteProvider};
@@ -108,7 +108,11 @@ fn parse_google_url(url: &str) -> Option<GoogleDocUrl> {
 
     // Extract the ID: the path segment after `/d/`
     let after_d = url.split(segment).nth(1)?;
-    let id = after_d.split('/').next().filter(|s| !s.is_empty())?.to_string();
+    let id = after_d
+        .split('/')
+        .next()
+        .filter(|s| !s.is_empty())?
+        .to_string();
 
     Some(GoogleDocUrl { id, kind })
 }
@@ -147,8 +151,7 @@ impl SiteProvider for GoogleWorkspaceProvider {
             ),
         };
 
-        let parsed = parse_google_url(url)
-            .context("Failed to parse Google Workspace URL")?;
+        let parsed = parse_google_url(url).context("Failed to parse Google Workspace URL")?;
 
         match parsed.kind {
             DocKind::Doc => extract_doc(&parsed.id, url, cookie_header).await,
@@ -225,11 +228,7 @@ async fn fetch_export(export_url: &str, cookie_header: &str) -> Result<bytes::By
 
 // ─── Google Docs ──────────────────────────────────────────────────────────────
 
-async fn extract_doc(
-    id: &str,
-    canonical_url: &str,
-    cookie_header: &str,
-) -> Result<SiteContent> {
+async fn extract_doc(id: &str, canonical_url: &str, cookie_header: &str) -> Result<SiteContent> {
     // Multi-tab discovery is not supported: Google renders tab metadata via
     // JavaScript so tab IDs are absent from the initial HTML. The export API's
     // `&tab=t.X` parameter requires an opaque ID that cannot be enumerated
@@ -309,11 +308,7 @@ pub(crate) struct XlsxSheet {
     pub(crate) index: usize,
 }
 
-async fn extract_sheet(
-    id: &str,
-    canonical_url: &str,
-    cookie_header: &str,
-) -> Result<SiteContent> {
+async fn extract_sheet(id: &str, canonical_url: &str, cookie_header: &str) -> Result<SiteContent> {
     // Download xlsx once — it contains all sheets, workbook metadata, shared
     // strings, and comments. This avoids a separate "editor page" request whose
     // data is only available after JavaScript execution.
@@ -325,8 +320,7 @@ async fn extract_sheet(
         Ok(_) | Err(_) => {
             // Fall back to CSV export for the default sheet when xlsx parsing fails.
             tracing::debug!("xlsx parsing produced no content, falling back to CSV");
-            let csv_url =
-                format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv");
+            let csv_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv");
             let csv_bytes = fetch_export(&csv_url, cookie_header).await?;
             csv_to_markdown(&String::from_utf8_lossy(&csv_bytes))
         }
@@ -502,10 +496,7 @@ pub(crate) fn parse_shared_strings(xml: &str) -> Vec<String> {
 ///
 /// Column letters (A, B, …, Z, AA, …) are converted to 0-based indices.
 /// Shared-string cells (`t="s"`) are resolved via `shared_strings`.
-pub(crate) fn parse_xlsx_sheet_xml(
-    xml: &str,
-    shared_strings: &[String],
-) -> Vec<Vec<String>> {
+pub(crate) fn parse_xlsx_sheet_xml(xml: &str, shared_strings: &[String]) -> Vec<Vec<String>> {
     let Ok(doc) = roxmltree::Document::parse(xml) else {
         return vec![];
     };
@@ -584,7 +575,11 @@ fn resolve_cell_value(
         }
         "b" => {
             // Boolean: "1" → "TRUE", "0" → "FALSE"
-            if raw == "1" { "TRUE".to_owned() } else { "FALSE".to_owned() }
+            if raw == "1" {
+                "TRUE".to_owned()
+            } else {
+                "FALSE".to_owned()
+            }
         }
         "inlineStr" => {
             // Inline string stored in <is><t>...</t></is>
@@ -700,39 +695,29 @@ pub(crate) fn xlsx_to_all_sheets_markdown(bytes: &[u8]) -> Result<String> {
 
 // ─── Google Slides ────────────────────────────────────────────────────────────
 
-async fn extract_slide(
-    id: &str,
-    canonical_url: &str,
-    cookie_header: &str,
-) -> Result<SiteContent> {
-    let txt_url = format!(
-        "https://docs.google.com/presentation/d/{id}/export?format=txt"
-    );
+async fn extract_slide(id: &str, canonical_url: &str, cookie_header: &str) -> Result<SiteContent> {
+    let txt_url = format!("https://docs.google.com/presentation/d/{id}/export?format=txt");
     let txt_bytes = fetch_export(&txt_url, cookie_header).await?;
     let slide_text = String::from_utf8_lossy(&txt_bytes).into_owned();
 
     let mut markdown = format!("## Presentation Notes\n\n{slide_text}");
 
     // Fetch OOXML for comments
-    let pptx_url = format!(
-        "https://docs.google.com/presentation/d/{id}/export?format=pptx"
-    );
+    let pptx_url = format!("https://docs.google.com/presentation/d/{id}/export?format=pptx");
     match fetch_export(&pptx_url, cookie_header).await {
-        Ok(pptx_bytes) => {
-            match parse_pptx_comments(&pptx_bytes) {
-                Ok(comments) if !comments.is_empty() => {
-                    markdown.push_str("\n\n---\n\n## Comments\n\n");
-                    for comment in &comments {
-                        markdown.push_str(comment);
-                        markdown.push('\n');
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!("Failed to parse .pptx comments: {e}");
+        Ok(pptx_bytes) => match parse_pptx_comments(&pptx_bytes) {
+            Ok(comments) if !comments.is_empty() => {
+                markdown.push_str("\n\n---\n\n## Comments\n\n");
+                for comment in &comments {
+                    markdown.push_str(comment);
+                    markdown.push('\n');
                 }
             }
-        }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("Failed to parse .pptx comments: {e}");
+            }
+        },
         Err(e) => {
             tracing::debug!("Skipping .pptx comments: {e}");
         }
@@ -1180,8 +1165,7 @@ mod tests {
     #[test]
     fn parse_google_sheet_url_extracts_id_and_kind() {
         let parsed =
-            parse_google_url("https://docs.google.com/spreadsheets/d/1abc_XYZ/edit#gid=0")
-                .unwrap();
+            parse_google_url("https://docs.google.com/spreadsheets/d/1abc_XYZ/edit#gid=0").unwrap();
         assert_eq!(parsed.id, "1abc_XYZ");
         assert_eq!(parsed.kind, DocKind::Sheet);
     }
@@ -1197,10 +1181,9 @@ mod tests {
     #[test]
     fn parse_google_url_strips_query_params_from_id() {
         // ID should not include query parameters
-        let parsed = parse_google_url(
-            "https://docs.google.com/document/d/DOCID123/export?format=html",
-        )
-        .unwrap();
+        let parsed =
+            parse_google_url("https://docs.google.com/document/d/DOCID123/export?format=html")
+                .unwrap();
         assert_eq!(parsed.id, "DOCID123");
     }
 
@@ -1235,7 +1218,10 @@ mod tests {
     fn csv_to_markdown_handles_quoted_fields_with_commas() {
         let csv = "Name,Notes\nAlice,\"Hello, world\"";
         let md = csv_to_markdown(csv);
-        assert!(md.contains("Hello, world"), "quoted comma field should be preserved");
+        assert!(
+            md.contains("Hello, world"),
+            "quoted comma field should be preserved"
+        );
     }
 
     #[test]
@@ -1303,7 +1289,11 @@ mod tests {
 </workbook>"#;
         let sheets = parse_xlsx_workbook(xml);
         assert_eq!(sheets.len(), 1);
-        assert!(sheets[0].name.starts_with("Sheet"), "expected fallback name, got '{}'", sheets[0].name);
+        assert!(
+            sheets[0].name.starts_with("Sheet"),
+            "expected fallback name, got '{}'",
+            sheets[0].name
+        );
     }
 
     #[test]
@@ -1478,10 +1468,7 @@ mod tests {
 
     #[test]
     fn grid_to_markdown_escapes_pipe_characters_in_cells() {
-        let grid = vec![
-            vec!["Col".to_string()],
-            vec!["A|B".to_string()],
-        ];
+        let grid = vec![vec!["Col".to_string()], vec!["A|B".to_string()]];
         let md = grid_to_markdown(&grid);
         assert!(md.contains("A\\|B"), "pipe must be escaped: {md}");
     }
@@ -1509,7 +1496,10 @@ mod tests {
         // WHEN
         let md = xlsx_to_all_sheets_markdown(&xlsx_bytes).unwrap();
         // THEN: single sheet → no "## Sheet:" header prefix
-        assert!(!md.contains("## Sheet:"), "single sheet must not have section header");
+        assert!(
+            !md.contains("## Sheet:"),
+            "single sheet must not have section header"
+        );
         assert!(md.contains("Revenue"), "cell data must appear: {md}");
     }
 
@@ -1535,8 +1525,14 @@ mod tests {
         // WHEN
         let md = xlsx_to_all_sheets_markdown(&xlsx_bytes).unwrap();
         // THEN
-        assert!(md.contains("## Sheet: Alpha"), "first sheet header missing: {md}");
-        assert!(md.contains("## Sheet: Beta"), "second sheet header missing: {md}");
+        assert!(
+            md.contains("## Sheet: Alpha"),
+            "first sheet header missing: {md}"
+        );
+        assert!(
+            md.contains("## Sheet: Beta"),
+            "second sheet header missing: {md}"
+        );
     }
 
     #[test]

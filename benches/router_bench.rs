@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo bench --bench router_bench`
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use nab::content::ContentRouter;
 use nab::site::github::GitHubProvider;
 use nab::site::hackernews::HackerNewsProvider;

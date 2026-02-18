@@ -118,8 +118,8 @@ fn fetch_body_flag_shows_content() {
         .timeout(std::time::Duration::from_secs(30))
         .assert()
         .success()
-        // example.com body contains "Example Domain" - should appear as markdown
-        .stdout(predicate::str::contains("Example Domain"));
+        // Readability extracts article body (strips h1 title); check for actual content
+        .stdout(predicate::str::contains("documentation examples"));
 }
 
 #[test]

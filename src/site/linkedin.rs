@@ -15,7 +15,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://www.linkedin.com/posts/someuser_topic-activity-123456789",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -48,7 +49,12 @@ impl SiteProvider for LinkedInProvider {
             || normalized.contains("linkedin.com/feed/update/")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         let oembed_url = format!(
             "https://www.linkedin.com/oembed?url={}&format=json",
             urlencoding::encode(url)
@@ -185,8 +191,11 @@ mod tests {
     #[test]
     fn matches_linkedin_feed_update_urls() {
         let provider = LinkedInProvider;
-        assert!(provider
-            .matches("https://www.linkedin.com/feed/update/urn:li:activity:7654321098765432109"));
+        assert!(
+            provider.matches(
+                "https://www.linkedin.com/feed/update/urn:li:activity:7654321098765432109"
+            )
+        );
     }
 
     #[test]

@@ -18,7 +18,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://x.com/naval/status/1234567890",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -50,7 +51,12 @@ impl SiteProvider for TwitterProvider {
             && normalized.contains("/status/")
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         // Extract user and status ID from URL
         let (user, id) = parse_twitter_url(url)?;
 

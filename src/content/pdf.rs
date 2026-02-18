@@ -15,7 +15,7 @@
 use anyhow::{Context, Result};
 use pdfium_render::prelude::*;
 
-use super::table::{detect_tables, Table};
+use super::table::{Table, detect_tables};
 use super::types::{PdfChar, TextLine};
 use super::{ContentHandler, ConversionResult};
 

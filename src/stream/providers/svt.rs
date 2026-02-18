@@ -1,6 +1,6 @@
 //! SVT Play (Swedish) streaming provider
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;

@@ -16,7 +16,8 @@
 //!
 //! let content = provider.extract(
 //!     "https://mastodon.social/@user/123456789",
-//!     &client
+//!     &client,
+//!     None
 //! ).await?;
 //!
 //! println!("{}", content.markdown);
@@ -78,7 +79,12 @@ impl SiteProvider for MastodonProvider {
         false
     }
 
-    async fn extract(&self, url: &str, client: &AcceleratedClient, _cookies: Option<&str>) -> Result<SiteContent> {
+    async fn extract(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        _cookies: Option<&str>,
+    ) -> Result<SiteContent> {
         let (instance, status_id) = parse_mastodon_url(url)?;
 
         let api_url = format!("https://{instance}/api/v1/statuses/{status_id}");

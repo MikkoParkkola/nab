@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo bench --bench arena_benchmark`
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use nab::arena::{ArenaResponse, ResponseArena, ResponseBuffer, StringInterner};
 
 /// Simulate typical HTTP response headers (10 headers, ~500 bytes)
@@ -277,8 +277,8 @@ fn bench_arena_reuse(c: &mut Criterion) {
 
                 black_box(buffer.as_str())
             } // buffer dropped here
-              // Reset for reuse (zero-cost with bumpalo)
-              // Note: In real usage, arena.reset() would be called between requests
+            // Reset for reuse (zero-cost with bumpalo)
+            // Note: In real usage, arena.reset() would be called between requests
         });
     });
 }

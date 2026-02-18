@@ -3,7 +3,7 @@ use std::time::Instant;
 use anyhow::Result;
 use scraper::{Html, Selector};
 
-use nab::{inject_fetch_sync, AcceleratedClient, ApiDiscovery, FetchClient, JsEngine};
+use nab::{AcceleratedClient, ApiDiscovery, FetchClient, JsEngine, inject_fetch_sync};
 
 use super::fetch::{resolve_browser_name, resolve_cookie_source};
 

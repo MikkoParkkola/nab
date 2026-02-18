@@ -20,14 +20,14 @@ pub async fn cmd_stream(
     player: Option<&str>,
 ) -> Result<()> {
     use nab::stream::{
+        StreamBackend, StreamProvider, StreamQuality,
         backend::StreamConfig,
         backends::{FfmpegBackend, NativeHlsBackend},
         providers::{GenericHlsProvider, YleProvider},
-        StreamBackend, StreamProvider, StreamQuality,
     };
     use std::collections::HashMap;
     use std::process::Stdio;
-    use tokio::io::{stdout, AsyncWriteExt};
+    use tokio::io::{AsyncWriteExt, stdout};
 
     // Parse quality
     let stream_quality = match quality.to_lowercase().as_str() {
@@ -133,7 +133,9 @@ pub async fn cmd_stream(
         headers.insert("X-Forwarded-For".to_string(), ip);
 
         if cookies.to_lowercase() == "none" {
-            eprintln!("🌍 Using Finnish IP for geo access. Add --cookies to enable authenticated content.");
+            eprintln!(
+                "🌍 Using Finnish IP for geo access. Add --cookies to enable authenticated content."
+            );
         } else {
             eprintln!("🔐 Using browser session + Finnish IP for Yle");
         }
