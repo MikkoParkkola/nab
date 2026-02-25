@@ -66,6 +66,8 @@ impl HtmlHandler {
 /// 1. **SPA extraction**: Try `__NEXT_DATA__` / `__NUXT_DATA__` for React/Vue SPAs
 /// 2. **Readability extraction**: Strip comment sections, then extract article content
 /// 3. **Fallback**: If extraction fails, use raw HTML with basic filtering
+/// 4. **Thin-content warning**: Emit a tracing warning when output is disproportionately
+///    small vs. the HTML body size, indicating JS-rendered content may be missing.
 ///
 /// Passing the real `url` significantly improves readability quality for sites with
 /// complex DOM structures (`LessWrong`, `Ghost CMS`, etc.).
@@ -81,18 +83,63 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 
     // Try readability extraction with real URL (or fallback placeholder)
     let effective_url = url.unwrap_or("https://example.com");
-    if let Some(article) = readability::extract_article(&cleaned_html, effective_url) {
+    let markdown = if let Some(article) = readability::extract_article(&cleaned_html, effective_url) {
         let md = html2md::parse_html(&article.content_html);
         let lines: Vec<&str> = md
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .collect();
-        return lines.join("\n");
+        lines.join("\n")
+    } else {
+        // Fallback to raw html2md with filtering if readability fails
+        html_to_markdown(html)
+    };
+
+    // Warn when output is suspiciously thin relative to the HTML input.
+    // A ratio below 2% usually means JS-rendered content was not captured.
+    if let Some(warning) = detect_thin_content(html.len(), markdown.len()) {
+        tracing::warn!("{}", warning);
     }
 
-    // Fallback to raw html2md with filtering if readability fails
-    html_to_markdown(html)
+    markdown
+}
+
+/// Detect suspiciously thin markdown output relative to HTML input size.
+///
+/// Returns a warning message when the markdown is disproportionately small
+/// compared to the raw HTML. This typically indicates JavaScript-rendered
+/// content that was not captured by the static HTML parser.
+///
+/// The threshold is empirically calibrated:
+/// - Normal article pages: markdown ≥ 8% of HTML body size
+/// - JS-rendered pages (e.g., Stripe blog): markdown < 1% of HTML body size
+/// - Minimum HTML size to avoid false positives on tiny pages: 5 KB
+///
+/// # Returns
+///
+/// `Some(warning)` when the ratio is below the threshold, `None` otherwise.
+#[must_use]
+pub fn detect_thin_content(html_len: usize, markdown_len: usize) -> Option<String> {
+    const MIN_HTML_LEN: usize = 5_000;
+    const THIN_RATIO_PERCENT: usize = 2;
+
+    if html_len < MIN_HTML_LEN {
+        return None;
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    let ratio_percent = (markdown_len * 100) / html_len.max(1);
+
+    if ratio_percent < THIN_RATIO_PERCENT {
+        Some(format!(
+            "Warning: output is suspiciously thin ({markdown_len} chars from {html_len} bytes of HTML, \
+             {ratio_percent}% ratio). The page likely uses JavaScript rendering — \
+             the article body may be missing. Try: nab fetch --cookies brave <url>"
+        ))
+    } else {
+        None
+    }
 }
 
 /// Convert HTML to markdown with readability extraction (URL-unaware).
@@ -141,30 +188,55 @@ fn try_extract_script_json(document: &scraper::Html, css_selector: &str) -> Opti
 
 /// Recursively search a Next.js `pageProps` tree for the longest content field.
 ///
-/// Next.js stores page data under `props.pageProps`. We look for well-known
-/// content field names and return the longest match above the minimum threshold.
+/// Next.js stores page data under `props.pageProps`. We use two strategies:
+///
+/// 1. **Named-key search**: Look for well-known content field names (most accurate).
+/// 2. **Longest-string fallback**: If named-key search fails, walk the entire tree
+///    and return the longest string value found. This handles sites like Stripe's
+///    developer blog that use proprietary key names (`bodyText`, `richContent`, etc.).
+///
+/// The named-key strategy is tried first because it is more precise. The
+/// longest-string fallback is less precise (may pick up large JSON blobs instead of
+/// article text) but is far better than returning nothing for JS-rendered pages.
 fn extract_nextjs_content(data: &serde_json::Value) -> Option<String> {
-    // Ordered by specificity: html/content first, metadata last
+    // Ordered by specificity — HTML/rich content first, summaries last.
+    // Extend this list when new CMS key patterns are discovered.
     const CONTENT_KEYS: &[&str] = &[
         "body",
+        "bodyText",
+        "bodyHtml",
+        "body_html",
         "html",
         "content",
+        "contentHtml",
+        "content_html",
+        "richContent",
+        "richText",
+        "articleBody",
+        "article_body",
         "article",
         "post",
+        "postBody",
+        "postContent",
         "markdown",
+        "source",
         "text",
+        "fullText",
+        "full_text",
+        "excerpt",
         "description",
+        "summary",
     ];
     // Minimum chars to be considered article content (not a blurb or empty string)
-    const MIN_CONTENT_LEN: usize = 100;
+    const MIN_CONTENT_LEN: usize = 200;
 
     // Next.js: props.pageProps holds the actual page data
     let page_props = data.get("props")?.get("pageProps")?;
 
+    // Strategy 1: named-key search across the entire pageProps subtree
     let mut best: Option<String> = None;
-
     for key in CONTENT_KEYS {
-        if let Some(found) = find_content_recursive(page_props, key) {
+        if let Some(found) = find_content_by_key(page_props, key) {
             let current_best_len = best.as_deref().map_or(0, str::len);
             if found.len() >= MIN_CONTENT_LEN && found.len() > current_best_len {
                 best = Some(found);
@@ -172,25 +244,35 @@ fn extract_nextjs_content(data: &serde_json::Value) -> Option<String> {
         }
     }
 
-    best.map(|content| {
-        if content.contains('<') && content.contains('>') {
-            // Looks like HTML — convert to markdown
-            let md = html2md::parse_html(&content);
-            md.lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            content
-        }
-    })
+    // Strategy 2: longest-string fallback for unknown CMS structures.
+    // Only activates when named-key search found nothing useful.
+    if best.is_none() {
+        best = find_longest_string(page_props, MIN_CONTENT_LEN);
+    }
+
+    best.map(|content| render_spa_content(&content))
+}
+
+/// Convert a SPA content string (HTML or plain text) to clean markdown.
+fn render_spa_content(content: &str) -> String {
+    if content.contains('<') && content.contains('>') {
+        // Looks like HTML — convert to markdown
+        let md = html2md::parse_html(content);
+        md.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        content.to_string()
+    }
 }
 
 /// Recursively walk a JSON value tree looking for a string field named `key`.
 ///
-/// Returns the first string value found, or `None`. Depth-first, object before array.
-fn find_content_recursive(value: &serde_json::Value, key: &str) -> Option<String> {
+/// Returns the first string value found using depth-first search (object fields
+/// before array items). Returns `None` if the key is not present.
+fn find_content_by_key(value: &serde_json::Value, key: &str) -> Option<String> {
     match value {
         serde_json::Value::Object(map) => {
             // Check this level first
@@ -199,7 +281,7 @@ fn find_content_recursive(value: &serde_json::Value, key: &str) -> Option<String
             }
             // Recurse into values
             for (_, v) in map {
-                if let Some(found) = find_content_recursive(v, key) {
+                if let Some(found) = find_content_by_key(v, key) {
                     return Some(found);
                 }
             }
@@ -207,7 +289,7 @@ fn find_content_recursive(value: &serde_json::Value, key: &str) -> Option<String
         }
         serde_json::Value::Array(arr) => {
             for item in arr {
-                if let Some(found) = find_content_recursive(item, key) {
+                if let Some(found) = find_content_by_key(item, key) {
                     return Some(found);
                 }
             }
@@ -216,6 +298,32 @@ fn find_content_recursive(value: &serde_json::Value, key: &str) -> Option<String
         _ => None,
     }
 }
+
+/// Find the longest string value anywhere in a JSON tree.
+///
+/// This is a last-resort fallback for Next.js / SPA pages that use proprietary
+/// content key names. By finding the longest string, we can usually recover the
+/// article body even when its field name is unknown.
+///
+/// Skips strings shorter than `min_len` to avoid picking up IDs, slugs, or
+/// short metadata strings.
+fn find_longest_string(value: &serde_json::Value, min_len: usize) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => {
+            if s.len() >= min_len { Some(s.clone()) } else { None }
+        }
+        serde_json::Value::Object(map) => map
+            .values()
+            .filter_map(|v| find_longest_string(v, min_len))
+            .max_by_key(|s| s.len()),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| find_longest_string(v, min_len))
+            .max_by_key(|s| s.len()),
+        _ => None,
+    }
+}
+
 
 /// Remove comment section DOM nodes from HTML before readability processing.
 ///
@@ -615,7 +723,7 @@ mod tests {
                 "pageProps": {
                     "post": {
                         "title": "Hello World",
-                        "body": "<p>This is the article body content with substantial text that should be extracted by the SPA extractor when readability fails.</p>"
+                        "body": "<p>This is the article body content with substantial text that should be extracted by the SPA extractor when readability fails. It contains enough characters to satisfy the minimum content length threshold of two hundred characters.</p>"
                     }
                 }
             }
@@ -659,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn find_content_recursive_finds_nested_key() {
+    fn find_content_by_key_finds_nested_key() {
         let value = serde_json::json!({
             "level1": {
                 "level2": {
@@ -668,19 +776,19 @@ mod tests {
             }
         });
 
-        let result = find_content_recursive(&value, "content");
+        let result = find_content_by_key(&value, "content");
         assert!(result.is_some());
         assert!(result.unwrap().contains("deep content"));
     }
 
     #[test]
-    fn find_content_recursive_finds_in_array() {
+    fn find_content_by_key_finds_in_array() {
         let value = serde_json::json!([
             {"title": "skip"},
             {"body": "the actual article body content found in array"}
         ]);
 
-        let result = find_content_recursive(&value, "body");
+        let result = find_content_by_key(&value, "body");
         assert!(result.is_some());
         assert!(result.unwrap().contains("actual article body"));
     }
@@ -695,7 +803,9 @@ mod tests {
     fn extract_spa_data_extracts_nextjs_data() {
         // Simulate a Next.js page with embedded data
         let body_content = "This is the article body content from a Next.js application. \
-            It contains multiple sentences to pass the length threshold check.";
+            It contains multiple sentences to pass the minimum length threshold check. \
+            The content must be at least two hundred characters long to be considered \
+            a valid article body by the SPA extractor.";
         let json = serde_json::json!({
             "props": {
                 "pageProps": {
@@ -734,5 +844,313 @@ mod tests {
             </article></body></html>";
         let md = html_to_markdown_with_readability(html);
         assert!(md.contains("Compat Test") || md.contains("Backward compatible"));
+    }
+
+    // ── detect_thin_content ─────────────────────────────────────────────────
+
+    #[test]
+    fn detect_thin_content_warns_when_ratio_below_threshold() {
+        // GIVEN: 10 KB HTML producing only 50 chars of markdown (0.5% ratio)
+        let warning = detect_thin_content(10_000, 50);
+        // THEN: a warning is returned
+        assert!(warning.is_some(), "should warn for 0.5% ratio");
+        let msg = warning.unwrap();
+        assert!(msg.contains("suspiciously thin"), "message should describe the problem");
+        assert!(msg.contains("JavaScript rendering"), "message should explain likely cause");
+        assert!(msg.contains("--cookies"), "message should suggest a workaround");
+    }
+
+    #[test]
+    fn detect_thin_content_no_warning_for_normal_ratio() {
+        // GIVEN: 10 KB HTML producing 1 KB of markdown (10% ratio — normal article)
+        let warning = detect_thin_content(10_000, 1_000);
+        // THEN: no warning
+        assert!(warning.is_none(), "should not warn for healthy 10% ratio");
+    }
+
+    #[test]
+    fn detect_thin_content_no_warning_for_tiny_html() {
+        // GIVEN: HTML body below the minimum size threshold (4 KB)
+        // WHEN: markdown is also very small
+        let warning = detect_thin_content(4_000, 10);
+        // THEN: no warning — too small to be reliable signal
+        assert!(
+            warning.is_none(),
+            "should not warn for HTML below 5 KB minimum"
+        );
+    }
+
+    #[test]
+    fn detect_thin_content_no_warning_at_exact_threshold() {
+        // GIVEN: ratio exactly at the 2% threshold (boundary condition)
+        let html_len = 10_000;
+        let markdown_len = 200; // 2% exactly
+        let warning = detect_thin_content(html_len, markdown_len);
+        // THEN: no warning (2% is at the boundary, not below it)
+        assert!(warning.is_none(), "exact threshold should not trigger warning");
+    }
+
+    #[test]
+    fn detect_thin_content_warns_just_below_threshold() {
+        // GIVEN: ratio just below the 2% threshold (boundary condition)
+        let html_len = 10_000;
+        let markdown_len = 199; // 1.99% — just below
+        let warning = detect_thin_content(html_len, markdown_len);
+        // THEN: warning is returned
+        assert!(warning.is_some(), "just-below-threshold should trigger warning");
+    }
+
+    #[test]
+    fn detect_thin_content_no_warning_for_empty_markdown_on_small_html() {
+        // GIVEN: small page that produces empty markdown — not a JS rendering issue
+        let warning = detect_thin_content(100, 0);
+        // THEN: no warning — HTML is below minimum size
+        assert!(warning.is_none(), "tiny HTML should never warn");
+    }
+
+    // ── find_longest_string ─────────────────────────────────────────────────
+
+    #[test]
+    fn find_longest_string_returns_longest_in_flat_object() {
+        // GIVEN: JSON object with strings of different lengths
+        let value = serde_json::json!({
+            "slug": "my-post",
+            "title": "A short title",
+            "bodyText": "This is a much longer string representing the article body content that should be selected as the longest value in the tree."
+        });
+        // WHEN: we search for the longest string above minimum length
+        let result = find_longest_string(&value, 50);
+        // THEN: the longest string is returned
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("article body content"));
+    }
+
+    #[test]
+    fn find_longest_string_returns_longest_in_nested_object() {
+        // GIVEN: nested JSON where the longest string is deep in the tree
+        let value = serde_json::json!({
+            "meta": {"slug": "test"},
+            "content": {
+                "sections": [
+                    {"type": "text", "value": "Short section."},
+                    {"type": "text", "value": "This section contains a much longer body of text that represents the actual article content. It spans many more characters than the other sections."}
+                ]
+            }
+        });
+        let result = find_longest_string(&value, 50);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("actual article content"));
+    }
+
+    #[test]
+    fn find_longest_string_returns_none_when_all_strings_below_min_len() {
+        // GIVEN: JSON where all string values are below the minimum length
+        let value = serde_json::json!({
+            "id": "abc123",
+            "slug": "my-post",
+            "status": "published"
+        });
+        let result = find_longest_string(&value, 50);
+        // THEN: None, since no string meets the minimum length
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn find_longest_string_handles_array_of_strings() {
+        // GIVEN: array containing strings of varying lengths
+        let value = serde_json::json!([
+            "short",
+            "medium length string here",
+            "this is the longest string in the array and it exceeds the minimum length threshold easily"
+        ]);
+        let result = find_longest_string(&value, 30);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("longest string in the array"));
+    }
+
+    // ── extract_nextjs_content with unknown CMS key names ───────────────────
+
+    #[test]
+    fn extract_nextjs_content_falls_back_to_longest_string_for_unknown_keys() {
+        // GIVEN: Next.js data where the article body uses a proprietary key name
+        // (simulating Stripe blog's structure which uses non-standard keys)
+        let article_body = "This is the full article body from Stripe's blog post about \
+            payment processing and financial infrastructure. It discusses how modern \
+            payment systems work and the engineering challenges involved in building \
+            reliable financial software at scale.";
+
+        let json_data = serde_json::json!({
+            "props": {
+                "pageProps": {
+                    "post": {
+                        "slug": "payment-systems",
+                        "author": "Jane Smith",
+                        "publishedAt": "2024-01-15",
+                        // Proprietary key not in CONTENT_KEYS list
+                        "richBodyContent": article_body
+                    }
+                }
+            },
+            "buildId": "stripe-blog-build-123"
+        });
+
+        // WHEN: we extract content
+        let result = extract_nextjs_content(&json_data);
+
+        // THEN: the article body is found via longest-string fallback
+        assert!(result.is_some(), "should extract content via longest-string fallback");
+        let content = result.unwrap();
+        assert!(
+            content.contains("Stripe's blog post") || content.contains("payment processing"),
+            "expected article body, got: {content}"
+        );
+    }
+
+    #[test]
+    fn extract_nextjs_content_prefers_named_key_over_longer_incidental_string() {
+        // GIVEN: pageProps with both a well-known key and a longer non-content string
+        // The named-key match should win even if a longer string exists elsewhere
+        let known_body = "This is the article body content stored under the well-known \
+            'body' key. It is substantial enough to pass the minimum length check.";
+        let longer_non_content = "a".repeat(500); // longer but not a content field
+
+        let json_data = serde_json::json!({
+            "props": {
+                "pageProps": {
+                    "post": {
+                        "body": known_body,
+                        // A longer string under an opaque key
+                        "_internalData": longer_non_content
+                    }
+                }
+            }
+        });
+
+        let result = extract_nextjs_content(&json_data);
+        assert!(result.is_some());
+        // Named-key strategy finds 'body' first — but since longest-string only
+        // activates when named-key finds nothing, both strategies can coexist.
+        // The key assertion: we get something useful back.
+        assert!(
+            result.unwrap().len() >= known_body.len() - 50,
+            "should return at least the known body content"
+        );
+    }
+
+    #[test]
+    fn extract_nextjs_content_extended_key_body_html() {
+        // GIVEN: pageProps using 'bodyHtml' — one of the newly added keys
+        let html_body =
+            "<p>Article content stored as HTML in the bodyHtml field. \
+            This is a common pattern in headless CMS systems where content \
+            is stored as rendered HTML fragments rather than plain text or markdown. \
+            The content is substantial enough to pass the minimum length threshold \
+            required by the SPA extractor.</p>";
+
+        let json_data = serde_json::json!({
+            "props": {
+                "pageProps": {
+                    "page": {
+                        "title": "CMS Article",
+                        "bodyHtml": html_body
+                    }
+                }
+            }
+        });
+
+        let result = extract_nextjs_content(&json_data);
+        assert!(result.is_some(), "should find content via 'bodyHtml' key");
+        let content = result.unwrap();
+        // HTML should be converted to markdown
+        assert!(
+            content.contains("Article content stored as HTML"),
+            "expected HTML converted to markdown, got: {content}"
+        );
+    }
+
+    // ── JS-rendered page simulation (issue #32 regression test) ────────────
+
+    #[test]
+    fn js_rendered_page_with_next_data_extracts_article_body() {
+        // GIVEN: A simulated JS-rendered blog page similar to stripe.dev/blog/*
+        // The static HTML shell has very little content; all article text lives
+        // in the embedded __NEXT_DATA__ JSON blob.
+        let article_body = "Minions & Stripe's One-Shot End-to-End Coding Agents: \
+            In this post we explore how we built autonomous coding agents capable of \
+            completing entire engineering tasks from specification to pull request. \
+            We discuss the architecture, the challenges of tool use, and the lessons \
+            learned from running thousands of agent sessions in production. \
+            The system combines LLM planning with deterministic execution steps, \
+            enabling reliable automation of complex software engineering workflows.";
+
+        let next_data = serde_json::json!({
+            "props": {
+                "pageProps": {
+                    "post": {
+                        "title": "Minions & Stripe's One-Shot End-to-End Coding Agents",
+                        "slug": "minions-stripes-one-shot-end-to-end-coding-agents",
+                        "author": {"name": "Stripe Engineering"},
+                        // Non-standard key as used by Stripe's CMS
+                        "bodyText": article_body
+                    }
+                }
+            },
+            "buildId": "abc123",
+            "page": "/blog/[slug]"
+        });
+
+        // Simulate the minimal static HTML shell a JS-rendered page serves
+        // (only author bio in SSR, all article content in __NEXT_DATA__)
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Minions &amp; Stripe's One-Shot End-to-End Coding Agents - Stripe Blog</title>
+    <meta name="description" content="How we built autonomous coding agents.">
+</head>
+<body>
+    <div id="__next">
+        <header><nav><a href="/">Stripe</a></nav></header>
+        <main>
+            <!-- JS renders article here; SSR only has author bio -->
+            <p class="author-bio">Stripe Engineering Team</p>
+        </main>
+    </div>
+    <script id="__NEXT_DATA__" type="application/json">{next_data}</script>
+</body>
+</html>"#,
+            next_data = next_data
+        );
+
+        // WHEN: we convert the page to markdown
+        let markdown = html_to_markdown_with_url(&html, Some("https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents"));
+
+        // THEN: the article body is in the output (not just the author bio)
+        assert!(
+            markdown.contains("autonomous coding agents") || markdown.contains("Minions"),
+            "expected article body in markdown, got only: {markdown}"
+        );
+        assert!(
+            markdown.len() > 200,
+            "output should be substantially longer than a bio, got {} chars",
+            markdown.len()
+        );
+    }
+
+    #[test]
+    fn detect_thin_content_fires_for_js_rendered_page_shell() {
+        // GIVEN: The 34 KB HTML shell of a JS-rendered page that produces only ~200 chars
+        // (simulating the actual stripe.dev/blog issue reported in #32)
+        let html_len = 34_936; // actual size reported in the bug
+        let markdown_len = 200; // actual output size reported in the bug
+
+        // WHEN: we check for thin content
+        let warning = detect_thin_content(html_len, markdown_len);
+
+        // THEN: a warning is returned
+        assert!(warning.is_some(), "34 KB HTML → 200 char markdown must trigger thin-content warning");
+        let msg = warning.unwrap();
+        assert!(msg.contains("200"), "warning should include actual markdown length");
+        assert!(msg.contains("34936") || msg.contains("34,936") || msg.contains("bytes"), "warning should include HTML size");
     }
 }

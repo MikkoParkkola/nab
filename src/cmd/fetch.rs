@@ -311,6 +311,16 @@ pub async fn cmd_fetch(
                 println!("   Conversion: {:.1}ms", result.elapsed_ms);
             }
         }
+
+        // Warn when markdown output is disproportionately small vs the HTML body.
+        // This almost always means JS-rendered content was not captured (e.g. Stripe blog).
+        let is_html = content_type.contains("html");
+        if is_html {
+            if let Some(warning) = nab::content::html::detect_thin_content(body_len, result.markdown.len()) {
+                eprintln!("Warning: {warning}");
+            }
+        }
+
         result.markdown
     } else {
         raw_text.clone()
