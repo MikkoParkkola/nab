@@ -23,11 +23,10 @@ impl BrowserType {
     pub fn as_str(&self) -> &'static str {
         match self {
             BrowserType::Brave => "brave",
-            BrowserType::Chrome => "chrome",
+            BrowserType::Chrome | BrowserType::Dia => "chrome", // Dia uses Chromium cookie format
             BrowserType::Firefox => "firefox",
             BrowserType::Safari => "safari",
             BrowserType::Edge => "edge",
-            BrowserType::Dia => "chrome", // Dia uses Chromium cookie format
         }
     }
 }
@@ -160,6 +159,7 @@ fn detect_windows_default_browser() -> Result<BrowserType> {
 }
 
 /// Fallback detection: check if browser applications exist
+#[allow(clippy::unnecessary_wraps)] // API consistency: caller uses ? on this return type
 fn fallback_detect_browser() -> Result<BrowserType> {
     #[cfg(target_os = "macos")]
     {

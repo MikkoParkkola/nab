@@ -83,7 +83,7 @@ fn test_readability_extracts_article_content() {
 
 #[test]
 fn test_readability_handles_non_article_pages_gracefully() {
-    let html = r#"
+    let html = r"
         <!DOCTYPE html>
         <html>
         <body>
@@ -91,7 +91,7 @@ fn test_readability_handles_non_article_pages_gracefully() {
             <div>Welcome</div>
         </body>
         </html>
-    "#;
+    ";
 
     let router = ContentRouter::new();
     let result = router

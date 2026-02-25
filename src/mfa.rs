@@ -138,7 +138,7 @@ impl MfaHandler {
         info!("🔐 Handling MFA challenge: {}", mfa_type.description());
 
         let result = match mfa_type {
-            MfaType::Totp => self.handle_totp(domain),
+            MfaType::Totp => Self::handle_totp(domain),
             MfaType::SmsOtp => self.handle_sms_otp(domain),
             MfaType::EmailOtp => self.handle_email_otp(domain),
             MfaType::Passkey => self.handle_passkey(domain),
@@ -155,6 +155,8 @@ impl MfaHandler {
             MfaType::Unknown => self.handle_human_in_loop(domain, "Complete 2FA on your device"),
         };
 
+        // Truncation acceptable: elapsed milliseconds fit comfortably in u64
+        #[allow(clippy::cast_possible_truncation)]
         let duration_ms = start.elapsed().as_millis() as u64;
 
         match result {
@@ -184,24 +186,22 @@ impl MfaHandler {
     }
 
     /// Handle TOTP via 1Password
-    fn handle_totp(&self, domain: &str) -> Result<Option<String>> {
-        if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)? {
-            if otp.source == OtpSource::OnePasswordTotp {
+    fn handle_totp(domain: &str) -> Result<Option<String>> {
+        if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)?
+            && otp.source == OtpSource::OnePasswordTotp {
                 info!("   ✅ Got TOTP from 1Password");
                 return Ok(Some(otp.code));
             }
-        }
         Err(anyhow::anyhow!("No TOTP found in 1Password"))
     }
 
     /// Handle SMS OTP via Beeper
     fn handle_sms_otp(&self, domain: &str) -> Result<Option<String>> {
-        if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)? {
-            if otp.source == OtpSource::SmsBeeper {
+        if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)?
+            && otp.source == OtpSource::SmsBeeper {
                 info!("   ✅ Got SMS OTP via Beeper");
                 return Ok(Some(otp.code));
             }
-        }
         // Fall back to human-in-loop if SMS not synced
         warn!("   ⚠️ SMS not available via Beeper, requesting manual input");
         self.handle_human_in_loop(domain, "Enter SMS code")
@@ -209,12 +209,11 @@ impl MfaHandler {
 
     /// Handle Email OTP via Gmail
     fn handle_email_otp(&self, domain: &str) -> Result<Option<String>> {
-        if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)? {
-            if otp.source == OtpSource::EmailGmail {
+        if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)?
+            && otp.source == OtpSource::EmailGmail {
                 info!("   ✅ Got Email OTP via Gmail");
                 return Ok(Some(otp.code));
             }
-        }
         // Fall back to human-in-loop
         warn!("   ⚠️ Email OTP not found, requesting manual input");
         self.handle_human_in_loop(domain, "Enter email verification code")
@@ -225,8 +224,8 @@ impl MfaHandler {
         // Check if 1Password has a passkey for this domain
         let passkeys = self.op_auth.list_passkeys()?;
         for passkey in passkeys {
-            if let Some(ref url) = passkey.url {
-                if url.contains(domain) {
+            if let Some(ref url) = passkey.url
+                && url.contains(domain) {
                     info!("   ✅ Found passkey in 1Password: {}", passkey.title);
                     // Note: Actual passkey signing requires 1Password browser extension
                     // or their SDK. For now, we notify the user to use 1Password.
@@ -234,7 +233,6 @@ impl MfaHandler {
                         return Ok(Some(id));
                     }
                 }
-            }
         }
 
         // Try using op CLI to sign (if supported)
@@ -243,13 +241,12 @@ impl MfaHandler {
             .args(["item", "list", "--categories=Passkey", "--format=json"])
             .output();
 
-        if let Ok(output) = output {
-            if output.status.success() {
+        if let Ok(output) = output
+            && output.status.success() {
                 // Found passkeys, but signing requires browser extension
                 info!("   ⚠️ Passkey found but signing requires 1Password browser extension");
                 return self.handle_human_in_loop(domain, "Complete passkey authentication");
             }
-        }
 
         Err(anyhow::anyhow!("No passkey found for {domain}"))
     }
@@ -271,6 +268,7 @@ impl MfaHandler {
     }
 
     /// Send notifications via all configured channels
+    #[allow(clippy::unnecessary_wraps)] // API consistency: could add more notifiers that return Err
     fn send_notifications(&self, domain: &str, instruction: &str) -> Result<()> {
         let message = format!("MicroFetch: 2FA required for {domain}\n{instruction}");
 
@@ -475,6 +473,8 @@ pub fn detect_mfa_type(html: &str, url: &str) -> Option<MfaType> {
 
 /// URL encoding helper
 mod urlencoding {
+    use std::fmt::Write as _;
+
     pub fn encode(s: &str) -> String {
         let mut result = String::new();
         for c in s.chars() {
@@ -483,7 +483,7 @@ mod urlencoding {
                 ' ' => result.push_str("%20"),
                 _ => {
                     for b in c.to_string().bytes() {
-                        result.push_str(&format!("%{b:02X}"));
+                        let _ = write!(result, "%{b:02X}");
                     }
                 }
             }

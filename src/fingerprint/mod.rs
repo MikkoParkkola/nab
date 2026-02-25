@@ -56,7 +56,7 @@ impl Platform {
         }
     }
 
-    fn os_string(&self) -> &'static str {
+    fn os_string(self) -> &'static str {
         match self {
             Platform::MacOS => "Macintosh; Intel Mac OS X 10_15_7",
             Platform::Windows => "Windows NT 10.0; Win64; x64",
@@ -64,7 +64,7 @@ impl Platform {
         }
     }
 
-    fn sec_ch_platform(&self) -> &'static str {
+    fn sec_ch_platform(self) -> &'static str {
         match self {
             Platform::MacOS => "\"macOS\"",
             Platform::Windows => "\"Windows\"",

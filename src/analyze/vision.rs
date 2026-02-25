@@ -385,6 +385,8 @@ Return ONLY valid JSON, no markdown."#;
         let emotion = parsed.get("emotion").and_then(|e| {
             Some(EmotionResult {
                 primary: e.get("primary")?.as_str()?.to_string(),
+                // Truncation acceptable: f32 precision sufficient for confidence score [0.0, 1.0]
+                #[allow(clippy::cast_possible_truncation)]
                 confidence: e.get("confidence")?.as_f64()? as f32,
                 secondary: None,
             })

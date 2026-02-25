@@ -51,7 +51,7 @@ const MARKDOWN_CHUNKS: &[&str] = &[
 fn bench_headers_arena(c: &mut Criterion) {
     let mut group = c.benchmark_group("headers");
 
-    for size in [10, 50, 100].iter() {
+    for size in &[10_usize, 50, 100] {
         group.throughput(Throughput::Elements(*size as u64));
 
         group.bench_with_input(BenchmarkId::new("bumpalo_arena", size), size, |b, &size| {
@@ -92,7 +92,7 @@ fn bench_headers_arena(c: &mut Criterion) {
 fn bench_html_buffering(c: &mut Criterion) {
     let mut group = c.benchmark_group("html_buffering");
 
-    for size in [10, 100, 1000].iter() {
+    for size in &[10_usize, 100, 1000] {
         group.throughput(Throughput::Elements(*size as u64));
 
         group.bench_with_input(BenchmarkId::new("bumpalo_arena", size), size, |b, &size| {
@@ -142,7 +142,7 @@ fn bench_html_buffering(c: &mut Criterion) {
 fn bench_markdown_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("markdown_conversion");
 
-    for size in [10, 100, 500].iter() {
+    for size in &[10_usize, 100, 500] {
         group.throughput(Throughput::Elements(*size as u64));
 
         group.bench_with_input(BenchmarkId::new("bumpalo_arena", size), size, |b, &size| {
@@ -267,7 +267,7 @@ fn bench_large_response(c: &mut Criterion) {
 fn bench_arena_reuse(c: &mut Criterion) {
     c.bench_function("bumpalo_arena_reuse", |b| {
         b.iter(|| {
-            let mut arena = ResponseArena::new();
+            let arena = ResponseArena::new();
             {
                 let mut buffer = ResponseBuffer::new(&arena);
 
@@ -346,6 +346,7 @@ fn bench_arena_response(c: &mut Criterion) {
 
     group.bench_function("standard_response_building", |b| {
         #[derive(Debug)]
+        #[allow(dead_code)] // benchmark struct; fields used for structural realism
         struct StandardResponse {
             status: u16,
             status_text: String,

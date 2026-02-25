@@ -288,7 +288,7 @@ mod tests {
 
         let merged = Diarizer::merge_segments(&segments, 0.5);
         assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0].end, 4.0); // A segments merged
+        assert!((merged[0].end - 4.0).abs() < f64::EPSILON); // A segments merged
         assert_eq!(merged[1].speaker, "B");
     }
 }

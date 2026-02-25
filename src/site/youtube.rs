@@ -1,6 +1,6 @@
-//! YouTube content extraction via oEmbed API.
+//! `YouTube` content extraction via oEmbed API.
 //!
-//! Uses YouTube's official oEmbed endpoint for video metadata.
+//! Uses `YouTube`'s official oEmbed endpoint for video metadata.
 //! Provides title, author, and thumbnail for videos.
 //!
 //! # Example
@@ -31,7 +31,7 @@ use serde::Deserialize;
 use super::{SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
 
-/// YouTube content provider using oEmbed API.
+/// `YouTube` content provider using oEmbed API.
 pub struct YouTubeProvider;
 
 #[async_trait]
@@ -84,7 +84,7 @@ impl SiteProvider for YouTubeProvider {
     }
 }
 
-/// Format YouTube video as markdown.
+/// Format `YouTube` video as markdown.
 fn format_youtube_markdown(oembed: &YouTubeOEmbed, url: &str) -> String {
     let mut md = String::new();
 

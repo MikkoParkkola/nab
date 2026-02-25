@@ -184,6 +184,8 @@ impl StreamProvider for SvtProvider {
             .map(|r| r.url.clone())
             .ok_or_else(|| anyhow!("No HLS manifest found"))?;
 
+        // Sign loss acceptable: content duration in seconds is non-negative
+        #[allow(clippy::cast_sign_loss)]
         let duration = video.content_duration.map(|d| d as u64);
 
         let thumbnail_url = video.poster.map(|p| {
@@ -223,6 +225,8 @@ impl StreamProvider for SvtProvider {
             .flat_map(|ac| ac.items.unwrap_or_default())
             .filter_map(|item| {
                 let ep = item.item?;
+                // Sign loss acceptable: episode/season/duration values are non-negative
+                #[allow(clippy::cast_sign_loss)]
                 Some(EpisodeInfo {
                     id: ep.video_svt_id.unwrap_or(ep.id),
                     title: ep.name,

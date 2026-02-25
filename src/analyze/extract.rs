@@ -86,7 +86,7 @@ impl FrameExtractor {
         }
 
         // Read extracted frames and their timestamps
-        let mut frames = self.read_extracted_frames(output_dir, &metadata).await?;
+        let mut frames = self.read_extracted_frames(output_dir, &metadata)?;
 
         // Limit to max_frames (keeping evenly distributed selection)
         if frames.len() > self.max_frames {
@@ -169,7 +169,7 @@ impl FrameExtractor {
     }
 
     /// Read extracted frames from directory
-    async fn read_extracted_frames(
+    fn read_extracted_frames(
         &self,
         output_dir: &Path,
         metadata: &VideoMetadata,
@@ -192,6 +192,8 @@ impl FrameExtractor {
             // Estimate timestamp from frame number (scene detection preserves pts)
             // This is approximate; for precise timestamps, parse ffmpeg showinfo output
             let frame_number = i as u64;
+            // Precision loss acceptable: timestamp is approximate display value
+            #[allow(clippy::cast_precision_loss)]
             let timestamp = frame_number as f64 / f64::from(metadata.fps);
 
             frames.push(ExtractedFrame {
@@ -385,7 +387,7 @@ mod tests {
     #[test]
     fn test_frame_extractor_new() {
         let extractor = FrameExtractor::new(0.4, 50);
-        assert_eq!(extractor.scene_threshold, 0.4);
+        assert!((extractor.scene_threshold - 0.4).abs() < f32::EPSILON);
         assert_eq!(extractor.max_frames, 50);
     }
 }

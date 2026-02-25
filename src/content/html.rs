@@ -315,11 +315,11 @@ fn find_longest_string(value: &serde_json::Value, min_len: usize) -> Option<Stri
         serde_json::Value::Object(map) => map
             .values()
             .filter_map(|v| find_longest_string(v, min_len))
-            .max_by_key(|s| s.len()),
+            .max_by_key(std::string::String::len),
         serde_json::Value::Array(arr) => arr
             .iter()
             .filter_map(|v| find_longest_string(v, min_len))
-            .max_by_key(|s| s.len()),
+            .max_by_key(std::string::String::len),
         _ => None,
     }
 }
@@ -602,8 +602,7 @@ mod tests {
         let markdown_lower = markdown.to_lowercase();
         assert!(
             markdown_lower.contains("main article") || markdown_lower.contains("article content"),
-            "Expected article content, got: {}",
-            markdown
+            "Expected article content, got: {markdown}"
         );
         assert!(markdown.contains("main article content"));
 
@@ -624,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_readability_with_semantic_html() {
-        let html = r#"
+        let html = r"
             <html>
             <body>
                 <header>Header content</header>
@@ -636,7 +635,7 @@ mod tests {
                 <footer>Footer content</footer>
             </body>
             </html>
-        "#;
+        ";
 
         let markdown = html_to_markdown_with_url(html, Some("https://example.com/article"));
 
@@ -701,14 +700,14 @@ mod tests {
 
     #[test]
     fn strip_comment_sections_preserves_article_content() {
-        let html = r#"
+        let html = r"
             <html><body>
                 <article>
                     <h1>The Real Post</h1>
                     <p>Substantive article body that we must not lose.</p>
                 </article>
             </body></html>
-        "#;
+        ";
 
         let stripped = strip_comment_sections(html);
 
@@ -734,8 +733,7 @@ mod tests {
         let content = result.unwrap();
         assert!(
             content.contains("article body content"),
-            "Expected body content, got: {}",
-            content
+            "Expected body content, got: {content}"
         );
     }
 
@@ -819,10 +817,9 @@ mod tests {
         });
         let html = format!(
             r#"<html><head></head><body>
-                <script id="__NEXT_DATA__" type="application/json">{}</script>
+                <script id="__NEXT_DATA__" type="application/json">{json}</script>
                 <div id="__next"><p>SSR placeholder</p></div>
-            </body></html>"#,
-            json
+            </body></html>"#
         );
 
         let result = extract_spa_data(&html);
@@ -830,8 +827,7 @@ mod tests {
         let content = result.unwrap();
         assert!(
             content.contains("article body content"),
-            "Expected SPA body, got: {}",
-            content
+            "Expected SPA body, got: {content}"
         );
     }
 
@@ -1118,8 +1114,7 @@ mod tests {
     </div>
     <script id="__NEXT_DATA__" type="application/json">{next_data}</script>
 </body>
-</html>"#,
-            next_data = next_data
+</html>"#
         );
 
         // WHEN: we convert the page to markdown

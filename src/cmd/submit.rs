@@ -17,7 +17,7 @@ pub async fn cmd_submit(
 ) -> Result<()> {
     use nab::{Form, parse_field_args};
 
-    let client = create_client_with_cookies(cookies, use_1password, url).await?;
+    let client = create_client_with_cookies(cookies, use_1password, url)?;
 
     println!("Fetching form page: {url}");
     let page_html = client.fetch_text(url).await?;
@@ -46,7 +46,7 @@ pub async fn cmd_submit(
             };
             form.fields.insert(field_name.to_string(), token);
         } else {
-            anyhow::bail!("CSRF token not found with selector: {}", selector);
+            anyhow::bail!("CSRF token not found with selector: {selector}");
         }
     }
 
@@ -72,7 +72,7 @@ pub async fn cmd_submit(
 }
 
 /// Create HTTP client with cookie support
-async fn create_client_with_cookies(
+fn create_client_with_cookies(
     _cookies: &str,
     _use_1password: bool,
     _url: &str,

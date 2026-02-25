@@ -23,7 +23,7 @@ fn generate_html(target_bytes: usize) -> String {
 <main>
 "#;
 
-    let boilerplate_footer = r#"
+    let boilerplate_footer = r"
 </main>
 <footer>
   <p>Skip to content</p>
@@ -31,7 +31,7 @@ fn generate_html(target_bytes: usize) -> String {
   <p>Privacy Policy | Terms of Service</p>
 </footer>
 </body>
-</html>"#;
+</html>";
 
     let paragraph = "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. \
         Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. \

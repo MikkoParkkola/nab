@@ -27,6 +27,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::fmt::Write as _;
 
 use super::{Engagement, SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
@@ -55,7 +56,7 @@ impl SiteProvider for RedditProvider {
         _cookies: Option<&str>,
     ) -> Result<SiteContent> {
         // Normalize URL and append .json
-        let json_url = parse_reddit_url(url)?;
+        let json_url = parse_reddit_url(url);
         tracing::debug!("Fetching from Reddit: {}", json_url);
 
         // Build a fresh client without http2_prior_knowledge. The AcceleratedClient
@@ -94,8 +95,7 @@ impl SiteProvider for RedditProvider {
         let empty_comments = vec![];
         let comments_data = api_response
             .get(1)
-            .map(|l| &l.data.children)
-            .unwrap_or(&empty_comments);
+            .map_or(&empty_comments, |l| &l.data.children);
 
         let markdown = format_reddit_markdown(&post_data.data, comments_data);
 
@@ -122,16 +122,19 @@ impl SiteProvider for RedditProvider {
 }
 
 /// Parse Reddit URL and convert to JSON API endpoint.
-fn parse_reddit_url(url: &str) -> Result<String> {
+fn parse_reddit_url(url: &str) -> String {
     let url = url.split('?').next().unwrap_or(url);
     let mut json_url = url.to_string();
 
-    // Ensure it ends with .json
-    if !json_url.ends_with(".json") {
+    // Ensure it ends with .json (case-insensitive check)
+    let has_json_ext = std::path::Path::new(&json_url)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    if !has_json_ext {
         json_url.push_str(".json");
     }
 
-    Ok(json_url)
+    json_url
 }
 
 /// Format Reddit post and comments as markdown.
@@ -144,20 +147,20 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
     md.push_str("\n\n");
 
     // Metadata line
-    md.push_str(&format!(
-        "by u/{} · {} points · {} comments\n\n",
+    let _ = writeln!(
+        md,
+        "by u/{} · {} points · {} comments\n",
         post.author,
         format_score(post.score),
         format_number(post.num_comments)
-    ));
+    );
 
     // Post body (selftext for text posts, url for link posts)
-    if let Some(selftext) = &post.selftext {
-        if !selftext.is_empty() {
+    if let Some(selftext) = &post.selftext
+        && !selftext.is_empty() {
             md.push_str(selftext);
             md.push_str("\n\n");
         }
-    }
 
     // If it's a link post, include the URL
     if !post.is_self {
@@ -177,12 +180,13 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
             }
 
             if let Some(body) = &comment.data.body {
-                md.push_str(&format!(
+                let _ = write!(
+                    md,
                     "**u/{}** ({} points):\n\n{}\n\n---\n\n",
                     comment.data.author,
                     format_score(comment.data.score),
                     body
-                ));
+                );
                 count += 1;
             }
         }
@@ -201,9 +205,7 @@ fn format_timestamp(timestamp: f64) -> String {
     let datetime = UNIX_EPOCH + duration;
 
     datetime
-        .duration_since(UNIX_EPOCH)
-        .map(|d| format!("{} seconds since epoch", d.as_secs()))
-        .unwrap_or_else(|_| "Unknown".to_string())
+        .duration_since(UNIX_EPOCH).map_or_else(|_| "Unknown".to_string(), |d| format!("{} seconds since epoch", d.as_secs()))
 }
 
 /// Format signed score values with K/M suffixes.
@@ -296,14 +298,14 @@ mod tests {
 
     #[test]
     fn parse_reddit_url_appends_json() {
-        let result = parse_reddit_url("https://reddit.com/r/rust/comments/abc123").unwrap();
+        let result = parse_reddit_url("https://reddit.com/r/rust/comments/abc123");
         assert_eq!(result, "https://reddit.com/r/rust/comments/abc123.json");
     }
 
     #[test]
     fn parse_reddit_url_strips_query() {
         let result =
-            parse_reddit_url("https://reddit.com/r/rust/comments/abc123?utm_source=x").unwrap();
+            parse_reddit_url("https://reddit.com/r/rust/comments/abc123?utm_source=x");
         assert_eq!(result, "https://reddit.com/r/rust/comments/abc123.json");
     }
 

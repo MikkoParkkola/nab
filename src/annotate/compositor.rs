@@ -38,8 +38,7 @@ impl CompositorOutput {
     pub fn ffmpeg_format(&self) -> &'static str {
         match self {
             Self::MpegTs => "mpegts",
-            Self::FragmentedMp4 => "mp4",
-            Self::Mp4 => "mp4",
+            Self::FragmentedMp4 | Self::Mp4 => "mp4",
             Self::Mkv => "matroska",
             Self::RawVideo => "rawvideo",
         }
@@ -189,7 +188,6 @@ impl Compositor {
 
     /// Build filter complex string for overlays
     fn build_filter_complex(
-        &self,
         subtitle_file: Option<&Path>,
         overlay_tracks: &[OverlayTrack],
     ) -> String {
@@ -227,8 +225,14 @@ impl Compositor {
                     .replace('\n', "\\n");
 
                 // Time-based enable expression
+                // Precision loss acceptable: millisecond timestamps for display timing
+                #[allow(clippy::cast_precision_loss)]
                 let start_sec = entry.start_ms as f64 / 1000.0;
+                #[allow(clippy::cast_precision_loss)]
                 let end_sec = entry.end_ms as f64 / 1000.0;
+                // Truncation/sign-loss acceptable: outline_width is a non-negative CSS pixel value
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let borderw = style.outline_width as u32;
 
                 let drawtext = format!(
                     "drawtext=text='{text}':\
@@ -242,7 +246,6 @@ impl Compositor {
                     style.font_name,
                     fontsize = style.font_size,
                     color = style.color,
-                    borderw = style.outline_width as u32,
                     bordercolor = style.outline_color,
                 );
 
@@ -345,7 +348,7 @@ impl Compositor {
         subtitle_file: Option<&Path>,
         overlay_tracks: &[OverlayTrack],
     ) -> Result<()> {
-        let filter = self.build_filter_complex(subtitle_file, overlay_tracks);
+        let filter = Self::build_filter_complex(subtitle_file, overlay_tracks);
         let args = self.build_args(input, Some(&output.to_string_lossy()), &filter);
 
         debug!("ffmpeg args: {:?}", args);
@@ -373,7 +376,7 @@ impl Compositor {
         overlay_tracks: &[OverlayTrack],
         output: &mut W,
     ) -> Result<u64> {
-        let filter = self.build_filter_complex(subtitle_file, overlay_tracks);
+        let filter = Self::build_filter_complex(subtitle_file, overlay_tracks);
         let args = self.build_args(input, None, &filter);
 
         debug!("ffmpeg streaming args: {:?}", args);
@@ -500,9 +503,9 @@ mod tests {
 
     #[test]
     fn test_build_filter_complex_subtitle_only() {
-        let compositor = Compositor::default();
+        let _compositor = Compositor::default();
         let path = PathBuf::from("/tmp/test.ass");
-        let filter = compositor.build_filter_complex(Some(&path), &[]);
+        let filter = Compositor::build_filter_complex(Some(&path), &[]);
 
         assert!(filter.contains("ass="));
         assert!(filter.contains("/tmp/test.ass"));

@@ -250,7 +250,10 @@ impl StreamProvider for DrProvider {
                 EpisodeInfo {
                     id: ep.product_number,
                     title: ep.title,
+                    // Sign loss acceptable: episode/season numbers are non-negative
+                    #[allow(clippy::cast_sign_loss)]
                     episode_number: ep.episode_number.map(|n| n as u32),
+                    #[allow(clippy::cast_sign_loss)]
                     season_number: ep.season_number.map(|n| n as u32),
                     duration_seconds: duration,
                     publish_date: ep.primary_broadcast_date,

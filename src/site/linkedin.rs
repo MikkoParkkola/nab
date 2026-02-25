@@ -1,6 +1,6 @@
-//! LinkedIn content extraction via oEmbed API.
+//! `LinkedIn` content extraction via oEmbed API.
 //!
-//! LinkedIn has no public content API, so we use the oEmbed endpoint
+//! `LinkedIn` has no public content API, so we use the oEmbed endpoint
 //! for limited data extraction (title, author, thumbnail).
 //!
 //! # Example
@@ -31,7 +31,7 @@ use serde::Deserialize;
 use super::{SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
 
-/// LinkedIn content provider using oEmbed API.
+/// `LinkedIn` content provider using oEmbed API.
 pub struct LinkedInProvider;
 
 #[async_trait]
@@ -89,7 +89,7 @@ impl SiteProvider for LinkedInProvider {
     }
 }
 
-/// Format LinkedIn oEmbed data as markdown.
+/// Format `LinkedIn` oEmbed data as markdown.
 fn format_linkedin_markdown(oembed: &LinkedInOEmbed, url: &str) -> String {
     let mut md = String::new();
 

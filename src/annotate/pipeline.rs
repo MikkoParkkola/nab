@@ -367,7 +367,7 @@ impl AnnotationPipeline {
         let json_path = output_dir.join(format!("{stem}.json"));
 
         if !json_path.exists() {
-            return Err(anyhow!("Whisper output file not found: {json_path:?}"));
+            return Err(anyhow!("Whisper output file not found: {}", json_path.display()));
         }
 
         let json_content = fs::read_to_string(&json_path).await?;
@@ -380,12 +380,15 @@ impl AnnotationPipeline {
     }
 
     /// Convert Whisper output to subtitle entries
-    fn whisper_to_subtitles(&self, whisper: &WhisperOutput) -> Vec<SubtitleEntry> {
+    fn whisper_to_subtitles(whisper: &WhisperOutput) -> Vec<SubtitleEntry> {
         whisper
             .segments
             .iter()
             .map(|seg| {
+                // Truncation/sign-loss acceptable: timestamps are non-negative seconds → ms
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let start_ms = (seg.start * 1000.0) as u64;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let end_ms = (seg.end * 1000.0) as u64;
                 let text = seg.text.trim().to_string();
 
@@ -401,13 +404,16 @@ impl AnnotationPipeline {
     }
 
     /// Extract speaker segments from Whisper output
-    fn extract_speaker_segments(&self, whisper: &WhisperOutput) -> Vec<(u64, u64, String)> {
+    fn extract_speaker_segments(whisper: &WhisperOutput) -> Vec<(u64, u64, String)> {
         whisper
             .segments
             .iter()
             .filter_map(|seg| {
                 seg.speaker.as_ref().map(|speaker| {
+                    // Truncation/sign-loss acceptable: timestamps are non-negative seconds → ms
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let start_ms = (seg.start * 1000.0) as u64;
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let end_ms = (seg.end * 1000.0) as u64;
                     (start_ms, end_ms, speaker.clone())
                 })
@@ -438,7 +444,7 @@ impl AnnotationPipeline {
         let _ = fs::remove_file(&audio_path).await;
 
         // Step 3: Generate subtitles
-        let subtitles = self.whisper_to_subtitles(&whisper_output);
+        let subtitles = Self::whisper_to_subtitles(&whisper_output);
         info!("Generated {} subtitle entries", subtitles.len());
 
         // Step 4: Generate overlay tracks
@@ -446,7 +452,7 @@ impl AnnotationPipeline {
 
         // Speaker labels
         if self.config.speaker_labels {
-            let speaker_segments = self.extract_speaker_segments(&whisper_output);
+            let speaker_segments = Self::extract_speaker_segments(&whisper_output);
             if !speaker_segments.is_empty() {
                 let speaker_overlay =
                     SpeakerLabelOverlay::new().with_position(self.config.speaker_position);
@@ -540,11 +546,11 @@ impl AnnotationPipeline {
         let whisper_output = self.transcribe_audio(&audio_path).await?;
         let _ = fs::remove_file(&audio_path).await;
 
-        let subtitles = self.whisper_to_subtitles(&whisper_output);
+        let subtitles = Self::whisper_to_subtitles(&whisper_output);
 
         let mut overlay_tracks = Vec::new();
         if self.config.speaker_labels {
-            let speaker_segments = self.extract_speaker_segments(&whisper_output);
+            let speaker_segments = Self::extract_speaker_segments(&whisper_output);
             if !speaker_segments.is_empty() {
                 let speaker_overlay =
                     SpeakerLabelOverlay::new().with_position(self.config.speaker_position);
@@ -615,7 +621,7 @@ impl AnnotationPipeline {
         let whisper_output = self.transcribe_audio(&audio_path).await?;
         let _ = fs::remove_file(&audio_path).await;
 
-        let subtitles = self.whisper_to_subtitles(&whisper_output);
+        let subtitles = Self::whisper_to_subtitles(&whisper_output);
 
         // Generate ASS file
         let generator = AssGenerator::new();

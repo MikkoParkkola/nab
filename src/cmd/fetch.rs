@@ -10,7 +10,7 @@ use nab::{AcceleratedClient, CookieSource, OnePasswordAuth, SafeFetchConfig};
 use super::output::output_body;
 use crate::OutputFormat;
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 pub async fn cmd_fetch(
     url: &str,
     show_headers: bool,
@@ -110,11 +110,10 @@ pub async fn cmd_fetch(
     // Handle 1Password
     if use_1password && OnePasswordAuth::is_available() {
         let auth = OnePasswordAuth::new(None);
-        if let Ok(Some(cred)) = auth.get_credential_for_url(url) {
-            if matches!(format, OutputFormat::Full) {
+        if let Ok(Some(cred)) = auth.get_credential_for_url(url)
+            && matches!(format, OutputFormat::Full) {
                 println!("🔐 Found 1Password: {}", cred.title);
             }
-        }
     }
 
     // Session warmup (for APIs that require prior page load)
@@ -202,13 +201,12 @@ pub async fn cmd_fetch(
             }
 
             // Add auto-referer if requested (domain origin)
-            if auto_referer {
-                if let Ok(parsed) = url::Url::parse(url) {
+            if auto_referer
+                && let Ok(parsed) = url::Url::parse(url) {
                     let referer =
                         format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
                     request = request.header("Referer", referer);
                 }
-            }
 
             // Add custom headers (--add-header "Name: Value")
             for header_str in custom_headers {
@@ -305,21 +303,19 @@ pub async fn cmd_fetch(
         .await
         .map_err(|_| anyhow::anyhow!("Content conversion timed out after 60s"))???;
 
-        if matches!(format, OutputFormat::Full) {
-            if let Some(pages) = result.page_count {
+        if matches!(format, OutputFormat::Full)
+            && let Some(pages) = result.page_count {
                 println!("   Pages: {pages}");
                 println!("   Conversion: {:.1}ms", result.elapsed_ms);
             }
-        }
 
         // Warn when markdown output is disproportionately small vs the HTML body.
         // This almost always means JS-rendered content was not captured (e.g. Stripe blog).
         let is_html = content_type.contains("html");
-        if is_html {
-            if let Some(warning) = nab::content::html::detect_thin_content(body_len, result.markdown.len()) {
+        if is_html
+            && let Some(warning) = nab::content::html::detect_thin_content(body_len, result.markdown.len()) {
                 eprintln!("Warning: {warning}");
             }
-        }
 
         result.markdown
     } else {
@@ -389,7 +385,7 @@ pub async fn cmd_fetch(
                 }
             }
 
-            println!("\n📄 Body: {} bytes", body_len);
+            println!("\n📄 Body: {body_len} bytes");
 
             if show_body || output_file.is_some() || markdown || links {
                 output_body(&body_text, output_file, markdown, links, max_body, !no_spa)?;
@@ -446,7 +442,7 @@ fn detect_bot_challenge(status: u16, body: &str) -> Option<String> {
 }
 
 /// Batch fetch: read URLs from file, fetch with concurrency control
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 async fn cmd_fetch_batch(
     file_path: &str,
     parallel: usize,
@@ -471,7 +467,7 @@ async fn cmd_fetch_batch(
     use tokio::sync::Semaphore;
 
     let contents = std::fs::read_to_string(file_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read batch file '{}': {}", file_path, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to read batch file '{file_path}': {e}"))?;
 
     let urls: Vec<String> = contents
         .lines()
@@ -481,7 +477,7 @@ async fn cmd_fetch_batch(
         .collect();
 
     if urls.is_empty() {
-        anyhow::bail!("No URLs found in batch file: {}", file_path);
+        anyhow::bail!("No URLs found in batch file: {file_path}");
     }
 
     eprintln!(
@@ -559,13 +555,12 @@ async fn cmd_fetch_batch(
                 request = request.header("Cookie", &cookie_header);
             }
 
-            if auto_referer {
-                if let Ok(parsed) = url::Url::parse(&url) {
+            if auto_referer
+                && let Ok(parsed) = url::Url::parse(&url) {
                     let referer =
                         format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
                     request = request.header("Referer", referer);
                 }
-            }
 
             for header_str in &custom_headers {
                 let parts: Vec<&str> = header_str.splitn(2, ':').collect();
@@ -589,14 +584,12 @@ async fn cmd_fetch_batch(
                     let body_len = body_bytes.len();
                     let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
 
-                    let markdown = if !raw_html {
+                    let markdown = if raw_html {
+                        raw_text
+                    } else {
                         let router = nab::content::ContentRouter::new();
                         router
-                            .convert(&body_bytes, &content_type)
-                            .map(|r| r.markdown)
-                            .unwrap_or_else(|_| raw_text.clone())
-                    } else {
-                        raw_text
+                            .convert(&body_bytes, &content_type).map_or_else(|_| raw_text.clone(), |r| r.markdown)
                     };
 
                     let metadata = serde_json::json!({
@@ -652,12 +645,12 @@ async fn cmd_fetch_batch(
                 } else {
                     println!(
                         "{} {}B {:.0}ms {}",
-                        r.get("status").and_then(|s| s.as_u64()).unwrap_or(0),
+                        r.get("status").and_then(serde_json::Value::as_u64).unwrap_or(0),
                         r.get("metadata")
                             .and_then(|m| m.get("content_length"))
-                            .and_then(|l| l.as_u64())
+                            .and_then(serde_json::Value::as_u64)
                             .unwrap_or(0),
-                        r.get("elapsed_ms").and_then(|t| t.as_f64()).unwrap_or(0.0),
+                        r.get("elapsed_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
                         r.get("url").and_then(|u| u.as_str()).unwrap_or("?"),
                     );
                 }
@@ -676,11 +669,11 @@ async fn cmd_fetch_batch(
                     println!(
                         "\n🌐 {} [{} {:.0}ms]",
                         r.get("url").and_then(|u| u.as_str()).unwrap_or("?"),
-                        r.get("status").and_then(|s| s.as_u64()).unwrap_or(0),
-                        r.get("elapsed_ms").and_then(|t| t.as_f64()).unwrap_or(0.0),
+                        r.get("status").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                        r.get("elapsed_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
                     );
-                    if show_body {
-                        if let Some(md) = r.get("markdown").and_then(|m| m.as_str()) {
+                    if show_body
+                        && let Some(md) = r.get("markdown").and_then(|m| m.as_str()) {
                             let display = if max_body > 0 && md.len() > max_body {
                                 &md[..max_body]
                             } else {
@@ -688,7 +681,6 @@ async fn cmd_fetch_batch(
                             };
                             println!("{display}");
                         }
-                    }
                 }
             }
         }
@@ -719,7 +711,7 @@ fn build_client(no_redirect: bool, proxy: Option<&str>) -> Result<AcceleratedCli
     if let Some(ref purl) = proxy_url {
         // Build client with proxy
         let proxy = reqwest::Proxy::all(purl)
-            .map_err(|e| anyhow::anyhow!("Invalid proxy URL '{}': {}", purl, e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid proxy URL '{purl}': {e}"))?;
 
         let mut builder = reqwest::Client::builder().proxy(proxy);
 
@@ -751,15 +743,13 @@ pub fn resolve_browser_name(cookies: &str) -> Option<String> {
     }
 }
 
-/// Resolve CookieSource from browser name string
+/// Resolve `CookieSource` from browser name string
 pub fn resolve_cookie_source(browser: &str) -> CookieSource {
     match browser.to_lowercase().as_str() {
         "brave" => CookieSource::Brave,
-        "chrome" => CookieSource::Chrome,
         "firefox" => CookieSource::Firefox,
         "safari" => CookieSource::Safari,
-        "edge" => CookieSource::Chrome,
-        _ => CookieSource::Chrome,
+        _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
     }
 }
 

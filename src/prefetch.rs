@@ -257,11 +257,11 @@ pub fn extract_link_hints(html: &str) -> Vec<EarlyHintLink> {
             let as_type = extract_attr(tag, "as");
             let crossorigin = extract_attr(tag, "crossorigin");
 
-            if let (Some(url), Some(rel)) = (href, rel) {
-                if rel.contains("preconnect")
+            if let (Some(url), Some(rel)) = (href, rel)
+                && (rel.contains("preconnect")
                     || rel.contains("dns-prefetch")
                     || rel.contains("preload")
-                    || rel.contains("prefetch")
+                    || rel.contains("prefetch"))
                 {
                     links.push(EarlyHintLink {
                         url,
@@ -270,7 +270,6 @@ pub fn extract_link_hints(html: &str) -> Vec<EarlyHintLink> {
                         crossorigin,
                     });
                 }
-            }
 
             pos = abs_start + end + 1;
         } else {
@@ -423,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_extract_attr_unquoted() {
-        let tag = r#"<link rel=preconnect href=https://cdn.example.com>"#;
+        let tag = r"<link rel=preconnect href=https://cdn.example.com>";
         assert_eq!(extract_attr(tag, "rel"), Some("preconnect".to_string()));
         assert_eq!(
             extract_attr(tag, "href"),

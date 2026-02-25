@@ -96,7 +96,7 @@ pub fn truncate_text(text: &str, max: usize) -> String {
 }
 
 /// Output response helper
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub async fn output_response(
     response: reqwest::Response,
     show_headers: bool,

@@ -228,7 +228,7 @@ impl JsEngine {
     /// Execute inline scripts from HTML and extract rendered DOM
     ///
     /// Parses HTML for inline `<script>` tags (not external src=), executes them
-    /// in QuickJS with minimal DOM shim, then returns `document.body.innerHTML`.
+    /// in `QuickJS` with minimal DOM shim, then returns `document.body.innerHTML`.
     ///
     /// # Arguments
     /// * `html` - Raw HTML containing inline scripts
@@ -246,7 +246,7 @@ impl JsEngine {
 
         // Find all inline script tags (no src attribute)
         let script_selector = Selector::parse("script")
-            .map_err(|e| anyhow::anyhow!("Failed to parse script selector: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse script selector: {e:?}"))?;
 
         let mut inline_scripts = Vec::new();
         for script_elem in document.select(&script_selector) {
@@ -304,7 +304,7 @@ impl JsEngine {
 
         // Build a simplified innerHTML string from body content
         let body_selector = Selector::parse("body")
-            .map_err(|e| anyhow::anyhow!("Failed to parse body selector: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse body selector: {e:?}"))?;
 
         if let Some(body_elem) = document.select(&body_selector).next() {
             // Extract inner HTML of body (all child elements as text)
@@ -388,10 +388,10 @@ mod tests {
         // Test createElement
         let result = engine
             .eval(
-                r#"
+                r"
             var div = document.createElement('div');
             div.tagName;
-        "#,
+        ",
             )
             .unwrap();
         assert_eq!(result, "DIV");
@@ -408,10 +408,10 @@ mod tests {
 
         let result = engine
             .eval(
-                r#"
+                r"
             window.localStorage.setItem('key', 'value');
             window.localStorage.getItem('key');
-        "#,
+        ",
             )
             .unwrap();
         assert_eq!(result, "value");
@@ -439,10 +439,10 @@ mod tests {
         // Destructuring
         let result = engine
             .eval(
-                r#"
+                r"
             var [a, b] = [1, 2];
             a + b;
-        "#,
+        ",
             )
             .unwrap();
         assert_eq!(result, "3");
@@ -450,11 +450,11 @@ mod tests {
         // Spread operator
         let result = engine
             .eval(
-                r#"
+                r"
             var arr1 = [1, 2];
             var arr2 = [...arr1, 3, 4];
             arr2.length;
-        "#,
+        ",
             )
             .unwrap();
         assert_eq!(result, "4");
@@ -469,12 +469,12 @@ mod tests {
         // This just tests the syntax is accepted
         let result = engine
             .eval(
-                r#"
+                r"
             async function test() {
                 return 42;
             }
             typeof test;
-        "#,
+        ",
             )
             .unwrap();
         assert_eq!(result, "function");
@@ -520,8 +520,7 @@ mod tests {
         // After script execution, should contain the dynamically created form
         assert!(
             result.contains("email") || result.contains("password"),
-            "Rendered HTML should contain form fields: {}",
-            result
+            "Rendered HTML should contain form fields: {result}"
         );
     }
 
@@ -590,13 +589,11 @@ mod tests {
         let result = engine.execute_and_extract_forms(html).unwrap();
         assert!(
             result.contains("username"),
-            "Should find username field: {}",
-            result
+            "Should find username field: {result}"
         );
         assert!(
             result.contains("password"),
-            "Should find password field: {}",
-            result
+            "Should find password field: {result}"
         );
     }
 

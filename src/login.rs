@@ -60,6 +60,7 @@ impl LoginFlow {
     /// 4. Fill and submit form
     /// 5. Handle MFA if needed
     /// 6. Return final page
+    #[allow(clippy::too_many_lines)] // Complex login flow; splitting would obscure the flow
     pub async fn login(&self, url: &str) -> Result<LoginResult> {
         // Use browser-based login if enabled
         #[cfg(feature = "browser")]
@@ -94,123 +95,120 @@ impl LoginFlow {
         let form_result = Form::find_login_form(&page_html).context("Failed to parse forms")?;
 
         // If no form found, try QuickJS execution for SPA forms
-        let mut form = match form_result {
-            Some(f) => f,
-            None => {
-                // Check if page has inline scripts that might render forms
-                let has_inline_scripts = Self::has_inline_scripts(&page_html);
+        let mut form = if let Some(f) = form_result { f } else {
+            // Check if page has inline scripts that might render forms
+            let has_inline_scripts = Self::has_inline_scripts(&page_html);
 
-                if has_inline_scripts && is_spa {
-                    info!(
-                        "No static form found, but inline scripts detected. Attempting QuickJS execution..."
-                    );
+            if has_inline_scripts && is_spa {
+                info!(
+                    "No static form found, but inline scripts detected. Attempting QuickJS execution..."
+                );
 
-                    // Try to execute inline scripts and extract rendered DOM
-                    match JsEngine::new() {
-                        Ok(js_engine) => {
-                            match js_engine.execute_and_extract_forms(&page_html) {
-                                Ok(rendered_html) => {
-                                    debug!("QuickJS execution completed, re-parsing for forms...");
+                // Try to execute inline scripts and extract rendered DOM
+                match JsEngine::new() {
+                    Ok(js_engine) => {
+                        match js_engine.execute_and_extract_forms(&page_html) {
+                            Ok(rendered_html) => {
+                                debug!("QuickJS execution completed, re-parsing for forms...");
 
-                                    // Try to find form in rendered HTML
-                                    if let Ok(Some(rendered_form)) =
-                                        Form::find_login_form(&rendered_html)
-                                    {
-                                        info!("✓ Found login form after JavaScript execution");
-                                        rendered_form
-                                    } else {
-                                        warn!(
-                                            "JavaScript executed but no login form found in rendered output"
-                                        );
-
-                                        // Try cookie-based auth as fallback
-                                        if self.cookie_header.is_some() {
-                                            info!(
-                                                "Attempting cookie-based authentication instead..."
-                                            );
-                                            return self.cookie_auth_fallback(url).await;
-                                        }
-
-                                        #[cfg(feature = "browser")]
-                                        anyhow::bail!(
-                                            "No login form found (SPA detected, JavaScript executed).\n\
-                                             💡 Try browser-based login: nab login <url> --browser\n\
-                                             💡 Or log in via your browser, then use: nab fetch <url> --cookies brave"
-                                        );
-                                        #[cfg(not(feature = "browser"))]
-                                        anyhow::bail!(
-                                            "No login form found (SPA detected, JavaScript executed).\n\
-                                             💡 Log in via your browser, then use: nab fetch <url> --cookies brave"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("JavaScript execution failed: {}", e);
+                                // Try to find form in rendered HTML
+                                if let Ok(Some(rendered_form)) =
+                                    Form::find_login_form(&rendered_html)
+                                {
+                                    info!("✓ Found login form after JavaScript execution");
+                                    rendered_form
+                                } else {
+                                    warn!(
+                                        "JavaScript executed but no login form found in rendered output"
+                                    );
 
                                     // Try cookie-based auth as fallback
                                     if self.cookie_header.is_some() {
-                                        info!("Attempting cookie-based authentication instead...");
+                                        info!(
+                                            "Attempting cookie-based authentication instead..."
+                                        );
                                         return self.cookie_auth_fallback(url).await;
                                     }
 
                                     #[cfg(feature = "browser")]
                                     anyhow::bail!(
-                                        "No login form found (JavaScript execution failed).\n\
+                                        "No login form found (SPA detected, JavaScript executed).\n\
                                          💡 Try browser-based login: nab login <url> --browser\n\
                                          💡 Or log in via your browser, then use: nab fetch <url> --cookies brave"
                                     );
                                     #[cfg(not(feature = "browser"))]
                                     anyhow::bail!(
-                                        "No login form found (JavaScript execution failed).\n\
+                                        "No login form found (SPA detected, JavaScript executed).\n\
                                          💡 Log in via your browser, then use: nab fetch <url> --cookies brave"
                                     );
                                 }
                             }
-                        }
-                        Err(e) => {
-                            warn!("Failed to create JavaScript engine: {}", e);
+                            Err(e) => {
+                                warn!("JavaScript execution failed: {}", e);
 
-                            // Try cookie-based auth as fallback
-                            if self.cookie_header.is_some() {
-                                info!("Attempting cookie-based authentication instead...");
-                                return self.cookie_auth_fallback(url).await;
+                                // Try cookie-based auth as fallback
+                                if self.cookie_header.is_some() {
+                                    info!("Attempting cookie-based authentication instead...");
+                                    return self.cookie_auth_fallback(url).await;
+                                }
+
+                                #[cfg(feature = "browser")]
+                                anyhow::bail!(
+                                    "No login form found (JavaScript execution failed).\n\
+                                     💡 Try browser-based login: nab login <url> --browser\n\
+                                     💡 Or log in via your browser, then use: nab fetch <url> --cookies brave"
+                                );
+                                #[cfg(not(feature = "browser"))]
+                                anyhow::bail!(
+                                    "No login form found (JavaScript execution failed).\n\
+                                     💡 Log in via your browser, then use: nab fetch <url> --cookies brave"
+                                );
                             }
-
-                            anyhow::bail!(
-                                "No login form found and JavaScript engine initialization failed"
-                            );
                         }
                     }
-                } else {
-                    if is_spa {
-                        warn!("No login form found — this appears to be a SPA (React/Vue/Angular)");
-                        warn!(
-                            "SPA login forms are rendered client-side and not visible to HTTP requests"
-                        );
-                    }
+                    Err(e) => {
+                        warn!("Failed to create JavaScript engine: {}", e);
 
-                    // Try cookie-based auth as fallback
-                    if self.cookie_header.is_some() {
-                        info!("Attempting cookie-based authentication instead...");
-                        return self.cookie_auth_fallback(url).await;
-                    }
+                        // Try cookie-based auth as fallback
+                        if self.cookie_header.is_some() {
+                            info!("Attempting cookie-based authentication instead...");
+                            return self.cookie_auth_fallback(url).await;
+                        }
 
-                    if is_spa {
-                        #[cfg(feature = "browser")]
                         anyhow::bail!(
-                            "No login form found (SPA detected).\n\
-                             💡 Try browser-based login: nab login <url> --browser\n\
-                             💡 Or log in via your browser, then use: nab fetch <url> --cookies brave"
-                        );
-                        #[cfg(not(feature = "browser"))]
-                        anyhow::bail!(
-                            "No login form found (SPA detected).\n\
-                             💡 Log in via your browser, then use: nab fetch <url> --cookies brave"
+                            "No login form found and JavaScript engine initialization failed"
                         );
                     }
-
-                    anyhow::bail!("No login form found on page");
                 }
+            } else {
+                if is_spa {
+                    warn!("No login form found — this appears to be a SPA (React/Vue/Angular)");
+                    warn!(
+                        "SPA login forms are rendered client-side and not visible to HTTP requests"
+                    );
+                }
+
+                // Try cookie-based auth as fallback
+                if self.cookie_header.is_some() {
+                    info!("Attempting cookie-based authentication instead...");
+                    return self.cookie_auth_fallback(url).await;
+                }
+
+                if is_spa {
+                    #[cfg(feature = "browser")]
+                    anyhow::bail!(
+                        "No login form found (SPA detected).\n\
+                         💡 Try browser-based login: nab login <url> --browser\n\
+                         💡 Or log in via your browser, then use: nab fetch <url> --cookies brave"
+                    );
+                    #[cfg(not(feature = "browser"))]
+                    anyhow::bail!(
+                        "No login form found (SPA detected).\n\
+                         💡 Log in via your browser, then use: nab fetch <url> --cookies brave"
+                    );
+                }
+
+                anyhow::bail!("No login form found on page");
             }
         };
 
@@ -241,7 +239,7 @@ impl LoginFlow {
         info!("Found credential: {}", credential.title);
 
         // Step 4: Fill form with credentials
-        self.fill_form_with_credential(&mut form, &credential)?;
+        Self::fill_form_with_credential(&mut form, &credential)?;
 
         // Step 5: Resolve action URL and submit
         let action_url = form.resolve_action(url)?;
@@ -277,7 +275,7 @@ impl LoginFlow {
             || body.to_lowercase().contains("dashboard")
             || body.to_lowercase().contains("my account");
 
-        if !login_succeeded && self.detect_mfa_required(&body) {
+        if !login_succeeded && Self::detect_mfa_required(&body) {
             info!("MFA required, attempting to get OTP...");
             body = self.handle_mfa(url, &body, &credential).await?;
         }
@@ -295,7 +293,8 @@ impl LoginFlow {
     /// Supports both exact field names (`email`) and nested/namespaced names
     /// like Rails (`user_session[email]`), Django (`auth-email`), or
     /// generic patterns (`login_email`).
-    fn fill_form_with_credential(&self, form: &mut Form, credential: &Credential) -> Result<()> {
+    #[allow(clippy::unnecessary_wraps)] // API consistency: callers use ? operator
+    fn fill_form_with_credential(form: &mut Form, credential: &Credential) -> Result<()> {
         // Common username field name patterns
         let username_patterns = [
             "username",
@@ -311,20 +310,18 @@ impl LoginFlow {
         let password_patterns = ["password", "pass", "passwd", "pwd"];
 
         // Find and fill username field
-        if let Some(ref username) = credential.username {
-            if let Some(key) = Self::find_matching_field(&form.fields, &username_patterns) {
+        if let Some(ref username) = credential.username
+            && let Some(key) = Self::find_matching_field(&form.fields, &username_patterns) {
                 debug!("Filling username field: {}", key);
                 form.fields.insert(key, username.clone());
             }
-        }
 
         // Find and fill password field
-        if let Some(ref password) = credential.password {
-            if let Some(key) = Self::find_matching_field(&form.fields, &password_patterns) {
+        if let Some(ref password) = credential.password
+            && let Some(key) = Self::find_matching_field(&form.fields, &password_patterns) {
                 debug!("Filling password field: {}", key);
                 form.fields.insert(key, password.clone());
             }
-        }
 
         Ok(())
     }
@@ -356,7 +353,7 @@ impl LoginFlow {
 
     /// Detect if MFA is required from the response
     /// Only detects MFA if there's a non-login form with a visible OTP/code input field
-    fn detect_mfa_required(&self, html: &str) -> bool {
+    fn detect_mfa_required(html: &str) -> bool {
         if let Ok(forms) = Form::parse_all(html) {
             return forms.iter().any(|f| {
                 // Skip login forms (they have password fields)
@@ -404,16 +401,16 @@ impl LoginFlow {
                         info!("Got TOTP from 1Password");
                         totp
                     } else {
-                        self.get_otp_from_other_sources(base_url).await?
+                        Self::get_otp_from_other_sources(base_url)?
                     }
                 } else {
-                    self.get_otp_from_other_sources(base_url).await?
+                    Self::get_otp_from_other_sources(base_url)?
                 }
             } else {
-                self.get_otp_from_other_sources(base_url).await?
+                Self::get_otp_from_other_sources(base_url)?
             }
         } else {
-            self.get_otp_from_other_sources(base_url).await?
+            Self::get_otp_from_other_sources(base_url)?
         };
 
         // Find MFA form
@@ -463,7 +460,7 @@ impl LoginFlow {
     }
 
     /// Get OTP from SMS or email sources
-    async fn get_otp_from_other_sources(&self, domain: &str) -> Result<String> {
+    fn get_otp_from_other_sources(domain: &str) -> Result<String> {
         if let Some(otp_code) = OtpRetriever::get_otp_for_domain(domain)? {
             info!("Got OTP from {}", otp_code.source);
             return Ok(otp_code.code);
@@ -635,9 +632,9 @@ fn extract_origin(url: &str) -> Result<String> {
     let port = parsed.port();
 
     if let Some(p) = port {
-        Ok(format!("{}://{}:{}", scheme, host, p))
+        Ok(format!("{scheme}://{host}:{p}"))
     } else {
-        Ok(format!("{}://{}", scheme, host))
+        Ok(format!("{scheme}://{host}"))
     }
 }
 
@@ -647,9 +644,6 @@ mod tests {
 
     #[test]
     fn test_detect_mfa_required() {
-        let client = AcceleratedClient::new().unwrap();
-        let flow = LoginFlow::new(client, false, None);
-
         let html_with_mfa = r#"
             <html>
                 <body>
@@ -660,33 +654,30 @@ mod tests {
             </html>
         "#;
 
-        assert!(flow.detect_mfa_required(html_with_mfa));
+        assert!(LoginFlow::detect_mfa_required(html_with_mfa));
 
-        let html_without_mfa = r#"
+        let html_without_mfa = r"
             <html>
                 <body>
                     <p>Welcome back!</p>
                 </body>
             </html>
-        "#;
+        ";
 
-        assert!(!flow.detect_mfa_required(html_without_mfa));
+        assert!(!LoginFlow::detect_mfa_required(html_without_mfa));
     }
 
     #[test]
     fn test_fill_form_with_credential() {
         use std::collections::HashMap;
 
-        let client = AcceleratedClient::new().unwrap();
-        let flow = LoginFlow::new(client, false, None);
-
         let mut form = Form {
             action: "/login".to_string(),
             method: "POST".to_string(),
             enctype: "application/x-www-form-urlencoded".to_string(),
             fields: HashMap::from([
-                ("username".to_string(), "".to_string()),
-                ("password".to_string(), "".to_string()),
+                ("username".to_string(), String::new()),
+                ("password".to_string(), String::new()),
             ]),
             hidden_fields: HashMap::new(),
             is_login_form: true,
@@ -702,7 +693,7 @@ mod tests {
             passkey_credential_id: None,
         };
 
-        flow.fill_form_with_credential(&mut form, &credential)
+        LoginFlow::fill_form_with_credential(&mut form, &credential)
             .unwrap();
 
         assert_eq!(form.fields.get("username"), Some(&"testuser".to_string()));
@@ -712,34 +703,25 @@ mod tests {
     #[test]
     fn test_has_inline_scripts() {
         // HTML with inline script
-        let html_with_inline = r#"
+        let html_with_inline = r"
             <html>
                 <head>
                     <script>console.log('hello');</script>
                 </head>
                 <body></body>
             </html>
-        "#;
+        ";
         assert!(LoginFlow::has_inline_scripts(html_with_inline));
 
-        // HTML with external script only
-        let _html_with_external = r#"
-            <html>
-                <head>
-                    <script src="bundle.js"></script>
-                </head>
-                <body></body>
-            </html>
-        "#;
-        // Note: has_inline_scripts is a simple heuristic that checks for <script> tags
-        // The actual QuickJS execution will skip external scripts via scraper parsing
+        // HTML with external script only - not tested since has_inline_scripts is a heuristic
+        // that checks for any <script> tag; QuickJS execution skips external scripts
 
         // HTML with no scripts
-        let html_no_script = r#"
+        let html_no_script = r"
             <html>
                 <body><p>No scripts here</p></body>
             </html>
-        "#;
+        ";
         assert!(!LoginFlow::has_inline_scripts(html_no_script));
     }
 

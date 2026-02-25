@@ -4,7 +4,7 @@ use nab::CookieSource;
 
 use super::fetch::resolve_browser_name;
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 pub async fn cmd_stream(
     source: &str,
     id: &str,
@@ -53,7 +53,9 @@ pub async fn cmd_stream(
         _ => {
             if id.contains("areena.yle.fi") || id.starts_with("1-") {
                 Box::new(YleProvider::new()?)
-            } else if id.ends_with(".m3u8") || id.ends_with(".mpd") {
+            } else if std::path::Path::new(id.split('?').next().unwrap_or(id))
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("mpd")) {
                 Box::new(GenericHlsProvider::new())
             } else {
                 anyhow::bail!("Unknown source: {source}. Use 'yle', 'generic', or a direct URL.");
@@ -148,11 +150,9 @@ pub async fn cmd_stream(
         eprintln!("🍪 Extracting cookies from {browser}...");
         let cookie_source = match browser.to_lowercase().as_str() {
             "brave" => CookieSource::Brave,
-            "chrome" => CookieSource::Chrome,
             "firefox" => CookieSource::Firefox,
             "safari" => CookieSource::Safari,
-            "edge" => CookieSource::Chrome,
-            _ => CookieSource::Chrome,
+            _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
         };
 
         match cookie_source.get_cookies("yle.fi") {
@@ -222,11 +222,10 @@ pub async fn cmd_stream(
         }
 
         let progress_cb = |p: nab::stream::backend::StreamProgress| {
-            eprint!(
-                "\r   📥 {:.1} MB, {:.1}s elapsed    ",
-                p.bytes_downloaded as f64 / 1_000_000.0,
-                p.elapsed_seconds
-            );
+            // Precision loss acceptable: MB display does not need full u64 precision
+            #[allow(clippy::cast_precision_loss)]
+            let mb: f64 = p.bytes_downloaded as f64 / 1_000_000.0;
+            eprint!("\r   📥 {mb:.1} MB, {:.1}s elapsed    ", p.elapsed_seconds);
         };
 
         if let Some(player_cmd) = player {
@@ -319,9 +318,11 @@ pub async fn cmd_stream(
                 .segments_total
                 .map(|t| format!("/{t}"))
                 .unwrap_or_default();
+            // Precision loss acceptable: MB display does not need full u64 precision
+            #[allow(clippy::cast_precision_loss)]
+            let mb: f64 = p.bytes_downloaded as f64 / 1_000_000.0;
             eprint!(
-                "\r   📥 {:.1} MB, {}{} segments, {:.1}s    ",
-                p.bytes_downloaded as f64 / 1_000_000.0,
+                "\r   📥 {mb:.1} MB, {}{} segments, {:.1}s    ",
                 p.segments_completed,
                 total,
                 p.elapsed_seconds
@@ -389,11 +390,9 @@ pub async fn cmd_stream(
 fn get_player_stdin_args(player: &str) -> Vec<&'static str> {
     match player {
         "vlc" => vec!["-", "--intf", "dummy", "--play-and-exit"],
-        "mpv" => vec!["-"],
         "ffplay" => vec!["-i", "-"],
-        "mplayer" => vec!["-"],
         "iina" => vec!["--stdin"],
-        _ => vec!["-"],
+        _ => vec!["-"], // mpv, mplayer, and unknown players use "-" for stdin
     }
 }
 

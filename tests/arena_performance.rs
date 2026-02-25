@@ -1,6 +1,7 @@
 //! Performance comparison test for arena allocator
 //!
 //! Run with: `cargo test --release arena_performance -- --nocapture --ignored`
+#![allow(clippy::cast_precision_loss)] // Bench timing display; precision not critical
 
 use nab::arena::{ResponseArena, ResponseBuffer};
 use std::time::Instant;
@@ -20,7 +21,7 @@ const HTML_CHUNKS: &[&str] = &[
 ];
 
 #[test]
-#[ignore] // Run explicitly with --ignored
+#[ignore = "performance benchmark: run with --release --ignored"]
 fn bench_arena_vs_vec_small() {
     const ITERATIONS: usize = 1000;
     const CHUNKS_PER_ITER: usize = 100;
@@ -68,7 +69,7 @@ fn bench_arena_vs_vec_small() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "performance benchmark: run with --release --ignored"]
 fn bench_arena_vs_vec_large() {
     const ITERATIONS: usize = 100;
     const CHUNKS_PER_ITER: usize = 10_000;
@@ -116,7 +117,7 @@ fn bench_arena_vs_vec_large() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "performance benchmark: run with --release --ignored"]
 fn bench_arena_vs_string() {
     const ITERATIONS: usize = 1000;
     const CHUNKS_PER_ITER: usize = 1000;
@@ -146,7 +147,7 @@ fn bench_arena_vs_string() {
             result.push_str(chunk);
         }
 
-        let _result = result;
+        drop(result);
     }
     let string_time = start.elapsed();
 
@@ -171,7 +172,7 @@ fn bench_arena_vs_string() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "performance benchmark: run with --release --ignored"]
 fn bench_arena_memory_usage() {
     const CHUNKS: usize = 10_000;
 
@@ -194,7 +195,7 @@ fn bench_arena_memory_usage() {
         allocated,
         allocated as f64 / 1024.0
     );
-    println!("Buffer parts: {}", parts);
+    println!("Buffer parts: {parts}");
     println!(
         "Content length: {} bytes ({:.2} KB)",
         content.len(),

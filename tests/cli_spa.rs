@@ -80,8 +80,7 @@ fn spa_starts_extraction_pipeline() {
     // The SPA command should at least print the extraction header
     assert!(
         stdout.contains("Extracting SPA data from") || stdout.contains("example.com"),
-        "SPA command should start extraction pipeline, got: {}",
-        stdout
+        "SPA command should start extraction pipeline, got: {stdout}"
     );
 }
 

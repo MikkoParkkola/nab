@@ -142,14 +142,14 @@ impl OnePasswordAuth {
         for item in items {
             // Check if title contains domain
             if item.title.to_lowercase().contains(&domain.to_lowercase()) {
-                return self.get_item_details(&item.id);
+                return Self::get_item_details(&item.id);
             }
 
             // Check URLs
             if let Some(ref urls) = item.urls {
                 for url_entry in urls {
                     if url_entry.href.contains(&domain) {
-                        return self.get_item_details(&item.id);
+                        return Self::get_item_details(&item.id);
                     }
                 }
             }
@@ -159,7 +159,7 @@ impl OnePasswordAuth {
     }
 
     /// Get full item details by ID
-    fn get_item_details(&self, item_id: &str) -> Result<Option<Credential>> {
+    fn get_item_details(item_id: &str) -> Result<Option<Credential>> {
         debug!("Getting 1Password item details: {}", item_id);
 
         let output = Command::new("op")
@@ -185,8 +185,8 @@ impl OnePasswordAuth {
         if let Some(fields) = item.fields {
             for field in &fields {
                 match field.id.as_str() {
-                    "username" => username = field.value.clone(),
-                    "password" => password = field.value.clone(),
+                    "username" => username.clone_from(&field.value),
+                    "password" => password.clone_from(&field.value),
                     _ => {
                         // Check by label
                         if let Some(ref label) = field.label {
@@ -194,20 +194,20 @@ impl OnePasswordAuth {
                             if (label_lower.contains("username") || label_lower.contains("email"))
                                 && username.is_none()
                             {
-                                username = field.value.clone();
+                                username.clone_from(&field.value);
                             }
                             if label_lower.contains("password") && password.is_none() {
-                                password = field.value.clone();
+                                password.clone_from(&field.value);
                             }
                             if label_lower.contains("one-time") || label_lower.contains("totp") {
                                 has_totp = true;
                                 // For TOTP, we need to get the current code
                                 if field.field_type.as_deref() == Some("OTP") {
-                                    totp = self.get_totp_code(&item.id).ok().flatten();
+                                    totp = Self::get_totp_code(&item.id).ok().flatten();
                                 }
                             }
                             if label_lower.contains("passkey") {
-                                passkey_credential_id = field.value.clone();
+                                passkey_credential_id.clone_from(&field.value);
                             }
                         }
                     }
@@ -234,7 +234,7 @@ impl OnePasswordAuth {
     }
 
     /// Get current TOTP code for an item (internal)
-    fn get_totp_code(&self, item_id: &str) -> Result<Option<String>> {
+    fn get_totp_code(item_id: &str) -> Result<Option<String>> {
         let output = Command::new("op")
             .args(["item", "get", item_id, "--otp"])
             .output()
@@ -252,15 +252,14 @@ impl OnePasswordAuth {
 
     /// Get TOTP with full `OtpCode` structure
     pub fn get_totp(&self, url: &str) -> Result<Option<OtpCode>> {
-        if let Some(cred) = self.get_credential_for_url(url)? {
-            if let Some(code) = cred.totp {
+        if let Some(cred) = self.get_credential_for_url(url)?
+            && let Some(code) = cred.totp {
                 return Ok(Some(OtpCode {
                     code,
                     source: OtpSource::OnePasswordTotp,
                     expires_in_seconds: Some(30), // TOTP typically 30 seconds
                 }));
             }
-        }
         Ok(None)
     }
 
@@ -304,7 +303,7 @@ impl OnePasswordAuth {
 
         let mut passkeys = Vec::new();
         for item in items {
-            if let Ok(Some(cred)) = self.get_item_details(&item.id) {
+            if let Ok(Some(cred)) = Self::get_item_details(&item.id) {
                 passkeys.push(cred);
             }
         }
@@ -353,6 +352,8 @@ impl OtpRetriever {
     }
 
     /// Extract OTP from recent SMS messages via Beeper MCP
+    // Result wrapping kept for API consistency with other OTP sources that may fail
+    #[allow(clippy::unnecessary_wraps)]
     fn get_sms_otp(domain: &str) -> Result<Option<OtpCode>> {
         // Call mcp-cli to query Beeper for recent SMS
         let output = Command::new("mcp-cli")
@@ -362,8 +363,8 @@ impl OtpRetriever {
             ])
             .output();
 
-        if let Ok(output) = output {
-            if output.status.success() {
+        if let Ok(output) = output
+            && output.status.success() {
                 let response = String::from_utf8_lossy(&output.stdout);
                 // Extract OTP code from message (6-digit pattern)
                 if let Some(code) = Self::extract_otp_from_text(&response) {
@@ -374,12 +375,13 @@ impl OtpRetriever {
                     }));
                 }
             }
-        }
 
         Ok(None)
     }
 
     /// Extract OTP from recent emails via Gmail API
+    // Result wrapping kept for API consistency with other OTP sources that may fail
+    #[allow(clippy::unnecessary_wraps)]
     fn get_email_otp(domain: &str) -> Result<Option<OtpCode>> {
         // Call mcp-cli to query Gmail for recent verification emails
         let output = Command::new("mcp-cli")
@@ -391,8 +393,8 @@ impl OtpRetriever {
             ])
             .output();
 
-        if let Ok(output) = output {
-            if output.status.success() {
+        if let Ok(output) = output
+            && output.status.success() {
                 let response = String::from_utf8_lossy(&output.stdout);
                 // Extract OTP code from email body
                 if let Some(code) = Self::extract_otp_from_text(&response) {
@@ -403,7 +405,6 @@ impl OtpRetriever {
                     }));
                 }
             }
-        }
 
         Ok(None)
     }
@@ -421,20 +422,21 @@ impl OtpRetriever {
             regex::Regex::new(r"(?:code|otp|verification)[:\s]*(\d{6,8})|\b(\d{3}[-\s]?\d{3})\b")
                 .expect("Static regex pattern should compile")
         });
+        // Fallback: find any 6-digit sequence — defined alongside OTP_REGEX to avoid
+        // the clippy::items_after_statements lint (items must precede statements)
+        static DIGIT_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"\b(\d{6})\b").expect("Static regex pattern should compile")
+        });
 
-        if let Some(caps) = OTP_REGEX.captures(text) {
-            if let Some(code) = caps.get(1).or_else(|| caps.get(2)) {
+        if let Some(caps) = OTP_REGEX.captures(text)
+            && let Some(code) = caps.get(1).or_else(|| caps.get(2)) {
                 let code_str = code.as_str().replace(['-', ' '], "");
                 if code_str.len() >= 6 {
                     return Some(code_str);
                 }
             }
-        }
 
         // Fallback: find any 6-digit sequence
-        static DIGIT_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-            regex::Regex::new(r"\b(\d{6})\b").expect("Static regex pattern should compile")
-        });
 
         DIGIT_REGEX
             .captures(text)
@@ -454,7 +456,7 @@ pub enum CookieSource {
 
 impl CookieSource {
     /// Get the cookie database path for this browser
-    fn cookie_path(&self) -> Option<std::path::PathBuf> {
+    fn cookie_path(self) -> Option<std::path::PathBuf> {
         let home = dirs::home_dir()?;
         let path = match self {
             CookieSource::Brave => {
@@ -470,17 +472,16 @@ impl CookieSource {
     }
 
     /// Get the Keychain service name for this browser
-    fn keychain_service(&self) -> &'static str {
+    fn keychain_service(self) -> &'static str {
         match self {
             CookieSource::Brave => "Brave Safe Storage",
             CookieSource::Chrome => "Chrome Safe Storage",
-            CookieSource::Firefox => "",
-            CookieSource::Safari => "",
+            CookieSource::Firefox | CookieSource::Safari => "",
         }
     }
 
     /// Get encryption key from macOS Keychain
-    fn get_keychain_key(&self) -> Result<Vec<u8>> {
+    fn get_keychain_key(self) -> Result<Vec<u8>> {
         let service = self.keychain_service();
         if service.is_empty() {
             anyhow::bail!("Browser does not use Keychain encryption");
@@ -526,7 +527,7 @@ impl CookieSource {
     }
 
     /// Native Rust cookie extraction - tries to extract cookies without Python dependency
-    fn get_cookies_native(&self, domain: &str) -> Result<HashMap<String, String>> {
+    fn get_cookies_native(self, domain: &str) -> Result<HashMap<String, String>> {
         let cookie_path = self
             .cookie_path()
             .context("Could not determine cookie path")?;
@@ -605,17 +606,16 @@ impl CookieSource {
                 let value = parts[1].to_string();
 
                 // If value is empty and we have encrypted_value, try to decrypt
-                if value.is_empty() && parts.len() >= 3 {
-                    if let Some(k) = key.as_ref() {
+                if value.is_empty() && parts.len() >= 3
+                    && let Some(k) = key.as_ref() {
                         // Try native decryption - if it fails, we'll fall back to Python at the caller
-                        if let Ok(decrypted) = self.decrypt_cookie_value(parts[2], k) {
+                        if let Ok(decrypted) = Self::decrypt_cookie_value(parts[2], k) {
                             cookies.insert(name, decrypted);
                             continue;
                         }
                         // If decryption fails, return error to trigger Python fallback
                         anyhow::bail!("Cookie decryption failed for encrypted values");
                     }
-                }
 
                 if !value.is_empty() {
                     cookies.insert(name, value);
@@ -636,14 +636,14 @@ impl CookieSource {
     }
 
     /// Decrypt a Chrome/Brave encrypted cookie value
-    fn decrypt_cookie_value(&self, _encrypted_hex: &str, _key: &[u8]) -> Result<String> {
+    fn decrypt_cookie_value(_encrypted_hex: &str, _key: &[u8]) -> Result<String> {
         // Chrome uses AES-128-CBC with PBKDF2-derived key
         // For simplicity, fall back to Python for decryption
         anyhow::bail!("Encrypted cookie - use Python fallback")
     }
 
     /// Fallback: Get cookies via Python `browser_cookie3`
-    fn get_cookies_via_python(&self, domain: &str) -> Result<HashMap<String, String>> {
+    fn get_cookies_via_python(self, domain: &str) -> Result<HashMap<String, String>> {
         let browser_fn = match self {
             CookieSource::Brave => "brave",
             CookieSource::Chrome => "chrome",
@@ -770,6 +770,7 @@ impl CredentialRetriever {
     }
 
     /// Get credential from macOS Keychain
+    #[allow(clippy::unnecessary_wraps)] // API consistency: callers use ? and expect Result
     fn get_keychain_credential(domain: &str) -> Result<Option<Credential>> {
         // Use security command to find internet password
         let output = Command::new("security")
@@ -781,8 +782,8 @@ impl CredentialRetriever {
             ])
             .output();
 
-        if let Ok(output) = output {
-            if output.status.success() {
+        if let Ok(output) = output
+            && output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -818,7 +819,6 @@ impl CredentialRetriever {
                     }));
                 }
             }
-        }
 
         Ok(None)
     }
@@ -870,8 +870,8 @@ impl CredentialRetriever {
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
 
-        if let Ok(output) = output {
-            if output.status.success() {
+        if let Ok(output) = output
+            && output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if let Some(line) = stdout.lines().next() {
                     let parts: Vec<&str> = line.split('\t').collect();
@@ -890,7 +890,6 @@ impl CredentialRetriever {
                     }
                 }
             }
-        }
 
         Ok(None)
     }
@@ -904,7 +903,7 @@ mod tests {
     fn test_op_available() {
         // This test will pass if 1Password CLI is installed
         let available = OnePasswordAuth::is_available();
-        println!("1Password CLI available: {}", available);
+        println!("1Password CLI available: {available}");
     }
 
     #[test]

@@ -110,7 +110,7 @@ impl AcceleratedClient {
         })
     }
 
-    /// Create client from an existing reqwest::Client (for custom configurations like proxies)
+    /// Create client from an existing `reqwest::Client` (for custom configurations like proxies)
     pub fn from_client(client: Client) -> Result<Self> {
         let profile = random_profile();
         let headers = profile.to_headers();
@@ -352,14 +352,15 @@ impl SafeFetchResponse {
 /// `max_size`, it is truncated and a warning is logged.
 async fn read_body_capped(response: Response, max_size: usize) -> Result<Bytes> {
     // Use content-length hint for early rejection if available
-    if let Some(len) = response.content_length() {
-        if len as usize > max_size {
+    // Truncation acceptable: content_length is used only as a size hint for logging
+    #[allow(clippy::cast_possible_truncation)]
+    if let Some(len) = response.content_length()
+        && len as usize > max_size {
             warn!(
                 content_length = len,
                 max_size, "Response body exceeds size cap; will truncate"
             );
         }
-    }
 
     // Read body in chunks to avoid OOM on huge responses
     let mut body = Vec::with_capacity(max_size.min(1024 * 1024)); // Pre-alloc max 1MB

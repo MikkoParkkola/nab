@@ -506,10 +506,7 @@ pub fn parse_srt(content: &str) -> Result<Vec<SubtitleEntry>> {
         }
 
         // Sequence number (skip)
-        let seq_line = match lines.next() {
-            Some(l) => l,
-            None => break,
-        };
+        let Some(seq_line) = lines.next() else { break };
 
         // Verify it's a number
         if seq_line.trim().parse::<u32>().is_err() {
@@ -517,10 +514,7 @@ pub fn parse_srt(content: &str) -> Result<Vec<SubtitleEntry>> {
         }
 
         // Timestamp line
-        let time_line = match lines.next() {
-            Some(l) => l,
-            None => break,
-        };
+        let Some(time_line) = lines.next() else { break };
 
         let (start_ms, end_ms) = parse_srt_timestamp_line(time_line)?;
 
@@ -577,7 +571,7 @@ mod tests {
         assert_eq!(SubtitleEntry::format_srt_time(0), "00:00:00,000");
         assert_eq!(SubtitleEntry::format_srt_time(1000), "00:00:01,000");
         assert_eq!(SubtitleEntry::format_srt_time(61000), "00:01:01,000");
-        assert_eq!(SubtitleEntry::format_srt_time(3661500), "01:01:01,500");
+        assert_eq!(SubtitleEntry::format_srt_time(3_661_500), "01:01:01,500");
     }
 
     #[test]
@@ -585,7 +579,7 @@ mod tests {
         assert_eq!(SubtitleEntry::format_ass_time(0), "0:00:00.00");
         assert_eq!(SubtitleEntry::format_ass_time(1000), "0:00:01.00");
         assert_eq!(SubtitleEntry::format_ass_time(61000), "0:01:01.00");
-        assert_eq!(SubtitleEntry::format_ass_time(3661500), "1:01:01.50");
+        assert_eq!(SubtitleEntry::format_ass_time(3_661_500), "1:01:01.50");
     }
 
     #[test]

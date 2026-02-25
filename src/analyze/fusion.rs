@@ -88,7 +88,7 @@ impl FusionEngine {
         for transcript in transcripts {
             // Find matching speaker
             let speaker = speakers.and_then(|spks| {
-                self.find_speaker_for_segment(spks, transcript.start, transcript.end)
+                Self::find_speaker_for_segment(spks, transcript.start, transcript.end)
             });
 
             // Find closest visual analysis
@@ -116,8 +116,8 @@ impl FusionEngine {
             let mut flags = Vec::new();
 
             // Flag: emotion mismatch between audio sentiment and visual
-            if let (Some(vis), Some(trans)) = (&visual, transcript.words.as_ref()) {
-                if let Some(ref emo) = vis.emotion {
+            if let (Some(vis), Some(trans)) = (&visual, transcript.words.as_ref())
+                && let Some(ref emo) = vis.emotion {
                     // Simple sentiment heuristics
                     let has_negative_words = trans.iter().any(|w| {
                         let word = w.word.to_lowercase();
@@ -131,7 +131,6 @@ impl FusionEngine {
                         flags.push("sentiment_mismatch".to_string());
                     }
                 }
-            }
 
             segments.push(AnalysisSegment {
                 start: transcript.start,
@@ -149,7 +148,6 @@ impl FusionEngine {
 
     /// Find the speaker for a time segment
     fn find_speaker_for_segment(
-        &self,
         speakers: &[SpeakerSegment],
         start: f64,
         end: f64,
@@ -333,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_speaker_overlap() {
-        let engine = FusionEngine::new();
+        let _engine = FusionEngine::new();
 
         let speakers = vec![
             SpeakerSegment {
@@ -351,11 +349,11 @@ mod tests {
         ];
 
         // Segment mostly in A's range
-        let result = engine.find_speaker_for_segment(&speakers, 1.0, 2.5);
+        let result = FusionEngine::find_speaker_for_segment(&speakers, 1.0, 2.5);
         assert_eq!(result, Some("A".to_string()));
 
         // Segment mostly in B's range
-        let result = engine.find_speaker_for_segment(&speakers, 3.0, 4.5);
+        let result = FusionEngine::find_speaker_for_segment(&speakers, 3.0, 4.5);
         assert_eq!(result, Some("B".to_string()));
     }
 

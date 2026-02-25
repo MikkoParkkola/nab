@@ -140,7 +140,7 @@ enum Commands {
         #[arg(long, default_value = "5")]
         parallel: usize,
 
-        /// Proxy URL (SOCKS5 or HTTP). Also checks HTTP_PROXY/HTTPS_PROXY/ALL_PROXY env vars.
+        /// Proxy URL (SOCKS5 or HTTP). Also checks `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` env vars.
         #[arg(long)]
         proxy: Option<String>,
     },
@@ -421,6 +421,7 @@ enum CookiesAction {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)] // Main function dispatches to all commands; cannot be split
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 

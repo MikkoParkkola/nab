@@ -31,12 +31,12 @@ impl Form {
     /// Parse all forms from HTML
     pub fn parse_all(html: &str) -> Result<Vec<Self>> {
         let document = Html::parse_document(html);
-        let form_selector = Selector::parse("form").map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let input_selector = Selector::parse("input").map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let select_selector = Selector::parse("select").map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let form_selector = Selector::parse("form").map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let input_selector = Selector::parse("input").map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let select_selector = Selector::parse("select").map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let textarea_selector =
-            Selector::parse("textarea").map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let option_selector = Selector::parse("option").map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            Selector::parse("textarea").map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let option_selector = Selector::parse("option").map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         let mut forms = Vec::new();
 
@@ -139,7 +139,7 @@ impl Form {
     /// Extract CSRF token from HTML using a CSS selector
     pub fn extract_csrf_token(html: &str, selector: &str) -> Result<Option<String>> {
         let document = Html::parse_document(html);
-        let css_selector = Selector::parse(selector).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let css_selector = Selector::parse(selector).map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         if let Some(element) = document.select(&css_selector).next() {
             // Try to get value attribute (for input elements)
@@ -193,7 +193,7 @@ pub fn parse_field_args(field_args: &[String]) -> Result<HashMap<String, String>
     for arg in field_args {
         let parts: Vec<&str> = arg.splitn(2, '=').collect();
         if parts.len() != 2 {
-            anyhow::bail!("Invalid field format: '{}'. Expected 'name=value'", arg);
+            anyhow::bail!("Invalid field format: '{arg}'. Expected 'name=value'");
         }
         fields.insert(parts[0].to_string(), parts[1].to_string());
     }
@@ -293,7 +293,7 @@ mod tests {
             enctype: "application/x-www-form-urlencoded".to_string(),
             fields: HashMap::from([
                 ("csrf".to_string(), "token123".to_string()),
-                ("username".to_string(), "".to_string()),
+                ("username".to_string(), String::new()),
             ]),
             hidden_fields: HashMap::from([("csrf".to_string(), "token123".to_string())]),
             is_login_form: false,

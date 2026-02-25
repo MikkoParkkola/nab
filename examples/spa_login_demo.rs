@@ -1,9 +1,9 @@
-//! Demonstration of SPA login form detection with QuickJS
+//! Demonstration of SPA login form detection with `QuickJS`
 //!
 //! This example shows how nab can detect and extract login forms
 //! from Single Page Applications (SPAs) that render forms via JavaScript.
 //!
-//! Run with: cargo run --example spa_login_demo
+//! Run with: `cargo run --example spa_login_demo`
 
 use nab::js_engine::JsEngine;
 
@@ -66,14 +66,14 @@ fn main() -> anyhow::Result<()> {
     "#;
 
     println!("🔍 Original HTML (SPA - no static form):\n");
-    println!("{}\n", spa_html);
+    println!("{spa_html}\n");
 
     // Create JavaScript engine and execute inline scripts
     let js_engine = JsEngine::new()?;
     let rendered_html = js_engine.execute_and_extract_forms(spa_html)?;
 
     println!("✨ Rendered HTML (after JavaScript execution):\n");
-    println!("{}\n", rendered_html);
+    println!("{rendered_html}\n");
 
     // Verify form fields were extracted
     if rendered_html.contains("email") && rendered_html.contains("password") {

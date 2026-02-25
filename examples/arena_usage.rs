@@ -72,7 +72,7 @@ fn example_html_chunks() {
         html.len(),
         buffer.part_count()
     );
-    println!("HTML: {}\n", html);
+    println!("HTML: {html}\n");
 }
 
 /// Demonstrate arena reuse for multiple requests
@@ -114,14 +114,15 @@ fn example_memory_stats() {
 
     println!("Bytes allocated: {} KB", arena.bytes_allocated() / 1024);
     println!("Content size: {} bytes", buffer.len());
-    println!(
-        "Overhead: {:.1}%",
-        (arena.bytes_allocated() - buffer.len()) as f64 / arena.bytes_allocated() as f64 * 100.0
-    );
+    #[allow(clippy::cast_precision_loss)] // Display only; sub-percent precision acceptable
+    let overhead_pct = (arena.bytes_allocated() - buffer.len()) as f64
+        / arena.bytes_allocated() as f64
+        * 100.0;
+    println!("Overhead: {overhead_pct:.1}%");
     println!();
 }
 
-/// Demonstrate building HTTP response with ArenaResponse
+/// Demonstrate building HTTP response with [`ArenaResponse`]
 fn example_http_response() {
     println!("=== HTTP Response Building ===");
 
@@ -144,12 +145,12 @@ fn example_http_response() {
     println!("Status: {} {}", response.status, response.status_text);
     println!("Headers: {} headers", response.headers.len());
     for (name, value) in &response.headers {
-        println!("  {}: {}", name, value);
+        println!("  {name}: {value}");
     }
 
     let body_text = response.body_text().unwrap();
     println!("Body: {} bytes", body_text.len());
-    println!("Content: {}\n", body_text);
+    println!("Content: {body_text}\n");
 }
 
 /// Demonstrate string interning for common headers

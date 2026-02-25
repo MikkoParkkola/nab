@@ -109,18 +109,16 @@ fn extract_with_scraper(html: &str) -> Option<Article> {
 /// Try extracting from semantic HTML5 elements (<article>, <main>).
 fn try_semantic_extraction(document: &Html) -> Option<Article> {
     // Try <article> first
-    if let Ok(article_selector) = Selector::parse("article") {
-        if let Some(article_elem) = document.select(&article_selector).next() {
+    if let Ok(article_selector) = Selector::parse("article")
+        && let Some(article_elem) = document.select(&article_selector).next() {
             return extract_from_element(article_elem, document);
         }
-    }
 
     // Try <main>
-    if let Ok(main_selector) = Selector::parse("main") {
-        if let Some(main_elem) = document.select(&main_selector).next() {
+    if let Ok(main_selector) = Selector::parse("main")
+        && let Some(main_elem) = document.select(&main_selector).next() {
             return extract_from_element(main_elem, document);
         }
-    }
 
     None
 }
@@ -238,18 +236,17 @@ fn is_unlikely_candidate(element: &scraper::element_ref::ElementRef) -> bool {
 /// Extract title from document (`<title>`, `<h1>`, or `OpenGraph`).
 fn extract_title(document: &Html) -> String {
     // Try <h1> first
-    if let Ok(h1_selector) = Selector::parse("h1") {
-        if let Some(h1) = document.select(&h1_selector).next() {
+    if let Ok(h1_selector) = Selector::parse("h1")
+        && let Some(h1) = document.select(&h1_selector).next() {
             let title = h1.text().collect::<Vec<_>>().join(" ").trim().to_string();
             if !title.is_empty() {
                 return title;
             }
         }
-    }
 
     // Try <title>
-    if let Ok(title_selector) = Selector::parse("title") {
-        if let Some(title) = document.select(&title_selector).next() {
+    if let Ok(title_selector) = Selector::parse("title")
+        && let Some(title) = document.select(&title_selector).next() {
             let title = title
                 .text()
                 .collect::<Vec<_>>()
@@ -260,19 +257,16 @@ fn extract_title(document: &Html) -> String {
                 return title;
             }
         }
-    }
 
     // Try OpenGraph meta tag
-    if let Ok(og_selector) = Selector::parse("meta[property='og:title']") {
-        if let Some(og) = document.select(&og_selector).next() {
-            if let Some(content) = og.value().attr("content") {
+    if let Ok(og_selector) = Selector::parse("meta[property='og:title']")
+        && let Some(og) = document.select(&og_selector).next()
+            && let Some(content) = og.value().attr("content") {
                 let title = content.trim().to_string();
                 if !title.is_empty() {
                     return title;
                 }
             }
-        }
-    }
 
     "Untitled".to_string()
 }
@@ -296,7 +290,7 @@ mod tests {
 
     #[test]
     fn extracts_article_with_semantic_html() {
-        let html = r#"
+        let html = r"
             <html>
             <head><title>Test Article</title></head>
             <body>
@@ -311,7 +305,7 @@ mod tests {
                 <footer>© 2025 Copyright</footer>
             </body>
             </html>
-        "#;
+        ";
 
         let article = extract_article(html, "https://example.com/article").unwrap();
 
@@ -329,7 +323,7 @@ mod tests {
 
     #[test]
     fn extracts_from_main_element() {
-        let html = r#"
+        let html = r"
             <html>
             <head><title>Page Title</title></head>
             <body>
@@ -342,7 +336,7 @@ mod tests {
                 <aside>Sidebar</aside>
             </body>
             </html>
-        "#;
+        ";
 
         let article = extract_article(html, "https://example.com/page").unwrap();
         // Title may come from various sources - just verify content extraction works
@@ -376,14 +370,14 @@ mod tests {
 
     #[test]
     fn returns_none_for_non_article_pages() {
-        let html = r#"
+        let html = r"
             <html>
             <body>
                 <div>Short</div>
                 <div>Text</div>
             </body>
             </html>
-        "#;
+        ";
 
         // Should return None for pages without substantial content
         let result = extract_article(html, "https://example.com/");
@@ -392,7 +386,7 @@ mod tests {
 
     #[test]
     fn extracts_title_from_h1() {
-        let html = r#"
+        let html = r"
             <html>
             <head><title>Page Title in Head</title></head>
             <body>
@@ -403,7 +397,7 @@ mod tests {
                 </article>
             </body>
             </html>
-        "#;
+        ";
 
         let article = extract_article(html, "https://example.com/article").unwrap();
         // Readability may prefer <title> over <h1> - both are valid
@@ -416,7 +410,7 @@ mod tests {
 
     #[test]
     fn extracts_title_from_title_tag_fallback() {
-        let html = r#"
+        let html = r"
             <html>
             <head><title>Page Title</title></head>
             <body>
@@ -426,7 +420,7 @@ mod tests {
                 </article>
             </body>
             </html>
-        "#;
+        ";
 
         let article = extract_article(html, "https://example.com/article").unwrap();
         assert_eq!(article.title, "Page Title");
@@ -434,7 +428,7 @@ mod tests {
 
     #[test]
     fn creates_excerpt() {
-        let html = r#"
+        let html = r"
             <html>
             <body>
                 <article>
@@ -443,7 +437,7 @@ mod tests {
                 </article>
             </body>
             </html>
-        "#;
+        ";
 
         let article = extract_article(html, "https://example.com/article").unwrap();
         assert!(!article.excerpt.is_empty());

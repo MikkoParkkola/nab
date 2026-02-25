@@ -45,12 +45,12 @@ impl OverlayPosition {
             Self::BottomCenter => 2,
             Self::BottomRight => 3,
             Self::MiddleLeft => 4,
-            Self::MiddleCenter => 5,
+            // Custom position defaults to center alignment; \pos tag overrides actual placement
+            Self::MiddleCenter | Self::Custom(_, _) => 5,
             Self::MiddleRight => 6,
             Self::TopLeft => 7,
             Self::TopCenter => 8,
             Self::TopRight => 9,
-            Self::Custom(_, _) => 5, // Default to center, use \pos for actual position
         }
     }
 
@@ -176,6 +176,8 @@ impl OverlayStyle {
             &self.outline_color[0..2]
         );
 
+        // Truncation/sign-loss acceptable: opacity ∈ [0.0, 1.0], result ∈ [0, 255]
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let alpha = ((1.0 - self.background_opacity) * 255.0) as u8;
         let back = format!(
             "&H{:02X}{}{}{}",
@@ -217,12 +219,17 @@ impl OverlayStyle {
         ];
 
         if self.outline_width > 0.0 {
+            // Truncation/sign-loss acceptable: outline_width > 0 guaranteed by guard
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             params.push(format!("borderw={}", self.outline_width as u32));
             params.push(format!("bordercolor=0x{}", self.outline_color));
         }
 
         if self.shadow_offset > 0.0 {
+            // Truncation acceptable: shadow_offset > 0 guaranteed by guard; i32 range sufficient
+            #[allow(clippy::cast_possible_truncation)]
             params.push(format!("shadowx={}", self.shadow_offset as i32));
+            #[allow(clippy::cast_possible_truncation)]
             params.push(format!("shadowy={}", self.shadow_offset as i32));
             params.push("shadowcolor=0x000000@0.5".to_string());
         }

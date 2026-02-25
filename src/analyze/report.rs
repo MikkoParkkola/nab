@@ -97,6 +97,8 @@ impl AnalysisReport {
             emotions.sort_by(|a, b| b.1.cmp(a.1));
 
             for (emotion, count) in emotions {
+                // Precision loss acceptable: percentage for display only
+                #[allow(clippy::cast_precision_loss)]
                 let pct = (*count as f64 / total_segments as f64) * 100.0;
                 writeln!(md, "- **{emotion}**: {count} ({pct:.1}%)")?;
             }
@@ -141,11 +143,10 @@ impl AnalysisReport {
                 )?;
             }
 
-            if let Some(ref vis) = seg.visual {
-                if vis.action != "unknown" && vis.action != "none" {
+            if let Some(ref vis) = seg.visual
+                && vis.action != "unknown" && vis.action != "none" {
                     write!(annotation, " [{}]", vis.action)?;
                 }
-            }
 
             writeln!(md, "**{time}** {speaker}{annotation}\n> {text}\n")?;
         }
@@ -219,6 +220,9 @@ impl AnalysisReport {
     }
 
     /// Format time for SRT (HH:MM:SS,mmm)
+    // Truncation and sign loss are intentional: seconds is always non-negative,
+    // and we want floor division to extract H/M/S/ms components.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn format_srt_time(seconds: f64) -> String {
         let hours = (seconds / 3600.0) as u32;
         let minutes = ((seconds % 3600.0) / 60.0) as u32;
@@ -229,6 +233,7 @@ impl AnalysisReport {
     }
 
     /// Format time for VTT (HH:MM:SS.mmm)
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn format_vtt_time(seconds: f64) -> String {
         let hours = (seconds / 3600.0) as u32;
         let minutes = ((seconds % 3600.0) / 60.0) as u32;

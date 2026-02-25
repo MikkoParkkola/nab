@@ -18,16 +18,13 @@ fn cmd_cookies_export(domain: &str, browser: &str) -> Result<()> {
 
     let source = match browser_name.to_lowercase().as_str() {
         "brave" => CookieSource::Brave,
-        "chrome" => CookieSource::Chrome,
         "firefox" => CookieSource::Firefox,
         "safari" => CookieSource::Safari,
-        "edge" => CookieSource::Chrome,
-        _ => CookieSource::Chrome,
+        _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
     };
 
     eprintln!(
-        "🍪 Exporting cookies for '{}' from {}",
-        domain, browser_name
+        "🍪 Exporting cookies for '{domain}' from {browser_name}"
     );
 
     let cookies = source.get_cookies(domain)?;
@@ -63,8 +60,7 @@ fn cmd_cookies_export(domain: &str, browser: &str) -> Result<()> {
         };
 
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            cookie_domain, include_subdomains, path, secure, expiry, name, value
+            "{cookie_domain}\t{include_subdomains}\t{path}\t{secure}\t{expiry}\t{name}\t{value}"
         );
     }
 

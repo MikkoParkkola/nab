@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = PipelineConfig::default();
-        assert_eq!(config.scene_threshold, 0.3);
+        assert!((config.scene_threshold - 0.3).abs() < f32::EPSILON);
         assert_eq!(config.whisper_model, "base");
         assert!(config.enable_diarization);
     }

@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn denies_ipv4_loopback() {
-        assert!(is_denied_ipv4(Ipv4Addr::new(127, 0, 0, 1)));
+        assert!(is_denied_ipv4(Ipv4Addr::LOCALHOST));
         assert!(is_denied_ipv4(Ipv4Addr::new(127, 0, 0, 2)));
         assert!(is_denied_ipv4(Ipv4Addr::new(127, 255, 255, 255)));
     }
@@ -280,12 +280,12 @@ mod tests {
 
     #[test]
     fn denies_ipv4_broadcast() {
-        assert!(is_denied_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
+        assert!(is_denied_ipv4(Ipv4Addr::BROADCAST));
     }
 
     #[test]
     fn denies_ipv4_unspecified() {
-        assert!(is_denied_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
+        assert!(is_denied_ipv4(Ipv4Addr::UNSPECIFIED));
     }
 
     #[test]
@@ -379,7 +379,7 @@ mod tests {
     fn extract_mapped_ipv4_loopback() {
         let ip: Ipv6Addr = "::ffff:127.0.0.1".parse().unwrap();
         let v4 = extract_mapped_ipv4(&ip).unwrap();
-        assert_eq!(v4, Ipv4Addr::new(127, 0, 0, 1));
+        assert_eq!(v4, Ipv4Addr::LOCALHOST);
     }
 
     #[test]
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn validate_ip_blocks_loopback_v4() {
-        assert!(validate_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))).is_err());
+        assert!(validate_ip(IpAddr::V4(Ipv4Addr::LOCALHOST)).is_err());
     }
 
     #[test]
@@ -500,8 +500,12 @@ mod tests {
 
     #[test]
     fn default_max_redirects_is_reasonable() {
-        assert!(DEFAULT_MAX_REDIRECTS >= 3);
-        assert!(DEFAULT_MAX_REDIRECTS <= 10);
+        // Documenting constant invariants - values intentionally checked at test-time for visibility
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(DEFAULT_MAX_REDIRECTS >= 3, "should allow at least 3 redirects");
+            assert!(DEFAULT_MAX_REDIRECTS <= 10, "should not allow more than 10 redirects");
+        }
     }
 
     #[test]

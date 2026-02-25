@@ -55,7 +55,7 @@ impl StreamlinkBackend {
     }
 
     /// Convert `StreamQuality` to streamlink quality string
-    fn quality_to_string(quality: &StreamQuality) -> String {
+    fn quality_to_string(quality: StreamQuality) -> String {
         match quality {
             StreamQuality::Best => "best".to_string(),
             StreamQuality::Worst => "worst".to_string(),
@@ -87,7 +87,7 @@ impl StreamlinkBackend {
 
         // URL and quality
         args.push(url.to_string());
-        args.push(Self::quality_to_string(&config.quality));
+        args.push(Self::quality_to_string(config.quality));
 
         args
     }
@@ -132,7 +132,7 @@ impl StreamlinkBackend {
 
         // URL and quality
         args.push(url.to_string());
-        args.push(Self::quality_to_string(&config.quality));
+        args.push(Self::quality_to_string(config.quality));
 
         args
     }
@@ -177,6 +177,8 @@ impl StreamlinkBackend {
             let value: f64 = parts[0].parse().ok()?;
             let unit = parts[1];
 
+            // Truncation/sign-loss acceptable: byte counts are non-negative finite values
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let bytes = match unit {
                 "KiB" => (value * 1024.0) as u64,
                 "MiB" => (value * 1024.0 * 1024.0) as u64,
@@ -285,7 +287,7 @@ impl StreamBackend for StreamlinkBackend {
 
         // Copy stdout to output
         let mut stdout_reader = BufReader::new(stdout);
-        let mut buffer = [0u8; 64 * 1024]; // 64KB buffer
+        let mut buffer = vec![0u8; 64 * 1024]; // 64KB heap buffer
         let mut total_bytes = 0u64;
 
         loop {
@@ -355,8 +357,8 @@ impl StreamBackend for StreamlinkBackend {
         let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
 
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(prog) = Self::parse_progress(&line) {
-                if let Some(ref cb) = progress {
+            if let Some(prog) = Self::parse_progress(&line)
+                && let Some(ref cb) = progress {
                     cb(StreamProgress {
                         bytes_downloaded: prog.bytes_downloaded,
                         segments_completed: 0,
@@ -364,7 +366,6 @@ impl StreamBackend for StreamlinkBackend {
                         elapsed_seconds: start_time.elapsed().as_secs_f64(),
                     });
                 }
-            }
 
             if line.contains("error") || line.contains("Error") {
                 warn!("streamlink: {}", line);
@@ -398,15 +399,15 @@ mod tests {
     #[test]
     fn test_quality_to_string() {
         assert_eq!(
-            StreamlinkBackend::quality_to_string(&StreamQuality::Best),
+            StreamlinkBackend::quality_to_string(StreamQuality::Best),
             "best"
         );
         assert_eq!(
-            StreamlinkBackend::quality_to_string(&StreamQuality::Worst),
+            StreamlinkBackend::quality_to_string(StreamQuality::Worst),
             "worst"
         );
         assert_eq!(
-            StreamlinkBackend::quality_to_string(&StreamQuality::Specific(720)),
+            StreamlinkBackend::quality_to_string(StreamQuality::Specific(720)),
             "720p"
         );
     }

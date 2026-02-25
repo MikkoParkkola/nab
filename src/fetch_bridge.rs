@@ -140,6 +140,7 @@ impl FetchClient {
 
 /// Inject `fetch()` global into `QuickJS` context
 /// This creates a synchronous `fetch()` that blocks on HTTP requests
+#[allow(clippy::too_many_lines)] // Complex JS bridge function; splitting would reduce clarity
 pub fn inject_fetch_sync(ctx: &Context, client: FetchClient) -> Result<()> {
     ctx.with(|ctx| {
         // Create fetch function
@@ -461,11 +462,11 @@ mod tests {
     // dependency in CI. Run with `cargo test -- --ignored` to execute.
 
     #[test]
-    #[ignore]
+    #[ignore = "requires network access"]
     fn fetch_sync_allows_public_url() {
         let client = FetchClient::new(None, None);
         let result = client.fetch_sync("https://httpbin.org/get".to_string());
-        assert!(result.is_ok(), "Public URL should be allowed: {:?}", result);
+        assert!(result.is_ok(), "Public URL should be allowed: {result:?}");
         let body = result.unwrap();
         assert!(
             body.contains("httpbin") || body.contains("headers"),
@@ -474,22 +475,21 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "requires network access"]
     fn fetch_sync_follows_redirects_with_validation() {
         let client = FetchClient::new(None, None);
         // httpbin.org/redirect/1 redirects once to /get
         let result = client.fetch_sync("https://httpbin.org/redirect/1".to_string());
         assert!(
             result.is_ok(),
-            "Should follow valid redirects: {:?}",
-            result
+            "Should follow valid redirects: {result:?}"
         );
         let body = result.unwrap();
         assert!(body.contains("httpbin"), "Should reach final destination");
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "requires network access"]
     fn fetch_sync_enforces_redirect_limit() {
         let client = FetchClient::new(None, None);
         // httpbin.org/redirect/10 redirects 10 times (exceeds DEFAULT_MAX_REDIRECTS=5)

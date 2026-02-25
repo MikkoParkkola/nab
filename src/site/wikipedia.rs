@@ -88,9 +88,7 @@ impl SiteProvider for WikipediaProvider {
             canonical_url: summary
                 .content_urls
                 .as_ref()
-                .and_then(|u| u.desktop.as_ref())
-                .map(|d| d.page.clone())
-                .unwrap_or_else(|| url.to_string()),
+                .and_then(|u| u.desktop.as_ref()).map_or_else(|| url.to_string(), |d| d.page.clone()),
             media_urls: summary
                 .thumbnail
                 .as_ref()
@@ -163,14 +161,16 @@ fn format_wikipedia_markdown(summary: &WikipediaSummary, lang: &str) -> String {
         .content_urls
         .as_ref()
         .and_then(|u| u.desktop.as_ref())
-        .map(|d| d.page.clone())
-        .unwrap_or_else(|| {
-            format!(
-                "https://{}.wikipedia.org/wiki/{}",
-                lang,
-                urlencoding::encode(&summary.title)
-            )
-        });
+        .map_or_else(
+            || {
+                format!(
+                    "https://{}.wikipedia.org/wiki/{}",
+                    lang,
+                    urlencoding::encode(&summary.title)
+                )
+            },
+            |d| d.page.clone(),
+        );
 
     md.push_str("[Read full article on Wikipedia](");
     md.push_str(&article_url);

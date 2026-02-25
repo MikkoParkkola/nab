@@ -1,6 +1,6 @@
 //! Example: Stream HLS/DASH using ffmpeg backend
 //!
-//! Usage: cargo run --example stream_ffmpeg <manifest_url>
+//! Usage: `cargo run --example stream_ffmpeg <manifest_url>`
 
 use anyhow::Result;
 use nab::stream::backend::{StreamBackend, StreamConfig, StreamProgress};
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    println!("Streaming {} via ffmpeg...", manifest_url);
+    println!("Streaming {manifest_url} via ffmpeg...");
 
     // Configure streaming
     let config = StreamConfig {
@@ -41,11 +41,9 @@ async fn main() -> Result<()> {
 
     // Progress callback
     let progress_cb = Box::new(|p: StreamProgress| {
-        eprintln!(
-            "\rDownloaded: {:.2} MB | Elapsed: {:.1}s",
-            p.bytes_downloaded as f64 / 1_000_000.0,
-            p.elapsed_seconds
-        );
+        #[allow(clippy::cast_precision_loss)] // display only; sub-MB precision acceptable
+        let mb = p.bytes_downloaded as f64 / 1_000_000.0;
+        eprintln!("\rDownloaded: {mb:.2} MB | Elapsed: {:.1}s", p.elapsed_seconds);
     });
 
     // Stream to stdout (can pipe to player: | mpv -)

@@ -27,6 +27,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::fmt::Write as _;
 
 use super::{Engagement, SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
@@ -65,8 +66,7 @@ impl SiteProvider for StackOverflowProvider {
 
         // Fetch question with body and answers
         let api_url = format!(
-            "https://api.stackexchange.com/2.3/questions/{}?site=stackoverflow&filter=withbody&order=desc&sort=votes",
-            question_id
+            "https://api.stackexchange.com/2.3/questions/{question_id}?site=stackoverflow&filter=withbody&order=desc&sort=votes"
         );
         tracing::debug!("Fetching from Stack Exchange: {}", api_url);
 
@@ -145,8 +145,7 @@ fn parse_stackoverflow_url(url: &str) -> Result<String> {
 /// Fetch top answers for a question.
 async fn fetch_answers(client: &AcceleratedClient, question_id: &str) -> Result<Vec<SEAnswer>> {
     let api_url = format!(
-        "https://api.stackexchange.com/2.3/questions/{}/answers?site=stackoverflow&filter=withbody&order=desc&sort=votes&pagesize=3",
-        question_id
+        "https://api.stackexchange.com/2.3/questions/{question_id}/answers?site=stackoverflow&filter=withbody&order=desc&sort=votes&pagesize=3"
     );
 
     let response = client
@@ -200,13 +199,14 @@ fn format_stackoverflow_markdown(question: &SEQuestion, answers: &[SEAnswer]) ->
     md.push_str("\n\n");
 
     // Metadata line
-    md.push_str(&format!(
-        "Asked by {} · {} votes · {} answers · {} views\n\n",
+    let _ = writeln!(
+        md,
+        "Asked by {} · {} votes · {} answers · {} views\n",
         question.owner.display_name,
         format_number(question.score),
         question.answer_count,
         format_number(question.view_count)
-    ));
+    );
 
     // Tags
     if !question.tags.is_empty() {
@@ -232,12 +232,13 @@ fn format_stackoverflow_markdown(question: &SEQuestion, answers: &[SEAnswer]) ->
             } else {
                 ""
             };
-            md.push_str(&format!(
+            let _ = write!(
+                md,
                 "**{}** ({} votes){}\n\n",
                 answer.owner.display_name,
                 format_number(answer.score),
                 accepted,
-            ));
+            );
 
             if let Some(body) = &answer.body {
                 md.push_str(&strip_html(body));
@@ -268,9 +269,7 @@ fn html_decode(s: &str) -> String {
 /// Format Unix timestamp as ISO 8601 date string.
 fn format_timestamp(timestamp: u64) -> String {
     let secs = i64::try_from(timestamp).unwrap_or(0);
-    chrono::DateTime::from_timestamp(secs, 0)
-        .map(|dt| dt.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| "Unknown".to_string())
+    chrono::DateTime::from_timestamp(secs, 0).map_or_else(|| "Unknown".to_string(), |dt| dt.format("%Y-%m-%d").to_string())
 }
 
 /// Format large numbers with K/M suffixes.

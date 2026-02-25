@@ -85,10 +85,11 @@ impl BrowserVersions {
             let days = (Utc::now() - self.safari_last_checked).num_days();
             eprintln!("⚠️  Safari versions are {days} days old (>6 months)");
             eprintln!("   Check: https://developer.apple.com/documentation/safari-release-notes");
-            eprintln!("   Or edit: {:?}", Self::config_path());
+            eprintln!("   Or edit: {}", Self::config_path().display());
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)] // Result used for ? operator on inner calls
     fn fetch_and_update(&self) -> Result<Self, Box<dyn std::error::Error>> {
         // Determine cache severity level for better observability
         let cache_age_days = (Utc::now() - self.last_updated).num_days();
@@ -334,7 +335,7 @@ mod tests {
             );
             // Major version should be reasonably recent
             let major: u32 = versions[0].0.parse().unwrap();
-            assert!(major >= 100, "Chrome version too old: {}", major);
+            assert!(major >= 100, "Chrome version too old: {major}");
         }
     }
 
@@ -351,7 +352,7 @@ mod tests {
             );
             // Version should be reasonably recent
             let major: u32 = versions[0].split('.').next().unwrap().parse().unwrap();
-            assert!(major >= 100, "Firefox version too old: {}", major);
+            assert!(major >= 100, "Firefox version too old: {major}");
         }
     }
 }

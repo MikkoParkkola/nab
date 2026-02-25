@@ -74,8 +74,8 @@ impl NativeHlsBackend {
                 let resolution = attrs.get("RESOLUTION").cloned();
                 let codecs = attrs.get("CODECS").cloned();
 
-                if let Some(uri_line) = lines.next() {
-                    if !uri_line.starts_with('#') {
+                if let Some(uri_line) = lines.next()
+                    && !uri_line.starts_with('#') {
                         let uri = Self::resolve_url(base_url, uri_line);
                         let height = resolution
                             .as_ref()
@@ -90,7 +90,6 @@ impl NativeHlsBackend {
                             uri,
                         });
                     }
-                }
             }
         }
 
@@ -255,11 +254,7 @@ impl NativeHlsBackend {
         }
     }
 
-    fn select_variant<'a>(
-        &self,
-        variants: &'a [HlsVariant],
-        quality: &StreamQuality,
-    ) -> Option<&'a HlsVariant> {
+    fn select_variant(variants: &[HlsVariant], quality: StreamQuality) -> Option<&HlsVariant> {
         if variants.is_empty() {
             return None;
         }
@@ -268,10 +263,12 @@ impl NativeHlsBackend {
             StreamQuality::Best => variants.first(),
             StreamQuality::Worst => variants.last(),
             StreamQuality::Specific(height) => {
+                // Wrap acceptable: video heights are well within i32 range
+                #[allow(clippy::cast_possible_wrap)]
                 // Find closest match
                 variants
                     .iter()
-                    .min_by_key(|v| (v.height as i32 - *height as i32).abs())
+                    .min_by_key(|v| (v.height as i32 - height as i32).abs())
             }
         }
     }
@@ -281,7 +278,7 @@ impl NativeHlsBackend {
         playlist_url: &str,
         headers: &HashMap<String, String>,
         output: &mut W,
-        progress: &Option<ProgressCallback>,
+        progress: Option<&ProgressCallback>,
         start_time: std::time::Instant,
         duration_secs: Option<u64>,
     ) -> Result<()> {
@@ -291,12 +288,11 @@ impl NativeHlsBackend {
 
         loop {
             // Check if we've reached duration limit
-            if let Some(max_dur) = duration_secs {
-                if start_time.elapsed().as_secs() >= max_dur {
+            if let Some(max_dur) = duration_secs
+                && start_time.elapsed().as_secs() >= max_dur {
                     info!("Duration limit reached ({max_dur}s), stopping live stream");
                     break;
                 }
-            }
 
             let playlist = self.parse_media_playlist(playlist_url, headers).await?;
 
@@ -318,7 +314,7 @@ impl NativeHlsBackend {
 
                     output.write_all(&data).await?;
 
-                    if let Some(cb) = &progress {
+                    if let Some(cb) = progress {
                         cb(StreamProgress {
                             bytes_downloaded,
                             segments_completed,
@@ -328,12 +324,11 @@ impl NativeHlsBackend {
                     }
 
                     // Check duration limit after each segment
-                    if let Some(max_dur) = duration_secs {
-                        if start_time.elapsed().as_secs() >= max_dur {
+                    if let Some(max_dur) = duration_secs
+                        && start_time.elapsed().as_secs() >= max_dur {
                             info!("Duration limit reached ({max_dur}s), stopping live stream");
                             return Ok(());
                         }
-                    }
                 }
             }
 
@@ -369,8 +364,7 @@ impl NativeHlsBackend {
             let variants = self.parse_master_playlist(manifest_url, headers).await?;
             debug!("Found {} quality variants", variants.len());
 
-            let variant = self
-                .select_variant(&variants, &config.quality)
+            let variant = Self::select_variant(&variants, config.quality)
                 .ok_or_else(|| anyhow!("No suitable quality variant found"))?;
 
             info!(
@@ -392,6 +386,8 @@ impl NativeHlsBackend {
         let total_segments = if playlist.is_live {
             None
         } else {
+            // Truncation acceptable: segment count fits comfortably in u32
+            #[allow(clippy::cast_possible_truncation)]
             Some(playlist.segments.len() as u32)
         };
         let mut bytes_downloaded = 0u64;
@@ -404,7 +400,7 @@ impl NativeHlsBackend {
                 &media_url,
                 headers,
                 output,
-                &progress,
+                progress.as_ref(),
                 start_time,
                 duration_secs,
             )
@@ -417,6 +413,8 @@ impl NativeHlsBackend {
                 } else {
                     // Estimate segments from target duration
                     let avg_seg_duration = playlist.target_duration;
+                    // Truncation/sign/precision acceptable: segment count is a finite non-negative value
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
                     Some((dur as f64 / avg_seg_duration).ceil() as usize)
                 }
             });
@@ -600,7 +598,6 @@ mod tests {
 
     #[test]
     fn test_select_variant_best() {
-        let backend = NativeHlsBackend::new().unwrap();
         let variants = vec![
             HlsVariant {
                 bandwidth: 5_000_000,
@@ -622,15 +619,13 @@ mod tests {
             },
         ];
 
-        let best = backend
-            .select_variant(&variants, &StreamQuality::Best)
+        let best = NativeHlsBackend::select_variant(&variants, StreamQuality::Best)
             .unwrap();
         assert_eq!(best.height, 1080);
     }
 
     #[test]
     fn test_select_variant_worst() {
-        let backend = NativeHlsBackend::new().unwrap();
         let variants = vec![
             HlsVariant {
                 bandwidth: 5_000_000,
@@ -646,15 +641,13 @@ mod tests {
             },
         ];
 
-        let worst = backend
-            .select_variant(&variants, &StreamQuality::Worst)
+        let worst = NativeHlsBackend::select_variant(&variants, StreamQuality::Worst)
             .unwrap();
         assert_eq!(worst.height, 360);
     }
 
     #[test]
     fn test_select_variant_specific() {
-        let backend = NativeHlsBackend::new().unwrap();
         let variants = vec![
             HlsVariant {
                 bandwidth: 5_000_000,
@@ -676,21 +669,15 @@ mod tests {
             },
         ];
 
-        let specific = backend
-            .select_variant(&variants, &StreamQuality::Specific(700))
+        let specific = NativeHlsBackend::select_variant(&variants, StreamQuality::Specific(700))
             .unwrap();
         assert_eq!(specific.height, 720, "should pick closest to 700p");
     }
 
     #[test]
     fn test_select_variant_empty() {
-        let backend = NativeHlsBackend::new().unwrap();
         let variants: Vec<HlsVariant> = vec![];
-        assert!(
-            backend
-                .select_variant(&variants, &StreamQuality::Best)
-                .is_none()
-        );
+        assert!(NativeHlsBackend::select_variant(&variants, StreamQuality::Best).is_none());
     }
 
     #[test]

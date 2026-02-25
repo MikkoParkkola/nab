@@ -7,7 +7,7 @@ use nab::{AcceleratedClient, ApiDiscovery, FetchClient, JsEngine, inject_fetch_s
 
 use super::fetch::{resolve_browser_name, resolve_cookie_source};
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 pub async fn cmd_spa(
     url: &str,
     cookies: &str,
@@ -162,8 +162,8 @@ pub async fn cmd_spa(
     }
 
     // STEP 1: Try embedded JSON extraction (fast path ~100ms)
-    if !found_data {
-        if let Some(data) = extract_script_json(&html, "__NEXT_DATA__") {
+    if !found_data
+        && let Some(data) = extract_script_json(&html, "__NEXT_DATA__") {
             println!(
                 "\n📊 Extraction complete in {:.2}ms",
                 elapsed.as_secs_f64() * 1000.0
@@ -180,7 +180,6 @@ pub async fn cmd_spa(
             )?;
             found_data = true;
         }
-    }
 
     if let Some(data) = extract_script_json(&html, "__INITIAL_STATE__") {
         if !found_data {
@@ -316,9 +315,9 @@ pub async fn cmd_spa(
         ];
 
         for (js_path, name) in patterns_to_check {
-            if let Ok(json_str) = js_engine.eval(&format!("JSON.stringify({js_path} || null)")) {
-                if json_str != "null" {
-                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            if let Ok(json_str) = js_engine.eval(&format!("JSON.stringify({js_path} || null)"))
+                && json_str != "null"
+                    && let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
                         println!("\n✅ {name} found via JavaScript execution:");
                         output_spa_data(
                             &data,
@@ -332,14 +331,12 @@ pub async fn cmd_spa(
                         found_data = true;
                         break;
                     }
-                }
-            }
         }
 
-        if !found_data {
-            if let Ok(window_json) = js_engine.eval("JSON.stringify(window)") {
-                if let Ok(window_data) = serde_json::from_str::<serde_json::Value>(&window_json) {
-                    if let Some(obj) = window_data.as_object() {
+        if !found_data
+            && let Ok(window_json) = js_engine.eval("JSON.stringify(window)")
+                && let Ok(window_data) = serde_json::from_str::<serde_json::Value>(&window_json)
+                    && let Some(obj) = window_data.as_object() {
                         let mut clean_data = serde_json::Map::new();
                         for (key, value) in obj {
                             if !key.starts_with('_')
@@ -370,9 +367,6 @@ pub async fn cmd_spa(
                             found_data = true;
                         }
                     }
-                }
-            }
-        }
 
         let fetched_urls = fetch_client.get_fetch_log();
         if !fetched_urls.is_empty() {

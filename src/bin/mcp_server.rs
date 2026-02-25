@@ -10,6 +10,7 @@
 //! nab-mcp
 //! ```
 
+use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -80,25 +81,27 @@ pub struct FetchTool {
 }
 
 impl FetchTool {
+    #[allow(clippy::too_many_lines)]
     pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
         let start = Instant::now();
         let client = get_client().await;
         let profile = client.profile().await;
 
         let mut output = format!("🌐 Fetching: {}\n", self.url);
-        output.push_str(&format!(
-            "🎭 Profile: {}\n",
+        let _ = writeln!(
+            output,
+            "🎭 Profile: {}",
             profile.user_agent.split('/').next().unwrap_or("Unknown")
-        ));
+        );
 
         // Get cookies if requested — load before site providers so authenticated
         // providers (e.g., Google Workspace) receive the cookie header.
         let cookie_header = if let Some(browser) = &self.cookies {
             let source = match browser.to_lowercase().as_str() {
-                "brave" => CookieSource::Brave,
                 "chrome" => CookieSource::Chrome,
                 "firefox" => CookieSource::Firefox,
                 "safari" => CookieSource::Safari,
+                // "brave" and unrecognised values default to Brave
                 _ => CookieSource::Brave,
             };
             let domain = url::Url::parse(&self.url)
@@ -174,20 +177,17 @@ impl FetchTool {
             };
 
         output.push_str("\n📊 Response:\n");
-        output.push_str(&format!("   Status: {status}\n"));
-        output.push_str(&format!(
-            "   Time: {:.2}ms\n",
-            elapsed.as_secs_f64() * 1000.0
-        ));
+        let _ = writeln!(output, "   Status: {status}");
+        let _ = writeln!(output, "   Time: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
 
         if self.headers {
             output.push_str("\n📋 Headers:\n");
             for (name, value) in &response_headers {
-                output.push_str(&format!("   {name}: {value}\n"));
+                let _ = writeln!(output, "   {name}: {value}");
             }
         }
 
-        output.push_str(&format!("\n📄 Body: {} bytes\n", body_bytes.len()));
+        let _ = writeln!(output, "\n📄 Body: {} bytes", body_bytes.len());
 
         // Route through ContentRouter for markdown conversion
         // Pass the real URL so readability uses site-specific heuristics
@@ -203,10 +203,7 @@ impl FetchTool {
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         if let Some(pages) = conversion.page_count {
-            output.push_str(&format!(
-                "📑 Pages: {} | Conversion: {:.1}ms\n",
-                pages, conversion.elapsed_ms
-            ));
+            let _ = writeln!(output, "📑 Pages: {} | Conversion: {:.1}ms", pages, conversion.elapsed_ms);
         }
 
         if self.body {
@@ -214,9 +211,9 @@ impl FetchTool {
             let truncated = if body_text.len() > 4000 {
                 format!("{}\n\n... [truncated]", &body_text[..4000])
             } else {
-                body_text.to_string()
+                body_text.clone()
             };
-            output.push_str(&format!("\n{truncated}"));
+            let _ = write!(output, "\n{truncated}");
         }
 
         Ok(CallToolResult::text_content(vec![TextContent::from(
@@ -267,7 +264,7 @@ impl FetchBatchTool {
         let mut output = format!("🚀 Batch fetch: {} URLs\n\n", self.urls.len());
 
         for (url, result, elapsed) in results {
-            output.push_str(&format!("=== {url} ===\n"));
+            let _ = writeln!(output, "=== {url} ===");
             match result {
                 Ok(response) => {
                     let status = response.status();
@@ -277,23 +274,25 @@ impl FetchBatchTool {
                     } else {
                         body.clone()
                     };
-                    output.push_str(&format!(
-                        "Status: {status} | {:.0}ms | {} bytes\n{preview}\n\n",
+                    let _ = writeln!(
+                        output,
+                        "Status: {status} | {:.0}ms | {} bytes\n{preview}\n",
                         elapsed.as_secs_f64() * 1000.0,
                         body.len()
-                    ));
+                    );
                 }
                 Err(e) => {
-                    output.push_str(&format!("Error: {e}\n\n"));
+                    let _ = writeln!(output, "Error: {e}\n");
                 }
             }
         }
 
-        output.push_str(&format!(
+        let _ = write!(
+            output,
             "\n[Total: {:.2}s for {} URLs]",
             total_elapsed.as_secs_f64(),
             self.urls.len()
-        ));
+        );
 
         Ok(CallToolResult::text_content(vec![TextContent::from(
             output,
@@ -332,9 +331,9 @@ impl AuthLookupTool {
         match CredentialRetriever::get_credential_for_url(&self.url) {
             Ok(Some(cred)) => {
                 output.push_str("✅ Found credential:\n");
-                output.push_str(&format!("   Title: {}\n", cred.title));
+                let _ = writeln!(output, "   Title: {}", cred.title);
                 if let Some(ref username) = cred.username {
-                    output.push_str(&format!("   Username: {username}\n"));
+                    let _ = writeln!(output, "   Username: {username}");
                 }
                 if cred.password.is_some() {
                     output.push_str("   Password: [present]\n");
@@ -343,14 +342,14 @@ impl AuthLookupTool {
                     output.push_str("   TOTP: available\n");
                 }
                 if let Some(ref passkey) = cred.passkey_credential_id {
-                    output.push_str(&format!("   Passkey: {passkey}\n"));
+                    let _ = writeln!(output, "   Passkey: {passkey}");
                 }
             }
             Ok(None) => {
                 output.push_str("❌ No credential found for this URL\n");
             }
             Err(e) => {
-                output.push_str(&format!("⚠️ Error: {e}\n"));
+                let _ = writeln!(output, "⚠️ Error: {e}");
             }
         }
 
@@ -399,14 +398,11 @@ impl FingerprintTool {
                 _ => random_profile(),
             };
 
-            output.push_str(&format!("Profile {}:\n", i + 1));
-            output.push_str(&format!("   UA: {}\n", profile.user_agent));
-            output.push_str(&format!(
-                "   Accept-Language: {}\n",
-                profile.accept_language
-            ));
+            let _ = writeln!(output, "Profile {}:", i + 1);
+            let _ = writeln!(output, "   UA: {}", profile.user_agent);
+            let _ = writeln!(output, "   Accept-Language: {}", profile.accept_language);
             if !profile.sec_ch_ua.is_empty() {
-                output.push_str(&format!("   Sec-CH-UA: {}\n", profile.sec_ch_ua));
+                let _ = writeln!(output, "   Sec-CH-UA: {}", profile.sec_ch_ua);
             }
             output.push('\n');
         }
@@ -443,16 +439,17 @@ impl ValidateTool {
             Ok(response) => {
                 let body = response.text().await.unwrap_or_default();
                 if body.contains("Example Domain") {
-                    output.push_str(&format!(
-                        "✅ {:.0}ms, {} bytes\n",
+                    let _ = writeln!(
+                        output,
+                        "✅ {:.0}ms, {} bytes",
                         test_start.elapsed().as_secs_f64() * 1000.0,
                         body.len()
-                    ));
+                    );
                 } else {
                     output.push_str("⚠️ Unexpected content\n");
                 }
             }
-            Err(e) => output.push_str(&format!("❌ {e}\n")),
+            Err(e) => { let _ = writeln!(output, "❌ {e}"); }
         }
 
         // Test 2: Compression
@@ -462,15 +459,16 @@ impl ValidateTool {
             Ok(response) => {
                 let body = response.text().await.unwrap_or_default();
                 if body.contains("brotli") {
-                    output.push_str(&format!(
-                        "✅ {:.0}ms\n",
+                    let _ = writeln!(
+                        output,
+                        "✅ {:.0}ms",
                         test_start.elapsed().as_secs_f64() * 1000.0
-                    ));
+                    );
                 } else {
                     output.push_str("⚠️ Compression may not be working\n");
                 }
             }
-            Err(e) => output.push_str(&format!("❌ {e}\n")),
+            Err(e) => { let _ = writeln!(output, "❌ {e}"); }
         }
 
         // Test 3: TLS 1.3
@@ -479,15 +477,16 @@ impl ValidateTool {
         match client.fetch("https://www.cloudflare.com").await {
             Ok(response) => {
                 if response.status().is_success() {
-                    output.push_str(&format!(
-                        "✅ {:.0}ms\n",
+                    let _ = writeln!(
+                        output,
+                        "✅ {:.0}ms",
                         test_start.elapsed().as_secs_f64() * 1000.0
-                    ));
+                    );
                 } else {
-                    output.push_str(&format!("⚠️ Status: {}\n", response.status()));
+                    let _ = writeln!(output, "⚠️ Status: {}", response.status());
                 }
             }
-            Err(e) => output.push_str(&format!("❌ {e}\n")),
+            Err(e) => { let _ = writeln!(output, "❌ {e}"); }
         }
 
         // Test 4: 1Password
@@ -498,10 +497,11 @@ impl ValidateTool {
             output.push_str("⚠️ Not available (run: op signin)\n");
         }
 
-        output.push_str(&format!(
-            "\n✨ Validation complete in {:.2}s\n",
+        let _ = writeln!(
+            output,
+            "\n✨ Validation complete in {:.2}s",
             start.elapsed().as_secs_f64()
-        ));
+        );
 
         Ok(CallToolResult::text_content(vec![TextContent::from(
             output,
@@ -556,14 +556,14 @@ impl BenchmarkTool {
             }
 
             if !times.is_empty() {
+                // Precision loss acceptable: timing averages for display only
+                #[allow(clippy::cast_precision_loss)]
                 let avg = times.iter().sum::<f64>() / times.len() as f64;
                 let min = times.iter().copied().fold(f64::INFINITY, f64::min);
                 let max = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
-                output.push_str(&format!("📊 {url}\n"));
-                output.push_str(&format!(
-                    "   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms\n\n"
-                ));
+                let _ = writeln!(output, "📊 {url}");
+                let _ = writeln!(output, "   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms\n");
             }
         }
 
@@ -590,9 +590,9 @@ Returns: Response body (markdown-converted) after form submission.",
 pub struct SubmitTool {
     /// URL of the page containing the form
     url: String,
-    /// Fields to submit as key=value pairs (e.g. ["username=admin", "q=search term"])
+    /// Fields to submit as key=value pairs (e.g. `["username=admin", "q=search term"]`)
     fields: Vec<String>,
-    /// CSS selector to extract CSRF token from (e.g. "input[name=csrf_token]")
+    /// CSS selector to extract CSRF token from (e.g. `input[name=csrf_token]`)
     #[serde(default)]
     csrf_selector: Option<String>,
     /// Browser cookies to use (brave, chrome, firefox, safari)
@@ -620,23 +620,23 @@ impl SubmitTool {
         }
 
         let mut form = forms.remove(0);
-        output.push_str(&format!("   Form: {} {}\n", form.method, form.action));
+        let _ = writeln!(output, "   Form: {} {}", form.method, form.action);
 
         // Extract CSRF if requested
-        if let Some(ref selector) = self.csrf_selector {
-            if let Ok(Some(token)) = nab::Form::extract_csrf_token(&page_html, selector) {
-                let field_name = if selector.contains("name=") {
-                    selector
-                        .split("name=")
-                        .nth(1)
-                        .and_then(|s| s.split(']').next())
-                        .unwrap_or("csrf_token")
-                } else {
-                    "csrf_token"
-                };
-                form.fields.insert(field_name.to_string(), token);
-                output.push_str("   CSRF: extracted\n");
-            }
+        if let Some(ref selector) = self.csrf_selector
+            && let Ok(Some(token)) = nab::Form::extract_csrf_token(&page_html, selector)
+        {
+            let field_name = if selector.contains("name=") {
+                selector
+                    .split("name=")
+                    .nth(1)
+                    .and_then(|s| s.split(']').next())
+                    .unwrap_or("csrf_token")
+            } else {
+                "csrf_token"
+            };
+            form.fields.insert(field_name.to_string(), token);
+            output.push_str("   CSRF: extracted\n");
         }
 
         // Merge user fields
@@ -665,7 +665,7 @@ impl SubmitTool {
             .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
-        output.push_str(&format!("   Status: {status}\n\n"));
+        let _ = writeln!(output, "   Status: {status}\n");
 
         // Convert response to markdown
         let router = ContentRouter::new();
@@ -729,7 +729,7 @@ impl LoginTool {
             .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
-        output.push_str(&format!("   Final URL: {}\n", result.final_url));
+        let _ = writeln!(output, "   Final URL: {}", result.final_url);
         output.push_str("   Status: ✅ Login successful\n\n");
 
         // Convert to markdown

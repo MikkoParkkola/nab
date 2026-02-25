@@ -32,7 +32,11 @@ impl StreamProvider for GenericHlsProvider {
     }
 
     fn matches(&self, url: &str) -> bool {
-        url.ends_with(".m3u8") || url.ends_with(".mpd")
+        // Strip query params for extension check
+        let path = url.split('?').next().unwrap_or(url);
+        std::path::Path::new(path)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("mpd"))
     }
 
     async fn get_stream_info(&self, url: &str) -> Result<StreamInfo> {

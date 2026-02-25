@@ -42,8 +42,8 @@ impl NrkProvider {
             if url_or_id.contains("/serie/") && url_or_id.contains("/episode/") {
                 // Return series-id/season/episode format
                 let serie_idx = parts.iter().position(|&p| p == "serie");
-                if let Some(idx) = serie_idx {
-                    if idx + 4 < parts.len() {
+                if let Some(idx) = serie_idx
+                    && idx + 4 < parts.len() {
                         return format!(
                             "{}/s{}/e{}",
                             parts[idx + 1],
@@ -51,7 +51,6 @@ impl NrkProvider {
                             parts[idx + 5].split('?').next().unwrap_or(parts[idx + 5]) // episode number
                         );
                     }
-                }
             }
 
             // Fallback: last path segment
@@ -252,7 +251,10 @@ impl StreamProvider for NrkProvider {
                 episodes.push(EpisodeInfo {
                     id: episode.id,
                     title: episode.titles.title,
+                    // Sign loss acceptable: episode/season numbers are non-negative
+                    #[allow(clippy::cast_sign_loss)]
                     episode_number: episode.episode_number.map(|n| n as u32),
+                    #[allow(clippy::cast_sign_loss)]
                     season_number: Some(season.season_number as u32),
                     duration_seconds: episode.duration.and_then(|d| parse_iso8601_duration(&d)),
                     publish_date: episode.availability.and_then(|a| a.published),

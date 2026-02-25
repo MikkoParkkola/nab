@@ -806,16 +806,14 @@ pub(crate) fn parse_comment_anchors(xml: &str) -> HashMap<String, String> {
             if let Some(cid) = comment_id_attr(node) {
                 range_starts.insert(cid, idx);
             }
-        } else if node.has_tag_name("commentRangeEnd") {
-            if let Some(cid) = comment_id_attr(node) {
-                if let Some(&start_idx) = range_starts.get(&cid) {
+        } else if node.has_tag_name("commentRangeEnd")
+            && let Some(cid) = comment_id_attr(node)
+                && let Some(&start_idx) = range_starts.get(&cid) {
                     let snippet = collect_text_in_range(&nodes, start_idx, idx);
                     if !snippet.is_empty() {
                         anchors.insert(cid, snippet);
                     }
                 }
-            }
-        }
     }
 
     anchors

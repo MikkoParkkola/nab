@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::OverlayStyleArg;
 
+#[allow(clippy::fn_params_excessive_bools)] // CLI commands require multiple independent bool flags
 pub async fn cmd_annotate(
     video: &str,
     output: &str,

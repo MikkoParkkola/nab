@@ -132,17 +132,16 @@ impl WebSocket {
                     Message::Ping(data) => {
                         // Auto-respond with pong
                         let _ = self.stream.send(Message::Pong(data)).await;
-                        continue;
                     }
                     Message::Pong(_) => {
                         debug!("Received pong");
-                        continue;
                     }
                     Message::Close(frame) => {
                         info!("WebSocket closed: {:?}", frame);
                         return Ok(Some(WebSocketMessage::Close));
                     }
-                    Message::Frame(_) => continue,
+                    Message::Frame(_) => {}
+
                 },
                 Some(Err(e)) => {
                     return Err(anyhow::Error::new(e).context("WebSocket receive failed"));

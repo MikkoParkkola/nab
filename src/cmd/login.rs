@@ -30,7 +30,7 @@ pub async fn cmd_login(
 
     println!("🔐 Starting auto-login for: {url}");
 
-    let (client, cookie_header) = create_client_with_cookies(cookies, url).await?;
+    let (client, cookie_header) = create_client_with_cookies(cookies, url)?;
 
     #[cfg(feature = "browser")]
     let login_flow = {
@@ -72,7 +72,7 @@ pub async fn cmd_login(
 }
 
 /// Create HTTP client with cookie support and return cookie header
-async fn create_client_with_cookies(
+fn create_client_with_cookies(
     cookies: &str,
     url: &str,
 ) -> Result<(AcceleratedClient, Option<String>)> {
@@ -115,14 +115,12 @@ fn resolve_browser_name(cookies: &str) -> Option<String> {
     }
 }
 
-/// Resolve CookieSource from browser name string
+/// Resolve `CookieSource` from browser name string
 fn resolve_cookie_source(browser: &str) -> CookieSource {
     match browser.to_lowercase().as_str() {
         "brave" => CookieSource::Brave,
-        "chrome" => CookieSource::Chrome,
         "firefox" => CookieSource::Firefox,
         "safari" => CookieSource::Safari,
-        "edge" => CookieSource::Chrome,
-        _ => CookieSource::Chrome,
+        _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
     }
 }

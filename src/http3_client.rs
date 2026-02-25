@@ -266,7 +266,7 @@ mod tests {
     async fn test_h3_detection() {
         // Cloudflare always supports H3
         let supports = Http3Client::supports_h3("https://cloudflare.com").await;
-        println!("Cloudflare H3 support: {}", supports);
+        println!("Cloudflare H3 support: {supports}");
         // Don't assert - depends on network
     }
 
@@ -282,7 +282,7 @@ mod tests {
                 assert!(resp.is_success());
             }
             Err(e) => {
-                println!("H3 fetch failed (may be network): {}", e);
+                println!("H3 fetch failed (may be network): {e}");
             }
         }
     }

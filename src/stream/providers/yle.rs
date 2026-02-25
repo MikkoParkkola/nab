@@ -68,7 +68,7 @@ impl YleProvider {
             .context("Failed to parse Yle preview API response")
     }
 
-    fn parse_episodes_from_next_data(&self, data: &serde_json::Value) -> Vec<EpisodeInfo> {
+    fn parse_episodes_from_next_data(data: &serde_json::Value) -> Vec<EpisodeInfo> {
         let mut episodes = Vec::new();
 
         // Try to find episodes array in various locations
@@ -81,7 +81,7 @@ impl YleProvider {
         for path in possible_paths {
             if let Some(items) = data.pointer(path).and_then(|v| v.as_array()) {
                 for item in items {
-                    if let Some(ep) = self.parse_episode_item(item) {
+                    if let Some(ep) = Self::parse_episode_item(item) {
                         episodes.push(ep);
                     }
                 }
@@ -94,7 +94,7 @@ impl YleProvider {
         episodes
     }
 
-    fn parse_episode_item(&self, item: &serde_json::Value) -> Option<EpisodeInfo> {
+    fn parse_episode_item(item: &serde_json::Value) -> Option<EpisodeInfo> {
         let id = item
             .pointer("/id")
             .or_else(|| item.pointer("/uri"))
@@ -108,11 +108,14 @@ impl YleProvider {
             .unwrap_or("Unknown")
             .to_string();
 
+        // Truncation acceptable: episode/season numbers fit in u32
+        #[allow(clippy::cast_possible_truncation)]
         let episode_number = item
             .pointer("/episodeNumber")
             .and_then(serde_json::Value::as_u64)
             .map(|n| n as u32);
 
+        #[allow(clippy::cast_possible_truncation)]
         let season_number = item
             .pointer("/seasonNumber")
             .and_then(serde_json::Value::as_u64)
@@ -133,7 +136,7 @@ impl YleProvider {
         })
     }
 
-    fn parse_episodes_from_html(&self, html: &str) -> Vec<EpisodeInfo> {
+    fn parse_episodes_from_html(html: &str) -> Vec<EpisodeInfo> {
         let mut episodes = Vec::new();
 
         // Simple regex-like search for episode links
@@ -314,7 +317,7 @@ impl StreamProvider for YleProvider {
                     .unwrap_or("Unknown Series")
                     .to_string();
 
-                let episodes = self.parse_episodes_from_next_data(&next_data);
+                let episodes = Self::parse_episodes_from_next_data(&next_data);
 
                 return Ok(SeriesInfo {
                     id: series_id.to_string(),
@@ -325,7 +328,7 @@ impl StreamProvider for YleProvider {
         }
 
         // Fallback: parse episode links from HTML
-        let episodes = self.parse_episodes_from_html(&html);
+        let episodes = Self::parse_episodes_from_html(&html);
 
         Ok(SeriesInfo {
             id: series_id.to_string(),

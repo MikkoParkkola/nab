@@ -196,6 +196,8 @@ impl FfmpegBackend {
         let bitrate = line.split("bitrate=").nth(1).and_then(|s| {
             let s = s.split_whitespace().next()?;
             let s = s.trim_end_matches("kbits/s");
+            // Truncation/sign-loss acceptable: bitrate is a positive finite value
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             s.parse::<f64>().ok().map(|b| (b * 1000.0) as u64)
         });
 
@@ -232,7 +234,7 @@ impl FfmpegBackend {
 
         let start_time = std::time::Instant::now();
         let mut stdout_reader = BufReader::new(stdout);
-        let mut buffer = [0u8; 64 * 1024];
+        let mut buffer = vec![0u8; 64 * 1024];
         let mut total_bytes = 0u64;
 
         loop {
@@ -315,13 +317,12 @@ impl StreamBackend for FfmpegBackend {
             let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
 
             while let Ok(Some(line)) = lines.next_line().await {
-                if progress_active {
-                    if let Some(_prog) = FfmpegBackend::parse_progress(&line) {
+                if progress_active
+                    && let Some(_prog) = FfmpegBackend::parse_progress(&line) {
                         // Progress is available but we can't easily pass it back
                         // due to ownership. Log it instead.
                         debug!("ffmpeg: {}", line);
                     }
-                }
                 // Log warnings/errors
                 if line.contains("Error") || line.contains("Warning") {
                     warn!("ffmpeg: {}", line);
@@ -331,7 +332,7 @@ impl StreamBackend for FfmpegBackend {
 
         // Copy stdout to output
         let mut stdout_reader = BufReader::new(stdout);
-        let mut buffer = [0u8; 64 * 1024]; // 64KB buffer
+        let mut buffer = vec![0u8; 64 * 1024]; // 64KB heap buffer
         let mut total_bytes = 0u64;
 
         loop {
@@ -401,16 +402,17 @@ impl StreamBackend for FfmpegBackend {
         let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
 
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(prog) = Self::parse_progress(&line) {
-                if let Some(ref cb) = progress {
+            if let Some(prog) = Self::parse_progress(&line)
+                && let Some(ref cb) = progress {
                     cb(StreamProgress {
                         bytes_downloaded: 0, // Not easily available for file output
+                        // Truncation/sign-loss acceptable: time_seconds is non-negative display value
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         segments_completed: prog.time_seconds as u32,
                         segments_total: None,
                         elapsed_seconds: start_time.elapsed().as_secs_f64(),
                     });
                 }
-            }
 
             if line.contains("Error") {
                 warn!("ffmpeg: {}", line);

@@ -78,7 +78,7 @@ static COMMON_HEADER_NAMES: &[&str] = &[
 /// String interner for HTTP header names/values
 ///
 /// Reuses common strings across requests to reduce allocations.
-/// Thread-safe via RwLock (read-heavy workload).
+/// Thread-safe via `RwLock` (read-heavy workload).
 pub struct StringInterner {
     cache: RwLock<HashMap<String, &'static str>>,
 }
@@ -104,11 +104,10 @@ impl StringInterner {
     /// Returns None if string not in cache (caller should use arena allocation)
     pub fn intern(&self, s: &str) -> Option<&'static str> {
         // Fast path: read lock for common case
-        if let Ok(cache) = self.cache.read() {
-            if let Some(&interned) = cache.get(s) {
+        if let Ok(cache) = self.cache.read()
+            && let Some(&interned) = cache.get(s) {
                 return Some(interned);
             }
-        }
         None
     }
 }
@@ -512,8 +511,8 @@ mod tests {
 
         // Same pointer (interned)
         assert_eq!(
-            content_type1.unwrap() as *const str,
-            content_type2.unwrap() as *const str
+            std::ptr::from_ref::<str>(content_type1.unwrap()),
+            std::ptr::from_ref::<str>(content_type2.unwrap())
         );
     }
 
