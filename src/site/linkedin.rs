@@ -79,6 +79,10 @@ pub fn classify_linkedin_url(url: &str) -> Option<LinkedInUrlKind> {
     if path.contains("/feed/update/") {
         return Some(LinkedInUrlKind::FeedUpdate);
     }
+    // /feed/ or /feed (home feed) — requires auth, no oEmbed fallback
+    if path.ends_with("/feed/") || path.ends_with("/feed") {
+        return Some(LinkedInUrlKind::Activity);
+    }
     if path.contains("/posts/") {
         return Some(LinkedInUrlKind::Post);
     }
