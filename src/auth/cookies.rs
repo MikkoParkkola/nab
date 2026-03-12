@@ -34,7 +34,7 @@ const CHROME_KEY_LEN: usize = 16;
 /// Prefix on every v10 encrypted cookie value (ASCII "v10").
 const V10_PREFIX: &[u8; 3] = b"v10";
 /// AES-CBC IV: 16 zero bytes (Chromium hard-codes this).
-const AES_CBC_IV: [u8; 16] = [b' '; 16];
+const AES_CBC_IV: [u8; 16] = [0u8; 16];
 
 // ─── CookieSource ─────────────────────────────────────────────────────────────
 
