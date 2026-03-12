@@ -77,8 +77,8 @@ pub use login::{LoginFlow, LoginResult, get_session_dir};
 pub use mfa::{MfaHandler, MfaResult, MfaType, NotificationConfig, detect_mfa_type};
 pub use prefetch::{EarlyHintLink, EarlyHints, PrefetchManager, extract_link_hints};
 pub use ssrf::{
-    DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS, validate_ip, validate_redirect_target,
-    validate_url,
+    DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS, extract_mapped_ipv4, is_denied_ipv4,
+    is_denied_ipv6, validate_ip, validate_redirect_target, validate_url,
 };
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};
 pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
