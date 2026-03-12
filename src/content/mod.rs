@@ -28,6 +28,7 @@ pub mod html;
 pub mod pdf;
 pub mod plain;
 pub mod readability;
+pub(crate) mod spa_extract;
 #[cfg(feature = "pdf")]
 pub mod table;
 #[cfg(feature = "pdf")]
