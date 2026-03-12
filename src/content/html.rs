@@ -135,7 +135,9 @@ pub fn detect_thin_content(html_len: usize, markdown_len: usize) -> Option<Strin
         Some(format!(
             "Warning: output is suspiciously thin ({markdown_len} chars from {html_len} bytes of HTML, \
              {ratio_percent}% ratio). The page likely uses JavaScript rendering — \
-             the article body may be missing. Try: nab fetch --cookies brave <url>"
+             the article body may be missing. Try:\n  \
+             1. nab spa <url>              (extract embedded SPA data)\n  \
+             2. nab fetch --cookies brave <url>  (use browser session cookies)"
         ))
     } else {
         None
@@ -157,6 +159,14 @@ pub fn html_to_markdown_with_readability(html: &str) -> String {
 /// server-side render state in `<script>` tags. This function extracts that
 /// state and recursively searches for the longest text content field.
 ///
+/// # Extraction Pipeline
+///
+/// 1. `<script id="__NEXT_DATA__">` (Next.js SSR data)
+/// 2. `<script id="__NUXT_DATA__">` / `<script id="__nuxt-data">` (Nuxt.js SSR data)
+/// 3. `<script type="application/ld+json">` (Schema.org structured data — `Article`,
+///    `BlogPosting`, `NewsArticle`)
+/// 4. Inline `<script>` variable assignments (`window.__NEXT_DATA__ = {...}`)
+///
 /// Returns `Some(markdown)` if a substantial content field is found (>200 chars),
 /// `None` otherwise.
 fn extract_spa_data(html: &str) -> Option<String> {
@@ -171,6 +181,180 @@ fn extract_spa_data(html: &str) -> Option<String> {
     for selector in &["script#__NUXT_DATA__", "script#__nuxt-data"] {
         if let Some(content) = try_extract_script_json(&document, selector) {
             return Some(content);
+        }
+    }
+
+    // Try JSON-LD structured data (Schema.org — widely used by modern blogs)
+    if let Some(content) = extract_jsonld_content(&document) {
+        return Some(content);
+    }
+
+    // Try inline script variable assignments (window.__NEXT_DATA__ = {...}, etc.)
+    if let Some(content) = extract_inline_script_json(html) {
+        return Some(content);
+    }
+
+    None
+}
+
+/// Extract article content from `<script type="application/ld+json">` tags.
+///
+/// Many modern blogs (including JS-rendered ones) embed Schema.org structured
+/// data as JSON-LD. This contains the article body in `articleBody`, or at
+/// minimum `description`, which gives us content without needing JS execution.
+///
+/// Handles both single JSON-LD objects and arrays of objects (some sites
+/// emit `[{...}, {...}]` with multiple schema types).
+fn extract_jsonld_content(document: &scraper::Html) -> Option<String> {
+    const MIN_CONTENT_LEN: usize = 200;
+
+    let sel = scraper::Selector::parse(r#"script[type="application/ld+json"]"#).ok()?;
+
+    // Ordered by preference: articleBody > description
+    let content_keys = ["articleBody", "text", "description"];
+
+    let mut best: Option<String> = None;
+
+    for script in document.select(&sel) {
+        let json_text = script.text().collect::<String>();
+        let json_text = json_text.trim();
+        if json_text.is_empty() {
+            continue;
+        }
+
+        // Parse as single object or array
+        let values: Vec<serde_json::Value> = if json_text.starts_with('[') {
+            serde_json::from_str(json_text).ok()?
+        } else if json_text.starts_with('{') {
+            vec![serde_json::from_str(json_text).ok()?]
+        } else {
+            continue;
+        };
+
+        for value in &values {
+            // Only consider Article-like types (skip Organization, WebSite, BreadcrumbList)
+            if let Some(schema_type) = value.get("@type").and_then(|t| t.as_str()) {
+                let is_article = schema_type.contains("Article")
+                    || schema_type.contains("Posting")
+                    || schema_type.contains("Report")
+                    || schema_type.contains("ScholarlyArticle")
+                    || schema_type.contains("TechArticle")
+                    || schema_type.contains("NewsArticle")
+                    || schema_type.contains("BlogPosting");
+                if !is_article {
+                    continue;
+                }
+            } else {
+                continue; // Skip objects without @type
+            }
+
+            for key in &content_keys {
+                if let Some(serde_json::Value::String(s)) = value.get(*key)
+                    && s.len() >= MIN_CONTENT_LEN
+                {
+                    let current_best_len = best.as_deref().map_or(0, str::len);
+                    if s.len() > current_best_len {
+                        best = Some(s.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    best.map(|content| render_spa_content(&content))
+}
+
+/// Extract content from inline `<script>` variable assignments.
+///
+/// Some JS-rendered pages embed data via:
+/// ```text
+/// <script>window.__NEXT_DATA__ = {"props":{"pageProps":{...}}}</script>
+/// ```
+/// rather than using a `<script id="__NEXT_DATA__" type="application/json">` tag.
+///
+/// This function scans all inline scripts for known variable assignment patterns
+/// and attempts to extract the JSON payload.
+fn extract_inline_script_json(html: &str) -> Option<String> {
+    const PATTERNS: &[&str] = &[
+        "window.__NEXT_DATA__",
+        "self.__NEXT_DATA__",
+        "__NEXT_DATA__",
+        "window.__NUXT__",
+        "window.__INITIAL_STATE__",
+        "window.__PRELOADED_STATE__",
+        "window.__APOLLO_STATE__",
+    ];
+
+    const MIN_CONTENT_LEN: usize = 200;
+
+    for pattern in PATTERNS {
+        if let Some(start_idx) = html.find(pattern) {
+            // Find the '=' after the variable name
+            let after_pattern = start_idx + pattern.len();
+            let remaining = &html[after_pattern..];
+
+            // Skip whitespace and find '='
+            let eq_offset = remaining.find('=')?;
+            let after_eq = &remaining[eq_offset + 1..];
+
+            // Find the start of the JSON object or array
+            let json_offset = after_eq.chars().position(|c| c == '{' || c == '[')?;
+            let json_start = &after_eq[json_offset..];
+
+            // Extract balanced JSON
+            if let Some(json_str) = extract_balanced_json(json_start)
+                && let Ok(data) = serde_json::from_str::<serde_json::Value>(json_str)
+            {
+                // Try Next.js structure (props.pageProps)
+                if let Some(content) = extract_nextjs_content(&data) {
+                    return Some(content);
+                }
+                // Try generic longest-string search on the entire payload
+                if let Some(longest) = find_longest_string(&data, MIN_CONTENT_LEN) {
+                    return Some(render_spa_content(&longest));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract a balanced JSON object or array from the beginning of a string.
+///
+/// Tracks brace/bracket depth and string escaping to find the end of the
+/// outermost JSON structure. Returns the slice containing the full JSON,
+/// or `None` if the structure is not balanced.
+fn extract_balanced_json(s: &str) -> Option<&str> {
+    let first_char = s.chars().next()?;
+    let (open, close) = match first_char {
+        '{' => ('{', '}'),
+        '[' => ('[', ']'),
+        _ => return None,
+    };
+
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, c) in s.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+
+        match c {
+            '\\' if in_string => escape_next = true,
+            '"' => in_string = !in_string,
+            _ if in_string => {}
+            c if c == open => depth += 1,
+            c if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[..=i]);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -854,6 +1038,7 @@ mod tests {
         assert!(msg.contains("suspiciously thin"), "message should describe the problem");
         assert!(msg.contains("JavaScript rendering"), "message should explain likely cause");
         assert!(msg.contains("--cookies"), "message should suggest a workaround");
+        assert!(msg.contains("nab spa"), "message should suggest nab spa as alternative");
     }
 
     #[test]
@@ -1147,5 +1332,321 @@ mod tests {
         let msg = warning.unwrap();
         assert!(msg.contains("200"), "warning should include actual markdown length");
         assert!(msg.contains("34936") || msg.contains("34,936") || msg.contains("bytes"), "warning should include HTML size");
+    }
+
+    // ── JSON-LD extraction (issue #32) ────────────────────────────────────
+
+    #[test]
+    fn extract_jsonld_article_body() {
+        // GIVEN: A JS-rendered page with Schema.org JSON-LD containing the article body
+        let article_body = "This is the full article body extracted from JSON-LD structured \
+            data. Modern blogs increasingly embed Schema.org Article markup which contains \
+            the complete article text in the articleBody field, making it possible to \
+            extract content even when the HTML shell is empty.";
+
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Blog Post</title>
+    <script type="application/ld+json">
+    {{
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Test Blog Post",
+        "author": {{"@type": "Person", "name": "Test Author"}},
+        "articleBody": "{article_body}"
+    }}
+    </script>
+</head>
+<body>
+    <div id="root"><p>Loading...</p></div>
+</body>
+</html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some("https://example.com/blog/test"));
+
+        assert!(
+            markdown.contains("JSON-LD structured data") || markdown.contains("full article body"),
+            "expected JSON-LD article body in markdown, got: {markdown}"
+        );
+        assert!(
+            markdown.len() > 200,
+            "output should be substantial, got {} chars",
+            markdown.len()
+        );
+    }
+
+    #[test]
+    fn extract_jsonld_ignores_non_article_types() {
+        // GIVEN: JSON-LD with Organization type (not an article)
+        let html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Example Corp",
+        "description": "We are a company that does things and this description is long enough to pass minimum length thresholds but should not be extracted as article content since it is an Organization type."
+    }
+    </script>
+</head>
+<body><div>Minimal page</div></body>
+</html>"#;
+
+        let document = scraper::Html::parse_document(html);
+        let result = extract_jsonld_content(&document);
+        assert!(result.is_none(), "Organization JSON-LD should not be extracted as article content");
+    }
+
+    #[test]
+    fn extract_jsonld_handles_array_of_schemas() {
+        // GIVEN: JSON-LD as an array with multiple types (common pattern)
+        let article_body = "The complete article body from a page that uses an array of \
+            JSON-LD schemas. This is a common pattern where the page includes both a \
+            WebSite schema and a BlogPosting schema in a single script tag. The \
+            extraction should find the article content from the BlogPosting entry.";
+
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <script type="application/ld+json">
+    [
+        {{
+            "@context": "https://schema.org",
+            "@type": "WebSite",
+            "name": "Example Blog",
+            "url": "https://example.com"
+        }},
+        {{
+            "@context": "https://schema.org",
+            "@type": "BlogPosting",
+            "headline": "Array Test",
+            "articleBody": "{article_body}"
+        }}
+    ]
+    </script>
+</head>
+<body><div id="root"></div></body>
+</html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some("https://example.com/blog/test"));
+        assert!(
+            markdown.contains("array of JSON-LD schemas") || markdown.contains("complete article body"),
+            "expected article body from JSON-LD array, got: {markdown}"
+        );
+    }
+
+    #[test]
+    fn extract_jsonld_uses_description_fallback() {
+        // GIVEN: JSON-LD Article without articleBody, but with a long description
+        let description = "A detailed description of the article that serves as a fallback \
+            when the articleBody field is not present. This is a common pattern in some CMS \
+            systems that only populate the description field in their JSON-LD markup. The \
+            description should be extracted as content when no better field is available.";
+
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <script type="application/ld+json">
+    {{
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": "Description Fallback Test",
+        "description": "{description}"
+    }}
+    </script>
+</head>
+<body><div id="root"></div></body>
+</html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some("https://example.com/article"));
+        assert!(
+            markdown.contains("detailed description") || markdown.contains("fallback"),
+            "expected description content as fallback, got: {markdown}"
+        );
+    }
+
+    // ── Inline script variable extraction (issue #32) ─────────────────────
+
+    #[test]
+    fn extract_inline_script_next_data_assignment() {
+        // GIVEN: A page that assigns __NEXT_DATA__ via inline script (not a tagged JSON blob)
+        let article_body = "This is the article body from a page that uses inline script \
+            assignment for Next.js data instead of a tagged script element. This pattern \
+            is used by some Next.js deployments and custom frameworks that inject the \
+            hydration data via window.__NEXT_DATA__ = {...} in an inline script.";
+
+        let next_data = serde_json::json!({
+            "props": {
+                "pageProps": {
+                    "post": {
+                        "title": "Inline Assignment Test",
+                        "body": article_body
+                    }
+                }
+            },
+            "buildId": "test123"
+        });
+
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head><title>Inline Next.js</title></head>
+<body>
+    <div id="__next"><p>Loading...</p></div>
+    <script>window.__NEXT_DATA__ = {next_data};</script>
+</body>
+</html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some("https://example.com/blog/test"));
+        assert!(
+            markdown.contains("inline script assignment") || markdown.contains("article body from a page"),
+            "expected article body from inline script, got: {markdown}"
+        );
+    }
+
+    #[test]
+    fn extract_inline_script_initial_state_assignment() {
+        // GIVEN: A page using window.__INITIAL_STATE__ = {...}
+        let content = "A long article body stored in the Redux initial state payload. \
+            This pattern is common in React applications that use Redux for state management \
+            and prehydrate the store with server-side rendered data via a global variable \
+            assignment in an inline script tag.";
+
+        let state = serde_json::json!({
+            "article": {
+                "content": content,
+                "title": "Redux State Test"
+            }
+        });
+
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<body>
+    <div id="root"></div>
+    <script>window.__INITIAL_STATE__ = {state};</script>
+</body>
+</html>"#
+        );
+
+        let result = extract_inline_script_json(&html);
+        assert!(
+            result.is_some(),
+            "should extract content from __INITIAL_STATE__ assignment"
+        );
+        let content = result.unwrap();
+        assert!(
+            content.contains("Redux initial state") || content.contains("long article body"),
+            "expected state content, got: {content}"
+        );
+    }
+
+    #[test]
+    fn extract_balanced_json_basic_object() {
+        let input = r#"{"key": "value", "nested": {"a": 1}}; more stuff"#;
+        let result = extract_balanced_json(input);
+        assert!(result.is_some());
+        let json = result.unwrap();
+        assert_eq!(json, r#"{"key": "value", "nested": {"a": 1}}"#);
+    }
+
+    #[test]
+    fn extract_balanced_json_with_string_braces() {
+        let input = r#"{"content": "text with {braces} inside"}"#;
+        let result = extract_balanced_json(input);
+        assert!(result.is_some());
+        let json = result.unwrap();
+        // Should correctly handle braces inside strings
+        assert!(serde_json::from_str::<serde_json::Value>(json).is_ok());
+    }
+
+    #[test]
+    fn extract_balanced_json_array() {
+        let input = r#"[1, 2, {"a": [3, 4]}];"#;
+        let result = extract_balanced_json(input);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), r#"[1, 2, {"a": [3, 4]}]"#);
+    }
+
+    #[test]
+    fn extract_balanced_json_returns_none_for_unbalanced() {
+        let input = r#"{"key": "value""#; // missing closing brace
+        let result = extract_balanced_json(input);
+        assert!(result.is_none());
+    }
+
+    // ── Issue #32 end-to-end regression: JS-rendered page with JSON-LD ────
+
+    #[test]
+    fn js_rendered_page_with_jsonld_extracts_article_body() {
+        // GIVEN: A simulated JS-rendered blog page with NO __NEXT_DATA__ but WITH JSON-LD
+        // This is the actual pattern for many modern blogs (Stripe, Medium, Ghost)
+        let article_body = "Minions and autonomous coding agents represent a new paradigm in \
+            software engineering automation. In this comprehensive post we explore the \
+            architecture decisions that went into building Stripe's end-to-end coding \
+            agent system. We discuss the challenges of tool use, context management, \
+            and the critical importance of verification in autonomous code generation. \
+            The system achieved remarkable results in production, completing complex \
+            engineering tasks from specification to pull request.";
+
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Minions - Stripe Blog</title>
+    <script type="application/ld+json">
+    {{
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Minions: Stripe's One-Shot End-to-End Coding Agents",
+        "author": {{"@type": "Person", "name": "Alistair Gray"}},
+        "datePublished": "2025-03-01",
+        "articleBody": "{article_body}"
+    }}
+    </script>
+</head>
+<body>
+    <div id="__next">
+        <header><nav><a href="/">Stripe</a></nav></header>
+        <main>
+            <!-- JS renders the article here; SSR only has author bio -->
+            <p class="author-bio">Alistair is a software engineer on the Leverage team</p>
+        </main>
+    </div>
+    <!-- No __NEXT_DATA__ script tag -->
+</body>
+</html>"#
+        );
+
+        // WHEN: we convert the page to markdown
+        let markdown = html_to_markdown_with_url(
+            &html,
+            Some("https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents"),
+        );
+
+        // THEN: the article body is in the output (not just the author bio)
+        assert!(
+            markdown.contains("autonomous coding agents") || markdown.contains("Minions"),
+            "expected article body from JSON-LD in markdown, got only: {markdown}"
+        );
+        assert!(
+            markdown.len() > 200,
+            "output should be substantially longer than a bio, got {} chars",
+            markdown.len()
+        );
+        // Ensure we did NOT just get the author bio
+        assert!(
+            !markdown.starts_with("Alistair is a software engineer"),
+            "should extract article body, not just author bio"
+        );
     }
 }

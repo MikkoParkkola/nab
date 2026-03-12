@@ -1,12 +1,52 @@
 //! SSRF (Server-Side Request Forgery) protection.
 //!
-//! Validates resolved IP addresses against a deny list of private, loopback,
-//! link-local, and other non-routable address ranges. Also detects IPv4-mapped
-//! IPv6 addresses that could bypass naive checks.
+//! Validates resolved IP addresses against a comprehensive deny list of RFC
+//! special-use address ranges. Also detects IPv4-mapped/embedded IPv6 addresses
+//! that could bypass naive checks.
+//!
+//! # Covered RFC Special-Use Ranges
+//!
+//! ## IPv4
+//! | CIDR | RFC | Description |
+//! |------|-----|-------------|
+//! | `0.0.0.0/32` | 1122 | Unspecified |
+//! | `10.0.0.0/8` | 1918 | Private |
+//! | `100.64.0.0/10` | 6598 | Carrier-Grade NAT (CGN) |
+//! | `127.0.0.0/8` | 1122 | Loopback |
+//! | `169.254.0.0/16` | 3927 | Link-local (includes AWS metadata) |
+//! | `172.16.0.0/12` | 1918 | Private |
+//! | `192.0.0.0/24` | 6890 | IETF Protocol Assignments |
+//! | `192.0.2.0/24` | 5737 | Documentation (TEST-NET-1) |
+//! | `192.88.99.0/24` | 7526 | 6to4 Relay Anycast (deprecated) |
+//! | `192.168.0.0/16` | 1918 | Private |
+//! | `198.18.0.0/15` | 2544 | Benchmarking |
+//! | `198.51.100.0/24` | 5737 | Documentation (TEST-NET-2) |
+//! | `203.0.113.0/24` | 5737 | Documentation (TEST-NET-3) |
+//! | `224.0.0.0/4` | 5771 | Multicast |
+//! | `240.0.0.0/4` | 1112 | Reserved (Class E) |
+//! | `255.255.255.255/32` | 919 | Broadcast |
+//!
+//! ## IPv6
+//! | CIDR | RFC | Description |
+//! |------|-----|-------------|
+//! | `::/128` | 4291 | Unspecified |
+//! | `::1/128` | 4291 | Loopback |
+//! | `::ffff:0:0/96` | 4291 | IPv4-mapped (delegated to IPv4 check) |
+//! | `64:ff9b::/96` | 6052 | NAT64 well-known (embedded IPv4 checked) |
+//! | `64:ff9b:1::/48` | 8215 | NAT64 local-use |
+//! | `100::/64` | 6666 | Discard-Only |
+//! | `2001::/32` | 4380 | Teredo tunneling |
+//! | `2001:20::/28` | 7343 | ORCHID v2 |
+//! | `2001:db8::/32` | 3849 | Documentation |
+//! | `2002::/16` | 3056 | 6to4 (deprecated, embedded IPv4 checked) |
+//! | `fc00::/7` | 4193 | Unique Local Address (ULA) |
+//! | `fe80::/10` | 4291 | Link-local |
+//! | `fec0::/10` | 3879 | Site-local (deprecated) |
+//! | `ff00::/8` | 4291 | Multicast |
 //!
 //! # DNS Pinning
 //!
-//! [`DnsPinningResolver`] resolves a hostname once, validates the resolved IP
+//! [`resolve_and_validate`] resolves a hostname once, validates the resolved IP
 //! against the SSRF deny list, and returns the pinned address for connection.
 //! This prevents DNS rebinding attacks where the first resolution returns a
 //! public IP (passing validation) and a subsequent resolution returns a private
@@ -29,23 +69,24 @@ pub const DEFAULT_MAX_REDIRECTS: u32 = 5;
 /// Default maximum response body size in bytes (10 MB).
 pub const DEFAULT_MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 
+// ─── IPv4 deny list ──────────────────────────────────────────────────────────
+
 /// Returns `true` if the given IPv4 address is in a denied range.
 ///
-/// Denied ranges include:
-/// - Loopback (`127.0.0.0/8`)
-/// - Private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
-/// - Link-local (`169.254.0.0/16`)
-/// - Documentation (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`)
-/// - Broadcast (`255.255.255.255`)
-/// - Unspecified (`0.0.0.0`)
+/// See module-level docs for the full CIDR table.
 fn is_denied_ipv4(ip: Ipv4Addr) -> bool {
     ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_broadcast()
         || ip.is_unspecified()
+        || ip.is_multicast()
         || is_ipv4_documentation(ip)
         || is_ipv4_benchmarking(ip)
+        || is_ipv4_cgn(ip)
+        || is_ipv4_protocol_assignments(ip)
+        || is_ipv4_6to4_relay(ip)
+        || is_ipv4_reserved(ip)
 }
 
 /// `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (RFC 5737).
@@ -63,12 +104,48 @@ fn is_ipv4_benchmarking(ip: Ipv4Addr) -> bool {
     octets[0] == 198 && (octets[1] == 18 || octets[1] == 19)
 }
 
+/// `100.64.0.0/10` -- Carrier-Grade NAT (RFC 6598).
+///
+/// Shared address space used by ISPs for large-scale NAT. Not routable on
+/// the public Internet; often used in cloud VPC internal networking.
+fn is_ipv4_cgn(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    // 100.64.0.0/10 = first octet 100, second octet 64..127 (bits: 01xxxxxx)
+    octets[0] == 100 && (octets[1] & 0xC0) == 64
+}
+
+/// `192.0.0.0/24` -- IETF Protocol Assignments (RFC 6890).
+///
+/// Includes DS-Lite (`192.0.0.0/29`), NAT64 discovery, and other IETF uses.
+fn is_ipv4_protocol_assignments(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 192 && octets[1] == 0 && octets[2] == 0
+}
+
+/// `192.88.99.0/24` -- 6to4 Relay Anycast (RFC 7526, deprecated).
+fn is_ipv4_6to4_relay(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 192 && octets[1] == 88 && octets[2] == 99
+}
+
+/// `240.0.0.0/4` -- Reserved for future use (RFC 1112, Class E).
+///
+/// Also catches `255.0.0.0/8` through `255.255.255.254` (broadcast
+/// `255.255.255.255` is already caught by `is_broadcast()`).
+fn is_ipv4_reserved(ip: Ipv4Addr) -> bool {
+    ip.octets()[0] >= 240
+}
+
+// ─── IPv6 deny list ──────────────────────────────────────────────────────────
+
 /// Returns `true` if the given IPv6 address is in a denied range.
+///
+/// See module-level docs for the full CIDR table.
 ///
 /// Also detects IPv4-mapped IPv6 addresses (`::ffff:x.x.x.x`) and validates
 /// the embedded IPv4 address against the IPv4 deny list.
 fn is_denied_ipv6(ip: Ipv6Addr) -> bool {
-    if ip.is_loopback() || ip.is_unspecified() {
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
         return true;
     }
 
@@ -78,13 +155,19 @@ fn is_denied_ipv6(ip: Ipv6Addr) -> bool {
         return is_denied_ipv4(ipv4);
     }
 
-    // Link-local (fe80::/10)
     let segments = ip.segments();
+
+    // Link-local (fe80::/10)
     if segments[0] & 0xffc0 == 0xfe80 {
         return true;
     }
 
-    // Unique local (fc00::/7)
+    // Site-local (fec0::/10, deprecated but still must be blocked) -- RFC 3879
+    if segments[0] & 0xffc0 == 0xfec0 {
+        return true;
+    }
+
+    // Unique local / ULA (fc00::/7)
     if segments[0] & 0xfe00 == 0xfc00 {
         return true;
     }
@@ -94,8 +177,46 @@ fn is_denied_ipv6(ip: Ipv6Addr) -> bool {
         return true;
     }
 
-    // Discard (100::/64)
+    // Discard-Only (100::/64) -- RFC 6666
     if segments[0] == 0x0100 && segments[1..4] == [0, 0, 0] {
+        return true;
+    }
+
+    // Teredo (2001::/32) -- RFC 4380
+    // Teredo tunnels IPv4 inside IPv6; the embedded server/client IPs could be
+    // private. Block the entire prefix since it is a tunneling mechanism.
+    if segments[0] == 0x2001 && segments[1] == 0x0000 {
+        return true;
+    }
+
+    // ORCHID v2 (2001:20::/28) -- RFC 7343
+    // Overlay Routable Cryptographic Hash Identifiers (non-routable experiment).
+    if segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0020 {
+        return true;
+    }
+
+    // 6to4 (2002::/16) -- RFC 3056
+    // Embeds an IPv4 address in bits 16..48. The entire prefix is deprecated
+    // (RFC 7526) and should not be used for fetching content.
+    if segments[0] == 0x2002 {
+        return true;
+    }
+
+    // NAT64 well-known prefix (64:ff9b::/96) -- RFC 6052
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
+        // Embedded IPv4 in last 32 bits
+        let embedded = Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            (segments[6] & 0xff) as u8,
+            (segments[7] >> 8) as u8,
+            (segments[7] & 0xff) as u8,
+        );
+        return is_denied_ipv4(embedded);
+    }
+
+    // NAT64 local-use prefix (64:ff9b:1::/48) -- RFC 8215
+    // Entire prefix is for local NAT64 deployment; not globally routable.
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001 {
         return true;
     }
 
@@ -136,6 +257,8 @@ fn extract_mapped_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
 
     None
 }
+
+// ─── Public API ──────────────────────────────────────────────────────────────
 
 /// Validates an IP address against the SSRF deny list.
 ///
@@ -289,10 +412,60 @@ mod tests {
     }
 
     #[test]
+    fn denies_ipv4_cgn() {
+        // 100.64.0.0/10 -- Carrier-Grade NAT (RFC 6598)
+        assert!(is_denied_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(100, 100, 100, 100)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(100, 127, 255, 255)));
+        // Just outside the range
+        assert!(!is_denied_ipv4(Ipv4Addr::new(100, 63, 255, 255)));
+        assert!(!is_denied_ipv4(Ipv4Addr::new(100, 128, 0, 0)));
+    }
+
+    #[test]
+    fn denies_ipv4_protocol_assignments() {
+        // 192.0.0.0/24 -- IETF Protocol Assignments (RFC 6890)
+        assert!(is_denied_ipv4(Ipv4Addr::new(192, 0, 0, 0)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(192, 0, 0, 1)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(192, 0, 0, 255)));
+    }
+
+    #[test]
+    fn denies_ipv4_6to4_relay() {
+        // 192.88.99.0/24 -- 6to4 Relay Anycast (RFC 7526)
+        assert!(is_denied_ipv4(Ipv4Addr::new(192, 88, 99, 0)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(192, 88, 99, 1)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(192, 88, 99, 255)));
+    }
+
+    #[test]
+    fn denies_ipv4_multicast() {
+        // 224.0.0.0/4 -- Multicast (RFC 5771)
+        assert!(is_denied_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(239, 255, 255, 255)));
+    }
+
+    #[test]
+    fn denies_ipv4_reserved_class_e() {
+        // 240.0.0.0/4 -- Reserved / Future use (RFC 1112)
+        assert!(is_denied_ipv4(Ipv4Addr::new(240, 0, 0, 1)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(250, 1, 2, 3)));
+        assert!(is_denied_ipv4(Ipv4Addr::new(255, 255, 255, 254)));
+    }
+
+    #[test]
+    fn denies_ipv4_aws_metadata() {
+        // 169.254.169.254 -- AWS/cloud metadata (covered by link-local)
+        assert!(is_denied_ipv4(Ipv4Addr::new(169, 254, 169, 254)));
+    }
+
+    #[test]
     fn allows_ipv4_public() {
         assert!(!is_denied_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
         assert!(!is_denied_ipv4(Ipv4Addr::new(1, 1, 1, 1)));
         assert!(!is_denied_ipv4(Ipv4Addr::new(93, 184, 216, 34)));
+        // Just outside CGN range
+        assert!(!is_denied_ipv4(Ipv4Addr::new(100, 63, 255, 255)));
     }
 
     // ─── IPv6 deny list ──────────────────────────────────────────────────
@@ -322,8 +495,87 @@ mod tests {
     }
 
     #[test]
+    fn denies_ipv6_site_local_deprecated() {
+        // fec0::/10 -- deprecated site-local (RFC 3879)
+        let ip: Ipv6Addr = "fec0::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+        let ip: Ipv6Addr = "feff::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
     fn denies_ipv6_documentation() {
         let ip: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv6_multicast() {
+        // ff00::/8 -- Multicast
+        let ip: Ipv6Addr = "ff02::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+        let ip: Ipv6Addr = "ff0e::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv6_teredo() {
+        // 2001::/32 -- Teredo tunneling (RFC 4380)
+        let ip: Ipv6Addr = "2001:0000::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+        let ip: Ipv6Addr = "2001:0000:4136:e378:8000:63bf:3fff:fdd2".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv6_orchid_v2() {
+        // 2001:20::/28 -- ORCHID v2 (RFC 7343)
+        let ip: Ipv6Addr = "2001:20::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+        let ip: Ipv6Addr = "2001:2f::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv6_6to4() {
+        // 2002::/16 -- 6to4 (RFC 3056), entirely blocked
+        // 6to4 embedding public IPv4 8.8.8.8 -- still blocked (deprecated)
+        let ip: Ipv6Addr = "2002:0808:0808::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+        // 6to4 embedding private 192.168.1.1
+        let ip: Ipv6Addr = "2002:c0a8:0101::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv6_nat64_well_known_private() {
+        // 64:ff9b::/96 with denied embedded IPv4
+        // NAT64 embedding 127.0.0.1
+        let ip: Ipv6Addr = "64:ff9b::127.0.0.1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+        // NAT64 embedding 10.0.0.1
+        let ip: Ipv6Addr = "64:ff9b::10.0.0.1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn allows_ipv6_nat64_with_public_embedded() {
+        // 64:ff9b::/96 with public embedded IPv4 should be allowed
+        let ip: Ipv6Addr = "64:ff9b::8.8.8.8".parse().unwrap();
+        assert!(!is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv6_nat64_local_use() {
+        // 64:ff9b:1::/48 -- NAT64 local-use (RFC 8215)
+        let ip: Ipv6Addr = "64:ff9b:1::1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv6_discard() {
+        // 100::/64 -- Discard-Only (RFC 6666)
+        let ip: Ipv6Addr = "100::1".parse().unwrap();
         assert!(is_denied_ipv6(ip));
     }
 
@@ -331,6 +583,9 @@ mod tests {
     fn allows_ipv6_public() {
         // Google's public DNS
         let ip: Ipv6Addr = "2001:4860:4860::8888".parse().unwrap();
+        assert!(!is_denied_ipv6(ip));
+        // Cloudflare
+        let ip: Ipv6Addr = "2606:4700:4700::1111".parse().unwrap();
         assert!(!is_denied_ipv6(ip));
     }
 
@@ -358,6 +613,20 @@ mod tests {
     #[test]
     fn denies_ipv4_mapped_link_local() {
         let ip: Ipv6Addr = "::ffff:169.254.1.1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv4_mapped_cgn() {
+        // ::ffff:100.64.0.1 -- CGN via IPv4-mapped bypass
+        let ip: Ipv6Addr = "::ffff:100.64.0.1".parse().unwrap();
+        assert!(is_denied_ipv6(ip));
+    }
+
+    #[test]
+    fn denies_ipv4_mapped_aws_metadata() {
+        // ::ffff:169.254.169.254 -- AWS metadata via IPv4-mapped bypass
+        let ip: Ipv6Addr = "::ffff:169.254.169.254".parse().unwrap();
         assert!(is_denied_ipv6(ip));
     }
 
@@ -453,6 +722,48 @@ mod tests {
     #[test]
     fn validate_url_blocks_mapped_ipv6_private() {
         let url = Url::parse("http://[::ffff:10.0.0.1]/internal").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn validate_url_blocks_cgn_literal() {
+        let url = Url::parse("http://100.64.0.1/internal").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn validate_url_blocks_aws_metadata() {
+        let url = Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn validate_url_blocks_multicast() {
+        let url = Url::parse("http://224.0.0.1/").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn validate_url_blocks_reserved_class_e() {
+        let url = Url::parse("http://240.0.0.1/").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn validate_url_blocks_6to4_ipv6() {
+        let url = Url::parse("http://[2002:c0a8:0101::1]/").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn validate_url_blocks_teredo_ipv6() {
+        let url = Url::parse("http://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]/").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn validate_url_blocks_nat64_private() {
+        let url = Url::parse("http://[64:ff9b::10.0.0.1]/").unwrap();
         assert!(validate_url(&url).is_err());
     }
 
