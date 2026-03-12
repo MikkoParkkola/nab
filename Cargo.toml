@@ -158,6 +158,19 @@ clap = { version = "4", features = ["derive"], optional = true }
 http = "1.4.0"
 dirs = "6.0.0"
 rust-mcp-sdk = { version = "0.7.2", features = ["server", "macros", "stdio", "2025-06-18"] }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NATIVE COOKIE DECRYPTION (macOS: AES-128-CBC + PBKDF2-SHA1 + Keychain)
+# ═══════════════════════════════════════════════════════════════════════════════
+aes = "0.8"                         # AES-128 block cipher (RustCrypto)
+cbc = { version = "0.1", features = ["block-padding"] }  # CBC mode + PKCS7 unpadding
+pbkdf2 = { version = "0.12", features = ["hmac"] }  # PBKDF2 key derivation
+sha1 = "0.10"                       # SHA-1 for PBKDF2 (Chrome/Brave use SHA1)
+hmac = "0.12"                       # HMAC (pulled in by pbkdf2 feature, explicit for clarity)
+hex = "0.4"                         # Hex encode/decode for sqlite3 blob round-trip
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.5"         # macOS Keychain API (transitive via rustls, make direct)
 which = "6.0"                       # Find ffmpeg binary in PATH
 
 [features]
