@@ -1,10 +1,13 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use anyhow::Result;
 
+use nab::content::diff::ContentSnapshot;
+use nab::content::diff_format::format_diff_terminal;
+use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, CookieSource, OnePasswordAuth, SafeFetchConfig};
 
 use super::output::output_body;
@@ -33,6 +36,7 @@ pub async fn cmd_fetch(
     batch_file: Option<&str>,
     parallel: usize,
     proxy: Option<&str>,
+    show_diff: bool,
 ) -> Result<()> {
     // Handle batch mode
     if let Some(file_path) = batch_file {
@@ -322,6 +326,11 @@ pub async fn cmd_fetch(
         raw_text.clone()
     };
 
+    // Content diff: compare against stored snapshot and display changes
+    if show_diff {
+        emit_diff(url, &body_text, format);
+    }
+
     // Output based on format
     match format {
         OutputFormat::Compact => {
@@ -394,6 +403,30 @@ pub async fn cmd_fetch(
     }
 
     Ok(())
+}
+
+/// Load the previous snapshot, compute diff against current content, print it,
+/// then save the new snapshot.
+fn emit_diff(url: &str, current_text: &str, format: OutputFormat) {
+    let store = SnapshotStore::default();
+    let new_snap = ContentSnapshot::new(url, current_text, SystemTime::now());
+
+    if let Some(old_snap) = store.load_latest_snapshot(url) {
+        let diff = nab::content::diff::compute_diff(&old_snap, &new_snap);
+        let output = format_diff_terminal(&diff);
+        match format {
+            OutputFormat::Full | OutputFormat::Compact => print!("{output}"),
+            OutputFormat::Json => {
+                // Embed diff summary in JSON would complicate the schema; just print to stderr
+                eprint!("{output}");
+            }
+        }
+    } else if matches!(format, OutputFormat::Full) {
+        println!("(no previous snapshot — storing baseline for future --diff runs)");
+    }
+
+    // Save regardless of whether a prior snapshot existed
+    let _ = store.save_snapshot(url, &new_snap);
 }
 
 /// Extract <title> from HTML for metadata

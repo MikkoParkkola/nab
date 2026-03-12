@@ -23,11 +23,14 @@
 //! assert!(result.markdown.contains("Hello"));
 //! ```
 
+pub mod diff;
+pub mod diff_format;
 pub mod html;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 pub mod plain;
 pub mod readability;
+pub mod snapshot_store;
 pub mod spa_extract;
 pub mod structured;
 #[cfg(feature = "pdf")]

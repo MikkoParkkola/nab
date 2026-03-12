@@ -143,6 +143,10 @@ enum Commands {
         /// Proxy URL (SOCKS5 or HTTP). Also checks `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` env vars.
         #[arg(long)]
         proxy: Option<String>,
+
+        /// Show what changed since the last fetch (stores snapshots in ~/.nab/snapshots/)
+        #[arg(long)]
+        diff: bool,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -462,6 +466,7 @@ async fn main() -> Result<()> {
             batch,
             parallel,
             proxy,
+            diff,
         } => {
             cmd::cmd_fetch(
                 &url,
@@ -485,6 +490,7 @@ async fn main() -> Result<()> {
                 batch.as_deref(),
                 parallel,
                 proxy.as_deref(),
+                diff,
             )
             .await?;
         }
