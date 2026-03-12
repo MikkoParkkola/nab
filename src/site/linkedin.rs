@@ -5,6 +5,13 @@
 //!    impersonation via `rquest` to bypass `LinkedIn`'s JA3/JA4 bot detection.
 //!    Required for profiles, companies, and activity pages. Falls back to oEmbed
 //!    for posts/pulse when authentication fails.
+//!
+//!    Primary parsing strategy: `<code>` tag JSON extraction. LinkedIn serves a 1.3 MB
+//!    SPA shell with no server-rendered CSS-selectable content. All profile and feed data
+//!    is embedded as JSON inside hidden `<code>` elements:
+//!    `<code style="display:none" id="bpr-guid-XXXX"><!--{...}--></code>`.
+//!    JSON-LD and CSS selectors are tried as fallbacks only.
+//!
 //! 2. **oEmbed** (fallback): Limited data (title, author, thumbnail) for public posts.
 //!
 //! # URL Coverage
@@ -179,237 +186,39 @@ impl SiteProvider for LinkedInProvider {
 // Authenticated Extraction (impersonate feature)
 // ============================================================================
 
-/// Top-level authenticated extraction: Voyager API first, HTML parsing fallback.
+/// Top-level authenticated extraction: fetch HTML, parse `<code>` JSON first.
+///
+/// The Voyager REST API (`/voyager/api/identity/profiles/{id}`) was deprecated
+/// and returns HTTP 410 Gone. LinkedIn now embeds all profile/feed data as JSON
+/// inside hidden `<code>` elements in the initial HTML response — that is the
+/// only reliable server-side data source.
 #[cfg(feature = "impersonate")]
 async fn fetch_authenticated(
     url: &str,
     cookies: &str,
     kind: LinkedInUrlKind,
 ) -> Result<SiteContent> {
-    // Voyager API is only applicable to Profile and Activity URL kinds.
-    // For other kinds (Company, Post, Pulse, FeedUpdate) fall straight through to HTML.
-    if matches!(kind, LinkedInUrlKind::Profile | LinkedInUrlKind::Activity) {
-        match fetch_voyager_api(url, cookies, kind).await {
-            Ok(content) => return Ok(content),
-            Err(e) => tracing::debug!("Voyager API failed ({}), falling back to HTML: {}", url, e),
-        }
-    }
-
     fetch_authenticated_html(url, cookies, kind).await
-}
-
-/// Fetch via Voyager REST API (`LinkedIn`'s internal SPA backend).
-///
-/// `LinkedIn`'s HTML pages are JavaScript-rendered shells — the server returns
-/// no profile/post data in the initial HTML. All content is loaded via the
-/// Voyager API, which is what this function targets.
-#[cfg(feature = "impersonate")]
-async fn fetch_voyager_api(
-    url: &str,
-    cookies: &str,
-    kind: LinkedInUrlKind,
-) -> Result<SiteContent> {
-    let csrf_token = extract_csrf_token(cookies)
-        .context("No JSESSIONID cookie found; cannot derive csrf-token for Voyager API")?;
-
-    let username = extract_username_from_url(url)
-        .context("Could not extract LinkedIn username from URL")?;
-
-    let voyager_headers = build_voyager_headers(cookies, &csrf_token);
-
-    let profile = fetch_voyager_profile(&username, &voyager_headers).await?;
-    let activities = fetch_voyager_activity(&username, &voyager_headers).await.ok();
-
-    Ok(format_voyager_content(url, kind, &profile, activities))
-}
-
-/// Fetch the `LinkedIn` Voyager profile endpoint for `username`.
-#[cfg(feature = "impersonate")]
-async fn fetch_voyager_profile(
-    username: &str,
-    headers: &[(String, String)],
-) -> Result<VoyagerProfileResponse> {
-    let api_url = format!(
-        "https://www.linkedin.com/voyager/api/identity/profiles/{username}"
-    );
-
-    let response =
-        crate::impersonate_client::fetch_impersonated(&api_url, None, Some(headers)).await?;
-
-    check_voyager_status(response.status.as_u16(), &api_url)?;
-
-    serde_json::from_str::<VoyagerProfileResponse>(&response.body)
-        .context("Failed to parse Voyager profile JSON")
-}
-
-/// Fetch recent activity/posts for `username` via the Voyager feed endpoint.
-///
-/// Returns `Err` on HTTP 401/403/404, which the caller silently ignores.
-#[cfg(feature = "impersonate")]
-async fn fetch_voyager_activity(
-    username: &str,
-    headers: &[(String, String)],
-) -> Result<VoyagerActivityResponse> {
-    // Feed updates filtered by profile URN
-    let api_url = format!(
-        "https://www.linkedin.com/voyager/api/feed/updates\
-         ?profileUrn=urn%3Ali%3Afsd_profile%3A{username}&count=10"
-    );
-
-    let response =
-        crate::impersonate_client::fetch_impersonated(&api_url, None, Some(headers)).await?;
-
-    check_voyager_status(response.status.as_u16(), &api_url)?;
-
-    serde_json::from_str::<VoyagerActivityResponse>(&response.body)
-        .context("Failed to parse Voyager activity JSON")
-}
-
-/// Build the header set required by every Voyager API call.
-///
-/// The `csrf-token` is derived from the `JSESSIONID` cookie value: `LinkedIn`
-/// stores it as `"ajax:NNNN"` (with quotes), and the token is the bare
-/// `ajax:NNNN` value (without quotes).
-#[cfg(feature = "impersonate")]
-fn build_voyager_headers(cookies: &str, csrf_token: &str) -> Vec<(String, String)> {
-    vec![
-        ("Cookie".to_string(), cookies.to_string()),
-        ("csrf-token".to_string(), csrf_token.to_string()),
-        ("x-restli-protocol-version".to_string(), "2.0.0".to_string()),
-        (
-            "Accept".to_string(),
-            "application/vnd.linkedin.normalized+json+2.1".to_string(),
-        ),
-        ("x-li-lang".to_string(), "en_US".to_string()),
-        ("x-li-track".to_string(),
-         r#"{"clientVersion":"1.13","mpVersion":"1.13","osName":"web","timezoneOffset":0,"timezone":"UTC","deviceFormFactor":"DESKTOP","mpName":"voyager-web","displayDensity":1,"displayWidth":1920,"displayHeight":1080}"#.to_string()),
-    ]
-}
-
-/// Return `Err` for non-success Voyager HTTP status codes.
-#[cfg(feature = "impersonate")]
-fn check_voyager_status(status: u16, url: &str) -> Result<()> {
-    match status {
-        200..=299 => Ok(()),
-        401 | 403 => anyhow::bail!("Voyager API returned HTTP {status} (auth) for {url}"),
-        404 => anyhow::bail!("Voyager API returned HTTP 404 (not found) for {url}"),
-        _ => anyhow::bail!("Voyager API returned HTTP {status} for {url}"),
-    }
-}
-
-/// Format Voyager profile and optional activity into `SiteContent`.
-#[cfg(feature = "impersonate")]
-fn format_voyager_content(
-    url: &str,
-    kind: LinkedInUrlKind,
-    profile: &VoyagerProfileResponse,
-    activities: Option<VoyagerActivityResponse>,
-) -> SiteContent {
-    let mut md = String::new();
-    let profile_md = parse_voyager_profile(profile);
-    md.push_str(&profile_md);
-
-    if let Some(activity) = activities {
-        let activity_md = parse_voyager_activity(&activity);
-        if !activity_md.trim().is_empty() {
-            let _ = writeln!(md, "\n### Recent Activity\n");
-            md.push_str(&activity_md);
-        }
-    }
-
-    let _ = writeln!(md, "\n[View on LinkedIn]({url})");
-
-    let full_name = build_full_name(profile.first_name.as_deref(), profile.last_name.as_deref());
-
-    let metadata = SiteMetadata {
-        author: full_name.clone(),
-        title: full_name,
-        published: None,
-        platform: format!("LinkedIn ({})", kind_label(kind)),
-        canonical_url: url.to_string(),
-        media_urls: vec![],
-        engagement: None,
-    };
-
-    SiteContent { markdown: md, metadata }
-}
-
-/// Render a Voyager profile response as markdown text.
-#[cfg(feature = "impersonate")]
-#[must_use]
-pub fn parse_voyager_profile(profile: &VoyagerProfileResponse) -> String {
-    let mut md = String::new();
-
-    let full_name = build_full_name(profile.first_name.as_deref(), profile.last_name.as_deref());
-    if let Some(ref name) = full_name {
-        let _ = writeln!(md, "## {name}\n");
-    }
-
-    if let Some(ref headline) = profile.headline {
-        let _ = writeln!(md, "{headline}\n");
-    }
-
-    if let Some(ref location) = profile.location_name {
-        let _ = writeln!(md, "Location: {location}");
-    }
-
-    if let Some(ref industry) = profile.industry_name {
-        let _ = writeln!(md, "Industry: {industry}\n");
-    } else {
-        md.push('\n');
-    }
-
-    if let Some(ref summary) = profile.summary {
-        let trimmed = summary.trim();
-        if !trimmed.is_empty() {
-            let _ = writeln!(md, "### About\n\n{trimmed}\n");
-        }
-    }
-
-    md
-}
-
-/// Render Voyager activity/feed response as markdown text.
-#[cfg(feature = "impersonate")]
-#[must_use]
-pub fn parse_voyager_activity(activity: &VoyagerActivityResponse) -> String {
-    let mut md = String::new();
-
-    for element in activity.elements.iter().take(10) {
-        let text = element
-            .value
-            .as_ref()
-            .and_then(|v| v.commentary.as_ref())
-            .map(|c| c.text.text.trim().to_string())
-            .filter(|t| !t.is_empty());
-
-        if let Some(post_text) = text {
-            let _ = writeln!(md, "---\n\n{post_text}\n");
-        }
-    }
-
-    md
 }
 
 /// Extract the `csrf-token` value from the raw cookie header string.
 ///
 /// `JSESSIONID` is stored as `"ajax:NNNN"` (with surrounding double quotes).
-/// The Voyager `csrf-token` header requires just `ajax:NNNN` (no quotes).
+/// The bare `ajax:NNNN` value (without quotes) is returned.
 ///
 /// Returns `None` if no `JSESSIONID` cookie is present.
 #[must_use]
 pub fn extract_csrf_token(cookies: &str) -> Option<String> {
-    for part in cookies.split(';') {
+    cookies.split(';').find_map(|part| {
         let kv = part.trim();
         let (key, value) = kv.split_once('=')?;
         if key.trim().eq_ignore_ascii_case("jsessionid") {
-            // Strip surrounding quotes if present: "ajax:NNN" → ajax:NNN
             let raw = value.trim();
-            let token = raw.trim_matches('"');
-            return Some(token.to_string());
+            Some(raw.trim_matches('"').to_string())
+        } else {
+            None
         }
-    }
-    None
+    })
 }
 
 /// Extract the `LinkedIn` username from a `/in/{username}` URL.
@@ -417,20 +226,16 @@ pub fn extract_csrf_token(cookies: &str) -> Option<String> {
 /// Returns `None` for non-profile URLs or malformed input.
 #[must_use]
 pub fn extract_username_from_url(url: &str) -> Option<String> {
-    // Strip query string; preserve original casing — Voyager API is case-sensitive.
+    // Strip query string; preserve original casing for use in API calls.
     let without_query = url.split('?').next().unwrap_or(url);
 
-    // Locate /in/ using case-insensitive search via lowercase copy
+    // Locate /in/ using case-insensitive search via lowercase copy.
     let lower = without_query.to_lowercase();
     let in_offset = lower.find("/in/")?;
     let after_in = &without_query[in_offset + 4..]; // 4 == len("/in/")
 
     let username = after_in.split('/').next()?;
-    if username.is_empty() {
-        return None;
-    }
-
-    Some(username.to_string())
+    if username.is_empty() { None } else { Some(username.to_string()) }
 }
 
 fn build_full_name(first: Option<&str>, last: Option<&str>) -> Option<String> {
@@ -483,17 +288,291 @@ async fn fetch_authenticated_html(
 }
 
 /// Parse `LinkedIn` HTML into structured markdown content.
+///
+/// Extraction priority:
+/// 1. `<code>` tag JSON — primary data source on 2026 LinkedIn SPA pages.
+/// 2. JSON-LD (`<script type="application/ld+json">`) — present on some pages.
+/// 3. CSS selectors — last resort; unreliable on the fully JS-rendered shell.
 #[cfg(feature = "impersonate")]
 fn parse_linkedin_html(html: &str, url: &str, kind: LinkedInUrlKind) -> Result<SiteContent> {
     let document = Html::parse_document(html);
 
-    // Priority 1: Try JSON-LD structured data
+    // Priority 1: <code> tag JSON (LinkedIn's 2026 SPA data embedding)
+    if let Some(content) = extract_code_json(&document, url, kind) {
+        return Ok(content);
+    }
+
+    // Priority 2: JSON-LD structured data (public pages)
     if let Some(content) = extract_json_ld(&document, url, kind) {
         return Ok(content);
     }
 
-    // Priority 2: CSS selector extraction
+    // Priority 3: CSS selector extraction (legacy / public pages)
     extract_from_selectors(&document, url, kind)
+}
+
+/// Extract LinkedIn profile and post data from hidden `<code>` elements.
+///
+/// LinkedIn's 2026 SPA architecture embeds all server-side rendered data as JSON
+/// inside `<code style="display:none"><!--{...}--></code>` elements. This is the
+/// only reliable extraction path for authenticated pages — the rest of the DOM is
+/// a skeleton shell with no meaningful content.
+///
+/// The JSON comment wrapper (`<!--` / `-->`) must be stripped before parsing.
+/// Returns `None` when no useful data is found across all `<code>` elements.
+#[cfg(feature = "impersonate")]
+fn extract_code_json(document: &Html, url: &str, kind: LinkedInUrlKind) -> Option<SiteContent> {
+    let selector = Selector::parse("code").ok()?;
+
+    let mut profile: Option<VoyagerProfileResponse> = None;
+    let mut posts: Vec<String> = Vec::new();
+    for element in document.select(&selector) {
+        // scraper's .text() strips HTML comment nodes — use inner_html() which
+        // preserves the raw "<!--{...}-->" content that LinkedIn embeds.
+        let raw = element.inner_html();
+        let json_str = strip_html_comment(raw.trim());
+        if json_str.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) else {
+            continue;
+        };
+
+        // Walk every JSON value recursively looking for profile and post data.
+        scan_json_value(&value, &mut profile, &mut posts);
+    }
+
+    build_code_json_content(url, kind, profile, &posts)
+}
+
+/// Recursively walk a JSON value tree looking for LinkedIn data objects.
+///
+/// LinkedIn embeds many small JSON blobs; relevant objects can appear at any
+/// nesting depth. We search until we find a profile object (one with at least
+/// `firstName` or `headline`) and collect post commentary strings.
+#[cfg(feature = "impersonate")]
+fn scan_json_value(
+    value: &serde_json::Value,
+    profile: &mut Option<VoyagerProfileResponse>,
+    posts: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            // Check if this object looks like a profile — keep the richest one.
+            if looks_like_profile(map) {
+                let p = extract_profile_manual(map);
+                let new_field_count = [&p.first_name, &p.last_name, &p.headline, &p.summary, &p.location_name, &p.industry_name]
+                    .iter().filter(|f| f.is_some()).count();
+                let old_field_count = profile.as_ref().map_or(0, |old| {
+                    [&old.first_name, &old.last_name, &old.headline, &old.summary, &old.location_name, &old.industry_name]
+                        .iter().filter(|f| f.is_some()).count()
+                });
+                if new_field_count > old_field_count {
+                    *profile = Some(p);
+                }
+            }
+
+            // Check if this object looks like a post/commentary.
+            if let Some(text) = extract_post_text(map) {
+                if !posts.contains(&text) {
+                    posts.push(text);
+                }
+            }
+
+            // Recurse into all values.
+            for v in map.values() {
+                scan_json_value(v, profile, posts);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                scan_json_value(v, profile, posts);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Manually extract profile fields from a LinkedIn JSON object.
+///
+/// LinkedIn's `<code>` JSON uses several naming conventions:
+/// - Simple: `firstName`, `headline` (string values)
+/// - Multi-locale: `multiLocaleHeadline` (object with locale keys)
+/// - Nested geo: `geoLocation` → lookup in `included` array
+#[cfg(feature = "impersonate")]
+fn extract_profile_manual(map: &serde_json::Map<String, serde_json::Value>) -> VoyagerProfileResponse {
+    /// Try to get a string value from a field, handling both plain strings
+    /// and multi-locale objects like `{"en_US": "value"}`.
+    fn get_str(map: &serde_json::Map<String, serde_json::Value>, key: &str, multi_key: &str) -> Option<String> {
+        // Try plain string first
+        if let Some(v) = map.get(key).and_then(|v| v.as_str()) {
+            if !v.is_empty() {
+                return Some(decode_html_entities(v));
+            }
+        }
+        // Try multi-locale object: {"en_US": "value"}
+        if let Some(obj) = map.get(multi_key).and_then(|v| v.as_object()) {
+            // Take the first non-empty locale value
+            for v in obj.values() {
+                if let Some(s) = v.as_str() {
+                    if !s.is_empty() {
+                        return Some(decode_html_entities(s));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    VoyagerProfileResponse {
+        first_name: get_str(map, "firstName", "multiLocaleFirstName"),
+        last_name: get_str(map, "lastName", "multiLocaleLastName"),
+        headline: get_str(map, "headline", "multiLocaleHeadline"),
+        summary: get_str(map, "summary", "multiLocaleSummary"),
+        location_name: map.get("geoLocationName").and_then(|v| v.as_str()).map(decode_html_entities)
+            .or_else(|| map.get("locationName").and_then(|v| v.as_str()).map(decode_html_entities)),
+        industry_name: map.get("industryName").and_then(|v| v.as_str()).map(decode_html_entities),
+    }
+}
+
+/// Return `true` when a JSON object has enough fields to be a LinkedIn profile.
+#[cfg(feature = "impersonate")]
+fn looks_like_profile(map: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let profile_keys = ["firstName", "lastName", "headline", "summary"];
+    profile_keys.iter().filter(|k| map.contains_key(**k)).count() >= 2
+}
+
+/// - `{"commentary": {"text": {"text": "..."}}}` — Voyager activity feed format
+/// - `{"commentary": "..."}` — flat string commentary
+/// - `{"text": {"text": "..."}}` — text wrapper
+#[cfg(feature = "impersonate")]
+fn extract_post_text(map: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    // Shape 1: {"commentary": {"text": {"text": "actual text"}}}
+    if let Some(commentary) = map.get("commentary").and_then(|c| c.as_object()) {
+        if let Some(text) = commentary
+            .get("text")
+            .and_then(|t| t.as_object())
+            .and_then(|t| t.get("text"))
+            .and_then(|t| t.as_str())
+        {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+        // Shape 2: {"commentary": {"text": "actual text"}} (flat)
+        if let Some(text) = commentary.get("text").and_then(|t| t.as_str()) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    // Shape 3: {"commentary": "actual text"} (string value)
+    if let Some(text) = map.get("commentary").and_then(|c| c.as_str()) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
+}
+
+/// Strip HTML comment wrappers (`<!--` ... `-->`) from a string.
+///
+/// LinkedIn's `<code>` element content is `<!--{...}-->` — the JSON is
+/// wrapped in an HTML comment so browsers ignore it until JS reads it.
+fn strip_html_comment(s: &str) -> &str {
+    s.strip_prefix("<!--")
+        .and_then(|inner| inner.strip_suffix("-->"))
+        .map(str::trim)
+        .unwrap_or(s)
+}
+
+/// Decode common HTML entities in a string.
+///
+/// Profile fields extracted from LinkedIn's embedded JSON arrive pre-HTML-escaped
+/// (e.g. `&amp;` instead of `&`). This helper decodes the five standard XML/HTML
+/// entities that appear in practice.
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+}
+
+/// Build `SiteContent` from extracted `<code>` JSON data.
+///
+/// Returns `None` when neither a profile nor any posts were found.
+#[cfg(feature = "impersonate")]
+fn build_code_json_content(
+    url: &str,
+    kind: LinkedInUrlKind,
+    profile: Option<VoyagerProfileResponse>,
+    posts: &[String],
+) -> Option<SiteContent> {
+    let mut md = String::new();
+
+    let (author, title) = if let Some(ref p) = profile {
+        let name = build_full_name(p.first_name.as_deref(), p.last_name.as_deref());
+
+        if let Some(ref n) = name {
+            let _ = writeln!(md, "## {n}\n");
+        }
+        if let Some(ref h) = p.headline {
+            let _ = writeln!(md, "{h}\n");
+        }
+        if let Some(ref loc) = p.location_name {
+            let _ = writeln!(md, "Location: {loc}");
+        }
+        if let Some(ref ind) = p.industry_name {
+            let _ = writeln!(md, "Industry: {ind}\n");
+        } else if name.is_some() {
+            md.push('\n');
+        }
+        if let Some(ref summary) = p.summary {
+            let trimmed = summary.trim();
+            if !trimmed.is_empty() {
+                let _ = writeln!(md, "### About\n\n{trimmed}\n");
+            }
+        }
+        (name.clone(), name)
+    } else {
+        (None, None)
+    };
+
+    if !posts.is_empty() {
+        if profile.is_some() {
+            let _ = writeln!(md, "### Recent Activity\n");
+        }
+        for post in posts.iter().take(10) {
+            let _ = writeln!(md, "---\n\n{post}\n");
+        }
+    }
+
+    if md.trim().is_empty() {
+        return None;
+    }
+
+    let _ = writeln!(md, "[View on LinkedIn]({url})");
+
+    Some(SiteContent {
+        markdown: md,
+        metadata: SiteMetadata {
+            author,
+            title,
+            published: None,
+            platform: format!("LinkedIn ({})", kind_label(kind)),
+            canonical_url: url.to_string(),
+            media_urls: vec![],
+            engagement: None,
+        },
+    })
 }
 
 /// Extract content from JSON-LD (`<script type="application/ld+json">`).
@@ -709,6 +788,64 @@ fn extract_og_image(document: &Html) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Render a `VoyagerProfileResponse` as markdown text.
+///
+/// Used both by the `<code>` tag extraction path (which deserializes the same
+/// field names) and directly in tests against raw Voyager-shaped JSON.
+#[cfg(feature = "impersonate")]
+#[must_use]
+pub fn parse_voyager_profile(profile: &VoyagerProfileResponse) -> String {
+    let mut md = String::new();
+
+    let full_name = build_full_name(profile.first_name.as_deref(), profile.last_name.as_deref());
+    if let Some(ref name) = full_name {
+        let _ = writeln!(md, "## {name}\n");
+    }
+    if let Some(ref headline) = profile.headline {
+        let _ = writeln!(md, "{headline}\n");
+    }
+    if let Some(ref location) = profile.location_name {
+        let _ = writeln!(md, "Location: {location}");
+    }
+    if let Some(ref industry) = profile.industry_name {
+        let _ = writeln!(md, "Industry: {industry}\n");
+    } else {
+        md.push('\n');
+    }
+    if let Some(ref summary) = profile.summary {
+        let trimmed = summary.trim();
+        if !trimmed.is_empty() {
+            let _ = writeln!(md, "### About\n\n{trimmed}\n");
+        }
+    }
+
+    md
+}
+
+/// Render a `VoyagerActivityResponse` as markdown text.
+///
+/// Skips elements without commentary (e.g. share-only items).
+#[cfg(feature = "impersonate")]
+#[must_use]
+pub fn parse_voyager_activity(activity: &VoyagerActivityResponse) -> String {
+    let mut md = String::new();
+
+    for element in activity.elements.iter().take(10) {
+        let text = element
+            .value
+            .as_ref()
+            .and_then(|v| v.commentary.as_ref())
+            .map(|c| c.text.text.trim().to_string())
+            .filter(|t| !t.is_empty());
+
+        if let Some(post_text) = text {
+            let _ = writeln!(md, "---\n\n{post_text}\n");
+        }
+    }
+
+    md
+}
+
 fn kind_label(kind: LinkedInUrlKind) -> &'static str {
     match kind {
         LinkedInUrlKind::Profile => "Profile",
@@ -729,8 +866,6 @@ async fn fetch_oembed(url: &str, client: &AcceleratedClient) -> Result<SiteConte
         "https://www.linkedin.com/oembed?url={}&format=json",
         urlencoding::encode(url)
     );
-    tracing::debug!("Fetching from LinkedIn oEmbed: {}", oembed_url);
-
     let response = client
         .fetch_text(&oembed_url)
         .await
@@ -1327,5 +1462,295 @@ mod tests {
 
         let content = parse_linkedin_html(html, "https://linkedin.com/in/user", LinkedInUrlKind::Profile).unwrap();
         assert!(content.markdown.contains("This is the only content available"));
+    }
+
+    // ── strip_html_comment ──────────────────────────────────────────────
+
+    #[test]
+    fn strip_comment_removes_html_comment_wrapper() {
+        // GIVEN: string wrapped in HTML comment (LinkedIn's <code> element format)
+        let input = r#"<!--{"firstName":"Jane"}-->"#;
+        // WHEN
+        let result = strip_html_comment(input);
+        // THEN: JSON is exposed without wrappers
+        assert_eq!(result, r#"{"firstName":"Jane"}"#);
+    }
+
+    #[test]
+    fn strip_comment_trims_whitespace_inside_comment() {
+        // GIVEN: comment wrapper with surrounding whitespace
+        let input = "<!--  {\"key\":\"value\"}  -->";
+        let result = strip_html_comment(input);
+        assert_eq!(result, r#"{"key":"value"}"#);
+    }
+
+    #[test]
+    fn strip_comment_passthrough_when_no_comment_wrapper() {
+        // GIVEN: plain JSON (no comment wrapper)
+        let input = r#"{"firstName":"Jane"}"#;
+        let result = strip_html_comment(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn strip_comment_passthrough_empty_string() {
+        assert_eq!(strip_html_comment(""), "");
+    }
+
+    // ── extract_post_text ───────────────────────────────────────────────
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn extract_post_text_voyager_nested_shape() {
+        // GIVEN: {"commentary": {"text": {"text": "actual text"}}} (Voyager activity shape)
+        let mut map = serde_json::Map::new();
+        let mut commentary = serde_json::Map::new();
+        let mut text_inner = serde_json::Map::new();
+        text_inner.insert("text".into(), serde_json::json!("Voyager nested post text"));
+        commentary.insert("text".into(), serde_json::Value::Object(text_inner));
+        map.insert("commentary".into(), serde_json::Value::Object(commentary));
+
+        // WHEN
+        let result = extract_post_text(&map);
+        // THEN
+        assert_eq!(result.as_deref(), Some("Voyager nested post text"));
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn extract_post_text_flat_commentary_text() {
+        // GIVEN: {"commentary": {"text": "flat text"}}
+        let mut map = serde_json::Map::new();
+        let mut commentary = serde_json::Map::new();
+        commentary.insert("text".into(), serde_json::json!("Flat commentary text"));
+        map.insert("commentary".into(), serde_json::Value::Object(commentary));
+
+        let result = extract_post_text(&map);
+        assert_eq!(result.as_deref(), Some("Flat commentary text"));
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn extract_post_text_string_commentary() {
+        // GIVEN: {"commentary": "direct string"}
+        let mut map = serde_json::Map::new();
+        map.insert("commentary".into(), serde_json::json!("Direct string post"));
+
+        let result = extract_post_text(&map);
+        assert_eq!(result.as_deref(), Some("Direct string post"));
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn extract_post_text_returns_none_when_absent() {
+        // GIVEN: object with no commentary field
+        let mut map = serde_json::Map::new();
+        map.insert("firstName".into(), serde_json::json!("Jane"));
+
+        let result = extract_post_text(&map);
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn extract_post_text_skips_blank_commentary() {
+        // GIVEN: commentary with only whitespace
+        let mut map = serde_json::Map::new();
+        map.insert("commentary".into(), serde_json::json!("   "));
+
+        let result = extract_post_text(&map);
+        assert!(result.is_none());
+    }
+
+    // ── looks_like_profile ──────────────────────────────────────────────
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn looks_like_profile_with_two_profile_keys() {
+        // GIVEN: object with firstName + headline (2 profile keys — minimum threshold)
+        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"firstName":"Jane","headline":"Staff Engineer"}"#,
+        )
+        .unwrap();
+        assert!(looks_like_profile(&map));
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn looks_like_profile_rejects_single_profile_key() {
+        // GIVEN: only one profile key present — insufficient signal
+        let map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"firstName":"Jane","unrelated":"data"}"#).unwrap();
+        assert!(!looks_like_profile(&map));
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn looks_like_profile_rejects_non_profile_object() {
+        // GIVEN: unrelated JSON object
+        let map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"color":"blue","size":42}"#).unwrap();
+        assert!(!looks_like_profile(&map));
+    }
+
+    // ── <code> tag JSON extraction (integration) ────────────────────────
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn code_tag_extraction_profile_data() {
+        // GIVEN: HTML with LinkedIn-style <code> element containing profile JSON
+        let profile_json = r#"{"firstName":"Jane","lastName":"Engineer","headline":"Staff Engineer at Acme","summary":"Building systems in Rust.","geoLocationName":"Helsinki, Finland","industryName":"Computer Software"}"#;
+        let html = format!(
+            r#"<!DOCTYPE html><html><head></head><body>
+            <code style="display:none" id="bpr-guid-1"><!—{profile_json}—></code>
+            <code style="display:none" id="bpr-guid-2"><!--{profile_json}--></code>
+            </body></html>"#
+        );
+
+        // WHEN
+        let content = parse_linkedin_html(&html, "https://linkedin.com/in/janeengineer", LinkedInUrlKind::Profile).unwrap();
+
+        // THEN: profile fields appear in markdown
+        assert!(content.markdown.contains("## Jane Engineer"), "Missing name: {}", content.markdown);
+        assert!(content.markdown.contains("Staff Engineer at Acme"), "Missing headline: {}", content.markdown);
+        assert!(content.markdown.contains("Helsinki, Finland"), "Missing location: {}", content.markdown);
+        assert!(content.markdown.contains("Computer Software"), "Missing industry: {}", content.markdown);
+        assert!(content.markdown.contains("Building systems in Rust."), "Missing summary: {}", content.markdown);
+        assert_eq!(content.metadata.platform, "LinkedIn (Profile)");
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn code_tag_extraction_post_commentary() {
+        // GIVEN: HTML with <code> elements containing post commentary JSON
+        let post_json = r#"{"commentary":{"text":{"text":"Just shipped Rust HTTP/3 client."}},"actor":{"name":"Jane Engineer"}}"#;
+        let html = format!(
+            r#"<!DOCTYPE html><html><head></head><body>
+            <code style="display:none" id="bpr-guid-1"><!--{post_json}--></code>
+            </body></html>"#
+        );
+
+        // WHEN
+        let content = parse_linkedin_html(
+            &html,
+            "https://linkedin.com/posts/jane_rust-123",
+            LinkedInUrlKind::Post,
+        ).unwrap();
+
+        // THEN
+        assert!(content.markdown.contains("Just shipped Rust HTTP/3 client."), "Missing post text: {}", content.markdown);
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn code_tag_extraction_deduplicates_posts() {
+        // GIVEN: same post JSON appears in two different <code> elements
+        let post_json = r#"{"commentary":"Unique post text."}"#;
+        let html = format!(
+            r#"<!DOCTYPE html><html><head></head><body>
+            <code><!--{post_json}--></code>
+            <code><!--{post_json}--></code>
+            </body></html>"#
+        );
+
+        // WHEN
+        let content = parse_linkedin_html(
+            &html,
+            "https://linkedin.com/posts/user_post-123",
+            LinkedInUrlKind::Post,
+        ).unwrap();
+
+        // THEN: appears exactly once
+        assert_eq!(
+            content.markdown.matches("Unique post text.").count(),
+            1,
+            "Expected 1 occurrence but got more: {}",
+            content.markdown
+        );
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn code_tag_extraction_falls_through_to_json_ld_when_empty() {
+        // GIVEN: <code> elements with no useful data, but JSON-LD present
+        let html = r#"<!DOCTYPE html><html><head>
+            <script type="application/ld+json">
+            {"@type":"Person","name":"Fallback Person","description":"JSON-LD description"}
+            </script>
+        </head><body>
+            <code><!--{"irrelevant":"noise"}--></code>
+        </body></html>"#;
+
+        // WHEN
+        let content = parse_linkedin_html(
+            html,
+            "https://linkedin.com/in/fallback",
+            LinkedInUrlKind::Profile,
+        ).unwrap();
+
+        // THEN: JSON-LD fallback used
+        assert!(content.markdown.contains("## Fallback Person"), "Expected JSON-LD fallback: {}", content.markdown);
+        assert!(content.markdown.contains("JSON-LD description"), "Expected JSON-LD desc: {}", content.markdown);
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn code_tag_extraction_handles_malformed_json_gracefully() {
+        // GIVEN: <code> elements with broken JSON mixed with valid JSON-LD
+        let html = r#"<!DOCTYPE html><html><head>
+            <meta property="og:description" content="og fallback works">
+        </head><body>
+            <code><!--{broken json--></code>
+            <code><!--not json at all--></code>
+        </body></html>"#;
+
+        // WHEN — should not panic, falls through to og:description
+        let content = parse_linkedin_html(
+            html,
+            "https://linkedin.com/in/user",
+            LinkedInUrlKind::Profile,
+        ).unwrap();
+
+        // THEN: og fallback used
+        assert!(content.markdown.contains("og fallback works"), "Expected og fallback: {}", content.markdown);
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn code_tag_extraction_nested_profile_in_object() {
+        // GIVEN: profile data nested inside a larger wrapper object
+        let html = r#"<!DOCTYPE html><html><head></head><body>
+            <code><!--{"data":{"profile":{"firstName":"Nested","lastName":"Profile","headline":"CTO at Example","summary":"Led engineering teams for a decade."}}}--></code>
+        </body></html>"#;
+
+        // WHEN
+        let content = parse_linkedin_html(
+            html,
+            "https://linkedin.com/in/nested",
+            LinkedInUrlKind::Profile,
+        ).unwrap();
+
+        // THEN: recursive scan finds the nested profile
+        assert!(content.markdown.contains("## Nested Profile"), "Missing nested profile: {}", content.markdown);
+        assert!(content.markdown.contains("CTO at Example"), "Missing headline: {}", content.markdown);
+    }
+
+    #[cfg(feature = "impersonate")]
+    #[test]
+    fn code_tag_profile_without_industry_still_renders() {
+        // GIVEN: profile missing industryName
+        let html = r#"<!DOCTYPE html><html><head></head><body>
+            <code><!--{"firstName":"Alice","lastName":"Smith","headline":"Engineer"}--></code>
+        </body></html>"#;
+
+        let content = parse_linkedin_html(
+            html,
+            "https://linkedin.com/in/alice",
+            LinkedInUrlKind::Profile,
+        ).unwrap();
+
+        assert!(content.markdown.contains("## Alice Smith"));
+        assert!(content.markdown.contains("Engineer"));
+        assert!(!content.markdown.contains("Industry:"));
     }
 }
