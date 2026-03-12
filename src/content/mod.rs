@@ -29,6 +29,7 @@ pub mod pdf;
 pub mod plain;
 pub mod readability;
 pub mod spa_extract;
+pub mod structured;
 #[cfg(feature = "pdf")]
 pub mod table;
 #[cfg(feature = "pdf")]
