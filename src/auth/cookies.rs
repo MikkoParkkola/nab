@@ -8,12 +8,19 @@
 //!
 //! Brave and Chrome encrypt cookies with AES-128-CBC:
 //! - Key: PBKDF2-SHA1(`keychain_password`, salt=`"saltysalt"`, iterations=1003, 16 bytes)
-//! - IV: 16 zero bytes
+//! - IV: 16 **space** bytes (`0x20 * 16`) — NOT zero bytes
 //! - Ciphertext: `encrypted_value[3..]` (first 3 bytes are the `"v10"` prefix)
 //! - Padding: PKCS7
 //!
 //! The raw password is retrieved from macOS Keychain under service
 //! `"Brave Safe Storage"` or `"Chrome Safe Storage"`.
+//!
+//! ## Schema v24+ domain-integrity prefix
+//!
+//! Starting with Chromium cookie DB schema version 24 (Chrome 130+, Brave 1.70+),
+//! the first 32 bytes of every decrypted plaintext are `SHA-256(host_key)`.
+//! These bytes must be stripped to recover the actual cookie value.
+//! See: <https://issues.chromium.org/issues/40185252>
 
 use std::collections::HashMap;
 use std::process::Command;
@@ -33,8 +40,14 @@ const CHROME_PBKDF2_ITERATIONS: u32 = 1003;
 const CHROME_KEY_LEN: usize = 16;
 /// Prefix on every v10 encrypted cookie value (ASCII "v10").
 const V10_PREFIX: &[u8; 3] = b"v10";
-/// AES-CBC IV: 16 zero bytes (Chromium hard-codes this).
-const AES_CBC_IV: [u8; 16] = [0u8; 16];
+/// AES-CBC IV: 16 **space** bytes (0x20). Chromium hard-codes this — NOT zero bytes.
+/// Reference: `chromium/components/os_crypt/os_crypt_mac.mm`, `OSCryptImpl::DecryptString`.
+const AES_CBC_IV: [u8; 16] = [b' '; 16];
+/// Domain-integrity prefix length added in DB schema v24+.
+/// First 32 bytes of every decrypted value are `SHA-256(host_key)`.
+const DOMAIN_SHA256_LEN: usize = 32;
+/// Minimum Chromium cookie DB schema version that prepends a SHA-256 domain tag.
+const SCHEMA_VERSION_WITH_DOMAIN_TAG: u32 = 24;
 
 // ─── CookieSource ─────────────────────────────────────────────────────────────
 
@@ -145,6 +158,9 @@ impl CookieSource {
     ///
     /// Reads the Chromium `Cookies` `SQLite` database, decrypts v10-encrypted values
     /// using AES-128-CBC with the key derived from the macOS Keychain password.
+    ///
+    /// For DB schema v24+, the decrypted plaintext has a 32-byte `SHA-256(host_key)`
+    /// prefix that is stripped automatically.
     fn get_cookies_native(self, domain: &str) -> Result<HashMap<String, String>> {
         let cookie_path = self
             .cookie_path()
@@ -155,13 +171,19 @@ impl CookieSource {
         }
 
         let temp_db = copy_db_to_temp(&cookie_path)?;
+        let schema_version = query_db_schema_version(&temp_db);
         let rows = query_cookie_db(&temp_db, domain)?;
         let _ = std::fs::remove_dir_all(
             temp_db.parent().expect("temp_db always has a parent"),
         );
 
         let key = self.get_keychain_key().ok();
-        let cookies = decrypt_rows(rows, key.as_deref());
+        let has_domain_tag = schema_version >= SCHEMA_VERSION_WITH_DOMAIN_TAG;
+        debug!(
+            "Cookie DB schema v{schema_version}, domain_tag={}",
+            has_domain_tag
+        );
+        let cookies = decrypt_rows(rows, key.as_deref(), has_domain_tag);
 
         if cookies.is_empty() {
             debug!("Native extraction: 0 cookies for {}", domain);
@@ -263,6 +285,24 @@ struct CookieRow {
     encrypted_bytes: Vec<u8>,
 }
 
+/// Query the `meta` table for the DB schema version (0 if unavailable).
+///
+/// Chromium increments this monotonically; v24 added `SHA-256(host_key)` prepended
+/// to every decrypted cookie value.
+fn query_db_schema_version(temp_db: &std::path::Path) -> u32 {
+    let Some(db_str) = temp_db.to_str() else {
+        return 0;
+    };
+    let output = Command::new("sqlite3")
+        .args([db_str, "SELECT value FROM meta WHERE key='version';"])
+        .output();
+    let Ok(out) = output else { return 0 };
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0)
+}
+
 /// Query the cookie database for rows matching `domain` and its parents.
 ///
 /// Uses `hex(encrypted_value)` to avoid binary corruption when reading blobs
@@ -338,7 +378,14 @@ fn parse_cookie_rows(stdout: &str) -> Vec<CookieRow> {
 /// Rows with a plaintext `value` are returned as-is.
 /// Rows with an `encrypted_value` blob are decrypted with `key` when provided.
 /// If a row is encrypted but no key is available, the row is skipped.
-fn decrypt_rows(rows: Vec<CookieRow>, key: Option<&[u8]>) -> HashMap<String, String> {
+///
+/// `has_domain_tag` — when `true` (DB schema ≥ 24), the first 32 bytes of each
+/// decrypted value are `SHA-256(host_key)` and are stripped.
+fn decrypt_rows(
+    rows: Vec<CookieRow>,
+    key: Option<&[u8]>,
+    has_domain_tag: bool,
+) -> HashMap<String, String> {
     let mut cookies = HashMap::new();
 
     for row in rows {
@@ -356,7 +403,7 @@ fn decrypt_rows(rows: Vec<CookieRow>, key: Option<&[u8]>) -> HashMap<String, Str
             continue;
         };
 
-        match decrypt_cookie_value(&row.encrypted_bytes, k) {
+        match decrypt_cookie_value(&row.encrypted_bytes, k, has_domain_tag) {
             Ok(plain) => {
                 cookies.insert(row.name, plain);
             }
@@ -388,22 +435,33 @@ pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
 
 /// Decrypt a single AES-128-CBC encrypted cookie blob.
 ///
-/// # Format
+/// # Format (macOS Chromium v10 cookies)
 /// ```text
 /// [ 'v' | '1' | '0' | ciphertext... ]
-///   3 bytes prefix     N bytes (must be multiple of 16)
+///   3 bytes prefix     N bytes (must be a nonzero multiple of 16)
 /// ```
 ///
+/// After PKCS7 unpadding the plaintext layout depends on the DB schema version:
+/// - **Schema < 24**: `[actual_cookie_value]`
+/// - **Schema ≥ 24**: `[SHA-256(host_key) 32 bytes][actual_cookie_value]`
+///
+/// Pass `has_domain_tag = true` for schema v24+ databases.
+///
 /// # Errors
-/// Returns an error if the blob is too short, the prefix is wrong, or AES
-/// decryption/unpadding fails.
-pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8]) -> Result<String> {
+/// Returns an error if the blob is too short, the prefix is wrong, AES
+/// decryption/unpadding fails, or the result is not valid UTF-8.
+pub fn decrypt_cookie_value(
+    encrypted: &[u8],
+    key: &[u8],
+    has_domain_tag: bool,
+) -> Result<String> {
     use aes::Aes128;
     use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
 
     anyhow::ensure!(
         encrypted.len() > V10_PREFIX.len(),
-        "Encrypted blob too short ({} bytes)", encrypted.len()
+        "Encrypted blob too short ({} bytes)",
+        encrypted.len()
     );
     anyhow::ensure!(
         encrypted.starts_with(V10_PREFIX),
@@ -415,7 +473,8 @@ pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8]) -> Result<String> {
     let ciphertext = &encrypted[V10_PREFIX.len()..];
     anyhow::ensure!(
         !ciphertext.is_empty() && ciphertext.len() % 16 == 0,
-        "Ciphertext length {} is not a nonzero multiple of 16", ciphertext.len()
+        "Ciphertext length {} is not a nonzero multiple of 16",
+        ciphertext.len()
     );
 
     type Aes128CbcDec = cbc::Decryptor<Aes128>;
@@ -427,7 +486,19 @@ pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8]) -> Result<String> {
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
         .map_err(|e| anyhow::anyhow!("AES-CBC unpadding failed: {e}"))?;
 
-    String::from_utf8(plaintext.to_vec())
+    // Schema v24+ prepends 32 bytes of SHA-256(host_key) before the real value.
+    let value_bytes = if has_domain_tag {
+        anyhow::ensure!(
+            plaintext.len() >= DOMAIN_SHA256_LEN,
+            "Decrypted blob too short for domain tag ({} bytes)",
+            plaintext.len()
+        );
+        &plaintext[DOMAIN_SHA256_LEN..]
+    } else {
+        plaintext
+    };
+
+    String::from_utf8(value_bytes.to_vec())
         .context("Decrypted cookie value is not valid UTF-8")
 }
 
@@ -677,19 +748,22 @@ mod tests {
 
     // ── AES-128-CBC decryption ────────────────────────────────────────────────
 
-    /// Build a valid v10-encrypted blob from known plaintext using the same
+    /// Build a valid v10-encrypted blob from `inner_plaintext` using the same
     /// cipher parameters that Chromium uses, for round-trip testing.
-    fn encrypt_v10(plaintext: &[u8], key: &[u8]) -> Vec<u8> {
+    ///
+    /// `inner_plaintext` is what is placed directly inside the AES envelope.
+    /// For schema-v24 blobs the caller should prepend 32 SHA-256 bytes itself.
+    fn encrypt_v10(inner_plaintext: &[u8], key: &[u8]) -> Vec<u8> {
         use aes::Aes128;
         use cbc::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
         type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 
-        // Allocate an output buffer with room for padding (up to one extra block).
-        let out_len = plaintext.len() + 16;
+        // Output buffer: plaintext + up to one extra block for PKCS7 padding.
+        let out_len = inner_plaintext.len() + 16;
         let mut out = vec![0u8; out_len];
         let enc = Aes128CbcEnc::new_from_slices(key, &AES_CBC_IV).unwrap();
         let ciphertext = enc
-            .encrypt_padded_b2b_mut::<Pkcs7>(plaintext, &mut out)
+            .encrypt_padded_b2b_mut::<Pkcs7>(inner_plaintext, &mut out)
             .expect("output buffer is always large enough");
 
         let mut blob = V10_PREFIX.to_vec();
@@ -697,30 +771,75 @@ mod tests {
         blob
     }
 
+    /// Build a v24+ blob: `v10` + AES-CBC(`SHA-256(host_key)` + `value`).
+    fn encrypt_v10_v24(value: &[u8], key: &[u8], host_key: &str) -> Vec<u8> {
+        use sha2::{Digest, Sha256};
+        let mut inner = Sha256::digest(host_key.as_bytes()).to_vec();
+        inner.extend_from_slice(value);
+        encrypt_v10(&inner, key)
+    }
+
+    #[test]
+    fn aes_iv_is_16_space_bytes_not_zero_bytes() {
+        // GIVEN: the AES_CBC_IV constant
+        // THEN: it must be 16 × 0x20 (space), matching Chromium's os_crypt_mac.mm
+        assert_eq!(AES_CBC_IV, [0x20u8; 16], "IV must be 16 space bytes (0x20)");
+        assert_ne!(AES_CBC_IV, [0u8; 16], "IV must NOT be zero bytes");
+    }
+
     #[test]
     fn decrypt_cookie_value_round_trip_simple() {
-        // GIVEN: a known plaintext and derived key
+        // GIVEN: a known plaintext and derived key (no domain tag, schema < 24)
         let password = b"test-key";
         let key = derive_cookie_key(password).unwrap();
         let plaintext = b"session_token_abc123";
         let blob = encrypt_v10(plaintext, &key);
 
-        // WHEN: decrypted
-        let result = decrypt_cookie_value(&blob, &key).expect("decryption must succeed");
+        // WHEN: decrypted without domain-tag stripping
+        let result =
+            decrypt_cookie_value(&blob, &key, false).expect("decryption must succeed");
 
         // THEN: plaintext recovered
         assert_eq!(result, "session_token_abc123");
     }
 
     #[test]
+    fn decrypt_cookie_value_round_trip_v24_domain_tag_stripped() {
+        // GIVEN: v24+ blob with 32-byte SHA-256 prefix before the actual value
+        let key = derive_cookie_key(b"brave-key").unwrap();
+        let host = ".linkedin.com";
+        let value = b"my_session_value";
+        let blob = encrypt_v10_v24(value, &key, host);
+
+        // WHEN: decrypted with has_domain_tag=true
+        let result = decrypt_cookie_value(&blob, &key, true).unwrap();
+
+        // THEN: only the actual value is returned, not the SHA-256 prefix
+        assert_eq!(result, "my_session_value");
+    }
+
+    #[test]
+    fn decrypt_cookie_value_v24_without_tag_flag_returns_garbage() {
+        // GIVEN: v24+ blob (SHA-256 prefix present)
+        let key = derive_cookie_key(b"brave-key-2").unwrap();
+        let blob = encrypt_v10_v24(b"val", &key, ".example.com");
+
+        // WHEN: decrypted WITHOUT setting has_domain_tag (wrong flag)
+        // THEN: result is either an error or contains the SHA-256 garbage bytes
+        // (not equal to "val"), proving the flag matters
+        let result = decrypt_cookie_value(&blob, &key, false).unwrap_or_default();
+        assert_ne!(result, "val", "domain tag must be stripped for correct result");
+    }
+
+    #[test]
     fn decrypt_cookie_value_round_trip_unicode() {
-        // GIVEN: UTF-8 cookie value
+        // GIVEN: UTF-8 cookie value (no domain tag)
         let key = derive_cookie_key(b"unicode-test").unwrap();
         let plaintext = "café=résumé".as_bytes();
         let blob = encrypt_v10(plaintext, &key);
 
         // WHEN: decrypted
-        let result = decrypt_cookie_value(&blob, &key).unwrap();
+        let result = decrypt_cookie_value(&blob, &key, false).unwrap();
 
         // THEN: unicode preserved
         assert_eq!(result, "café=résumé");
@@ -734,7 +853,7 @@ mod tests {
         let blob = encrypt_v10(plaintext, &key);
 
         // WHEN: decrypted
-        let result = decrypt_cookie_value(&blob, &key).unwrap();
+        let result = decrypt_cookie_value(&blob, &key, false).unwrap();
 
         // THEN: exact match
         assert_eq!(result, "0123456789abcdef");
@@ -744,7 +863,7 @@ mod tests {
     fn decrypt_cookie_value_empty_blob_returns_error() {
         // GIVEN: empty input
         // WHEN: decryption attempted
-        let err = decrypt_cookie_value(&[], &[0u8; 16]).unwrap_err();
+        let err = decrypt_cookie_value(&[], &[0u8; 16], false).unwrap_err();
         // THEN: descriptive error
         assert!(
             err.to_string().contains("too short"),
@@ -759,7 +878,7 @@ mod tests {
         blob.extend_from_slice(&[0u8; 16]);
 
         // WHEN: decryption attempted
-        let err = decrypt_cookie_value(&blob, &[0u8; 16]).unwrap_err();
+        let err = decrypt_cookie_value(&blob, &[0u8; 16], false).unwrap_err();
 
         // THEN: error mentions v10
         assert!(
@@ -774,7 +893,7 @@ mod tests {
         let blob = V10_PREFIX.to_vec();
 
         // WHEN: decryption attempted
-        let err = decrypt_cookie_value(&blob, &[0u8; 16]).unwrap_err();
+        let err = decrypt_cookie_value(&blob, &[0u8; 16], false).unwrap_err();
 
         // THEN: error is descriptive
         assert!(!err.to_string().is_empty());
@@ -786,10 +905,28 @@ mod tests {
         let blob = encrypt_v10(b"hello", &[0u8; 16]);
 
         // WHEN: called with 32-byte key
-        let err = decrypt_cookie_value(&blob, &[0u8; 32]).unwrap_err();
+        let err = decrypt_cookie_value(&blob, &[0u8; 32], false).unwrap_err();
 
         // THEN: error mentions key
         assert!(!err.to_string().is_empty(), "should fail: {err}");
+    }
+
+    #[test]
+    fn decrypt_cookie_value_v24_too_short_for_domain_tag_returns_error() {
+        // GIVEN: a valid AES-CBC blob that decrypts to fewer than 32 bytes
+        // (can't have a full domain tag)
+        let key = derive_cookie_key(b"short-test").unwrap();
+        // Encrypt something smaller than 32 bytes
+        let blob = encrypt_v10(b"tiny", &key);
+
+        // WHEN: decoded with has_domain_tag=true
+        let err = decrypt_cookie_value(&blob, &key, true).unwrap_err();
+
+        // THEN: error mentions the domain tag being too short
+        assert!(
+            err.to_string().contains("too short"),
+            "error should mention too short for domain tag: {err}"
+        );
     }
 
     // ── Domain condition builder ──────────────────────────────────────────────
@@ -863,22 +1000,14 @@ mod tests {
 
     #[test]
     fn decrypt_rows_plaintext_passthrough() {
-        // GIVEN: rows with only plaintext values
+        // GIVEN: rows with only plaintext values (no encryption)
         let rows = vec![
-            CookieRow {
-                name: "a".into(),
-                value: "v1".into(),
-                encrypted_bytes: vec![],
-            },
-            CookieRow {
-                name: "b".into(),
-                value: "v2".into(),
-                encrypted_bytes: vec![],
-            },
+            CookieRow { name: "a".into(), value: "v1".into(), encrypted_bytes: vec![] },
+            CookieRow { name: "b".into(), value: "v2".into(), encrypted_bytes: vec![] },
         ];
 
         // WHEN: decrypted with no key
-        let result = decrypt_rows(rows, None);
+        let result = decrypt_rows(rows, None, false);
 
         // THEN: both cookies present
         assert_eq!(result["a"], "v1");
@@ -897,15 +1026,15 @@ mod tests {
         }];
 
         // WHEN: decrypted without key
-        let result = decrypt_rows(rows, None);
+        let result = decrypt_rows(rows, None, false);
 
         // THEN: cookie skipped, not present
         assert!(!result.contains_key("tok"));
     }
 
     #[test]
-    fn decrypt_rows_encrypted_with_correct_key_decrypts() {
-        // GIVEN: encrypted row with correct key
+    fn decrypt_rows_encrypted_with_correct_key_schema_pre24() {
+        // GIVEN: encrypted row, schema < 24 (no domain tag), with correct key
         let key = derive_cookie_key(b"my-browser-password").unwrap();
         let blob = encrypt_v10(b"my_session_value", &key);
         let rows = vec![CookieRow {
@@ -914,10 +1043,28 @@ mod tests {
             encrypted_bytes: blob,
         }];
 
-        // WHEN: decrypted with key
-        let result = decrypt_rows(rows, Some(&key));
+        // WHEN: decrypted with key, has_domain_tag=false
+        let result = decrypt_rows(rows, Some(&key), false);
 
         // THEN: value recovered
         assert_eq!(result["session"], "my_session_value");
+    }
+
+    #[test]
+    fn decrypt_rows_encrypted_with_correct_key_schema_v24() {
+        // GIVEN: v24+ encrypted row (SHA-256 domain prefix present), correct key
+        let key = derive_cookie_key(b"brave-real-password").unwrap();
+        let blob = encrypt_v10_v24(b"real_cookie_value", &key, ".example.com");
+        let rows = vec![CookieRow {
+            name: "auth".into(),
+            value: String::new(),
+            encrypted_bytes: blob,
+        }];
+
+        // WHEN: decrypted with key and has_domain_tag=true (v24+ path)
+        let result = decrypt_rows(rows, Some(&key), true);
+
+        // THEN: domain prefix stripped, actual value recovered
+        assert_eq!(result["auth"], "real_cookie_value");
     }
 }
