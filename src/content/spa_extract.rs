@@ -10,6 +10,8 @@
 //! 2. `<script id="__NUXT_DATA__">` / `<script id="__nuxt-data">` (Nuxt.js SSR data)
 //! 3. `<script type="application/ld+json">` (Schema.org structured data)
 //! 4. Inline `<script>` variable assignments (`window.__NEXT_DATA__ = {...}`)
+//! 5. Hidden `<code>` elements with JSON (LinkedIn-style SPA hydration)
+//! 6. Pre-fetched API response envelopes (`{status: 200, body: "{...}"}`) in any JSON
 
 /// Try to extract article content from SPA JSON bundles embedded in HTML.
 ///
@@ -41,6 +43,13 @@ pub fn extract_spa_data(html: &str) -> Option<String> {
 
     // Try inline script variable assignments (window.__NEXT_DATA__ = {...}, etc.)
     if let Some(content) = extract_inline_script_json(html) {
+        return Some(content);
+    }
+
+    // Try hidden <code> elements with JSON (LinkedIn-style SPA hydration).
+    // Many SPA frameworks embed server-fetched data in hidden <code> or <script>
+    // elements for client-side hydration. This catches the pattern generically.
+    if let Some(content) = extract_hidden_code_json(&document) {
         return Some(content);
     }
 
@@ -333,6 +342,135 @@ pub fn find_content_by_key(value: &serde_json::Value, key: &str) -> Option<Strin
     }
 }
 
+/// Extract content from hidden `<code>` elements containing JSON.
+///
+/// Some SPAs (notably LinkedIn) embed server-fetched data in hidden `<code>`
+/// elements rather than `<script>` tags:
+///
+/// ```text
+/// <code style="display:none" id="bpr-guid-XXXX"><!--{"data":{...}}--></code>
+/// ```
+///
+/// This function scans all `<code>` elements for JSON payloads, unwraps
+/// HTML comment wrappers (`<!--` / `-->`), and searches recursively for
+/// text content. Also handles pre-fetched API response envelopes where the
+/// `body` field contains a nested JSON string.
+fn extract_hidden_code_json(document: &scraper::Html) -> Option<String> {
+    const MIN_CONTENT_LEN: usize = 200;
+
+    let selector = scraper::Selector::parse("code").ok()?;
+    let mut all_text = Vec::new();
+
+    for element in document.select(&selector) {
+        let raw = element.inner_html();
+        let json_str = strip_html_comment_wrapper(raw.trim());
+        if json_str.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) else {
+            continue;
+        };
+
+        // Collect text from the JSON tree and any nested API response envelopes
+        collect_text_from_json(&value, &mut all_text);
+        unwrap_api_response_bodies(&value, &mut all_text);
+    }
+
+    if all_text.is_empty() {
+        return None;
+    }
+
+    // Return the longest text found (most likely to be the main content)
+    all_text
+        .into_iter()
+        .filter(|s| s.len() >= MIN_CONTENT_LEN)
+        .max_by_key(std::string::String::len)
+        .map(|content| render_spa_content(&content))
+}
+
+/// Strip `<!--` prefix and `-->` suffix from an HTML comment wrapper.
+///
+/// LinkedIn wraps `<code>` JSON in HTML comments: `<!--{...}-->`.
+/// Returns the inner content unchanged if no wrapper is present.
+fn strip_html_comment_wrapper(s: &str) -> &str {
+    let s = s.strip_prefix("<!--").unwrap_or(s);
+    let s = s.strip_suffix("-->").unwrap_or(s);
+    s.trim()
+}
+
+/// Unwrap pre-fetched API response envelopes from a JSON value.
+///
+/// SPAs often embed pre-fetched API responses as:
+/// ```json
+/// {"request": "/api/endpoint", "status": 200, "body": "{\"data\": ...}", "method": "GET"}
+/// ```
+///
+/// The `body` field contains the full API response as a JSON string.
+/// This function finds such envelopes, parses the `body` string as JSON,
+/// and recursively collects text content from the parsed payload.
+///
+/// This pattern is used by LinkedIn, Instagram, and other Meta-family SPAs.
+pub fn unwrap_api_response_bodies(value: &serde_json::Value, texts: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            // Check if this object is an API response envelope
+            if let (Some(status), Some(body_str)) = (
+                map.get("status").and_then(|v| v.as_u64()),
+                map.get("body").and_then(|v| v.as_str()),
+            ) {
+                if status == 200 && !body_str.is_empty() {
+                    if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str) {
+                        collect_text_from_json(&body_json, texts);
+                    }
+                }
+            }
+            // Recurse into all values to find nested envelopes
+            for v in map.values() {
+                unwrap_api_response_bodies(v, texts);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                unwrap_api_response_bodies(v, texts);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recursively collect substantial text strings from a JSON value tree.
+///
+/// Walks the entire JSON structure and collects string values that look like
+/// meaningful text content (minimum length, not URLs/IDs/hashes).
+fn collect_text_from_json(value: &serde_json::Value, texts: &mut Vec<String>) {
+    const MIN_TEXT_LEN: usize = 50;
+
+    match value {
+        serde_json::Value::String(s) => {
+            // Skip short strings, URLs, hashes, and IDs
+            if s.len() >= MIN_TEXT_LEN
+                && !s.starts_with("http")
+                && !s.starts_with("urn:")
+                && !s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+            {
+                texts.push(s.clone());
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values() {
+                collect_text_from_json(v, texts);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                collect_text_from_json(v, texts);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Find the longest string value anywhere in a JSON tree.
 ///
 /// This is a last-resort fallback for Next.js / SPA pages that use proprietary
@@ -355,6 +493,142 @@ pub fn find_longest_string(value: &serde_json::Value, min_len: usize) -> Option<
             .filter_map(|v| find_longest_string(v, min_len))
             .max_by_key(std::string::String::len),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_html_comment_wrapper_removes_wrapper() {
+        assert_eq!(strip_html_comment_wrapper("<!--{\"a\":1}-->"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn strip_html_comment_wrapper_passthrough_no_wrapper() {
+        assert_eq!(strip_html_comment_wrapper("{\"a\":1}"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn strip_html_comment_wrapper_trims_whitespace() {
+        assert_eq!(strip_html_comment_wrapper("<!-- {\"a\":1} -->"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn unwrap_api_response_bodies_parses_body_string() {
+        let envelope = serde_json::json!({
+            "request": "/api/v2/data",
+            "status": 200,
+            "body": "{\"text\": \"This is a substantial piece of text content that should be extracted from the API response body for display.\"}",
+            "method": "GET"
+        });
+        let mut texts = Vec::new();
+        unwrap_api_response_bodies(&envelope, &mut texts);
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].contains("substantial piece of text"));
+    }
+
+    #[test]
+    fn unwrap_api_response_bodies_skips_non_200() {
+        let envelope = serde_json::json!({
+            "request": "/api/v2/data",
+            "status": 404,
+            "body": "{\"error\": \"not found with a long enough message to pass the minimum length filter for text extraction\"}",
+            "method": "GET"
+        });
+        let mut texts = Vec::new();
+        unwrap_api_response_bodies(&envelope, &mut texts);
+        assert!(texts.is_empty());
+    }
+
+    #[test]
+    fn unwrap_api_response_bodies_handles_nested_envelopes() {
+        let outer = serde_json::json!({
+            "responses": [
+                {
+                    "status": 200,
+                    "body": "{\"commentary\": \"This is a long post about technology and innovation that should definitely be extracted by the parser.\"}",
+                    "request": "/api/feed"
+                },
+                {
+                    "status": 200,
+                    "body": "{\"title\": \"Another interesting article with enough content to meet the minimum length threshold for extraction.\"}",
+                    "request": "/api/articles"
+                }
+            ]
+        });
+        let mut texts = Vec::new();
+        unwrap_api_response_bodies(&outer, &mut texts);
+        assert_eq!(texts.len(), 2);
+    }
+
+    #[test]
+    fn unwrap_api_response_bodies_skips_empty_body() {
+        let envelope = serde_json::json!({
+            "status": 200,
+            "body": "",
+            "request": "/api/empty"
+        });
+        let mut texts = Vec::new();
+        unwrap_api_response_bodies(&envelope, &mut texts);
+        assert!(texts.is_empty());
+    }
+
+    #[test]
+    fn collect_text_skips_urls_and_short_strings() {
+        let data = serde_json::json!({
+            "url": "https://example.com/path",
+            "urn": "urn:li:member:12345",
+            "id": "abc-def-123",
+            "short": "too short",
+            "content": "This is a long enough string that should be collected by the text extraction function because it passes all filters."
+        });
+        let mut texts = Vec::new();
+        collect_text_from_json(&data, &mut texts);
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].contains("long enough string"));
+    }
+
+    #[test]
+    fn extract_hidden_code_json_from_html() {
+        let html = r#"<html><body>
+            <code style="display:none"><!--{"data": {"elements": [{"commentary": "This is a substantial article body that contains enough text to meet the minimum content length threshold for extraction from hidden code elements in single-page application frameworks. We need this to be over two hundred characters in total length to pass the minimum content filter that ensures we only return meaningful text content and not short metadata strings or identifiers."}]}}--></code>
+        </body></html>"#;
+        let document = scraper::Html::parse_document(html);
+        let result = extract_hidden_code_json(&document);
+        assert!(result.is_some());
+        let content = result.unwrap();
+        assert!(content.contains("substantial article body"), "got: {content}");
+    }
+
+    #[test]
+    fn extract_hidden_code_json_with_api_envelope() {
+        let body_json = serde_json::json!({
+            "data": {
+                "commentary": "This is a pre-fetched API response body containing a long post about marketplace fraud that should be extracted from the envelope format. The text must exceed two hundred characters in total length to pass the minimum content threshold applied by the extraction pipeline to filter out short metadata strings, identifiers, and other non-content values."
+            }
+        });
+        let html = format!(
+            r#"<html><body>
+            <code style="display:none"><!--{{"request": "/voyager/api/graphql", "status": 200, "body": {}, "method": "GET"}}--></code>
+        </body></html>"#,
+            serde_json::to_string(&body_json.to_string()).unwrap()
+        );
+        let document = scraper::Html::parse_document(&html);
+        let result = extract_hidden_code_json(&document);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("marketplace fraud"));
+    }
+
+    #[test]
+    fn extract_hidden_code_json_returns_none_for_no_content() {
+        let html = r#"<html><body>
+            <code>just some code here</code>
+            <code>{"id": "short"}</code>
+        </body></html>"#;
+        let document = scraper::Html::parse_document(html);
+        assert!(extract_hidden_code_json(&document).is_none());
     }
 }
 

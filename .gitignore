@@ -28,3 +28,8 @@ __pycache__/
 
 # Development artifacts
 .tiers/
+
+# Internal / promotion drafts
+linkedin-posts-draft.md
+docs/linkedin-ajax-replay.md
+retros/

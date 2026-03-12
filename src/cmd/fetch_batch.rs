@@ -7,7 +7,6 @@ use anyhow::Result;
 use nab::content::ContentRouter;
 
 use super::fetch::{build_client, resolve_browser_name, resolve_cookie_source};
-use super::output::output_body;
 use crate::OutputFormat;
 
 /// Fetch URLs from a file in parallel and print results.

@@ -351,6 +351,20 @@ fn extract_code_json(document: &Html, url: &str, kind: LinkedInUrlKind) -> Optio
 
         // Walk every JSON value recursively looking for profile and post data.
         scan_json_value(&value, &mut profile, &mut posts);
+
+        // Type 2: Pre-fetched API response envelopes — parse the body string
+        if let Some(obj) = value.as_object() {
+            if let (Some(status), Some(body_str)) = (
+                obj.get("status").and_then(|v| v.as_u64()),
+                obj.get("body").and_then(|v| v.as_str()),
+            ) {
+                if status == 200 && !body_str.is_empty() {
+                    if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str) {
+                        scan_json_value(&body_json, &mut profile, &mut posts);
+                    }
+                }
+            }
+        }
     }
 
     build_code_json_content(url, kind, profile, &posts)
