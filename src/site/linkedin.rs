@@ -83,6 +83,12 @@ pub fn classify_linkedin_url(url: &str) -> Option<LinkedInUrlKind> {
     if path.ends_with("/feed/") || path.ends_with("/feed") {
         return Some(LinkedInUrlKind::Activity);
     }
+    // Other authenticated sections: mynetwork, jobs, messaging, notifications
+    for section in &["/mynetwork/", "/jobs/", "/messaging/", "/notifications/"] {
+        if path.contains(section) {
+            return Some(LinkedInUrlKind::Activity);
+        }
+    }
     if path.contains("/posts/") {
         return Some(LinkedInUrlKind::Post);
     }
