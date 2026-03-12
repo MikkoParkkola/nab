@@ -35,6 +35,8 @@ pub mod fingerprint;
 pub mod form;
 pub mod http3_client;
 pub mod http_client;
+#[cfg(feature = "impersonate")]
+pub mod impersonate_client;
 pub mod js_engine;
 pub mod login;
 pub mod mfa;

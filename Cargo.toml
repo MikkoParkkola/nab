@@ -47,6 +47,18 @@ h3 = { version = "0.0.8", optional = true }
 h3-quinn = { version = "0.0.10", optional = true }
 bytes = "1"                         # Required for h3
 
+# TLS fingerprint impersonation (Chrome/Safari/Firefox via BoringSSL)
+# Bypasses anti-bot TLS fingerprinting (LinkedIn HTTP 999, etc.)
+rquest = { version = "5.1", optional = true, default-features = false, features = [
+    "cookies",
+    "brotli",
+    "zstd",
+    "gzip",
+    "deflate",
+    "webpki-roots",
+] }
+rquest-util = { version = "2.2", optional = true }
+
 # WebSocket support
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tungstenite = "0.24"
@@ -149,7 +161,7 @@ rust-mcp-sdk = { version = "0.7.2", features = ["server", "macros", "stdio", "20
 which = "6.0"                       # Find ffmpeg binary in PATH
 
 [features]
-default = ["cli", "http3"]
+default = ["cli", "http3", "impersonate"]
 cli = ["clap"]
 # HTTP/3 + QUIC - enabled by default for maximum performance
 # Disable with: cargo build --no-default-features --features cli
@@ -160,6 +172,9 @@ pdf = ["pdfium-render"]
 # Browser automation for SPA login and CAPTCHA handling (optional)
 # Requires running Chrome/Chromium with --remote-debugging-port=9222
 browser = ["chromiumoxide"]
+# TLS fingerprint impersonation — bypasses anti-bot TLS fingerprinting
+# BoringSSL-backed Chrome/Safari/Firefox TLS profiles
+impersonate = ["rquest", "rquest-util"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -175,7 +190,7 @@ required-features = ["cli"]
 
 [[bin]]
 name = "nab-mcp"
-path = "src/bin/mcp_server.rs"
+path = "src/bin/mcp_server/main.rs"
 
 [[bench]]
 name = "arena_benchmark"

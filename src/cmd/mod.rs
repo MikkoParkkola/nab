@@ -4,6 +4,7 @@ pub mod auth;
 pub mod bench;
 pub mod cookies;
 pub mod fetch;
+pub mod fetch_batch;
 pub mod fingerprint;
 pub mod login;
 pub mod otp;
