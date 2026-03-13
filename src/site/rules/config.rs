@@ -65,7 +65,7 @@ pub struct SiteRuleConfig {
 /// [[fetch_additional]]
 /// prefix     = "ans"
 /// rewrite_from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
-/// rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=*2(ZhUvnXWhH&sort=votes"
+/// rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=!6WPIomnMOOD*e&sort=votes"
 /// accept     = "application/json"
 ///
 /// [fetch_additional.json]
