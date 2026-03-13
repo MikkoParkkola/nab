@@ -5,7 +5,7 @@ use nab::{AcceleratedClient, CookieSource};
 use super::output::output_body;
 use crate::OutputFormat;
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub async fn cmd_login(
     url: &str,
     use_1password: bool,

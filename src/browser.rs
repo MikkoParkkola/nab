@@ -1,9 +1,7 @@
-//! Browser automation via Chrome DevTools Protocol (CDP)
+//! Browser automation via Chrome `DevTools` Protocol (CDP)
 //!
 //! Provides automated login for SPAs and CAPTCHA-protected sites
 //! by connecting to a running Chrome/Chromium instance.
-
-#![cfg(feature = "browser")]
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
@@ -12,7 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::auth::Credential;
 
-/// Chrome DevTools Protocol client for browser automation
+/// Chrome `DevTools` Protocol client for browser automation
 pub struct BrowserLogin {
     browser: chromiumoxide::Browser,
 }
@@ -39,7 +37,7 @@ impl BrowserLogin {
         debug!("Connecting to Chrome on port {}", port);
 
         let (browser, mut handler) = chromiumoxide::Browser::connect(
-            format!("http://localhost:{}", port)
+            format!("http://localhost:{port}")
         )
         .await
         .context("Failed to connect to Chrome. Make sure Chrome is running with --remote-debugging-port=9222")?;

@@ -124,14 +124,14 @@ urlencoding = "2"                   # URL encoding for forms
 readability = { version = "0.3", default-features = false }  # Mozilla-style article extraction
 
 # OOXML parsing (Google Docs/Sheets/Slides export)
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 roxmltree = "0.20"
 
 # PDF extraction (optional - requires pdfium dynamic library)
 pdfium-render = { version = "0.8", default-features = true, optional = true }
 
 # Browser automation via Chrome DevTools Protocol (optional)
-chromiumoxide = { version = "0.7", optional = true, default-features = false, features = ["tokio-runtime"] }
+chromiumoxide = { version = "0.9", optional = true, default-features = false, features = ["rustls", "zip8"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ERROR HANDLING & LOGGING

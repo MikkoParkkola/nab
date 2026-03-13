@@ -2,10 +2,16 @@
 
 [![CI](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml/badge.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/nab.svg)](https://crates.io/crates/nab)
-[![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
 [![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
-[![MSRV](https://img.shields.io/badge/MSRV-1.93-blue.svg)](https://github.com/MikkoParkkola/nab)
+[![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
+[![Rust](https://img.shields.io/badge/Rust-1.93+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance)
+[![dependency status](https://deps.rs/repo/github/MikkoParkkola/nab/status.svg)](https://deps.rs/repo/github/MikkoParkkola/nab)
+[![Tests](https://img.shields.io/badge/tests-780+-brightgreen.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
+[![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
+[![MCP Servers](https://img.shields.io/badge/MCP_Tools-8-blue.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
+[![Capabilities](https://img.shields.io/badge/Capabilities-tools%20%7C%20elicitation%20%7C%20structured_output-informational.svg)](https://modelcontextprotocol.io)
 
 <a href="https://glama.ai/mcp/servers/MikkoParkkola/nab"><img width="380" height="200" src="https://glama.ai/mcp/servers/MikkoParkkola/nab/badge" alt="nab MCP server" /></a>
 

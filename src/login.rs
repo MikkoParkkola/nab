@@ -47,6 +47,7 @@ impl LoginFlow {
 
     /// Enable browser-based login (requires browser feature)
     #[cfg(feature = "browser")]
+    #[must_use]
     pub fn with_browser(mut self, enable: bool) -> Self {
         self.use_browser = enable;
         self
