@@ -23,8 +23,10 @@
 //! assert!(result.markdown.contains("Hello"));
 //! ```
 
+pub mod budget;
 pub mod diff;
 pub mod diff_format;
+pub mod focus;
 pub mod html;
 #[cfg(feature = "pdf")]
 pub mod pdf;

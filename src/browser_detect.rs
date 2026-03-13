@@ -102,19 +102,19 @@ fn detect_linux_default_browser() -> Result<BrowserType> {
         .args(["get", "default-web-browser"])
         .output();
 
-    if let Ok(output) = output {
-        if output.status.success() {
-            let browser = String::from_utf8_lossy(&output.stdout).to_lowercase();
+    if let Ok(output) = output
+        && output.status.success()
+    {
+        let browser = String::from_utf8_lossy(&output.stdout).to_lowercase();
 
-            if browser.contains("brave") {
-                return Ok(BrowserType::Brave);
-            }
-            if browser.contains("chrome") || browser.contains("chromium") {
-                return Ok(BrowserType::Chrome);
-            }
-            if browser.contains("firefox") {
-                return Ok(BrowserType::Firefox);
-            }
+        if browser.contains("brave") {
+            return Ok(BrowserType::Brave);
+        }
+        if browser.contains("chrome") || browser.contains("chromium") {
+            return Ok(BrowserType::Chrome);
+        }
+        if browser.contains("firefox") {
+            return Ok(BrowserType::Firefox);
         }
     }
 
