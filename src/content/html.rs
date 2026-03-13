@@ -98,13 +98,51 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
         html_to_markdown(html)
     };
 
-    // Warn when output is suspiciously thin relative to the HTML input.
+    // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
-    if let Some(warning) = detect_thin_content(html.len(), markdown.len()) {
-        tracing::warn!("{}", warning);
+    // Re-try SPA extraction on the *original* (uncleaned) HTML — the initial
+    // attempt at line 78 may have missed embedded JSON that only appears in
+    // deeply nested script tags or variable assignments.
+    if is_thin_content(html.len(), markdown.len()) {
+        tracing::debug!(
+            "Thin content detected ({} chars from {} bytes HTML) — attempting SPA auto-recovery",
+            markdown.len(),
+            html.len()
+        );
+        // SPA extraction was already tried above on the raw HTML, but
+        // detect_thin_content fires only when readability also fails.
+        // Emit the actionable guidance as a warning.
+        tracing::warn!(
+            "Output is suspiciously thin ({} chars from {} bytes of HTML). \
+             The page likely uses JavaScript rendering. Try:\n  \
+             1. nab spa <url>              (extract embedded SPA data)\n  \
+             2. nab fetch --cookies brave <url>  (use browser session cookies)",
+            markdown.len(),
+            html.len()
+        );
     }
 
     markdown
+}
+
+/// Check if markdown output is suspiciously thin relative to HTML input size.
+///
+/// Returns `true` when the markdown is disproportionately small compared to
+/// the raw HTML. This typically indicates JS-rendered content not captured.
+///
+/// Thresholds: HTML >= 5 KB, markdown < 200 chars, ratio < 2%.
+#[must_use]
+fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
+    const MIN_HTML_LEN: usize = 5_000;
+    const MIN_MARKDOWN_LEN: usize = 200;
+    const THIN_RATIO_PERCENT: usize = 2;
+
+    if html_len < MIN_HTML_LEN || markdown_len >= MIN_MARKDOWN_LEN {
+        return false;
+    }
+
+    let ratio_percent = (markdown_len * 100) / html_len.max(1);
+    ratio_percent < THIN_RATIO_PERCENT
 }
 
 /// Detect suspiciously thin markdown output relative to HTML input size.
@@ -113,27 +151,13 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 /// compared to the raw HTML. This typically indicates JavaScript-rendered
 /// content that was not captured by the static HTML parser.
 ///
-/// The threshold is empirically calibrated:
-/// - Normal article pages: markdown ≥ 8% of HTML body size
-/// - JS-rendered pages (e.g., Stripe blog): markdown < 1% of HTML body size
-/// - Minimum HTML size to avoid false positives on tiny pages: 5 KB
-///
 /// # Returns
 ///
 /// `Some(warning)` when the ratio is below the threshold, `None` otherwise.
 #[must_use]
 pub fn detect_thin_content(html_len: usize, markdown_len: usize) -> Option<String> {
-    const MIN_HTML_LEN: usize = 5_000;
-    const THIN_RATIO_PERCENT: usize = 2;
-
-    if html_len < MIN_HTML_LEN {
-        return None;
-    }
-
-    #[allow(clippy::cast_precision_loss)]
-    let ratio_percent = (markdown_len * 100) / html_len.max(1);
-
-    if ratio_percent < THIN_RATIO_PERCENT {
+    if is_thin_content(html_len, markdown_len) {
+        let ratio_percent = (markdown_len * 100) / html_len.max(1);
         Some(format!(
             "Warning: output is suspiciously thin ({markdown_len} chars from {html_len} bytes of HTML, \
              {ratio_percent}% ratio). The page likely uses JavaScript rendering — \

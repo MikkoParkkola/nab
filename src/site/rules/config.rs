@@ -37,6 +37,13 @@ pub struct SiteRuleConfig {
     /// `ans_body`) to avoid collisions with primary fields.
     #[serde(default, rename = "fetch_additional")]
     pub additional_fetches: Vec<AdditionalFetchConfig>,
+    /// Concurrent item expansion from a list endpoint.
+    ///
+    /// Each entry fetches a single list URL, walks an item array, and expands
+    /// fields as `{prefix}_{idx}_{field}`.  Useful for multi-item pages
+    /// (e.g., `HackerNews` stories, Reddit comment threads).
+    #[serde(default, rename = "fetch_concurrent")]
+    pub concurrent_fetches: Vec<ConcurrentFetchConfig>,
     /// Fallback strategies tried when the primary fetch returns no fields.
     ///
     /// Tried in order; the first that produces any fields wins.  This enables
@@ -87,6 +94,52 @@ pub struct AdditionalFetchConfig {
     /// JSON field extraction paths for this response.
     #[serde(default)]
     pub json: JsonConfig,
+}
+
+/// `[[fetch_concurrent]]` — list-endpoint expansion.
+///
+/// Fetches a single JSON list URL and expands each item in the array into
+/// numbered fields: `{prefix}_{0}_{field}`, `{prefix}_{1}_{field}`, etc.
+///
+/// # Example (TOML)
+///
+/// ```toml
+/// [[fetch_concurrent]]
+/// prefix       = "story"
+/// rewrite_from = "(?i)https?://news.ycombinator.com.*"
+/// rewrite_to   = "https://hacker-news.firebaseio.com/v0/topstories.json"
+/// items_path   = "."
+/// max_items    = 10
+///
+/// [fetch_concurrent.json]
+/// title = ".title"
+/// url   = ".url"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConcurrentFetchConfig {
+    /// Short prefix for expanded field names.
+    pub prefix: String,
+    /// Regex applied to the **original** URL to produce the list endpoint URL.
+    pub rewrite_from: String,
+    /// Replacement template for the list URL.
+    pub rewrite_to: String,
+    /// JSON dot-path to the array of items (e.g., `.items` or `.` for root array).
+    pub items_path: String,
+    /// JSON field extraction paths applied to each array element.
+    #[serde(default)]
+    pub json: JsonConfig,
+    /// `Accept` header for this request.
+    pub accept: Option<String>,
+    /// Maximum number of items to expand (default 10).
+    pub max_items: Option<usize>,
+}
+
+impl ConcurrentFetchConfig {
+    /// Return the effective item limit (default 10).
+    #[must_use]
+    pub fn item_limit(&self) -> usize {
+        self.max_items.unwrap_or(10)
+    }
 }
 
 /// Extraction type for a `[[fallback]]` entry.
@@ -463,6 +516,21 @@ impl SiteRuleConfig {
                 format!(
                     "invalid fetch_additional[{i}].rewrite_from regex '{}' in rule '{}'",
                     af.rewrite_from, self.site.name
+                )
+            })?;
+        }
+        // Validate concurrent fetch regexes.
+        for (i, cf) in self.concurrent_fetches.iter().enumerate() {
+            if cf.prefix.is_empty() {
+                bail!(
+                    "fetch_concurrent[{i}].prefix must not be empty in rule '{}'",
+                    self.site.name
+                );
+            }
+            regex::Regex::new(&cf.rewrite_from).with_context(|| {
+                format!(
+                    "invalid fetch_concurrent[{i}].rewrite_from regex '{}' in rule '{}'",
+                    cf.rewrite_from, self.site.name
                 )
             })?;
         }

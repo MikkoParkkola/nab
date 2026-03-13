@@ -15,7 +15,9 @@ use async_trait::async_trait;
 use regex::Regex;
 
 use super::super::{Engagement, SiteContent, SiteMetadata, SiteProvider};
-use super::config::{AuthConfig, ClientKind, FallbackType, JsonConfig, SiteRuleConfig};
+use super::config::{
+    AuthConfig, ClientKind, ConcurrentFetchConfig, FallbackType, JsonConfig, SiteRuleConfig,
+};
 use super::json_path;
 use super::template;
 use crate::http_client::AcceleratedClient;
@@ -34,6 +36,9 @@ pub struct ApiRuleProvider {
     /// Compiled `rewrite_from` regexes for each fallback (parallel to
     /// `config.fallback`).
     fallback_rewrite_froms: Vec<Regex>,
+    /// Compiled `rewrite_from` regexes for each concurrent fetch (parallel to
+    /// `config.concurrent_fetches`).
+    concurrent_rewrite_froms: Vec<Regex>,
 }
 
 impl ApiRuleProvider {
@@ -81,12 +86,26 @@ impl ApiRuleProvider {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let concurrent_rewrite_froms = config
+            .concurrent_fetches
+            .iter()
+            .map(|cf| {
+                Regex::new(&cf.rewrite_from).with_context(|| {
+                    format!(
+                        "invalid fetch_concurrent rewrite_from regex '{}'",
+                        cf.rewrite_from
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(Self {
             config,
             patterns,
             rewrite_from,
             additional_rewrite_froms,
             fallback_rewrite_froms,
+            concurrent_rewrite_froms,
         })
     }
 
@@ -104,8 +123,9 @@ impl ApiRuleProvider {
         &self,
         client: &AcceleratedClient,
         api_url: &str,
+        cookies: Option<&str>,
     ) -> Result<Option<HashMap<String, String>>> {
-        let body = self.fetch_body(client, api_url).await?;
+        let body = self.fetch_body(client, api_url, cookies).await?;
         let json = parse_response_json(&body, api_url)?;
         if let Some(path) = &self.config.request.success_path
             && !json_path::is_non_null(&json, path)
@@ -165,6 +185,7 @@ impl ApiRuleProvider {
         &self,
         original_url: &str,
         client: &AcceleratedClient,
+        cookies: Option<&str>,
         fields: &mut HashMap<String, String>,
     ) {
         for (af, rewrite_re) in self
@@ -189,6 +210,7 @@ impl ApiRuleProvider {
                 &api_url,
                 af.accept.as_deref(),
                 &af.json,
+                cookies,
             )
             .await
             {
@@ -209,6 +231,49 @@ impl ApiRuleProvider {
         }
     }
 
+    /// Execute all configured concurrent fetches and expand items into `fields`.
+    ///
+    /// Each `[[fetch_concurrent]]` entry fetches a single list URL, walks the
+    /// item array at `items_path`, and inserts fields as
+    /// `{prefix}_{idx}_{field}` (e.g., `story_0_title`, `story_1_title`).
+    async fn apply_concurrent_fetches(
+        &self,
+        original_url: &str,
+        client: &AcceleratedClient,
+        cookies: Option<&str>,
+        fields: &mut HashMap<String, String>,
+    ) {
+        for (cf, rewrite_re) in self
+            .config
+            .concurrent_fetches
+            .iter()
+            .zip(self.concurrent_rewrite_froms.iter())
+        {
+            let list_url = rewrite_url_with(rewrite_re, &cf.rewrite_to, original_url);
+            tracing::debug!(
+                "ApiRuleProvider '{}': concurrent fetch ({}) {}",
+                self.config.site.name,
+                cf.prefix,
+                list_url
+            );
+
+            match fetch_and_expand_items(client, &list_url, cf, cookies).await {
+                Ok(expanded) => {
+                    for (key, value) in expanded {
+                        fields.insert(key, value);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Concurrent fetch '{}' for rule '{}' failed: {e}",
+                        cf.prefix,
+                        self.config.site.name
+                    );
+                }
+            }
+        }
+    }
+
     /// Try each configured fallback in order, returning the fields from the
     /// first one that produces a non-empty map.
     ///
@@ -218,6 +283,7 @@ impl ApiRuleProvider {
         &self,
         original_url: &str,
         client: &AcceleratedClient,
+        cookies: Option<&str>,
         prefetched_html: Option<&[u8]>,
     ) -> HashMap<String, String> {
         for (fb, rewrite_re) in self
@@ -236,8 +302,14 @@ impl ApiRuleProvider {
 
             let fields = match fb.fallback_type {
                 FallbackType::Json => {
-                    self.apply_json_fallback(client, &fetch_url, fb.accept.as_deref(), &fb.json)
-                        .await
+                    self.apply_json_fallback(
+                        client,
+                        &fetch_url,
+                        fb.accept.as_deref(),
+                        &fb.json,
+                        cookies,
+                    )
+                    .await
                 }
                 FallbackType::Html => {
                     self.apply_html_fallback(
@@ -246,6 +318,7 @@ impl ApiRuleProvider {
                         original_url,
                         fb.accept.as_deref(),
                         &fb.css,
+                        cookies,
                         prefetched_html,
                     )
                     .await
@@ -266,8 +339,9 @@ impl ApiRuleProvider {
         url: &str,
         accept: Option<&str>,
         json_config: &JsonConfig,
+        cookies: Option<&str>,
     ) -> HashMap<String, String> {
-        match fetch_and_extract_json(client, url, accept, json_config).await {
+        match fetch_and_extract_json(client, url, accept, json_config, cookies).await {
             Ok(fields) => fields,
             Err(e) => {
                 tracing::warn!(
@@ -282,6 +356,7 @@ impl ApiRuleProvider {
 
     /// Fallback path: fetch URL (or reuse `prefetched_html`), parse HTML,
     /// extract fields via CSS selectors.
+    #[allow(clippy::too_many_arguments)]
     async fn apply_html_fallback(
         &self,
         client: &AcceleratedClient,
@@ -289,6 +364,7 @@ impl ApiRuleProvider {
         original_url: &str,
         accept: Option<&str>,
         css_map: &HashMap<String, String>,
+        cookies: Option<&str>,
         prefetched_html: Option<&[u8]>,
     ) -> HashMap<String, String> {
         // Reuse pre-fetched bytes when the resolved URL is the original URL.
@@ -296,7 +372,7 @@ impl ApiRuleProvider {
             if let Some(bytes) = prefetched_html {
                 String::from_utf8_lossy(bytes).into_owned()
             } else {
-                match self.fetch_html(client, fetch_url, accept).await {
+                match self.fetch_html(client, fetch_url, accept, cookies).await {
                     Ok(h) => h,
                     Err(e) => {
                         tracing::warn!(
@@ -309,7 +385,7 @@ impl ApiRuleProvider {
                 }
             }
         } else {
-            match self.fetch_html(client, fetch_url, accept).await {
+            match self.fetch_html(client, fetch_url, accept, cookies).await {
                 Ok(h) => h,
                 Err(e) => {
                     tracing::warn!(
@@ -331,10 +407,14 @@ impl ApiRuleProvider {
         client: &AcceleratedClient,
         url: &str,
         accept: Option<&str>,
+        cookies: Option<&str>,
     ) -> Result<String> {
         let mut request = client.inner().get(url);
         if let Some(accept_val) = accept {
             request = request.header(reqwest::header::ACCEPT, accept_val);
+        }
+        if let Some(cookie_val) = cookies {
+            request = request.header(reqwest::header::COOKIE, cookie_val);
         }
         request
             .send()
@@ -407,15 +487,20 @@ impl ApiRuleProvider {
     /// Uses a plain `reqwest::Client` when `request.client = "standard"` (e.g.
     /// for Reddit, which returns HTML when forced to HTTP/2 without ALPN).
     /// Falls back to the shared [`AcceleratedClient`] otherwise.
-    async fn fetch_body(&self, client: &AcceleratedClient, api_url: &str) -> Result<String> {
+    async fn fetch_body(
+        &self,
+        client: &AcceleratedClient,
+        api_url: &str,
+        cookies: Option<&str>,
+    ) -> Result<String> {
         match self.config.request.client {
-            ClientKind::Standard => self.fetch_body_standard(api_url).await,
-            ClientKind::Default => self.fetch_body_accelerated(client, api_url).await,
+            ClientKind::Standard => self.fetch_body_standard(api_url, cookies).await,
+            ClientKind::Default => self.fetch_body_accelerated(client, api_url, cookies).await,
         }
     }
 
     /// Fetch using a fresh standard `reqwest::Client` (ALPN negotiation).
-    async fn fetch_body_standard(&self, api_url: &str) -> Result<String> {
+    async fn fetch_body_standard(&self, api_url: &str, cookies: Option<&str>) -> Result<String> {
         let standard_client = reqwest::Client::builder()
             .use_rustls_tls()
             .gzip(true)
@@ -426,7 +511,10 @@ impl ApiRuleProvider {
             .build()
             .context("failed to build standard HTTP client")?;
 
-        let request = self.apply_headers(standard_client.get(api_url));
+        let mut request = self.apply_headers(standard_client.get(api_url));
+        if let Some(cookie_val) = cookies {
+            request = request.header(reqwest::header::COOKIE, cookie_val);
+        }
 
         request
             .send()
@@ -444,8 +532,12 @@ impl ApiRuleProvider {
         &self,
         client: &AcceleratedClient,
         api_url: &str,
+        cookies: Option<&str>,
     ) -> Result<String> {
-        let request = self.apply_headers(client.inner().get(api_url));
+        let mut request = self.apply_headers(client.inner().get(api_url));
+        if let Some(cookie_val) = cookies {
+            request = request.header(reqwest::header::COOKIE, cookie_val);
+        }
 
         request
             .send()
@@ -527,10 +619,14 @@ async fn fetch_and_extract_json(
     url: &str,
     accept: Option<&str>,
     json_config: &JsonConfig,
+    cookies: Option<&str>,
 ) -> Result<HashMap<String, String>> {
     let mut request = client.inner().get(url);
     if let Some(accept_val) = accept {
         request = request.header(reqwest::header::ACCEPT, accept_val);
+    }
+    if let Some(cookie_val) = cookies {
+        request = request.header(reqwest::header::COOKIE, cookie_val);
     }
 
     let body = request
@@ -564,6 +660,84 @@ async fn fetch_and_extract_json(
         .collect();
 
     Ok(fields)
+}
+
+/// Fetch a list endpoint and expand items into numbered fields.
+///
+/// Walks `items_path` in the JSON response to find an array, then extracts
+/// fields from each element using `cf.json`.  Fields are named
+/// `{prefix}_{idx}_{field}` (e.g., `story_0_title`).
+///
+/// Respects `cf.item_limit()` to cap expansion.
+async fn fetch_and_expand_items(
+    client: &AcceleratedClient,
+    url: &str,
+    cf: &ConcurrentFetchConfig,
+    cookies: Option<&str>,
+) -> Result<HashMap<String, String>> {
+    let mut request = client.inner().get(url);
+    if let Some(accept_val) = &cf.accept {
+        request = request.header(reqwest::header::ACCEPT, accept_val.as_str());
+    }
+    if let Some(cookie_val) = cookies {
+        request = request.header(reqwest::header::COOKIE, cookie_val);
+    }
+
+    let body = request
+        .send()
+        .await
+        .with_context(|| format!("concurrent fetch failed for '{url}'"))?
+        .error_for_status()
+        .with_context(|| format!("HTTP error for concurrent fetch '{url}'"))?
+        .text()
+        .await
+        .with_context(|| format!("failed to read concurrent fetch body from '{url}'"))?;
+
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .with_context(|| format!("failed to parse JSON from concurrent fetch '{url}'"))?;
+
+    // Navigate to the items array.
+    let items_array = extract_items_array(&json, &cf.items_path)?;
+
+    let limit = cf.item_limit();
+    let mut fields = HashMap::new();
+
+    for (idx, item) in items_array.iter().take(limit).enumerate() {
+        for (field_name, path) in &cf.json.0 {
+            if let Some(value) = json_path::extract(item, path) {
+                fields.insert(format!("{}_{}_{}", cf.prefix, idx, field_name), value);
+            }
+        }
+    }
+
+    Ok(fields)
+}
+
+/// Navigate a JSON value to find an array at `items_path`.
+///
+/// Supports `"."` for root arrays, and dot-separated paths like `.items` or
+/// `.data.results`.
+fn extract_items_array<'a>(
+    json: &'a serde_json::Value,
+    items_path: &str,
+) -> Result<&'a Vec<serde_json::Value>> {
+    let path = items_path.trim_start_matches('.');
+
+    let target = if path.is_empty() {
+        json
+    } else {
+        let mut current = json;
+        for segment in path.split('.') {
+            current = current.get(segment).with_context(|| {
+                format!("items_path segment '{segment}' not found in JSON response")
+            })?;
+        }
+        current
+    };
+
+    target
+        .as_array()
+        .with_context(|| format!("items_path '{items_path}' did not resolve to a JSON array"))
 }
 
 /// Rewrite `url` using a compiled regex and template string.
@@ -665,7 +839,7 @@ impl SiteProvider for ApiRuleProvider {
         &self,
         url: &str,
         client: &AcceleratedClient,
-        _cookies: Option<&str>,
+        cookies: Option<&str>,
         prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         let api_url = self.rewrite_url(url);
@@ -677,7 +851,7 @@ impl SiteProvider for ApiRuleProvider {
 
         // Attempt primary JSON fetch; fall through to fallbacks on failure or
         // when the API returns a content-not-found envelope (success_path null).
-        let primary_result = self.try_primary_json(client, &api_url).await;
+        let primary_result = self.try_primary_json(client, &api_url, cookies).await;
 
         // `Ok(None)` → API-level not-found; `Err` → HTTP/parse failure.
         // Both cases trigger fallback or a bail with a clear message.
@@ -698,7 +872,7 @@ impl SiteProvider for ApiRuleProvider {
                 // any fields that the primary API didn't return (e.g., SE API returns
                 // metadata but not body without an app key).
                 if !self.config.fallback.is_empty() {
-                    let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
+                    let fb_fields = self.apply_fallbacks(url, client, cookies, prefetched_html).await;
                     for (k, v) in fb_fields {
                         f.entry(k).or_insert(v);
                     }
@@ -711,7 +885,7 @@ impl SiteProvider for ApiRuleProvider {
                     "ApiRuleProvider '{}': primary yielded no fields, trying fallbacks",
                     self.config.site.name
                 );
-                let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
+                let fb_fields = self.apply_fallbacks(url, client, cookies, prefetched_html).await;
                 if fb_fields.is_empty() {
                     bail!(
                         "no fields extracted from primary or fallbacks for rule '{}'",
@@ -733,7 +907,7 @@ impl SiteProvider for ApiRuleProvider {
                     "ApiRuleProvider '{}': primary not-found/failed, trying fallbacks",
                     self.config.site.name
                 );
-                let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
+                let fb_fields = self.apply_fallbacks(url, client, cookies, prefetched_html).await;
                 if fb_fields.is_empty() {
                     bail!(
                         "content not found via '{}' and no fallback succeeded for rule '{}'",
@@ -752,7 +926,10 @@ impl SiteProvider for ApiRuleProvider {
             }
         };
 
-        self.apply_additional_fetches(url, client, &mut fields)
+        self.apply_additional_fetches(url, client, cookies, &mut fields)
+            .await;
+
+        self.apply_concurrent_fetches(url, client, cookies, &mut fields)
             .await;
 
         let markdown = template::render(&self.config.template.format, &fields, url);
