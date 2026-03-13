@@ -693,7 +693,18 @@ impl SiteProvider for ApiRuleProvider {
         };
 
         let mut fields = match primary_fields {
-            Some(f) if !f.is_empty() => f,
+            Some(mut f) if !f.is_empty() => {
+                // Primary succeeded — if fallbacks are configured, use them to fill
+                // any fields that the primary API didn't return (e.g., SE API returns
+                // metadata but not body without an app key).
+                if !self.config.fallback.is_empty() {
+                    let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
+                    for (k, v) in fb_fields {
+                        f.entry(k).or_insert(v);
+                    }
+                }
+                f
+            }
             Some(_empty) if !self.config.fallback.is_empty() => {
                 // Extracted successfully but no paths matched — try fallbacks.
                 tracing::debug!(
