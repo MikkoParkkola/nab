@@ -92,8 +92,13 @@ impl ApiRuleProvider {
 
     /// Fetch the primary API URL as JSON and extract configured fields.
     ///
-    /// Returns `Ok(empty_map)` when the response body cannot be parsed as JSON
-    /// or no configured paths match — indicating fallbacks should be tried.
+    /// Returns `Ok(empty_map)` when:
+    /// - the response body cannot be parsed as JSON, or
+    /// - `request.success_path` is set and resolves to `null`/missing
+    ///   (application-level error envelope — e.g. `FxTwitter` `tweet: null`), or
+    /// - no configured paths match.
+    ///
+    /// All of these indicate that fallbacks should be tried.
     async fn try_primary_json(
         &self,
         client: &AcceleratedClient,
@@ -101,6 +106,17 @@ impl ApiRuleProvider {
     ) -> Result<HashMap<String, String>> {
         let body = self.fetch_body(client, api_url).await?;
         let json = parse_response_json(&body, api_url)?;
+        if let Some(path) = &self.config.request.success_path
+            && !json_path::is_non_null(&json, path)
+        {
+            tracing::debug!(
+                "ApiRuleProvider '{}': success_path '{}' resolved to null/missing — \
+                 treating as no fields (API returned error envelope)",
+                self.config.site.name,
+                path
+            );
+            return Ok(HashMap::new());
+        }
         Ok(self.extract_fields(&json))
     }
 
@@ -323,6 +339,8 @@ impl ApiRuleProvider {
             .send()
             .await
             .with_context(|| format!("fallback HTML fetch failed for '{url}'"))?
+            .error_for_status()
+            .with_context(|| format!("HTTP error for fallback HTML fetch '{url}'"))?
             .text()
             .await
             .with_context(|| format!("failed to read fallback HTML body from '{url}'"))
@@ -413,6 +431,8 @@ impl ApiRuleProvider {
             .send()
             .await
             .with_context(|| format!("request failed for '{api_url}'"))?
+            .error_for_status()
+            .with_context(|| format!("HTTP error for '{api_url}'"))?
             .text()
             .await
             .with_context(|| format!("failed to read response body from '{api_url}'"))
@@ -430,6 +450,8 @@ impl ApiRuleProvider {
             .send()
             .await
             .with_context(|| format!("request failed for '{api_url}'"))?
+            .error_for_status()
+            .with_context(|| format!("HTTP error for '{api_url}'"))?
             .text()
             .await
             .with_context(|| format!("failed to read response body from '{api_url}'"))
@@ -489,6 +511,12 @@ fn parse_response_json(body: &str, api_url: &str) -> Result<serde_json::Value> {
     serde_json::from_str(body).with_context(|| format!("failed to parse JSON from '{api_url}'"))
 }
 
+/// Thin wrapper around [`json_path::is_non_null`] for use in tests.
+#[cfg(test)]
+fn json_path_is_non_null(json: &serde_json::Value, path: &str) -> bool {
+    json_path::is_non_null(json, path)
+}
+
 /// Fetch a URL and extract JSON fields according to `json_config`.
 ///
 /// Used for additional fetches.  Returns an empty map (rather than an error)
@@ -508,6 +536,8 @@ async fn fetch_and_extract_json(
         .send()
         .await
         .with_context(|| format!("additional fetch request failed for '{url}'"))?
+        .error_for_status()
+        .with_context(|| format!("HTTP error for additional fetch '{url}'"))?
         .text()
         .await
         .with_context(|| format!("failed to read additional fetch body from '{url}'"))?;
@@ -970,6 +1000,94 @@ mod tests {
         assert!(meta.engagement.is_none());
     }
 
+    // ── success_path (request.success_path guard) ─────────────────────────────
+
+    #[test]
+    fn twitter_success_path_is_configured() {
+        // GIVEN: the twitter provider (loaded from embedded TOML)
+        let p = twitter_provider();
+        // THEN: success_path is set to ".tweet" to detect null-tweet envelopes
+        assert_eq!(
+            p.config.request.success_path.as_deref(),
+            Some(".tweet"),
+            "twitter rule must have success_path = \".tweet\" to handle FxTwitter \
+             404 envelopes ({{\"tweet\":null}})"
+        );
+    }
+
+    #[test]
+    fn twitter_extract_fields_returns_empty_for_null_tweet_envelope() {
+        // GIVEN: FxTwitter error response — HTTP 200 but tweet is null
+        let p = twitter_provider();
+        let json = serde_json::json!({"code": 404, "message": "NOT_FOUND", "tweet": null});
+        // WHEN: extracting fields directly (simulates what try_primary_json sees)
+        let fields = p.extract_fields(&json);
+        // THEN: empty — all paths start with .tweet which is null
+        assert!(
+            fields.is_empty(),
+            "extract_fields must return empty map for null tweet; got: {fields:?}"
+        );
+    }
+
+    #[test]
+    fn provider_with_success_path_skips_extraction_when_path_is_null() {
+        // GIVEN: a provider config with success_path = ".data"
+        let toml = r#"
+[site]
+name = "test_guard"
+patterns = ["example\\.com/.*"]
+
+[rewrite]
+from = ".*"
+to   = "https://api.example.com/data"
+
+[request]
+success_path = ".data"
+
+[json]
+title = ".data.title"
+
+[template]
+format = "{title}"
+"#;
+        let p = make_provider(toml);
+        // THEN: success_path is set correctly
+        assert_eq!(p.config.request.success_path.as_deref(), Some(".data"));
+        // AND: extracting from a null-data envelope yields an empty map
+        let json = serde_json::json!({"status": "error", "data": null});
+        let fields = p.extract_fields(&json);
+        assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn provider_without_success_path_extracts_despite_sibling_nulls() {
+        // GIVEN: a provider with NO success_path and a response where some fields are null
+        let toml = r#"
+[site]
+name = "test_no_guard"
+patterns = ["example\\.com/.*"]
+
+[rewrite]
+from = ".*"
+to   = "https://api.example.com/"
+
+[json]
+title  = ".title"
+author = ".author"
+
+[template]
+format = "{title} by {author}"
+"#;
+        let p = make_provider(toml);
+        assert!(p.config.request.success_path.is_none());
+        // WHEN: response has title but author is null
+        let json = serde_json::json!({"title": "Hello", "author": null});
+        let fields = p.extract_fields(&json);
+        // THEN: title is extracted, author is absent (null → None in extract)
+        assert_eq!(fields.get("title").map(String::as_str), Some("Hello"));
+        assert!(!fields.contains_key("author"));
+    }
+
     // ── parse_u64 ─────────────────────────────────────────────────────────────
 
     #[test]
@@ -1149,6 +1267,101 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn parse_response_json_fails_on_html_body() {
+        // GIVEN: HTML body — what Reddit returns when HTTP/2-without-ALPN is used
+        let body = "<!DOCTYPE html><html><body>Just a moment...</body></html>";
+        // WHEN: attempting to parse as JSON
+        let result = parse_response_json(body, "https://www.reddit.com/r/rust.json");
+        // THEN: error returned so the caller can surface it properly
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("failed to parse JSON"));
+    }
+
+    // ── reddit error-envelope and URL-rewrite edge cases ─────────────────────
+
+    #[test]
+    fn reddit_extract_fields_yields_empty_for_not_found_envelope() {
+        // GIVEN: Reddit's error JSON (valid JSON but no listing structure).
+        // Before error_for_status() was added, HTTP 404 responses were silently
+        // treated as "no fields" rather than a hard error, making the diagnostic
+        // message misleading ("check json paths" when the real issue is 404).
+        let p = reddit_provider();
+        let json = serde_json::json!({"message": "Not Found", "error": 404});
+        // WHEN: extracting Reddit fields from the error envelope
+        let fields = p.extract_fields(&json);
+        // THEN: no fields extracted (the [0].data.children paths don't exist here)
+        assert!(
+            fields.is_empty(),
+            "error envelope should yield no fields, got: {fields:?}"
+        );
+    }
+
+    #[test]
+    fn reddit_rewrite_with_trailing_slash_produces_json_url() {
+        // GIVEN: URL with trailing slash (common copy-paste from browser)
+        let p = reddit_provider();
+        let url = "https://www.reddit.com/r/rust/comments/1krtgr2/media_i_made_a_native_music_player_with_rust/";
+        // WHEN: rewriting
+        let rewritten = p.rewrite_url(url);
+        // THEN: trailing slash consumed by regex, .json appended to slug
+        assert_eq!(
+            rewritten,
+            "https://www.reddit.com/r/rust/comments/1krtgr2/media_i_made_a_native_music_player_with_rust.json"
+        );
+    }
+
+    #[test]
+    fn reddit_rewrite_without_title_slug_produces_json_url() {
+        // GIVEN: short URL with post ID but no title slug
+        let p = reddit_provider();
+        let url = "https://www.reddit.com/r/rust/comments/1krtgr2/";
+        // WHEN: rewriting
+        let rewritten = p.rewrite_url(url);
+        // THEN: .json appended to post ID
+        assert_eq!(
+            rewritten,
+            "https://www.reddit.com/r/rust/comments/1krtgr2.json"
+        );
+    }
+
+    // ── json_path_is_non_null ─────────────────────────────────────────────────
+
+    #[test]
+    fn json_path_is_non_null_returns_true_for_existing_string() {
+        // GIVEN: FxTwitter-style success response with a non-null tweet object
+        let json = json!({"tweet": {"text": "hello", "likes": 42}});
+        // WHEN/THEN: paths to real values return true
+        assert!(json_path_is_non_null(&json, ".tweet.text"));
+        assert!(json_path_is_non_null(&json, ".tweet.likes"));
+    }
+
+    #[test]
+    fn json_path_is_non_null_returns_false_for_null_value() {
+        // GIVEN: FxTwitter-style error where tweet is null (tweet not found)
+        let json = json!({"tweet": null, "code": 144});
+        // WHEN/THEN: path to null returns false
+        assert!(!json_path_is_non_null(&json, ".tweet"));
+    }
+
+    #[test]
+    fn json_path_is_non_null_returns_false_for_missing_path() {
+        // GIVEN: JSON without the expected success field (Reddit 404 envelope)
+        let json = json!({"message": "Not Found", "error": 404});
+        // WHEN/THEN: paths that don't exist return false
+        assert!(!json_path_is_non_null(&json, ".tweet"));
+        assert!(!json_path_is_non_null(&json, "[0].data.children[0].data.title"));
+    }
+
+    #[test]
+    fn json_path_is_non_null_returns_true_for_number_zero() {
+        // GIVEN: JSON with a zero value — falsy in some langs, but not null in Rust
+        let json = json!({"count": 0});
+        // WHEN/THEN: zero is non-null
+        assert!(json_path_is_non_null(&json, ".count"));
+    }
+
     // ── stackoverflow provider (multi-fetch config) ───────────────────────────
 
     fn stackoverflow_provider() -> ApiRuleProvider {
@@ -1180,7 +1393,7 @@ mod tests {
         assert!(rewritten.contains("api.stackexchange.com"));
         assert!(rewritten.contains("26946646"));
         assert!(rewritten.contains("site=stackoverflow"));
-        assert!(rewritten.contains("filter=withbody"));
+        assert!(rewritten.contains("filter=*2(ZhUvnXWhH"));
     }
 
     #[test]

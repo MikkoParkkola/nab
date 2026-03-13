@@ -8,6 +8,11 @@ to = "https://api.fxtwitter.com/$1/status/$2"
 
 [request]
 accept = "application/json"
+# FxTwitter returns {"code":404,"tweet":null} with HTTP 200 for deleted/private
+# tweets.  Guard extraction on the tweet object being present and non-null so
+# the provider fails fast (rather than emitting a confusing "check json paths"
+# warning) and lets nab fall back to the normal HTTP fetch path.
+success_path = ".tweet"
 
 [json]
 author_name = ".tweet.author.name"

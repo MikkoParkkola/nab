@@ -68,7 +68,7 @@ impl SiteProvider for StackOverflowProvider {
 
         // Fetch question with body and answers
         let api_url = format!(
-            "https://api.stackexchange.com/2.3/questions/{question_id}?site=stackoverflow&filter=withbody&order=desc&sort=votes"
+            "https://api.stackexchange.com/2.3/questions/{question_id}?site=stackoverflow&filter=*2(ZhUvnXWhH&order=desc&sort=votes"
         );
         tracing::debug!("Fetching from Stack Exchange: {}", api_url);
 
@@ -147,7 +147,7 @@ fn parse_stackoverflow_url(url: &str) -> Result<String> {
 /// Fetch top answers for a question.
 async fn fetch_answers(client: &AcceleratedClient, question_id: &str) -> Result<Vec<SEAnswer>> {
     let api_url = format!(
-        "https://api.stackexchange.com/2.3/questions/{question_id}/answers?site=stackoverflow&filter=withbody&order=desc&sort=votes&pagesize=3"
+        "https://api.stackexchange.com/2.3/questions/{question_id}/answers?site=stackoverflow&filter=*2(ZhUvnXWhH&order=desc&sort=votes&pagesize=3"
     );
 
     let response = client

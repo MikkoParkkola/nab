@@ -65,7 +65,7 @@ pub struct SiteRuleConfig {
 /// [[fetch_additional]]
 /// prefix     = "ans"
 /// rewrite_from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
-/// rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=withbody&sort=votes"
+/// rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=*2(ZhUvnXWhH&sort=votes"
 /// accept     = "application/json"
 ///
 /// [fetch_additional.json]
@@ -327,6 +327,23 @@ pub struct RequestConfig {
     /// auth = "env:GITHUB_TOKEN"
     /// ```
     pub auth: Option<String>,
+    /// Optional JSON dot-path that must resolve to a non-null value for the
+    /// primary extraction to proceed.
+    ///
+    /// When set and the path resolves to `null` or is absent in the response,
+    /// the provider treats the primary fetch as yielding no fields (triggering
+    /// fallbacks if configured, or a clean bail).  Use this to detect
+    /// application-level error envelopes where the API returns HTTP 200 but
+    /// signals failure via a null payload field — e.g. `FxTwitter` returns
+    /// `{"code":404,"tweet":null}` for deleted tweets.
+    ///
+    /// # TOML example
+    ///
+    /// ```toml
+    /// [request]
+    /// success_path = ".tweet"   # extraction aborts if tweet is null/missing
+    /// ```
+    pub success_path: Option<String>,
 }
 
 /// `[json]` — mapping of logical field names to JSON dot-path selectors.

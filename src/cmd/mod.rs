@@ -20,7 +20,7 @@ pub use annotate::cmd_annotate;
 pub use auth::cmd_auth;
 pub use bench::cmd_bench;
 pub use cookies::cmd_cookies;
-pub use export_rules::cmd_export_rules;
+pub use export_rules::{cmd_export_rules, cmd_list_rules};
 pub use fetch::cmd_fetch;
 pub use fingerprint::cmd_fingerprint;
 pub use login::cmd_login;

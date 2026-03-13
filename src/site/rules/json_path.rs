@@ -65,6 +65,31 @@ pub fn extract(value: &Value, path: &str) -> Option<String> {
     value_to_string(node)
 }
 
+/// Return `true` when `path` resolves to a value that is present and not
+/// `null`.
+///
+/// Unlike [`extract`], this accepts any non-null JSON value including objects
+/// and arrays — it only asks "does a non-null node exist here?".  Use this to
+/// implement `request.success_path` guards: APIs that return HTTP 200 but
+/// encode failure as `null` (e.g. `{"tweet": null}`) are detected before field
+/// extraction wastes time.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+/// use nab::site::rules::json_path::is_non_null;
+///
+/// let v = json!({"tweet": {"text": "hello"}, "empty": null});
+/// assert!(is_non_null(&v, ".tweet"));       // object — present & non-null
+/// assert!(!is_non_null(&v, ".empty"));      // null — present but null
+/// assert!(!is_non_null(&v, ".missing"));    // absent
+/// ```
+#[must_use]
+pub fn is_non_null(value: &Value, path: &str) -> bool {
+    walk_path(value, path).is_some_and(|v| !v.is_null())
+}
+
 /// Extract all string values matched by an array path.
 ///
 /// Supports two forms:
@@ -519,5 +544,61 @@ mod tests {
     fn extract_indexed_on_non_array_returns_none() {
         let v = json!({"items": "not an array"});
         assert_eq!(extract(&v, ".items[0].title"), None);
+    }
+
+    // ── is_non_null ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_non_null_returns_true_for_object_value() {
+        // GIVEN: a JSON object with a nested object
+        let v = json!({"tweet": {"text": "hello"}});
+        // WHEN: checking the object path
+        // THEN: true — present and non-null, even though it is an object (not scalar)
+        assert!(is_non_null(&v, ".tweet"));
+    }
+
+    #[test]
+    fn is_non_null_returns_true_for_string_value() {
+        let v = json!({"title": "hello"});
+        assert!(is_non_null(&v, ".title"));
+    }
+
+    #[test]
+    fn is_non_null_returns_true_for_number_value() {
+        let v = json!({"count": 42});
+        assert!(is_non_null(&v, ".count"));
+    }
+
+    #[test]
+    fn is_non_null_returns_true_for_array_value() {
+        let v = json!({"items": [1, 2, 3]});
+        assert!(is_non_null(&v, ".items"));
+    }
+
+    #[test]
+    fn is_non_null_returns_false_for_explicit_null() {
+        // GIVEN: FxTwitter-style error envelope where tweet is null
+        let v = json!({"code": 404, "tweet": null});
+        // WHEN: checking the tweet path
+        // THEN: false — present but null
+        assert!(!is_non_null(&v, ".tweet"));
+    }
+
+    #[test]
+    fn is_non_null_returns_false_for_missing_field() {
+        let v = json!({"other": "value"});
+        assert!(!is_non_null(&v, ".tweet"));
+    }
+
+    #[test]
+    fn is_non_null_returns_false_for_missing_nested_field() {
+        let v = json!({"tweet": {"text": "hi"}});
+        assert!(!is_non_null(&v, ".tweet.author"));
+    }
+
+    #[test]
+    fn is_non_null_returns_true_for_nested_object() {
+        let v = json!({"tweet": {"author": {"name": "jack"}}});
+        assert!(is_non_null(&v, ".tweet.author"));
     }
 }

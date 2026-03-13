@@ -439,6 +439,13 @@ enum RulesAction {
     ///
     /// Existing files are skipped so user customisations are preserved.
     Export,
+
+    /// List all active site rules and their sources
+    ///
+    /// Shows embedded rules, user overrides, and user-only rules in a table.
+    /// Embedded rules appear first (in definition order); user-only rules
+    /// follow alphabetically.
+    List,
 }
 
 #[tokio::main]
@@ -678,6 +685,9 @@ async fn main() -> Result<()> {
         Commands::Rules { action } => match action {
             RulesAction::Export => {
                 cmd::cmd_export_rules()?;
+            }
+            RulesAction::List => {
+                cmd::cmd_list_rules()?;
             }
         },
     }
