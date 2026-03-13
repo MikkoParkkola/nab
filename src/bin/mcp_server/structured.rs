@@ -30,12 +30,17 @@ pub(crate) fn build_structured<const N: usize>(
 }
 
 /// Build the `structuredContent` map for the `fetch` tool response.
+///
+/// `has_diff` is `true` when `diff: true` was requested and content has changed
+/// since the last snapshot; `false` on first fetch, unchanged content, or when
+/// diff mode was not requested.
 pub(crate) fn build_fetch_structured(
     url: &str,
     status: u16,
     content_type: &str,
     markdown: &str,
     timing_ms: f64,
+    has_diff: bool,
 ) -> serde_json::Map<String, serde_json::Value> {
     build_structured([
         ("url", serde_json::Value::String(url.to_string())),
@@ -54,6 +59,7 @@ pub(crate) fn build_fetch_structured(
                 serde_json::Number::from_f64(timing_ms).unwrap_or(serde_json::Number::from(0)),
             ),
         ),
+        ("has_diff", serde_json::Value::Bool(has_diff)),
     ])
 }
 

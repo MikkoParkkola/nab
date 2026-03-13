@@ -117,6 +117,7 @@ fn fetch_structured_has_all_required_fields() {
         "text/html",
         "# Hello\n\nworld",
         42.5,
+        false,
     );
     // WHEN inspected
     // THEN all outputSchema fields are present
@@ -125,6 +126,7 @@ fn fetch_structured_has_all_required_fields() {
     assert!(map.contains_key("content_type"));
     assert!(map.contains_key("content"));
     assert!(map.contains_key("timing_ms"));
+    assert!(map.contains_key("has_diff"));
     assert_eq!(map["status"], serde_json::Value::Number(200.into()));
 }
 
@@ -132,7 +134,7 @@ fn fetch_structured_has_all_required_fields() {
 fn fetch_structured_truncates_long_content() {
     // GIVEN content longer than 4000 chars
     let long_content = "x".repeat(5000);
-    let map = build_fetch_structured("https://example.com", 200, "text/plain", &long_content, 10.0);
+    let map = build_fetch_structured("https://example.com", 200, "text/plain", &long_content, 10.0, false);
     // WHEN inspected
     // THEN content is truncated
     let content = map["content"].as_str().unwrap();
@@ -161,4 +163,54 @@ fn server_icons_have_svg_mime_type() {
         assert_eq!(icon.sizes, vec!["any"]);
         assert!(icon.src.starts_with("data:image/svg+xml;base64,"));
     }
+}
+
+// ── apply_diff ────────────────────────────────────────────────────────────────
+
+use crate::tools::apply_diff_with_store;
+use nab::content::snapshot_store::SnapshotStore;
+use tempfile::TempDir;
+
+fn tmp_store() -> (TempDir, SnapshotStore) {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let store = SnapshotStore::with_root(dir.path());
+    (dir, store)
+}
+
+#[test]
+fn apply_diff_first_fetch_returns_first_fetch_prefix() {
+    // GIVEN: no prior snapshot exists for the URL
+    let (_dir, store) = tmp_store();
+    // WHEN: apply_diff called on a fresh URL
+    let (output, has_diff) = apply_diff_with_store(&store, "https://example.com/first", "Hello world.");
+    // THEN: output signals first fetch and has_diff is false
+    assert!(output.starts_with("First fetch"), "got: {output}");
+    assert!(!has_diff);
+}
+
+#[test]
+fn apply_diff_unchanged_content_returns_no_changes() {
+    // GIVEN: a prior snapshot already stored with identical content
+    let (_dir, store) = tmp_store();
+    let url = "https://example.com/unchanged";
+    let content = "Same content forever.";
+    let (_, _) = apply_diff_with_store(&store, url, content); // prime
+    // WHEN: fetched again with identical content
+    let (output, has_diff) = apply_diff_with_store(&store, url, content);
+    // THEN: no-change confirmation returned, has_diff false
+    assert!(output.starts_with("No changes"), "got: {output}");
+    assert!(!has_diff);
+}
+
+#[test]
+fn apply_diff_changed_content_returns_diff_with_has_diff_true() {
+    // GIVEN: a prior snapshot with different content
+    let (_dir, store) = tmp_store();
+    let url = "https://example.com/changed";
+    apply_diff_with_store(&store, url, "Old paragraph.\n\nShared footer.");
+    // WHEN: fetched with new content
+    let (output, has_diff) = apply_diff_with_store(&store, url, "New paragraph.\n\nShared footer.");
+    // THEN: diff output returned and has_diff is true
+    assert!(output.starts_with("Changed since last fetch"), "got: {output}");
+    assert!(has_diff);
 }

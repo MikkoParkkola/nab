@@ -77,12 +77,17 @@ fn fetch_output_schema() -> ToolOutputSchema {
         "timing_ms".into(),
         number_prop("Round-trip time in milliseconds"),
     );
+    props.insert(
+        "has_diff".into(),
+        bool_prop("True when diff mode was requested and content changed since last snapshot"),
+    );
     ToolOutputSchema::new(
         vec![
             "url".into(),
             "status".into(),
             "content".into(),
             "timing_ms".into(),
+            "has_diff".into(),
         ],
         Some(props),
         None,

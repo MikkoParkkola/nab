@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
 use nab::content::ContentRouter;
+use nab::content::diff::{ContentSnapshot, compute_diff};
+use nab::content::diff_format::format_diff_markdown;
+use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, CredentialRetriever, OnePasswordAuth, SafeFetchConfig, chrome_profile, firefox_profile, random_profile, safari_profile};
 
 use crate::elicitation::{
@@ -53,7 +56,13 @@ Network features:
 - Realistic browser fingerprints (Chrome/Firefox/Safari)
 - Browser cookie injection (Brave/Chrome/Firefox/Safari)
 
-Returns: Markdown-converted body with timing info.",
+Diff mode (diff: true):
+- Compares current content against the previous snapshot for this URL
+- Returns only the changed sections (token-efficient for monitoring tasks)
+- First fetch caches the page; subsequent fetches return semantic diffs
+- Unchanged content returns a 5-token confirmation instead of full body
+
+Returns: Markdown-converted body with timing info (or diff when diff: true).",
     read_only_hint = true,
     open_world_hint = true
 )]
@@ -66,6 +75,13 @@ pub struct FetchTool {
     body: bool,
     #[serde(default)]
     cookies: Option<String>,
+    /// When true, return only changed content vs the previous snapshot.
+    ///
+    /// On first fetch the page is cached and full content is returned.
+    /// On subsequent fetches only the semantic diff is returned, saving
+    /// tokens for monitoring or change-detection workflows.
+    #[serde(default)]
+    diff: bool,
 }
 
 impl FetchTool {
@@ -91,8 +107,24 @@ impl FetchTool {
             Some(cookie_header.as_str())
         };
         if let Some(site_content) = site_router.try_extract(&self.url, client, cookie_opt).await {
+            let body = &site_content.markdown;
+            if self.diff {
+                let (diff_output, has_diff) = apply_diff(&self.url, body);
+                output.push_str(&diff_output);
+                let structured = build_fetch_structured(
+                    &self.url,
+                    200,
+                    "text/html",
+                    body,
+                    start.elapsed().as_secs_f64() * 1000.0,
+                    has_diff,
+                );
+                let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+                result.structured_content = Some(structured);
+                return Ok(result);
+            }
             output.push_str("\n📄 Content (from specialized provider):\n\n");
-            output.push_str(&site_content.markdown);
+            output.push_str(body);
             return Ok(CallToolResult::text_content(vec![TextContent::from(
                 output,
             )]));
@@ -126,23 +158,79 @@ impl FetchTool {
             );
         }
 
-        if self.body {
-            let truncated = truncate_markdown(&conversion.markdown, 4000);
-            let _ = write!(output, "\n{truncated}");
-        }
+        let markdown = &conversion.markdown;
+
+        let has_diff = if self.diff {
+            let (diff_output, had_diff) = apply_diff(&self.url, markdown);
+            output.push('\n');
+            output.push_str(&diff_output);
+            had_diff
+        } else {
+            if self.body {
+                let truncated = truncate_markdown(markdown, 4000);
+                let _ = write!(output, "\n{truncated}");
+            }
+            false
+        };
 
         let structured = build_fetch_structured(
             &self.url,
             status.as_u16(),
             &content_type,
-            &conversion.markdown,
+            markdown,
             elapsed.as_secs_f64() * 1000.0,
+            has_diff,
         );
 
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
         result.structured_content = Some(structured);
         Ok(result)
     }
+}
+
+// ─── diff helper ──────────────────────────────────────────────────────────────
+
+/// Load previous snapshot, compute diff, save new snapshot.
+///
+/// Returns `(formatted_output, has_diff)` where `has_diff` is `true` when
+/// content changed since the last snapshot.  Always saves a fresh snapshot
+/// regardless of whether content changed.
+fn apply_diff(url: &str, markdown: &str) -> (String, bool) {
+    apply_diff_with_store(&SnapshotStore::new(), url, markdown)
+}
+
+/// Testable variant: same logic as [`apply_diff`] but uses an explicit store.
+pub(crate) fn apply_diff_with_store(
+    store: &SnapshotStore,
+    url: &str,
+    markdown: &str,
+) -> (String, bool) {
+    let new_snap = ContentSnapshot::new(url, markdown, std::time::SystemTime::now());
+
+    let output = match store.load_latest_snapshot(url) {
+        Some(old_snap) if old_snap.content_unchanged(&new_snap) => {
+            let _ = store.save_snapshot(url, &new_snap);
+            "No changes since last fetch".to_owned()
+        }
+        Some(old_snap) => {
+            let _ = store.save_snapshot(url, &new_snap);
+            let diff = compute_diff(&old_snap, &new_snap);
+            format!(
+                "Changed since last fetch:\n\n{}",
+                format_diff_markdown(&diff)
+            )
+        }
+        None => {
+            let _ = store.save_snapshot(url, &new_snap);
+            format!(
+                "First fetch (cached for future diff):\n\n{}",
+                truncate_markdown(markdown, 4000)
+            )
+        }
+    };
+
+    let has_diff = !output.starts_with("No changes") && !output.starts_with("First fetch");
+    (output, has_diff)
 }
 
 // ─── fetch_batch ──────────────────────────────────────────────────────────────
