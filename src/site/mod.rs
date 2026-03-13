@@ -86,11 +86,18 @@ pub trait SiteProvider: Send + Sync {
     ///
     /// `cookies` carries the browser cookie header (e.g., `"SID=abc; HSID=def"`) for
     /// providers that require authentication. Most providers ignore this parameter.
+    ///
+    /// `prefetched_html` is an optional pre-fetched raw HTML body for the URL.
+    /// When present, providers that need the HTML body can use it directly to
+    /// avoid a redundant HTTP round-trip (e.g. CSS extractor providers in P4).
+    /// All current providers ignore this parameter — it exists for forward
+    /// compatibility with Phase 4 (CSS extractors).
     async fn extract(
         &self,
         url: &str,
         client: &AcceleratedClient,
         cookies: Option<&str>,
+        prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent>;
 }
 
@@ -128,6 +135,9 @@ impl SiteRouter {
     /// `cookies` is an optional browser cookie header (e.g., `"SID=abc; HSID=def"`) forwarded
     /// to providers that require authentication (e.g., Google Workspace).
     ///
+    /// `prefetched_html` is an optional pre-fetched raw HTML body for the URL, passed through
+    /// to providers that can use it to avoid a redundant HTTP round-trip.
+    ///
     /// Returns `None` if:
     /// - No provider matches the URL
     /// - Provider extraction fails (logged as warning)
@@ -137,10 +147,24 @@ impl SiteRouter {
         client: &AcceleratedClient,
         cookies: Option<&str>,
     ) -> Option<SiteContent> {
+        self.try_extract_with_html(url, client, cookies, None).await
+    }
+
+    /// Like [`try_extract`] but accepts pre-fetched HTML bytes for providers that can use them.
+    pub async fn try_extract_with_html(
+        &self,
+        url: &str,
+        client: &AcceleratedClient,
+        cookies: Option<&str>,
+        prefetched_html: Option<&[u8]>,
+    ) -> Option<SiteContent> {
         for provider in &self.providers {
             if provider.matches(url) {
                 tracing::debug!("Matched site provider: {}", provider.name());
-                match provider.extract(url, client, cookies).await {
+                match provider
+                    .extract(url, client, cookies, prefetched_html)
+                    .await
+                {
                     Ok(content) => return Some(content),
                     Err(e) => {
                         tracing::warn!(

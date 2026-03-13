@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
 
-use nab::{AcceleratedClient, CookieSource, SafeFetchConfig};
 use nab::content::ContentRouter;
+use nab::{AcceleratedClient, CookieSource, SafeFetchConfig};
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 

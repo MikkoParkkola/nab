@@ -8,23 +8,23 @@
 //! - Cookie resolution logic that stitches the above together
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::fmt::Write as FmtWrite;
+use std::sync::Arc;
 
 use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::schema::{
     CallToolResult, ElicitFormSchema, ElicitRequestFormParams, ElicitRequestParams,
-    ElicitRequestUrlParams, ElicitResultAction, ElicitResultContent,
-    ElicitResultContentPrimitive, LegacyTitledEnumSchema, PrimitiveSchemaDefinition,
-    StringSchema, TextContent, TitledMultiSelectEnumSchema, TitledMultiSelectEnumSchemaItems,
+    ElicitRequestUrlParams, ElicitResultAction, ElicitResultContent, ElicitResultContentPrimitive,
+    LegacyTitledEnumSchema, PrimitiveSchemaDefinition, StringSchema, TextContent,
+    TitledMultiSelectEnumSchema, TitledMultiSelectEnumSchemaItems,
     TitledMultiSelectEnumSchemaItemsAnyOfItem, schema_utils::CallToolError,
 };
 
 use nab::CookieSource;
 use nab::content::ContentRouter;
 
-use crate::tools::get_client;
 use crate::structured::truncate_markdown;
+use crate::tools::get_client;
 
 // ─── Elicitation helpers ──────────────────────────────────────────────────────
 
@@ -57,15 +57,18 @@ pub(crate) async fn elicit_credentials(
         )),
     );
 
-    let schema = ElicitFormSchema::new(properties, vec!["username".into(), "password".into()], None);
+    let schema =
+        ElicitFormSchema::new(properties, vec!["username".into(), "password".into()], None);
 
     let result = runtime
-        .request_elicitation(ElicitRequestParams::FormParams(ElicitRequestFormParams::new(
-            format!("No stored credentials found for {url}. Please enter your login details:"),
-            schema,
-            None,
-            None,
-        )))
+        .request_elicitation(ElicitRequestParams::FormParams(
+            ElicitRequestFormParams::new(
+                format!("No stored credentials found for {url}. Please enter your login details:"),
+                schema,
+                None,
+                None,
+            ),
+        ))
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
@@ -117,12 +120,14 @@ pub(crate) async fn elicit_credential_choice(
     let schema = ElicitFormSchema::new(properties, vec!["credential".into()], None);
 
     let result = runtime
-        .request_elicitation(ElicitRequestParams::FormParams(ElicitRequestFormParams::new(
-            format!("Multiple credentials found for {url}. Which one would you like to use?"),
-            schema,
-            None,
-            None,
-        )))
+        .request_elicitation(ElicitRequestParams::FormParams(
+            ElicitRequestFormParams::new(
+                format!("Multiple credentials found for {url}. Which one would you like to use?"),
+                schema,
+                None,
+                None,
+            ),
+        ))
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
@@ -294,25 +299,27 @@ pub(crate) async fn elicit_oauth_url(
     service_name: &str,
 ) -> Result<ElicitResultAction, CallToolError> {
     // elicitation_id must be unique per request; use a short random suffix.
-    let elicitation_id = format!("oauth-{}-{}", service_name, std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_millis())
-        .unwrap_or(0));
+    let elicitation_id = format!(
+        "oauth-{}-{}",
+        service_name,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_millis())
+            .unwrap_or(0)
+    );
 
     let result = runtime
-        .request_elicitation(ElicitRequestParams::UrlParams(
-            ElicitRequestUrlParams::new(
-                elicitation_id,
-                format!(
-                    "OAuth login required for {service_name}. \
+        .request_elicitation(ElicitRequestParams::UrlParams(ElicitRequestUrlParams::new(
+            elicitation_id,
+            format!(
+                "OAuth login required for {service_name}. \
                      Please complete the sign-in in your browser. \
                      The page will reload once authentication is complete."
-                ),
-                oauth_url.to_string(),
-                None,
-                None,
             ),
-        ))
+            oauth_url.to_string(),
+            None,
+            None,
+        )))
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
@@ -364,7 +371,11 @@ pub(crate) async fn resolve_login_cookies(
         .collect::<Vec<_>>()
         .join("; ");
 
-    Ok(if combined.is_empty() { None } else { Some(combined) })
+    Ok(if combined.is_empty() {
+        None
+    } else {
+        Some(combined)
+    })
 }
 
 // ─── Multi-select cookie source elicitation ───────────────────────────────────
@@ -388,10 +399,12 @@ pub(crate) async fn elicit_cookie_sources(
     let items = TitledMultiSelectEnumSchemaItems {
         any_of: options
             .iter()
-            .map(|&(value, label)| TitledMultiSelectEnumSchemaItemsAnyOfItem {
-                const_: value.to_string(),
-                title: label.to_string(),
-            })
+            .map(
+                |&(value, label)| TitledMultiSelectEnumSchemaItemsAnyOfItem {
+                    const_: value.to_string(),
+                    title: label.to_string(),
+                },
+            )
             .collect(),
     };
 
@@ -413,15 +426,17 @@ pub(crate) async fn elicit_cookie_sources(
     let schema = ElicitFormSchema::new(properties, vec!["sources".into()], None);
 
     let result = runtime
-        .request_elicitation(ElicitRequestParams::FormParams(ElicitRequestFormParams::new(
-            format!(
-                "Which browser cookie stores should be used for login to {url}? \
+        .request_elicitation(ElicitRequestParams::FormParams(
+            ElicitRequestFormParams::new(
+                format!(
+                    "Which browser cookie stores should be used for login to {url}? \
                  Select all that apply."
+                ),
+                schema,
+                None,
+                None,
             ),
-            schema,
-            None,
-            None,
-        )))
+        ))
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
 

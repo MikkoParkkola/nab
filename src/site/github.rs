@@ -86,6 +86,7 @@ impl SiteProvider for GitHubProvider {
         url: &str,
         client: &AcceleratedClient,
         _cookies: Option<&str>,
+        _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         let normalized = url.to_lowercase();
         let stripped = normalized.split('?').next().unwrap_or(&normalized);

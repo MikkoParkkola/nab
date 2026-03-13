@@ -127,6 +127,7 @@ impl SiteProvider for LinkedInProvider {
         url: &str,
         client: &AcceleratedClient,
         cookies: Option<&str>,
+        _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         let kind = classify_linkedin_url(url).context("URL does not match any LinkedIn pattern")?;
 

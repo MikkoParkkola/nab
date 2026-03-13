@@ -15,14 +15,15 @@
 pub mod elicitation;
 pub mod helpers;
 pub mod structured;
-pub mod tools;
 #[cfg(test)]
 mod tests;
+pub mod tools;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
 use rust_mcp_sdk::mcp_server::{McpServerOptions, ServerHandler, server_runtime};
 use rust_mcp_sdk::schema::{
     CallToolRequestParams, CallToolResult, CreateTaskResult, Implementation, InitializeResult,
@@ -30,16 +31,18 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, ToolExecution,
     ToolExecutionTaskSupport, ToolOutputSchema, schema_utils::CallToolError,
 };
-use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
-use rust_mcp_sdk::schema::{TaskStatus, schema_utils::{ClientJsonrpcRequest, ResultFromServer}};
+use rust_mcp_sdk::schema::{
+    TaskStatus,
+    schema_utils::{ClientJsonrpcRequest, ResultFromServer},
+};
 use rust_mcp_sdk::task_store::{CreateTaskOptions, InMemoryTaskStore, ServerTaskCreator};
 use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 
+use structured::server_icons;
 use tools::{
     AuthLookupTool, BenchmarkTool, FetchBatchTool, FetchTool, FingerprintTool, LoginTool,
     SubmitTool, ValidateTool, get_client,
 };
-use structured::server_icons;
 
 // Generate the tools enum
 tool_box!(
@@ -399,9 +402,7 @@ impl ServerHandler for MicroFetchHandler {
                     let msg = e.to_string();
                     (
                         TaskStatus::Failed,
-                        ResultFromServer::CallToolResult(
-                            CallToolError::from_message(msg).into(),
-                        ),
+                        ResultFromServer::CallToolResult(CallToolError::from_message(msg).into()),
                     )
                 }
             };
@@ -428,9 +429,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wire the InMemoryTaskStore so that task-augmented fetch_batch calls work.
     // The runtime subscribes to the store's broadcast channel and sends
     // notifications/task/status to the client whenever a task changes state.
-    let task_store: Arc<rust_mcp_sdk::task_store::ServerTaskStore> = Arc::new(
-        InMemoryTaskStore::<ClientJsonrpcRequest, ResultFromServer>::new(None),
-    );
+    let task_store: Arc<rust_mcp_sdk::task_store::ServerTaskStore> =
+        Arc::new(InMemoryTaskStore::<ClientJsonrpcRequest, ResultFromServer>::new(None));
 
     let server_details = InitializeResult {
         server_info: Implementation {

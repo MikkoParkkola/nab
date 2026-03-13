@@ -56,6 +56,7 @@ impl SiteProvider for TwitterProvider {
         url: &str,
         client: &AcceleratedClient,
         _cookies: Option<&str>,
+        _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         // Extract user and status ID from URL
         let (user, id) = parse_twitter_url(url)?;

@@ -23,7 +23,9 @@ fn oauth_redirect_detects_google() {
 
 #[test]
 fn oauth_redirect_detects_github() {
-    assert!(is_oauth_redirect("https://github.com/login/oauth/authorize?client_id=abc"));
+    assert!(is_oauth_redirect(
+        "https://github.com/login/oauth/authorize?client_id=abc"
+    ));
 }
 
 #[test]
@@ -44,7 +46,9 @@ fn oauth_redirect_rejects_normal_site() {
 
 #[test]
 fn oauth_redirect_case_insensitive() {
-    assert!(is_oauth_redirect("https://ACCOUNTS.GOOGLE.COM/o/oauth2/auth"));
+    assert!(is_oauth_redirect(
+        "https://ACCOUNTS.GOOGLE.COM/o/oauth2/auth"
+    ));
 }
 
 // ── extract_multiselect_field ────────────────────────────────────────────────
@@ -98,11 +102,17 @@ fn build_structured_produces_correct_keys() {
     // GIVEN a set of key-value pairs
     // WHEN built into a structured map
     let map = build_structured([
-        ("url", serde_json::Value::String("https://example.com".into())),
+        (
+            "url",
+            serde_json::Value::String("https://example.com".into()),
+        ),
         ("status", serde_json::Value::Number(200.into())),
     ]);
     // THEN all keys are present with correct values
-    assert_eq!(map["url"], serde_json::Value::String("https://example.com".into()));
+    assert_eq!(
+        map["url"],
+        serde_json::Value::String("https://example.com".into())
+    );
     assert_eq!(map["status"], serde_json::Value::Number(200.into()));
 }
 
@@ -134,7 +144,14 @@ fn fetch_structured_has_all_required_fields() {
 fn fetch_structured_truncates_long_content() {
     // GIVEN content longer than 4000 chars
     let long_content = "x".repeat(5000);
-    let map = build_fetch_structured("https://example.com", 200, "text/plain", &long_content, 10.0, false);
+    let map = build_fetch_structured(
+        "https://example.com",
+        200,
+        "text/plain",
+        &long_content,
+        10.0,
+        false,
+    );
     // WHEN inspected
     // THEN content is truncated
     let content = map["content"].as_str().unwrap();
@@ -182,7 +199,8 @@ fn apply_diff_first_fetch_returns_first_fetch_prefix() {
     // GIVEN: no prior snapshot exists for the URL
     let (_dir, store) = tmp_store();
     // WHEN: apply_diff called on a fresh URL
-    let (output, has_diff) = apply_diff_with_store(&store, "https://example.com/first", "Hello world.");
+    let (output, has_diff) =
+        apply_diff_with_store(&store, "https://example.com/first", "Hello world.");
     // THEN: output signals first fetch and has_diff is false
     assert!(output.starts_with("First fetch"), "got: {output}");
     assert!(!has_diff);
@@ -211,6 +229,9 @@ fn apply_diff_changed_content_returns_diff_with_has_diff_true() {
     // WHEN: fetched with new content
     let (output, has_diff) = apply_diff_with_store(&store, url, "New paragraph.\n\nShared footer.");
     // THEN: diff output returned and has_diff is true
-    assert!(output.starts_with("Changed since last fetch"), "got: {output}");
+    assert!(
+        output.starts_with("Changed since last fetch"),
+        "got: {output}"
+    );
     assert!(has_diff);
 }

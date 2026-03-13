@@ -129,6 +129,7 @@ impl SiteProvider for GoogleWorkspaceProvider {
         url: &str,
         _client: &AcceleratedClient,
         cookies: Option<&str>,
+        _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         let cookie_header = match cookies {
             Some(c) if !c.is_empty() => c,

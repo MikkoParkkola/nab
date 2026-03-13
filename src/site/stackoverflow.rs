@@ -61,6 +61,7 @@ impl SiteProvider for StackOverflowProvider {
         url: &str,
         client: &AcceleratedClient,
         _cookies: Option<&str>,
+        _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         let question_id = parse_stackoverflow_url(url)?;
 

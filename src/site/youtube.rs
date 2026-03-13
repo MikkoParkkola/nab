@@ -52,6 +52,7 @@ impl SiteProvider for YouTubeProvider {
         url: &str,
         client: &AcceleratedClient,
         _cookies: Option<&str>,
+        _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         // Use oEmbed endpoint
         let oembed_url = format!(

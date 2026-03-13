@@ -54,6 +54,7 @@ impl SiteProvider for RedditProvider {
         url: &str,
         _client: &AcceleratedClient,
         _cookies: Option<&str>,
+        _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         // Normalize URL and append .json
         let json_url = parse_reddit_url(url);

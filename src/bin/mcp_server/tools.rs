@@ -8,7 +8,9 @@ use std::time::Instant;
 
 use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
-use rust_mcp_sdk::schema::{CallToolResult, ElicitResultAction, TextContent, schema_utils::CallToolError};
+use rust_mcp_sdk::schema::{
+    CallToolResult, ElicitResultAction, TextContent, schema_utils::CallToolError,
+};
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::OnceCell;
@@ -17,7 +19,10 @@ use nab::content::ContentRouter;
 use nab::content::diff::{ContentSnapshot, compute_diff};
 use nab::content::diff_format::format_diff_markdown;
 use nab::content::snapshot_store::SnapshotStore;
-use nab::{AcceleratedClient, CredentialRetriever, OnePasswordAuth, SafeFetchConfig, chrome_profile, firefox_profile, random_profile, safari_profile};
+use nab::{
+    AcceleratedClient, CredentialRetriever, OnePasswordAuth, SafeFetchConfig, chrome_profile,
+    firefox_profile, random_profile, safari_profile,
+};
 
 use crate::elicitation::{
     elicit_credential_choice, elicit_credentials, elicit_oauth_url, is_oauth_redirect,
@@ -106,68 +111,67 @@ impl FetchTool {
         } else {
             Some(cookie_header.as_str())
         };
-        if let Some(site_content) = site_router.try_extract(&self.url, client, cookie_opt).await {
-            let body = &site_content.markdown;
-            if self.diff {
-                let (diff_output, has_diff) = apply_diff(&self.url, body);
-                output.push_str(&diff_output);
-                let structured = build_fetch_structured(
-                    &self.url,
-                    200,
-                    "text/html",
-                    body,
-                    start.elapsed().as_secs_f64() * 1000.0,
-                    has_diff,
-                );
-                let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
-                result.structured_content = Some(structured);
-                return Ok(result);
-            }
+
+        // Determine markdown, status, content_type, and elapsed_ms from either
+        // a specialized site provider or the standard HTTP fetch path.  Both
+        // paths converge below into the single diff + structured_content pipeline.
+        let (markdown, status_u16, content_type, elapsed_ms) = if let Some(site_content) =
+            site_router.try_extract(&self.url, client, cookie_opt).await
+        {
+            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             output.push_str("\n📄 Content (from specialized provider):\n\n");
-            output.push_str(body);
-            return Ok(CallToolResult::text_content(vec![TextContent::from(
-                output,
-            )]));
-        }
+            (
+                site_content.markdown,
+                200u16,
+                "text/html".to_owned(),
+                elapsed_ms,
+            )
+        } else {
+            let config = SafeFetchConfig::default();
 
-        let config = SafeFetchConfig::default();
+            let (status, content_type, response_headers, body_bytes, elapsed) =
+                if cookie_header.is_empty() {
+                    fetch_safe_response(client, &self.url, &config, start).await?
+                } else {
+                    fetch_with_cookies(client, &self.url, &cookie_header, &profile, start).await?
+                };
 
-        let (status, content_type, response_headers, body_bytes, elapsed) =
-            if cookie_header.is_empty() {
-                fetch_safe_response(client, &self.url, &config, start).await?
-            } else {
-                fetch_with_cookies(client, &self.url, &cookie_header, &profile, start).await?
-            };
-
-        write_response_summary(
-            &mut output,
-            status,
-            elapsed,
-            self.headers,
-            &response_headers,
-        );
-        write_body_info(&mut output, body_bytes.len());
-
-        let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
-
-        if let Some(pages) = conversion.page_count {
-            let _ = writeln!(
-                output,
-                "📑 Pages: {} | Conversion: {:.1}ms",
-                pages, conversion.elapsed_ms
+            write_response_summary(
+                &mut output,
+                status,
+                elapsed,
+                self.headers,
+                &response_headers,
             );
-        }
+            write_body_info(&mut output, body_bytes.len());
 
-        let markdown = &conversion.markdown;
+            let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
 
+            if let Some(pages) = conversion.page_count {
+                let _ = writeln!(
+                    output,
+                    "📑 Pages: {} | Conversion: {:.1}ms",
+                    pages, conversion.elapsed_ms
+                );
+            }
+
+            (
+                conversion.markdown,
+                status.as_u16(),
+                content_type,
+                elapsed.as_secs_f64() * 1000.0,
+            )
+        };
+
+        // Unified post-processing pipeline: diff → (future: focus → budget → prefetch)
         let has_diff = if self.diff {
-            let (diff_output, had_diff) = apply_diff(&self.url, markdown);
+            let (diff_output, had_diff) = apply_diff(&self.url, &markdown);
             output.push('\n');
             output.push_str(&diff_output);
             had_diff
         } else {
             if self.body {
-                let truncated = truncate_markdown(markdown, 4000);
+                let truncated = truncate_markdown(&markdown, 4000);
                 let _ = write!(output, "\n{truncated}");
             }
             false
@@ -175,10 +179,10 @@ impl FetchTool {
 
         let structured = build_fetch_structured(
             &self.url,
-            status.as_u16(),
+            status_u16,
             &content_type,
-            markdown,
-            elapsed.as_secs_f64() * 1000.0,
+            &markdown,
+            elapsed_ms,
             has_diff,
         );
 
@@ -314,7 +318,8 @@ impl FetchBatchTool {
             self.urls.len()
         );
 
-        let structured = build_structured([("results", serde_json::Value::Array(structured_items))]);
+        let structured =
+            build_structured([("results", serde_json::Value::Array(structured_items))]);
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
         result.structured_content = Some(structured);
         Ok(result)
@@ -582,7 +587,8 @@ impl BenchmarkTool {
             }
         }
 
-        let structured = build_structured([("results", serde_json::Value::Array(structured_items))]);
+        let structured =
+            build_structured([("results", serde_json::Value::Array(structured_items))]);
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
         result.structured_content = Some(structured);
         Ok(result)
@@ -735,7 +741,9 @@ impl LoginTool {
                     output.push_str("   ⚠️ OAuth flow cancelled by user\n");
                 }
             }
-            return Ok(CallToolResult::text_content(vec![TextContent::from(output)]));
+            return Ok(CallToolResult::text_content(vec![TextContent::from(
+                output,
+            )]));
         }
 
         if !OnePasswordAuth::is_available() {
@@ -785,7 +793,8 @@ impl LoginTool {
         // P2: When no explicit cookie source was supplied, offer multi-select
         // so the user can choose one or more browser cookie stores to inject
         // into the login request.  An empty selection means no cookies.
-        let resolved_cookies = resolve_login_cookies(&self.url, self.cookies.as_deref(), &runtime).await?;
+        let resolved_cookies =
+            resolve_login_cookies(&self.url, self.cookies.as_deref(), &runtime).await?;
 
         let client =
             AcceleratedClient::new().map_err(|e| CallToolError::from_message(e.to_string()))?;
@@ -816,4 +825,3 @@ impl LoginTool {
         )]))
     }
 }
-
