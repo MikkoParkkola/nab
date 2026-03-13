@@ -295,9 +295,12 @@ mod tests {
     #[test]
     fn render_line_substitutes_original_url() {
         let f = fields(&[]);
-        let result =
-            render_line("[Watch]({original_url})", &f, "https://youtube.com/watch?v=abc")
-                .unwrap();
+        let result = render_line(
+            "[Watch]({original_url})",
+            &f,
+            "https://youtube.com/watch?v=abc",
+        )
+        .unwrap();
         assert_eq!(result, "[Watch](https://youtube.com/watch?v=abc)");
     }
 
@@ -341,11 +344,9 @@ mod tests {
 
     #[test]
     fn render_omits_lines_with_missing_optional_fields() {
-        let f = fields(&[
-            ("title", "A Video"),
-            ("author", "Bob"),
-        ]);
-        let tmpl = "## {title}\n\nby {author}\n\n![thumb]({thumbnail})\n\n[Watch]({original_url})\n";
+        let f = fields(&[("title", "A Video"), ("author", "Bob")]);
+        let tmpl =
+            "## {title}\n\nby {author}\n\n![thumb]({thumbnail})\n\n[Watch]({original_url})\n";
         let output = render(tmpl, &f, "https://youtube.com/watch?v=xyz");
 
         assert!(output.contains("## A Video"));

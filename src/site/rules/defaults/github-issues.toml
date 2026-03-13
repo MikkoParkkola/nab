@@ -1,0 +1,79 @@
+# GitHub Issues and Pull Requests extraction via GitHub REST API.
+#
+# Matches github.com/{owner}/{repo}/issues/{num} and
+# github.com/{owner}/{repo}/pull/{num}.  Pull requests are fetched via the
+# /issues/ endpoint — GitHub exposes every PR as an issue.
+#
+# Primary fetch: issue/PR metadata (title, body, state, labels, author).
+# Additional fetch: first page of comments (up to 30, ordered oldest-first).
+#
+# Auth is optional: if $GITHUB_TOKEN is set the request is authenticated,
+# giving a higher rate limit (5000 req/hr vs 60 req/hr unauthenticated).
+# Public repositories are accessible without any token.
+
+[site]
+name = "github-issues"
+patterns = [
+    "(?i)github\\.com/[^/]+/[^/]+/issues/\\d+",
+    "(?i)github\\.com/[^/]+/[^/]+/pull/\\d+",
+]
+
+[rewrite]
+# Capture owner, repo, and number; map /pull/ to /issues/ (GitHub API treats
+# PRs as issues for metadata purposes).
+from = "(?i)https?://github\\.com/([^/]+)/([^/]+)/(?:issues|pull)/(\\d+)[/?#]?.*"
+to   = "https://api.github.com/repos/$1/$2/issues/$3"
+
+[request]
+accept = "application/vnd.github+json"
+auth   = "env:GITHUB_TOKEN"
+headers = { "User-Agent" = "nab/0.5", "X-GitHub-Api-Version" = "2022-11-28" }
+
+[json]
+title        = ".title"
+state        = ".state"
+author       = ".user.login"
+body         = ".body"
+comments     = ".comments"
+created_at   = ".created_at"
+html_url     = ".html_url"
+labels       = ".labels[].name"
+
+[template]
+format = """
+## {title} [{state}]
+
+by @{author} · {comments|number} comments
+Labels: {labels}
+
+{body}
+
+---
+
+[View on GitHub]({html_url})
+"""
+
+[metadata]
+platform          = "GitHub"
+author_field      = "author"
+title_field       = "title"
+published_field   = "created_at"
+canonical_url_field = "html_url"
+
+[engagement]
+replies = "comments"
+
+[[fetch_additional]]
+prefix       = "cmt"
+rewrite_from = "(?i)https?://github\\.com/([^/]+)/([^/]+)/(?:issues|pull)/(\\d+)[/?#]?.*"
+rewrite_to   = "https://api.github.com/repos/$1/$2/issues/$3/comments?per_page=10"
+accept       = "application/vnd.github+json"
+
+[fetch_additional.json]
+# First three comment authors and bodies for a quick preview.
+c0_author = "[0].user.login"
+c0_body   = "[0].body"
+c1_author = "[1].user.login"
+c1_body   = "[1].body"
+c2_author = "[2].user.login"
+c2_body   = "[2].body"

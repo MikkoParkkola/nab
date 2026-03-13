@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use regex::Regex;
 
 use super::super::{Engagement, SiteContent, SiteMetadata, SiteProvider};
-use super::config::{ClientKind, JsonConfig, SiteRuleConfig};
+use super::config::{AuthConfig, ClientKind, FallbackType, JsonConfig, SiteRuleConfig};
 use super::json_path;
 use super::template;
 use crate::http_client::AcceleratedClient;
@@ -31,6 +31,9 @@ pub struct ApiRuleProvider {
     /// Compiled `rewrite_from` regexes for each additional fetch (parallel
     /// to `config.additional_fetches`).
     additional_rewrite_froms: Vec<Regex>,
+    /// Compiled `rewrite_from` regexes for each fallback (parallel to
+    /// `config.fallback`).
+    fallback_rewrite_froms: Vec<Regex>,
 }
 
 impl ApiRuleProvider {
@@ -60,12 +63,45 @@ impl ApiRuleProvider {
             .iter()
             .map(|af| {
                 Regex::new(&af.rewrite_from).with_context(|| {
-                    format!("invalid fetch_additional rewrite_from regex '{}'", af.rewrite_from)
+                    format!(
+                        "invalid fetch_additional rewrite_from regex '{}'",
+                        af.rewrite_from
+                    )
                 })
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Self { config, patterns, rewrite_from, additional_rewrite_froms })
+        let fallback_rewrite_froms = config
+            .fallback
+            .iter()
+            .map(|fb| {
+                Regex::new(&fb.rewrite_from).with_context(|| {
+                    format!("invalid fallback rewrite_from regex '{}'", fb.rewrite_from)
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            config,
+            patterns,
+            rewrite_from,
+            additional_rewrite_froms,
+            fallback_rewrite_froms,
+        })
+    }
+
+    /// Fetch the primary API URL as JSON and extract configured fields.
+    ///
+    /// Returns `Ok(empty_map)` when the response body cannot be parsed as JSON
+    /// or no configured paths match — indicating fallbacks should be tried.
+    async fn try_primary_json(
+        &self,
+        client: &AcceleratedClient,
+        api_url: &str,
+    ) -> Result<HashMap<String, String>> {
+        let body = self.fetch_body(client, api_url).await?;
+        let json = parse_response_json(&body, api_url)?;
+        Ok(self.extract_fields(&json))
     }
 
     /// Rewrite `url` according to the rule's `[rewrite]` config.
@@ -90,7 +126,9 @@ impl ApiRuleProvider {
             .filter_map(|(name, path)| {
                 let value = if path.contains("[]") {
                     let arr = json_path::extract_array(json, path);
-                    if arr.is_empty() { return None; }
+                    if arr.is_empty() {
+                        return None;
+                    }
                     arr.join(", ")
                 } else {
                     json_path::extract(json, path)?
@@ -129,7 +167,14 @@ impl ApiRuleProvider {
                 api_url
             );
 
-            let extra = match fetch_and_extract_json(client, &api_url, af.accept.as_deref(), &af.json).await {
+            let extra = match fetch_and_extract_json(
+                client,
+                &api_url,
+                af.accept.as_deref(),
+                &af.json,
+            )
+            .await
+            {
                 Ok(f) => f,
                 Err(e) => {
                     tracing::warn!(
@@ -147,33 +192,180 @@ impl ApiRuleProvider {
         }
     }
 
+    /// Try each configured fallback in order, returning the fields from the
+    /// first one that produces a non-empty map.
+    ///
+    /// `prefetched_html` is used for the first `type = "html"` fallback whose
+    /// `rewrite_to` resolves to the original URL, avoiding a redundant fetch.
+    async fn apply_fallbacks(
+        &self,
+        original_url: &str,
+        client: &AcceleratedClient,
+        prefetched_html: Option<&[u8]>,
+    ) -> HashMap<String, String> {
+        for (fb, rewrite_re) in self
+            .config
+            .fallback
+            .iter()
+            .zip(self.fallback_rewrite_froms.iter())
+        {
+            let fetch_url = rewrite_url_with(rewrite_re, &fb.rewrite_to, original_url);
+            tracing::debug!(
+                "ApiRuleProvider '{}': trying fallback ({}) {}",
+                self.config.site.name,
+                fb.fallback_type.as_str(),
+                fetch_url
+            );
+
+            let fields = match fb.fallback_type {
+                FallbackType::Json => {
+                    self.apply_json_fallback(client, &fetch_url, fb.accept.as_deref(), &fb.json)
+                        .await
+                }
+                FallbackType::Html => {
+                    self.apply_html_fallback(
+                        client,
+                        &fetch_url,
+                        original_url,
+                        fb.accept.as_deref(),
+                        &fb.css,
+                        prefetched_html,
+                    )
+                    .await
+                }
+            };
+
+            if !fields.is_empty() {
+                return fields;
+            }
+        }
+        HashMap::new()
+    }
+
+    /// Fallback path: fetch URL, parse JSON, extract fields.
+    async fn apply_json_fallback(
+        &self,
+        client: &AcceleratedClient,
+        url: &str,
+        accept: Option<&str>,
+        json_config: &JsonConfig,
+    ) -> HashMap<String, String> {
+        match fetch_and_extract_json(client, url, accept, json_config).await {
+            Ok(fields) => fields,
+            Err(e) => {
+                tracing::warn!(
+                    "JSON fallback failed for rule '{}' at '{}': {e}",
+                    self.config.site.name,
+                    url
+                );
+                HashMap::new()
+            }
+        }
+    }
+
+    /// Fallback path: fetch URL (or reuse `prefetched_html`), parse HTML,
+    /// extract fields via CSS selectors.
+    async fn apply_html_fallback(
+        &self,
+        client: &AcceleratedClient,
+        fetch_url: &str,
+        original_url: &str,
+        accept: Option<&str>,
+        css_map: &HashMap<String, String>,
+        prefetched_html: Option<&[u8]>,
+    ) -> HashMap<String, String> {
+        // Reuse pre-fetched bytes when the resolved URL is the original URL.
+        let html: String = if fetch_url == original_url {
+            if let Some(bytes) = prefetched_html {
+                String::from_utf8_lossy(bytes).into_owned()
+            } else {
+                match self.fetch_html(client, fetch_url, accept).await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        tracing::warn!(
+                            "HTML fallback fetch failed for rule '{}' at '{}': {e}",
+                            self.config.site.name,
+                            fetch_url
+                        );
+                        return HashMap::new();
+                    }
+                }
+            }
+        } else {
+            match self.fetch_html(client, fetch_url, accept).await {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::warn!(
+                        "HTML fallback fetch failed for rule '{}' at '{}': {e}",
+                        self.config.site.name,
+                        fetch_url
+                    );
+                    return HashMap::new();
+                }
+            }
+        };
+
+        extract_css_fields(&html, css_map)
+    }
+
+    /// Fetch a URL as text, applying the optional `Accept` header.
+    async fn fetch_html(
+        &self,
+        client: &AcceleratedClient,
+        url: &str,
+        accept: Option<&str>,
+    ) -> Result<String> {
+        let mut request = client.inner().get(url);
+        if let Some(accept_val) = accept {
+            request = request.header(reqwest::header::ACCEPT, accept_val);
+        }
+        request
+            .send()
+            .await
+            .with_context(|| format!("fallback HTML fetch failed for '{url}'"))?
+            .text()
+            .await
+            .with_context(|| format!("failed to read fallback HTML body from '{url}'"))
+    }
+
     /// Build [`SiteMetadata`] from extracted fields and config.
     fn build_metadata(&self, fields: &HashMap<String, String>, original_url: &str) -> SiteMetadata {
         let meta = &self.config.metadata;
 
-        let author = meta.author.as_deref().map(|tmpl| {
-            template::render(tmpl, fields, original_url)
-        }).or_else(|| {
-            // Fallback: check extra["author_field"]
-            meta.extra.get("author_field")
-                .and_then(|f| fields.get(f))
-                .cloned()
-        });
+        let author = meta
+            .author
+            .as_deref()
+            .map(|tmpl| template::render(tmpl, fields, original_url))
+            .or_else(|| {
+                // Fallback: check extra["author_field"]
+                meta.extra
+                    .get("author_field")
+                    .and_then(|f| fields.get(f))
+                    .cloned()
+            });
 
-        let title = meta.title_field.as_deref()
+        let title = meta
+            .title_field
+            .as_deref()
             .and_then(|f| if f.is_empty() { None } else { fields.get(f) })
             .cloned();
 
-        let published = meta.published_field.as_deref()
+        let published = meta
+            .published_field
+            .as_deref()
             .and_then(|f| if f.is_empty() { None } else { fields.get(f) })
             .cloned();
 
-        let canonical_url = meta.canonical_url_field.as_deref()
+        let canonical_url = meta
+            .canonical_url_field
+            .as_deref()
             .and_then(|f| if f.is_empty() { None } else { fields.get(f) })
             .cloned()
             .unwrap_or_else(|| original_url.to_string());
 
-        let media_urls = meta.media_urls_field.as_deref()
+        let media_urls = meta
+            .media_urls_field
+            .as_deref()
             .and_then(|f| if f.is_empty() { None } else { fields.get(f) })
             .map(|u| vec![u.clone()])
             .unwrap_or_default();
@@ -243,13 +435,46 @@ impl ApiRuleProvider {
             .with_context(|| format!("failed to read response body from '{api_url}'"))
     }
 
-    /// Apply configured `Accept` header and custom headers to a request builder.
+    /// Apply configured `Accept` header, custom headers, and optional auth to a
+    /// request builder.
+    ///
+    /// Auth injection is best-effort: when `request.auth` is set but the
+    /// referenced env var is absent, the request proceeds without the auth
+    /// header (unauthenticated access — correct for public APIs such as GitHub).
     fn apply_headers(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if let Some(accept) = &self.config.request.accept {
             request = request.header(reqwest::header::ACCEPT, accept.as_str());
         }
         for (key, value) in &self.config.request.headers {
             request = request.header(key.as_str(), value.as_str());
+        }
+        if let Some(auth_str) = &self.config.request.auth {
+            match AuthConfig::parse(auth_str) {
+                Ok(auth_cfg) => {
+                    if let Some((header_name, header_value)) = auth_cfg.resolve() {
+                        tracing::debug!(
+                            "ApiRuleProvider '{}': injecting auth header '{}'",
+                            self.config.site.name,
+                            header_name
+                        );
+                        request = request.header(header_name.as_str(), header_value.as_str());
+                    } else {
+                        tracing::debug!(
+                            "ApiRuleProvider '{}': env var '{}' not set, proceeding without auth",
+                            self.config.site.name,
+                            auth_cfg.env_var
+                        );
+                    }
+                }
+                Err(e) => {
+                    // Config was already validated at parse time; this branch is
+                    // unreachable in practice but defensive against stale configs.
+                    tracing::warn!(
+                        "ApiRuleProvider '{}': invalid auth config ignored: {e}",
+                        self.config.site.name
+                    );
+                }
+            }
         }
         request
     }
@@ -261,8 +486,7 @@ impl ApiRuleProvider {
 /// response) are accepted.  Paths in the TOML rule use `[N].field` notation to
 /// index into root arrays, which [`json_path::extract`] handles natively.
 fn parse_response_json(body: &str, api_url: &str) -> Result<serde_json::Value> {
-    serde_json::from_str(body)
-        .with_context(|| format!("failed to parse JSON from '{api_url}'"))
+    serde_json::from_str(body).with_context(|| format!("failed to parse JSON from '{api_url}'"))
 }
 
 /// Fetch a URL and extract JSON fields according to `json_config`.
@@ -297,7 +521,9 @@ async fn fetch_and_extract_json(
         .filter_map(|(name, path)| {
             let value = if path.contains("[]") {
                 let arr = json_path::extract_array(&json, path);
-                if arr.is_empty() { return None; }
+                if arr.is_empty() {
+                    return None;
+                }
                 arr.join(", ")
             } else {
                 json_path::extract(&json, path)?
@@ -307,6 +533,71 @@ async fn fetch_and_extract_json(
         .collect();
 
     Ok(fields)
+}
+
+/// Rewrite `url` using a compiled regex and template string.
+///
+/// Same rules as [`ApiRuleProvider::rewrite_url`]: `{url}` is replaced with
+/// the URL-encoded original; otherwise capture-group substitution is applied.
+fn rewrite_url_with(re: &Regex, to: &str, url: &str) -> String {
+    if to.contains("{url}") {
+        return to.replace("{url}", &urlencoding::encode(url));
+    }
+    re.replace(url, to).into_owned()
+}
+
+/// Extract named fields from HTML using CSS selectors.
+///
+/// Each entry in `css_map` maps a field name to a selector string.  A
+/// `::attr(name)` suffix causes attribute extraction; without it the element's
+/// text content is collected.
+fn extract_css_fields(html: &str, css_map: &HashMap<String, String>) -> HashMap<String, String> {
+    use scraper::{Html, Selector};
+
+    let document = Html::parse_document(html);
+    let mut fields = HashMap::new();
+
+    for (field_name, selector_str) in css_map {
+        let (selector_str, attr_name) = parse_css_attr_suffix(selector_str);
+
+        let Ok(selector) = Selector::parse(selector_str) else {
+            tracing::warn!("Invalid CSS selector for field '{field_name}': '{selector_str}'");
+            continue;
+        };
+
+        let Some(element) = document.select(&selector).next() else {
+            continue;
+        };
+
+        let value = if let Some(attr) = attr_name {
+            element.value().attr(attr).unwrap_or("").to_string()
+        } else {
+            element.text().collect::<String>()
+        };
+
+        if !value.is_empty() {
+            fields.insert(field_name.clone(), value);
+        }
+    }
+
+    fields
+}
+
+/// Split a CSS selector string on `::attr(name)`, returning `(selector, attr)`.
+///
+/// Returns `(full_string, None)` when no `::attr(...)` suffix is present.
+fn parse_css_attr_suffix(selector: &str) -> (&str, Option<&str>) {
+    // Locate `::attr(` — must be followed by `name)` at the end.
+    let Some(attr_start) = selector.rfind("::attr(") else {
+        return (selector, None);
+    };
+    let rest = &selector[attr_start + 7..]; // skip "::attr("
+    let Some(close) = rest.rfind(')') else {
+        return (selector, None);
+    };
+    let attr_name = &rest[..close];
+    let css_part = &selector[..attr_start];
+    (css_part, Some(attr_name))
 }
 
 /// Extract name string from a static `LazyLock<String>`.
@@ -344,25 +635,46 @@ impl SiteProvider for ApiRuleProvider {
         url: &str,
         client: &AcceleratedClient,
         _cookies: Option<&str>,
-        _prefetched_html: Option<&[u8]>,
+        prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         let api_url = self.rewrite_url(url);
-        tracing::debug!("ApiRuleProvider '{}': fetching {}", self.config.site.name, api_url);
+        tracing::debug!(
+            "ApiRuleProvider '{}': fetching {}",
+            self.config.site.name,
+            api_url
+        );
 
-        let body = self.fetch_body(client, &api_url).await?;
+        // Attempt primary JSON fetch; fall through to fallbacks on any failure.
+        let primary_fields = self
+            .try_primary_json(client, &api_url)
+            .await
+            .unwrap_or_default();
 
-        let json = parse_response_json(&body, &api_url)?;
-        let mut fields = self.extract_fields(&json);
-
-        if fields.is_empty() {
+        let mut fields = if primary_fields.is_empty() && !self.config.fallback.is_empty() {
+            tracing::debug!(
+                "ApiRuleProvider '{}': primary yielded no fields, trying fallbacks",
+                self.config.site.name
+            );
+            let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
+            if fb_fields.is_empty() {
+                bail!(
+                    "no fields extracted from primary or fallbacks for rule '{}'",
+                    self.config.site.name
+                );
+            }
+            fb_fields
+        } else if primary_fields.is_empty() {
             bail!(
                 "no fields extracted from '{}' response (check json paths in rule '{}')",
                 api_url,
                 self.config.site.name
             );
-        }
+        } else {
+            primary_fields
+        };
 
-        self.apply_additional_fetches(url, client, &mut fields).await;
+        self.apply_additional_fetches(url, client, &mut fields)
+            .await;
 
         let markdown = template::render(&self.config.template.format, &fields, url);
         let metadata = self.build_metadata(&fields, url);
@@ -377,14 +689,25 @@ fn build_engagement(
     fields: &HashMap<String, String>,
 ) -> Option<Engagement> {
     let likes = eng.likes.as_deref().and_then(|f| parse_u64(fields.get(f)?));
-    let reposts = eng.reposts.as_deref().and_then(|f| parse_u64(fields.get(f)?));
-    let replies = eng.replies.as_deref().and_then(|f| parse_u64(fields.get(f)?));
+    let reposts = eng
+        .reposts
+        .as_deref()
+        .and_then(|f| parse_u64(fields.get(f)?));
+    let replies = eng
+        .replies
+        .as_deref()
+        .and_then(|f| parse_u64(fields.get(f)?));
     let views = eng.views.as_deref().and_then(|f| parse_u64(fields.get(f)?));
 
     if likes.is_none() && reposts.is_none() && replies.is_none() && views.is_none() {
         None
     } else {
-        Some(Engagement { likes, reposts, replies, views })
+        Some(Engagement {
+            likes,
+            reposts,
+            replies,
+            views,
+        })
     }
 }
 
@@ -481,14 +804,20 @@ mod tests {
     fn twitter_rewrite_constructs_fxtwitter_url() {
         let p = twitter_provider();
         let rewritten = p.rewrite_url("https://x.com/naval/status/1234567890");
-        assert_eq!(rewritten, "https://api.fxtwitter.com/naval/status/1234567890");
+        assert_eq!(
+            rewritten,
+            "https://api.fxtwitter.com/naval/status/1234567890"
+        );
     }
 
     #[test]
     fn twitter_rewrite_works_for_twitter_com() {
         let p = twitter_provider();
         let rewritten = p.rewrite_url("https://twitter.com/elonmusk/status/9876543210");
-        assert_eq!(rewritten, "https://api.fxtwitter.com/elonmusk/status/9876543210");
+        assert_eq!(
+            rewritten,
+            "https://api.fxtwitter.com/elonmusk/status/9876543210"
+        );
     }
 
     #[test]
@@ -504,8 +833,7 @@ mod tests {
     #[test]
     fn wikipedia_rewrite_constructs_rest_api_url() {
         let p = wikipedia_provider();
-        let rewritten =
-            p.rewrite_url("https://en.wikipedia.org/wiki/Rust_(programming_language)");
+        let rewritten = p.rewrite_url("https://en.wikipedia.org/wiki/Rust_(programming_language)");
         assert_eq!(
             rewritten,
             "https://en.wikipedia.org/api/rest_v1/page/summary/Rust_(programming_language)"
@@ -531,8 +859,14 @@ mod tests {
         });
         let fields = p.extract_fields(&json);
         assert_eq!(fields.get("author_name").map(String::as_str), Some("Naval"));
-        assert_eq!(fields.get("author_handle").map(String::as_str), Some("naval"));
-        assert_eq!(fields.get("text").map(String::as_str), Some("Build wealth, not status."));
+        assert_eq!(
+            fields.get("author_handle").map(String::as_str),
+            Some("naval")
+        );
+        assert_eq!(
+            fields.get("text").map(String::as_str),
+            Some("Build wealth, not status.")
+        );
         assert_eq!(fields.get("likes").map(String::as_str), Some("8800"));
     }
 
@@ -571,7 +905,10 @@ mod tests {
         let mut fields = HashMap::new();
         fields.insert("author_name".to_string(), "Naval".to_string());
         fields.insert("author_handle".to_string(), "naval".to_string());
-        fields.insert("url".to_string(), "https://x.com/naval/status/123".to_string());
+        fields.insert(
+            "url".to_string(),
+            "https://x.com/naval/status/123".to_string(),
+        );
 
         let meta = p.build_metadata(&fields, "https://x.com/naval/status/123");
         assert_eq!(meta.platform, "Twitter/X");
@@ -583,14 +920,20 @@ mod tests {
     fn wikipedia_build_metadata_title_and_url() {
         let p = wikipedia_provider();
         let mut fields = HashMap::new();
-        fields.insert("title".to_string(), "Rust (programming language)".to_string());
+        fields.insert(
+            "title".to_string(),
+            "Rust (programming language)".to_string(),
+        );
         fields.insert(
             "page_url".to_string(),
             "https://en.wikipedia.org/wiki/Rust_(programming_language)".to_string(),
         );
         fields.insert("timestamp".to_string(), "2025-01-01T00:00:00Z".to_string());
 
-        let meta = p.build_metadata(&fields, "https://en.wikipedia.org/wiki/Rust_(programming_language)");
+        let meta = p.build_metadata(
+            &fields,
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+        );
         assert_eq!(meta.platform, "Wikipedia");
         assert_eq!(meta.title.as_deref(), Some("Rust (programming language)"));
         assert_eq!(
@@ -693,17 +1036,28 @@ mod tests {
     fn reddit_rewrite_appends_json_suffix() {
         let p = reddit_provider();
         let rewritten = p.rewrite_url("https://www.reddit.com/r/rust/comments/abc123/some_title/");
-        assert!(rewritten.ends_with(".json"), "expected .json suffix, got: {rewritten}");
-        assert!(!rewritten.contains('?'), "query string should be stripped, got: {rewritten}");
+        assert!(
+            rewritten.ends_with(".json"),
+            "expected .json suffix, got: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains('?'),
+            "query string should be stripped, got: {rewritten}"
+        );
     }
 
     #[test]
     fn reddit_rewrite_strips_query_string() {
         let p = reddit_provider();
-        let rewritten =
-            p.rewrite_url("https://reddit.com/r/rust/comments/abc123?utm_source=share");
-        assert!(rewritten.ends_with(".json"), "expected .json suffix, got: {rewritten}");
-        assert!(!rewritten.contains("utm_source"), "utm param should be gone, got: {rewritten}");
+        let rewritten = p.rewrite_url("https://reddit.com/r/rust/comments/abc123?utm_source=share");
+        assert!(
+            rewritten.ends_with(".json"),
+            "expected .json suffix, got: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("utm_source"),
+            "utm param should be gone, got: {rewritten}"
+        );
     }
 
     #[test]
@@ -738,8 +1092,14 @@ mod tests {
         // WHEN: extracting fields
         let fields = p.extract_fields(&json);
         // THEN: all key fields are present
-        assert_eq!(fields.get("title").map(String::as_str), Some("Rust 2024 edition released"));
-        assert_eq!(fields.get("author").map(String::as_str), Some("rustacean42"));
+        assert_eq!(
+            fields.get("title").map(String::as_str),
+            Some("Rust 2024 edition released")
+        );
+        assert_eq!(
+            fields.get("author").map(String::as_str),
+            Some("rustacean42")
+        );
         assert_eq!(fields.get("score").map(String::as_str), Some("4200"));
         assert_eq!(fields.get("comments").map(String::as_str), Some("350"));
         assert_eq!(fields.get("subreddit").map(String::as_str), Some("rust"));
@@ -751,7 +1111,10 @@ mod tests {
         let mut fields = std::collections::HashMap::new();
         fields.insert("title".to_string(), "My Post".to_string());
         fields.insert("author".to_string(), "testuser".to_string());
-        fields.insert("url".to_string(), "https://reddit.com/r/rust/comments/x".to_string());
+        fields.insert(
+            "url".to_string(),
+            "https://reddit.com/r/rust/comments/x".to_string(),
+        );
         fields.insert("subreddit".to_string(), "rust".to_string());
 
         let meta = p.build_metadata(&fields, "https://reddit.com/r/rust/comments/x");
@@ -857,7 +1220,10 @@ mod tests {
             }]
         });
         let fields = p.extract_fields(&json);
-        assert_eq!(fields.get("title").map(String::as_str), Some("How to use Vec in Rust?"));
+        assert_eq!(
+            fields.get("title").map(String::as_str),
+            Some("How to use Vec in Rust?")
+        );
         assert_eq!(fields.get("score").map(String::as_str), Some("42"));
         assert_eq!(fields.get("answer_count").map(String::as_str), Some("3"));
     }
@@ -876,5 +1242,340 @@ mod tests {
         assert!(af.json.0.contains_key("score"));
         assert!(af.json.0.contains_key("is_accepted"));
         assert!(af.json.0.contains_key("author"));
+    }
+
+    // ── auth config integration ───────────────────────────────────────────────
+
+    fn provider_with_auth(auth: &str) -> ApiRuleProvider {
+        let toml = format!(
+            r#"
+[site]
+name = "test-auth"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[request]
+auth = "{auth}"
+
+[json]
+title = ".title"
+
+[template]
+format = "{{{{title}}}}"
+"#
+        );
+        make_provider(&toml)
+    }
+
+    #[test]
+    fn provider_with_auth_config_parses_successfully() {
+        // GIVEN: a rule with auth = "env:SOME_TOKEN"
+        // WHEN: provider is built
+        let p = provider_with_auth("env:SOME_TOKEN");
+        // THEN: auth field is stored in config
+        assert_eq!(p.config.request.auth.as_deref(), Some("env:SOME_TOKEN"));
+    }
+
+    #[test]
+    fn provider_with_auth_stores_env_var_name() {
+        // GIVEN: auth pointing to a custom env var
+        let p = provider_with_auth("env:GITHUB_TOKEN");
+        // WHEN: the stored auth string is parsed
+        let auth_cfg = AuthConfig::parse(p.config.request.auth.as_deref().unwrap()).unwrap();
+        // THEN: correct env var name is stored
+        assert_eq!(auth_cfg.env_var, "GITHUB_TOKEN");
+        assert!(auth_cfg.bearer);
+        assert_eq!(auth_cfg.header_name, "Authorization");
+    }
+
+    #[test]
+    fn provider_with_custom_header_auth_stores_header_name() {
+        // GIVEN: auth with custom header
+        let p = provider_with_auth("env:MY_KEY:header=X-Custom-Auth");
+        let auth_cfg = AuthConfig::parse(p.config.request.auth.as_deref().unwrap()).unwrap();
+        assert_eq!(auth_cfg.header_name, "X-Custom-Auth");
+        assert!(!auth_cfg.bearer);
+    }
+
+    #[test]
+    fn github_issues_provider_parses_and_has_auth() {
+        // GIVEN: the embedded github-issues TOML rule
+        let p = make_provider(include_str!("defaults/github-issues.toml"));
+        // THEN: provider name is correct, auth is set
+        assert_eq!(p.config.site.name, "github-issues");
+        assert_eq!(p.config.request.auth.as_deref(), Some("env:GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn github_issues_provider_matches_issue_and_pr_urls() {
+        let p = make_provider(include_str!("defaults/github-issues.toml"));
+        assert!(p.matches("https://github.com/rust-lang/rust/issues/12345"));
+        assert!(p.matches("https://github.com/owner/repo/pull/999"));
+        assert!(p.matches("https://GITHUB.COM/owner/repo/issues/1"));
+    }
+
+    #[test]
+    fn github_issues_provider_does_not_match_repo_root() {
+        let p = make_provider(include_str!("defaults/github-issues.toml"));
+        assert!(!p.matches("https://github.com/rust-lang/rust"));
+        assert!(!p.matches("https://github.com/owner/repo/tree/main"));
+    }
+
+    #[test]
+    fn github_issues_rewrite_constructs_api_url() {
+        let p = make_provider(include_str!("defaults/github-issues.toml"));
+        let rewritten = p.rewrite_url("https://github.com/rust-lang/rust/issues/12345");
+        assert_eq!(
+            rewritten,
+            "https://api.github.com/repos/rust-lang/rust/issues/12345"
+        );
+    }
+
+    #[test]
+    fn github_issues_rewrite_works_for_pull_requests() {
+        let p = make_provider(include_str!("defaults/github-issues.toml"));
+        // GitHub API exposes PRs under /issues/ endpoint
+        let rewritten = p.rewrite_url("https://github.com/owner/repo/pull/42");
+        assert_eq!(
+            rewritten,
+            "https://api.github.com/repos/owner/repo/issues/42"
+        );
+    }
+
+    #[test]
+    fn github_issues_extract_fields_from_api_json() {
+        // GIVEN: a GitHub issue API response
+        let p = make_provider(include_str!("defaults/github-issues.toml"));
+        let json = json!({
+            "html_url": "https://github.com/rust-lang/rust/issues/12345",
+            "title": "Some bug",
+            "state": "open",
+            "user": {"login": "contributor"},
+            "body": "This is the issue body.",
+            "comments": 5,
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug"}, {"name": "help wanted"}]
+        });
+        // WHEN: extracting fields
+        let fields = p.extract_fields(&json);
+        // THEN: key fields are present
+        assert_eq!(fields.get("title").map(String::as_str), Some("Some bug"));
+        assert_eq!(
+            fields.get("author").map(String::as_str),
+            Some("contributor")
+        );
+        assert_eq!(fields.get("state").map(String::as_str), Some("open"));
+        assert_eq!(fields.get("comments").map(String::as_str), Some("5"));
+    }
+
+    // ── parse_css_attr_suffix ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_css_attr_suffix_detects_attr() {
+        // GIVEN: selector with ::attr(content) suffix
+        let (css, attr) = parse_css_attr_suffix("meta[property='og:title']::attr(content)");
+        assert_eq!(css, "meta[property='og:title']");
+        assert_eq!(attr, Some("content"));
+    }
+
+    #[test]
+    fn parse_css_attr_suffix_no_suffix_returns_none() {
+        // GIVEN: plain selector without ::attr
+        let (css, attr) = parse_css_attr_suffix("h1.title");
+        assert_eq!(css, "h1.title");
+        assert!(attr.is_none());
+    }
+
+    #[test]
+    fn parse_css_attr_suffix_handles_href_attribute() {
+        let (css, attr) = parse_css_attr_suffix("a.link::attr(href)");
+        assert_eq!(css, "a.link");
+        assert_eq!(attr, Some("href"));
+    }
+
+    #[test]
+    fn parse_css_attr_suffix_handles_malformed_no_closing_paren() {
+        // GIVEN: ::attr( without closing )
+        let (css, attr) = parse_css_attr_suffix("meta::attr(content");
+        // THEN: treated as no attr suffix
+        assert_eq!(css, "meta::attr(content");
+        assert!(attr.is_none());
+    }
+
+    // ── extract_css_fields ───────────────────────────────────────────────────
+
+    #[test]
+    fn extract_css_fields_attribute_extraction() {
+        // GIVEN: HTML with og:meta tags and a CSS map using ::attr(content)
+        let html = r#"<html><head>
+            <meta property="og:title" content="Test Title" />
+            <meta property="og:description" content="A description" />
+            <meta property="og:image" content="https://example.com/img.jpg" />
+        </head><body></body></html>"#;
+        let mut css_map = HashMap::new();
+        css_map.insert(
+            "title".to_string(),
+            "meta[property='og:title']::attr(content)".to_string(),
+        );
+        css_map.insert(
+            "description".to_string(),
+            "meta[property='og:description']::attr(content)".to_string(),
+        );
+        css_map.insert(
+            "image".to_string(),
+            "meta[property='og:image']::attr(content)".to_string(),
+        );
+        // WHEN: extracting
+        let fields = extract_css_fields(html, &css_map);
+        // THEN: all three fields present
+        assert_eq!(fields.get("title").map(String::as_str), Some("Test Title"));
+        assert_eq!(
+            fields.get("description").map(String::as_str),
+            Some("A description")
+        );
+        assert_eq!(
+            fields.get("image").map(String::as_str),
+            Some("https://example.com/img.jpg")
+        );
+    }
+
+    #[test]
+    fn extract_css_fields_text_content_extraction() {
+        // GIVEN: HTML with an h1 and CSS map using text content (no ::attr)
+        let html = "<html><body><h1>Page Heading</h1></body></html>";
+        let mut css_map = HashMap::new();
+        css_map.insert("title".to_string(), "h1".to_string());
+        // WHEN: extracting
+        let fields = extract_css_fields(html, &css_map);
+        // THEN: text content of h1 is used
+        assert_eq!(
+            fields.get("title").map(String::as_str),
+            Some("Page Heading")
+        );
+    }
+
+    #[test]
+    fn extract_css_fields_missing_element_omitted() {
+        // GIVEN: HTML without the targeted element
+        let html = "<html><body><p>No heading here</p></body></html>";
+        let mut css_map = HashMap::new();
+        css_map.insert("title".to_string(), "h1".to_string());
+        // WHEN: extracting
+        let fields = extract_css_fields(html, &css_map);
+        // THEN: field absent (no element found)
+        assert!(fields.get("title").is_none());
+    }
+
+    #[test]
+    fn extract_css_fields_empty_attr_value_omitted() {
+        // GIVEN: meta tag with empty content attribute
+        let html = r#"<html><head><meta property="og:title" content="" /></head></html>"#;
+        let mut css_map = HashMap::new();
+        css_map.insert(
+            "title".to_string(),
+            "meta[property='og:title']::attr(content)".to_string(),
+        );
+        // WHEN: extracting
+        let fields = extract_css_fields(html, &css_map);
+        // THEN: empty attribute value is omitted
+        assert!(fields.get("title").is_none());
+    }
+
+    #[test]
+    fn extract_css_fields_invalid_selector_logs_and_skips() {
+        // GIVEN: an invalid CSS selector
+        let html = "<html><body></body></html>";
+        let mut css_map = HashMap::new();
+        css_map.insert("title".to_string(), "[[[invalid".to_string());
+        // WHEN: extracting
+        let fields = extract_css_fields(html, &css_map);
+        // THEN: field absent, no panic
+        assert!(fields.is_empty());
+    }
+
+    // ── rewrite_url_with ─────────────────────────────────────────────────────
+
+    #[test]
+    fn rewrite_url_with_url_placeholder() {
+        // GIVEN: template with {url}
+        let re = regex::Regex::new(".*").unwrap();
+        let result = rewrite_url_with(
+            &re,
+            "https://api.example.com?url={url}",
+            "https://orig.com/page",
+        );
+        assert!(result.contains("https%3A%2F%2Forig.com%2Fpage"));
+    }
+
+    #[test]
+    fn rewrite_url_with_capture_group() {
+        // GIVEN: template with capture group $1
+        let re = regex::Regex::new(r"https://example\.com/items/(\d+)").unwrap();
+        let result = rewrite_url_with(
+            &re,
+            "https://api.example.com/items/$1",
+            "https://example.com/items/42",
+        );
+        assert_eq!(result, "https://api.example.com/items/42");
+    }
+
+    #[test]
+    fn rewrite_url_with_identity_passthrough() {
+        // GIVEN: {url} template that passes original URL through (url-encoded)
+        let re = regex::Regex::new(".*").unwrap();
+        let result = rewrite_url_with(&re, "{url}", "https://example.com/page");
+        assert_eq!(result, "https%3A%2F%2Fexample.com%2Fpage");
+    }
+
+    // ── instagram provider ───────────────────────────────────────────────────
+
+    fn instagram_provider() -> ApiRuleProvider {
+        make_provider(include_str!("defaults/instagram.toml"))
+    }
+
+    #[test]
+    fn instagram_provider_matches_post_urls() {
+        let p = instagram_provider();
+        assert!(p.matches("https://instagram.com/p/ABC123xyz"));
+        assert!(p.matches("https://www.instagram.com/p/XYZ789abc"));
+        assert!(p.matches("https://INSTAGRAM.COM/p/test123"));
+    }
+
+    #[test]
+    fn instagram_provider_matches_reel_urls() {
+        let p = instagram_provider();
+        assert!(p.matches("https://instagram.com/reel/ABC123xyz"));
+        assert!(p.matches("https://www.instagram.com/reel/XYZ789"));
+    }
+
+    #[test]
+    fn instagram_provider_does_not_match_profile_urls() {
+        let p = instagram_provider();
+        assert!(!p.matches("https://instagram.com/username"));
+        assert!(!p.matches("https://instagram.com/"));
+        assert!(!p.matches("https://youtube.com/watch?v=abc"));
+    }
+
+    #[test]
+    fn instagram_provider_has_one_html_fallback() {
+        let p = instagram_provider();
+        assert_eq!(p.config.fallback.len(), 1);
+        assert_eq!(p.fallback_rewrite_froms.len(), 1);
+        use crate::site::rules::config::FallbackType;
+        assert_eq!(p.config.fallback[0].fallback_type, FallbackType::Html);
+    }
+
+    #[test]
+    fn instagram_provider_fallback_css_has_og_selectors() {
+        let p = instagram_provider();
+        let css = &p.config.fallback[0].css;
+        assert!(css.contains_key("title"));
+        assert!(css.contains_key("description"));
+        assert!(css.contains_key("image"));
+        assert!(css["title"].contains("og:title"));
+        assert!(css["image"].contains("og:image"));
     }
 }

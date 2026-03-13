@@ -1,0 +1,48 @@
+[site]
+name = "instagram"
+patterns = ["(?i)instagram\\.com/(?:p|reel)/"]
+
+# Primary: Instagram's internal oEmbed endpoint.
+# Meta has restricted the public oembed.com endpoint; the internal
+# api.instagram.com endpoint still works for public posts.
+[rewrite]
+from = ".*"
+to = "https://www.instagram.com/api/v1/oembed/?url={url}"
+
+[request]
+accept = "application/json"
+
+[json]
+author_name   = ".author_name"
+thumbnail_url = ".thumbnail_url"
+title         = ".title"
+
+[template]
+format = """
+## @{author_name}
+
+{title}
+
+![Instagram post]({thumbnail_url})
+
+[View on Instagram]({original_url})
+"""
+
+[metadata]
+platform         = "Instagram"
+author_field     = "author_name"
+title_field      = "title"
+media_urls_field = "thumbnail_url"
+
+# Fallback: fetch the original URL as HTML and extract og:meta tags.
+# Used when the oEmbed API returns a non-JSON error (HTTP 4xx/5xx or
+# HTML response), which Meta increasingly does.
+[[fallback]]
+rewrite_from = ".*"
+rewrite_to   = "{url}"
+type         = "html"
+
+[fallback.css]
+title       = "meta[property='og:title']::attr(content)"
+description = "meta[property='og:description']::attr(content)"
+image       = "meta[property='og:image']::attr(content)"

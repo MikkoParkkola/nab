@@ -37,6 +37,12 @@ pub struct SiteRuleConfig {
     /// `ans_body`) to avoid collisions with primary fields.
     #[serde(default, rename = "fetch_additional")]
     pub additional_fetches: Vec<AdditionalFetchConfig>,
+    /// Fallback strategies tried when the primary fetch returns no fields.
+    ///
+    /// Tried in order; the first that produces any fields wins.  This enables
+    /// patterns like "try oEmbed JSON first, fall back to og:meta HTML tags".
+    #[serde(default)]
+    pub fallback: Vec<FallbackConfig>,
     /// Markdown output template.
     pub template: TemplateConfig,
     /// Metadata field mapping.
@@ -83,6 +89,75 @@ pub struct AdditionalFetchConfig {
     pub json: JsonConfig,
 }
 
+/// Extraction type for a `[[fallback]]` entry.
+///
+/// - `Json`: parse the response as JSON and apply `.json` dot-path selectors.
+/// - `Html`: parse the response as HTML and apply `.css` CSS selectors.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FallbackType {
+    /// Parse response as JSON and extract fields via dot-path selectors.
+    #[default]
+    Json,
+    /// Parse response as HTML and extract fields via CSS selectors.
+    Html,
+}
+
+impl FallbackType {
+    /// Return a lowercase string representation for logging.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Html => "html",
+        }
+    }
+}
+
+/// `[[fallback]]` — one fallback strategy tried when the primary fetch yields
+/// no fields (e.g., API returns an error or non-JSON body).
+///
+/// Fallbacks are tried in TOML order; the first that produces any fields wins.
+/// After the fallback fields are collected, the normal template + metadata
+/// pipeline runs as usual.
+///
+/// # Example (TOML)
+///
+/// ```toml
+/// [[fallback]]
+/// rewrite_from = ".*"
+/// rewrite_to   = "{url}"   # fetch the original URL verbatim
+/// type         = "html"
+///
+/// [fallback.css]
+/// title       = "meta[property='og:title']::attr(content)"
+/// description = "meta[property='og:description']::attr(content)"
+/// image       = "meta[property='og:image']::attr(content)"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct FallbackConfig {
+    /// Regex matched against the **original** URL to produce the fetch URL.
+    pub rewrite_from: String,
+    /// Replacement template (supports `$1`/`$2` captures and `{url}`
+    /// placeholder for the URL-encoded original URL).
+    pub rewrite_to: String,
+    /// Extraction type: `"json"` (default) or `"html"`.
+    #[serde(default, rename = "type")]
+    pub fallback_type: FallbackType,
+    /// `Accept` header for this fallback request.
+    pub accept: Option<String>,
+    /// JSON dot-path selectors used when `type = "json"`.
+    #[serde(default)]
+    pub json: JsonConfig,
+    /// CSS selectors used when `type = "html"`.
+    ///
+    /// Values support a `::attr(name)` suffix to extract an attribute value
+    /// (e.g. `"meta[property='og:title']::attr(content)"`).  Without the
+    /// suffix, the element's text content is used.
+    #[serde(default)]
+    pub css: HashMap<String, String>,
+}
+
 /// `[site]` — name and URL patterns for a rule.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SiteConfig {
@@ -127,6 +202,100 @@ pub enum ClientKind {
     Standard,
 }
 
+/// Parsed representation of a `[request] auth = "..."` value.
+///
+/// Supported formats:
+/// - `"env:VAR_NAME"` — reads `$VAR_NAME` and injects `Authorization: Bearer $value`
+/// - `"env:VAR_NAME:header=X-Custom-Header"` — reads `$VAR_NAME` and injects
+///   `X-Custom-Header: $value` verbatim
+///
+/// When the env var is absent the request proceeds without authentication,
+/// which is correct for APIs that allow unauthenticated access to public
+/// resources (e.g. GitHub API rate-limits unauthenticated requests but does
+/// not block them entirely).
+///
+/// # Examples
+///
+/// ```
+/// use nab::site::rules::config::AuthConfig;
+///
+/// // Bearer token from env var
+/// let cfg = AuthConfig::parse("env:GITHUB_TOKEN").unwrap();
+/// assert_eq!(cfg.env_var, "GITHUB_TOKEN");
+/// assert_eq!(cfg.header_name, "Authorization");
+/// assert!(cfg.bearer);
+///
+/// // Custom header name
+/// let cfg = AuthConfig::parse("env:MY_KEY:header=X-Api-Key").unwrap();
+/// assert_eq!(cfg.header_name, "X-Api-Key");
+/// assert!(!cfg.bearer);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthConfig {
+    /// Environment variable holding the credential value.
+    pub env_var: String,
+    /// HTTP header name to inject.  Defaults to `"Authorization"`.
+    pub header_name: String,
+    /// Whether to wrap the value as `"Bearer $value"`.
+    ///
+    /// `true` (default) → `Authorization: Bearer $value`.
+    /// `false` (custom header) → `X-Header: $value` verbatim.
+    pub bearer: bool,
+}
+
+impl AuthConfig {
+    /// Parse an `auth` string into an [`AuthConfig`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the format is not `"env:VAR"` or
+    /// `"env:VAR:header=NAME"`.
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        let rest = s
+            .strip_prefix("env:")
+            .ok_or_else(|| anyhow::anyhow!("auth value must start with 'env:' (got '{s}')"))?;
+
+        match rest.split_once(':') {
+            None => Ok(Self {
+                env_var: rest.to_string(),
+                header_name: "Authorization".to_string(),
+                bearer: true,
+            }),
+            Some((var, suffix)) => {
+                let header_name = suffix
+                    .strip_prefix("header=")
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("auth suffix must be 'header=NAME' (got '{suffix}')")
+                    })?
+                    .to_string();
+                anyhow::ensure!(
+                    !header_name.is_empty(),
+                    "auth header name must not be empty"
+                );
+                Ok(Self {
+                    env_var: var.to_string(),
+                    header_name,
+                    bearer: false,
+                })
+            }
+        }
+    }
+
+    /// Resolve the auth header `(name, value)` from the environment.
+    ///
+    /// Returns `None` when the env var is not set (auth is optional).
+    #[must_use]
+    pub fn resolve(&self) -> Option<(String, String)> {
+        let value = std::env::var(&self.env_var).ok()?;
+        let header_value = if self.bearer {
+            format!("Bearer {value}")
+        } else {
+            value
+        };
+        Some((self.header_name.clone(), header_value))
+    }
+}
+
 /// `[request]` — HTTP request options.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RequestConfig {
@@ -143,6 +312,21 @@ pub struct RequestConfig {
     pub headers: HashMap<String, String>,
     /// Value for the `Accept` header (convenience shorthand).
     pub accept: Option<String>,
+    /// Optional auth injection from an environment variable.
+    ///
+    /// Supported formats:
+    /// - `"env:VAR_NAME"` → `Authorization: Bearer $value`
+    /// - `"env:VAR_NAME:header=X-Custom-Header"` → `X-Custom-Header: $value`
+    ///
+    /// When the env var is absent the request proceeds without the auth header.
+    ///
+    /// # TOML example
+    ///
+    /// ```toml
+    /// [request]
+    /// auth = "env:GITHUB_TOKEN"
+    /// ```
+    pub auth: Option<String>,
 }
 
 /// `[json]` — mapping of logical field names to JSON dot-path selectors.
@@ -212,8 +396,7 @@ impl SiteRuleConfig {
     /// Returns an error if the TOML is malformed, required fields are missing,
     /// or patterns/regexes fail to compile.
     pub fn from_toml(toml_str: &str) -> Result<Self> {
-        let config: Self =
-            toml::from_str(toml_str).context("failed to parse site rule TOML")?;
+        let config: Self = toml::from_str(toml_str).context("failed to parse site rule TOML")?;
         config.validate()?;
         Ok(config)
     }
@@ -224,18 +407,32 @@ impl SiteRuleConfig {
             bail!("site.name must not be empty");
         }
         if self.site.patterns.is_empty() {
-            bail!("site.patterns must not be empty for rule '{}'", self.site.name);
+            bail!(
+                "site.patterns must not be empty for rule '{}'",
+                self.site.name
+            );
         }
         // Validate that each pattern compiles as a regex.
         for pattern in &self.site.patterns {
-            regex::Regex::new(pattern)
-                .with_context(|| format!("invalid pattern regex '{}' in rule '{}'", pattern, self.site.name))?;
+            regex::Regex::new(pattern).with_context(|| {
+                format!(
+                    "invalid pattern regex '{}' in rule '{}'",
+                    pattern, self.site.name
+                )
+            })?;
         }
         // Validate that the rewrite `from` regex compiles.
-        regex::Regex::new(&self.rewrite.from)
-            .with_context(|| format!("invalid rewrite.from regex '{}' in rule '{}'", self.rewrite.from, self.site.name))?;
+        regex::Regex::new(&self.rewrite.from).with_context(|| {
+            format!(
+                "invalid rewrite.from regex '{}' in rule '{}'",
+                self.rewrite.from, self.site.name
+            )
+        })?;
         if self.template.format.is_empty() {
-            bail!("template.format must not be empty in rule '{}'", self.site.name);
+            bail!(
+                "template.format must not be empty in rule '{}'",
+                self.site.name
+            );
         }
         // Validate additional fetch regexes.
         for (i, af) in self.additional_fetches.iter().enumerate() {
@@ -249,6 +446,24 @@ impl SiteRuleConfig {
                 format!(
                     "invalid fetch_additional[{i}].rewrite_from regex '{}' in rule '{}'",
                     af.rewrite_from, self.site.name
+                )
+            })?;
+        }
+        // Validate fallback regexes.
+        for (i, fb) in self.fallback.iter().enumerate() {
+            regex::Regex::new(&fb.rewrite_from).with_context(|| {
+                format!(
+                    "invalid fallback[{i}].rewrite_from regex '{}' in rule '{}'",
+                    fb.rewrite_from, self.site.name
+                )
+            })?;
+        }
+        // Validate auth string format if present.
+        if let Some(auth) = &self.request.auth {
+            AuthConfig::parse(auth).with_context(|| {
+                format!(
+                    "invalid request.auth '{}' in rule '{}'",
+                    auth, self.site.name
                 )
             })?;
         }
@@ -289,7 +504,10 @@ mod tests {
         let cfg = SiteRuleConfig::from_toml(youtube_toml()).unwrap();
         assert_eq!(cfg.site.name, "youtube");
         assert_eq!(cfg.site.patterns.len(), 2);
-        assert_eq!(cfg.rewrite.to, "https://www.youtube.com/oembed?url={url}&format=json");
+        assert_eq!(
+            cfg.rewrite.to,
+            "https://www.youtube.com/oembed?url={url}&format=json"
+        );
     }
 
     #[test]
@@ -304,9 +522,15 @@ mod tests {
     fn parse_twitter_json_fields_all_present() {
         let cfg = SiteRuleConfig::from_toml(twitter_toml()).unwrap();
         let fields = &cfg.json.0;
-        assert_eq!(fields.get("author_name").map(String::as_str), Some(".tweet.author.name"));
+        assert_eq!(
+            fields.get("author_name").map(String::as_str),
+            Some(".tweet.author.name")
+        );
         assert_eq!(fields.get("text").map(String::as_str), Some(".tweet.text"));
-        assert_eq!(fields.get("likes").map(String::as_str), Some(".tweet.likes"));
+        assert_eq!(
+            fields.get("likes").map(String::as_str),
+            Some(".tweet.likes")
+        );
     }
 
     #[test]
@@ -375,7 +599,11 @@ to = "https://api.example.com"
 format = "{title}"
 "#;
         let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
-        assert!(err.to_string().contains("pattern") || err.to_string().contains("regex") || err.to_string().contains("invalid"));
+        assert!(
+            err.to_string().contains("pattern")
+                || err.to_string().contains("regex")
+                || err.to_string().contains("invalid")
+        );
     }
 
     #[test]
@@ -575,8 +803,14 @@ score = ".items[0].score"
             "https://api.example.com/questions/$1/answers"
         );
         assert_eq!(af.accept.as_deref(), Some("application/json"));
-        assert_eq!(af.json.0.get("body").map(String::as_str), Some(".items[0].body"));
-        assert_eq!(af.json.0.get("score").map(String::as_str), Some(".items[0].score"));
+        assert_eq!(
+            af.json.0.get("body").map(String::as_str),
+            Some(".items[0].body")
+        );
+        assert_eq!(
+            af.json.0.get("score").map(String::as_str),
+            Some(".items[0].score")
+        );
     }
 
     #[test]
@@ -665,7 +899,9 @@ rewrite_from = "[invalid"
 rewrite_to = "https://api.example.com/extra"
 "#;
         let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
-        assert!(err.to_string().contains("fetch_additional") || err.to_string().contains("invalid"));
+        assert!(
+            err.to_string().contains("fetch_additional") || err.to_string().contains("invalid")
+        );
     }
 
     fn stackoverflow_toml() -> &'static str {
@@ -681,5 +917,342 @@ rewrite_to = "https://api.example.com/extra"
         assert_eq!(af.prefix, "ans");
         assert!(af.json.0.contains_key("body"));
         assert!(af.json.0.contains_key("score"));
+    }
+
+    // ── AuthConfig unit tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn auth_config_parses_env_bearer() {
+        // GIVEN: bare env-var auth string
+        // WHEN: parsed
+        let cfg = AuthConfig::parse("env:GITHUB_TOKEN").unwrap();
+        // THEN: defaults to Authorization Bearer
+        assert_eq!(cfg.env_var, "GITHUB_TOKEN");
+        assert_eq!(cfg.header_name, "Authorization");
+        assert!(cfg.bearer);
+    }
+
+    #[test]
+    fn auth_config_parses_env_custom_header() {
+        // GIVEN: auth string with explicit custom header name
+        let cfg = AuthConfig::parse("env:MY_KEY:header=X-Api-Key").unwrap();
+        // THEN: custom header, no bearer wrapping
+        assert_eq!(cfg.env_var, "MY_KEY");
+        assert_eq!(cfg.header_name, "X-Api-Key");
+        assert!(!cfg.bearer);
+    }
+
+    #[test]
+    fn auth_config_parse_rejects_missing_env_prefix() {
+        let err = AuthConfig::parse("token:GITHUB_TOKEN").unwrap_err();
+        assert!(err.to_string().contains("env:"));
+    }
+
+    #[test]
+    fn auth_config_parse_rejects_bad_suffix() {
+        let err = AuthConfig::parse("env:VAR:notaheader=x").unwrap_err();
+        assert!(err.to_string().contains("header="));
+    }
+
+    #[test]
+    fn auth_config_parse_rejects_empty_header_name() {
+        let err = AuthConfig::parse("env:VAR:header=").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn auth_config_resolve_returns_bearer_when_var_set() {
+        // GIVEN: env var is set
+        // SAFETY: test-only mutation; test runner is multi-threaded but unique
+        // var name avoids collisions with other tests.
+        unsafe { std::env::set_var("NAB_TEST_TOKEN_BEARER_CFG", "secret123") };
+        let cfg = AuthConfig::parse("env:NAB_TEST_TOKEN_BEARER_CFG").unwrap();
+        // WHEN: resolved
+        let resolved = cfg.resolve();
+        unsafe { std::env::remove_var("NAB_TEST_TOKEN_BEARER_CFG") };
+        // THEN: Authorization header with Bearer prefix
+        assert_eq!(
+            resolved,
+            Some(("Authorization".to_string(), "Bearer secret123".to_string()))
+        );
+    }
+
+    #[test]
+    fn auth_config_resolve_returns_custom_header_when_var_set() {
+        unsafe { std::env::set_var("NAB_TEST_TOKEN_CUSTOM_CFG", "myapikey") };
+        let cfg = AuthConfig::parse("env:NAB_TEST_TOKEN_CUSTOM_CFG:header=X-Api-Key").unwrap();
+        let resolved = cfg.resolve();
+        unsafe { std::env::remove_var("NAB_TEST_TOKEN_CUSTOM_CFG") };
+        assert_eq!(
+            resolved,
+            Some(("X-Api-Key".to_string(), "myapikey".to_string()))
+        );
+    }
+
+    #[test]
+    fn auth_config_resolve_returns_none_when_var_absent() {
+        // GIVEN: env var not set (unique name prevents collisions)
+        unsafe { std::env::remove_var("NAB_TEST_TOKEN_ABSENT_XYZ_CFG") };
+        let cfg = AuthConfig::parse("env:NAB_TEST_TOKEN_ABSENT_XYZ_CFG").unwrap();
+        // THEN: None — auth is optional, not an error
+        assert!(cfg.resolve().is_none());
+    }
+
+    #[test]
+    fn request_config_auth_field_parses_from_toml() {
+        // GIVEN: a TOML rule with auth = "env:MY_TOKEN"
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[request]
+auth = "env:MY_TOKEN"
+
+[json]
+
+[template]
+format = "hello"
+"#;
+        // WHEN: parsed
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        // THEN: auth field is preserved verbatim
+        assert_eq!(cfg.request.auth.as_deref(), Some("env:MY_TOKEN"));
+    }
+
+    #[test]
+    fn validate_rejects_malformed_auth_string() {
+        // GIVEN: auth string not starting with "env:"
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[request]
+auth = "token:GITHUB_TOKEN"
+
+[json]
+
+[template]
+format = "hello"
+"#;
+        // WHEN: parsed
+        let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
+        // THEN: validation error mentions auth or env:
+        assert!(err.to_string().contains("auth") || err.to_string().contains("env:"));
+    }
+
+    // ── FallbackConfig / FallbackType tests ───────────────────────────────────
+
+    #[test]
+    fn fallback_type_as_str_json() {
+        assert_eq!(FallbackType::Json.as_str(), "json");
+    }
+
+    #[test]
+    fn fallback_type_as_str_html() {
+        assert_eq!(FallbackType::Html.as_str(), "html");
+    }
+
+    #[test]
+    fn fallback_type_default_is_json() {
+        assert_eq!(FallbackType::default(), FallbackType::Json);
+    }
+
+    #[test]
+    fn fallback_defaults_to_empty_vec() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+
+[template]
+format = "hello"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        assert!(cfg.fallback.is_empty());
+    }
+
+    #[test]
+    fn parse_html_fallback_succeeds() {
+        // GIVEN: a TOML with a [[fallback]] of type "html"
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com/oembed?url={url}"
+
+[json]
+title = ".title"
+
+[template]
+format = "{title}"
+
+[[fallback]]
+rewrite_from = ".*"
+rewrite_to = "{url}"
+type = "html"
+
+[fallback.css]
+title = "meta[property='og:title']::attr(content)"
+description = "meta[property='og:description']::attr(content)"
+"#;
+        // WHEN: parsed
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        // THEN: one fallback with html type and css selectors
+        assert_eq!(cfg.fallback.len(), 1);
+        let fb = &cfg.fallback[0];
+        assert_eq!(fb.fallback_type, FallbackType::Html);
+        assert_eq!(fb.rewrite_to, "{url}");
+        assert_eq!(
+            fb.css.get("title").map(String::as_str),
+            Some("meta[property='og:title']::attr(content)")
+        );
+        assert_eq!(
+            fb.css.get("description").map(String::as_str),
+            Some("meta[property='og:description']::attr(content)")
+        );
+    }
+
+    #[test]
+    fn parse_json_fallback_succeeds() {
+        // GIVEN: a TOML with a [[fallback]] of type "json" (default)
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com/primary"
+
+[json]
+title = ".title"
+
+[template]
+format = "{title}"
+
+[[fallback]]
+rewrite_from = ".*"
+rewrite_to = "https://api.example.com/fallback"
+
+[fallback.json]
+title = ".data.title"
+"#;
+        // WHEN: parsed
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        // THEN: one fallback with json type and json selectors
+        assert_eq!(cfg.fallback.len(), 1);
+        let fb = &cfg.fallback[0];
+        assert_eq!(fb.fallback_type, FallbackType::Json);
+        assert_eq!(
+            fb.json.0.get("title").map(String::as_str),
+            Some(".data.title")
+        );
+        assert!(fb.css.is_empty());
+    }
+
+    #[test]
+    fn parse_multiple_fallbacks_in_order() {
+        // GIVEN: two [[fallback]] entries
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+title = ".title"
+
+[template]
+format = "{title}"
+
+[[fallback]]
+rewrite_from = ".*"
+rewrite_to = "https://fallback1.example.com"
+
+[fallback.json]
+title = ".title"
+
+[[fallback]]
+rewrite_from = ".*"
+rewrite_to = "{url}"
+type = "html"
+
+[fallback.css]
+title = "h1"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        // THEN: two fallbacks in declaration order
+        assert_eq!(cfg.fallback.len(), 2);
+        assert_eq!(cfg.fallback[0].fallback_type, FallbackType::Json);
+        assert_eq!(cfg.fallback[1].fallback_type, FallbackType::Html);
+    }
+
+    #[test]
+    fn validate_rejects_invalid_fallback_regex() {
+        // GIVEN: a fallback with an invalid rewrite_from regex
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+
+[template]
+format = "hello"
+
+[[fallback]]
+rewrite_from = "[invalid"
+rewrite_to = "{url}"
+type = "html"
+"#;
+        // WHEN: validated
+        let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
+        // THEN: error mentions fallback and/or invalid
+        assert!(
+            err.to_string().contains("fallback") || err.to_string().contains("invalid"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_instagram_toml_succeeds() {
+        let cfg = SiteRuleConfig::from_toml(include_str!("defaults/instagram.toml")).unwrap();
+        assert_eq!(cfg.site.name, "instagram");
+        // Primary JSON extraction
+        assert!(cfg.json.0.contains_key("author_name"));
+        assert!(cfg.json.0.contains_key("thumbnail_url"));
+        // Exactly one HTML fallback
+        assert_eq!(cfg.fallback.len(), 1);
+        let fb = &cfg.fallback[0];
+        assert_eq!(fb.fallback_type, FallbackType::Html);
+        assert!(fb.css.contains_key("title"));
+        assert!(fb.css.contains_key("description"));
+        assert!(fb.css.contains_key("image"));
     }
 }

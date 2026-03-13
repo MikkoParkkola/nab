@@ -309,8 +309,17 @@ mod tests {
         // All expected names must appear somewhere in the provider list.
         let names: Vec<&str> = router.providers.iter().map(|p| p.name()).collect();
         for expected in &[
-            "twitter", "reddit", "hackernews", "github", "google-workspace",
-            "instagram", "youtube", "wikipedia", "stackoverflow", "mastodon", "linkedin",
+            "twitter",
+            "reddit",
+            "hackernews",
+            "github",
+            "google-workspace",
+            "instagram",
+            "youtube",
+            "wikipedia",
+            "stackoverflow",
+            "mastodon",
+            "linkedin",
         ] {
             assert!(names.contains(expected), "missing provider '{expected}'");
         }
@@ -324,14 +333,19 @@ mod tests {
         let reddit_pos = router.providers.iter().position(|p| p.name() == "reddit");
         // twitter (rule-based, embedded default index 0) should appear before reddit
         // (hardcoded, not covered by a rule).
-        assert!(twitter_pos < reddit_pos, "rule-based twitter should precede hardcoded reddit");
+        assert!(
+            twitter_pos < reddit_pos,
+            "rule-based twitter should precede hardcoded reddit"
+        );
     }
 
     #[test]
     fn router_matches_twitter_urls() {
         let router = SiteRouter::new();
         // Find the first provider that matches twitter URLs.
-        let twitter = router.providers.iter()
+        let twitter = router
+            .providers
+            .iter()
             .find(|p| p.matches("https://x.com/user/status/123"))
             .expect("some provider should match twitter URLs");
         assert_eq!(twitter.name(), "twitter");

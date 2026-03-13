@@ -39,8 +39,7 @@ fn export_rule(name: &str, content: &str, dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    fs::write(&path, content)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    fs::write(&path, content).with_context(|| format!("Failed to write {}", path.display()))?;
 
     println!("Exported {name}.toml to {}", path.display());
     Ok(())

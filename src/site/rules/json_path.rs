@@ -76,8 +76,7 @@ pub fn extract(value: &Value, path: &str) -> Option<String> {
 pub fn extract_array(value: &Value, path: &str) -> Vec<String> {
     if let Some(nested_path) = path.strip_suffix("[]") {
         // `.field[]` — collect all array elements
-        return walk_path(value, nested_path)
-            .map_or_else(Vec::new, |v| collect_array(v, None));
+        return walk_path(value, nested_path).map_or_else(Vec::new, |v| collect_array(v, None));
     }
 
     // `.field[].nested` form
@@ -158,9 +157,7 @@ fn walk_indexed_path<'v>(value: &'v Value, path: &str) -> Option<&'v Value> {
             rest = &after_bracket[close + 1..];
         } else if let Some(after_dot) = rest.strip_prefix('.') {
             // Parse `key` up to the next `.` or `[`
-            let key_end = after_dot
-                .find(['.', '['])
-                .unwrap_or(after_dot.len());
+            let key_end = after_dot.find(['.', '[']).unwrap_or(after_dot.len());
             let key = &after_dot[..key_end];
             if key.is_empty() {
                 return None;
@@ -181,7 +178,9 @@ fn walk_indexed_path<'v>(value: &'v Value, path: &str) -> Option<&'v Value> {
 /// If `nested` is `Some("field")`, each element is treated as an object and
 /// the `field` key is extracted.  Otherwise each element itself is converted.
 fn collect_array(array_val: &Value, nested: Option<&str>) -> Vec<String> {
-    let Some(arr) = array_val.as_array() else { return Vec::new() };
+    let Some(arr) = array_val.as_array() else {
+        return Vec::new();
+    };
 
     arr.iter()
         .filter_map(|elem| match nested {
@@ -322,7 +321,10 @@ mod tests {
         });
         assert_eq!(
             extract_array(&v, ".media.all[].url"),
-            vec!["https://example.com/img1.jpg", "https://example.com/img2.jpg"]
+            vec![
+                "https://example.com/img1.jpg",
+                "https://example.com/img2.jpg"
+            ]
         );
     }
 
