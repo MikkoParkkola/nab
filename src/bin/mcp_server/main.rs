@@ -12,7 +12,12 @@
 //! nab-mcp
 //! ```
 
+pub mod elicitation;
+pub mod helpers;
+pub mod structured;
 pub mod tools;
+#[cfg(test)]
+mod tests;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,8 +37,9 @@ use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 
 use tools::{
     AuthLookupTool, BenchmarkTool, FetchBatchTool, FetchTool, FingerprintTool, LoginTool,
-    SubmitTool, ValidateTool, get_client, server_icons,
+    SubmitTool, ValidateTool, get_client,
 };
+use structured::server_icons;
 
 // Generate the tools enum
 tool_box!(

@@ -1,0 +1,209 @@
+//! HTTP fetch helpers for `nab-mcp` tool implementations.
+//!
+//! Low-level async helpers used by the tool `run` methods:
+//! cookie resolution, safe/cookie-injected fetch, body conversion,
+//! response formatting, and validation test runners.
+
+use std::fmt::Write as FmtWrite;
+use std::time::Instant;
+
+use rust_mcp_sdk::schema::schema_utils::CallToolError;
+
+use nab::{AcceleratedClient, CookieSource, SafeFetchConfig};
+use nab::content::ContentRouter;
+
+// ─── Cookie helpers ───────────────────────────────────────────────────────────
+
+/// Resolve cookie header for a URL from the requested browser.
+pub(crate) fn resolve_cookie_header(url: &str, browser: Option<&str>) -> String {
+    let Some(browser) = browser else {
+        return String::new();
+    };
+    let source = match browser.to_lowercase().as_str() {
+        "chrome" => CookieSource::Chrome,
+        "firefox" => CookieSource::Firefox,
+        "safari" => CookieSource::Safari,
+        _ => CookieSource::Brave,
+    };
+    let domain = url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
+        .unwrap_or_default();
+    source.get_cookie_header(&domain).unwrap_or_default()
+}
+
+// ─── Fetch helpers ────────────────────────────────────────────────────────────
+
+/// Fetch via `fetch_safe` and return the response components.
+pub(crate) async fn fetch_safe_response(
+    client: &AcceleratedClient,
+    url: &str,
+    config: &SafeFetchConfig,
+    start: Instant,
+) -> Result<
+    (
+        reqwest::StatusCode,
+        String,
+        Vec<(String, String)>,
+        bytes::Bytes,
+        std::time::Duration,
+    ),
+    CallToolError,
+> {
+    let safe_resp = client
+        .fetch_safe(url, config)
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    let elapsed = start.elapsed();
+    Ok((
+        safe_resp.status,
+        safe_resp.content_type.clone(),
+        safe_resp.headers.clone(),
+        safe_resp.body,
+        elapsed,
+    ))
+}
+
+/// Fetch with a cookie header and return the response components.
+pub(crate) async fn fetch_with_cookies(
+    client: &AcceleratedClient,
+    url: &str,
+    cookie_header: &str,
+    profile: &nab::fingerprint::BrowserProfile,
+    start: Instant,
+) -> Result<
+    (
+        reqwest::StatusCode,
+        String,
+        Vec<(String, String)>,
+        bytes::Bytes,
+        std::time::Duration,
+    ),
+    CallToolError,
+> {
+    let response = client
+        .inner()
+        .get(url)
+        .header("Cookie", cookie_header)
+        .headers(profile.to_headers())
+        .send()
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    let elapsed = start.elapsed();
+    let status = response.status();
+    let ct = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/html")
+        .to_string();
+    let hdrs: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
+        .collect();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    Ok((status, ct, hdrs, bytes, elapsed))
+}
+
+/// Convert body bytes to markdown asynchronously via `spawn_blocking`.
+pub(crate) async fn convert_body_async(
+    body_bytes: &bytes::Bytes,
+    content_type: &str,
+    url: &str,
+) -> Result<nab::content::ConversionResult, CallToolError> {
+    let bytes_clone = body_bytes.to_vec();
+    let ct_clone = content_type.to_string();
+    let url_clone = url.to_string();
+    let router = ContentRouter::new();
+    tokio::task::spawn_blocking(move || {
+        router.convert_with_url(&bytes_clone, &ct_clone, Some(&url_clone))
+    })
+    .await
+    .map_err(|e| CallToolError::from_message(e.to_string()))?
+    .map_err(|e| CallToolError::from_message(e.to_string()))
+}
+
+// ─── Output formatting helpers ────────────────────────────────────────────────
+
+/// Write the response status/timing/header summary to `output`.
+pub(crate) fn write_response_summary(
+    output: &mut String,
+    status: reqwest::StatusCode,
+    elapsed: std::time::Duration,
+    show_headers: bool,
+    response_headers: &[(String, String)],
+) {
+    output.push_str("\n📊 Response:\n");
+    let _ = writeln!(output, "   Status: {status}");
+    let _ = writeln!(output, "   Time: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+
+    if show_headers {
+        output.push_str("\n📋 Headers:\n");
+        for (name, value) in response_headers {
+            let _ = writeln!(output, "   {name}: {value}");
+        }
+    }
+}
+
+/// Write the body size line to `output`.
+pub(crate) fn write_body_info(output: &mut String, body_len: usize) {
+    let _ = writeln!(output, "\n📄 Body: {body_len} bytes");
+}
+
+// ─── Validation test runners ─────────────────────────────────────────────────
+
+/// Run a simple fetch-and-check validation test.
+pub(crate) async fn run_validation_test(
+    client: &AcceleratedClient,
+    output: &mut String,
+    label: &str,
+    url: &str,
+    expected_keyword: &str,
+) {
+    output.push_str(label);
+    let test_start = Instant::now();
+    match client.fetch(url).await {
+        Ok(response) => {
+            let body = response.text().await.unwrap_or_default();
+            if body.contains(expected_keyword) {
+                let _ = writeln!(
+                    output,
+                    "✅ {:.0}ms, {} bytes",
+                    test_start.elapsed().as_secs_f64() * 1000.0,
+                    body.len()
+                );
+            } else {
+                output.push_str("⚠️ Unexpected content\n");
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(output, "❌ {e}");
+        }
+    }
+}
+
+/// Run the TLS 1.3 validation test.
+pub(crate) async fn run_tls_test(client: &AcceleratedClient, output: &mut String) {
+    output.push_str("3️⃣  TLS 1.3 (cloudflare.com)... ");
+    let test_start = Instant::now();
+    match client.fetch("https://www.cloudflare.com").await {
+        Ok(response) => {
+            if response.status().is_success() {
+                let _ = writeln!(
+                    output,
+                    "✅ {:.0}ms",
+                    test_start.elapsed().as_secs_f64() * 1000.0
+                );
+            } else {
+                let _ = writeln!(output, "⚠️ Status: {}", response.status());
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(output, "❌ {e}");
+        }
+    }
+}

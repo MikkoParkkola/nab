@@ -266,7 +266,16 @@ nab ships a native Rust MCP server (`nab-mcp`) for integration with Claude Code 
 | `validate` | Run validation test suite | (none) |
 | `benchmark` | Benchmark URL fetching | `urls` (required), `iterations` (default: 3) |
 
-The MCP server uses the latest MCP protocol (2025-06-18), communicates over stdio, and shares a single `AcceleratedClient` instance across all tool calls for connection pooling.
+The MCP server uses MCP protocol **2025-11-25** (latest) over stdio and shares a single `AcceleratedClient` across all tool calls for connection pooling.
+
+**Protocol features:**
+
+- **Tool annotations** — read-only, destructive, and open-world hints on all 8 tools
+- **Structured output** — `outputSchema` + `structured_content` on fetch, fetch_batch, auth_lookup, fingerprint, benchmark (machine-parseable JSON alongside human-readable text)
+- **URL elicitation** — OAuth/SSO login sends the user to the auth URL in-browser (Google, GitHub, Microsoft, Apple, and 9 more)
+- **Form elicitation** — interactive credential input and multi-select cookie source picker
+- **Task-augmented execution** — `fetch_batch` can run asynchronously with progress notifications
+- **Server icons** — globe SVG in light/dark themes
 
 ## Benchmarks
 
