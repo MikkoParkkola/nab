@@ -76,6 +76,11 @@ nab ships with anti-fingerprinting by default: realistic TLS fingerprints, brows
 - **Anti-Fingerprinting** — Realistic Chrome/Firefox/Safari browser profiles to avoid bot detection.
 - **JS Engine (QuickJS)** — Lightweight embedded JavaScript for pages that need it, without a full browser.
 - **Compression** — Brotli, Zstd, Gzip, Deflate decompression built in.
+- **Query-Focused Extraction** — BM25-lite scoring extracts only the sections relevant to your query. Send `focus="authentication"` and get back just the auth docs, not the entire page.
+- **Token Budget** — Structure-aware truncation respects headings, code blocks, and tables. Never splits mid-block. Set `max_tokens=2000` to fit any context window.
+- **Prefetch Link Graph** — Extract same-site links from fetched pages, scored by relevance to your focus query. eTLD+1 filtering via Mozilla's public suffix list.
+- **Persistent Sessions** — Named sessions with automatic cookie persistence across requests. LRU eviction (32 slots), cookie seeding from browser jars.
+- **CSS Extractor Plugins** — Define custom extractors in `plugins.toml` using CSS selectors — no Rust code required.
 - **MCP Server** — `nab-mcp` binary for direct integration with Claude Code and other MCP clients.
 - **Batch Fetching** — Parallel URL fetching with connection pooling.
 
@@ -224,13 +229,29 @@ nab requires no configuration files. It uses smart defaults: auto-detected brows
 **Optional plugin configuration** at `~/.config/nab/plugins.toml`:
 
 ```toml
+# Binary plugin — external process (original format)
 [[plugins]]
 name = "my-provider"
 binary = "/usr/local/bin/nab-plugin-example"
 patterns = ["example\\.com/.*"]
+
+# CSS extractor — no external binary needed (new in v0.5)
+[[plugins]]
+name     = "internal-wiki"
+type     = "css"
+patterns = ["wiki\\.corp\\.com/.*"]
+
+[plugins.content]
+selector = "div.wiki-content"
+remove   = ["nav", ".sidebar"]
+
+[plugins.metadata]
+title     = "h1.page-title"
+author    = ".author-name"
+published = "time.published"
 ```
 
-Plugins are external binaries that receive a URL as JSON on stdin and return markdown content on stdout. See [Plugin System](https://github.com/MikkoParkkola/nab/wiki/Architecture#extension-points) for the protocol specification.
+Binary plugins receive a URL as JSON on stdin and return markdown on stdout. CSS extractors run in-process using configurable selectors — no code required.
 
 **Persistent state** stored in `~/.nab/`:
 
@@ -258,16 +279,16 @@ nab ships a native Rust MCP server (`nab-mcp`) for integration with Claude Code 
 
 **Available tools:**
 
-| Tool | Description | Parameters |
+| Tool | Description | Key Parameters |
 |------|-------------|------------|
-| `fetch` | Fetch URL and convert to markdown | `url` (required), `headers`, `body`, `cookies` |
-| `fetch_batch` | Fetch multiple URLs in parallel | `urls` (required, array) |
-| `submit` | Submit a web form with CSRF extraction | `url`, `fields` (required), `csrf_selector`, `cookies` |
-| `login` | Auto-login via 1Password | `url` (required), `cookies` |
-| `auth_lookup` | Look up 1Password credentials | `url` (required) |
-| `fingerprint` | Generate browser fingerprints | `count` (default: 1), `browser` |
-| `validate` | Run validation test suite | (none) |
-| `benchmark` | Benchmark URL fetching | `urls` (required), `iterations` (default: 3) |
+| `fetch` | Fetch URL and convert to markdown | `url`, `cookies`, `focus`, `max_tokens`, `session` |
+| `fetch_batch` | Fetch multiple URLs in parallel | `urls` (array) |
+| `submit` | Submit a web form with CSRF extraction | `url`, `fields`, `cookies`, `session` |
+| `login` | Auto-login via 1Password | `url`, `cookies`, `session` |
+| `auth_lookup` | Look up 1Password credentials | `url` |
+| `fingerprint` | Generate browser fingerprints | `count`, `browser` |
+| `validate` | Run validation test suite | — |
+| `benchmark` | Benchmark URL fetching | `urls`, `iterations` |
 
 The MCP server uses MCP protocol **2025-11-25** (latest) over stdio and shares a single `AcceleratedClient` across all tool calls for connection pooling.
 

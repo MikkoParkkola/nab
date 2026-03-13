@@ -158,6 +158,19 @@ pub struct FetchTool {
 impl FetchTool {
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
+        let url_host = url::Url::parse(&self.url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "<invalid>".to_owned());
+        tracing::info!(
+            url_host = %url_host,
+            has_focus = self.focus.is_some(),
+            has_budget = self.max_tokens.is_some(),
+            has_session = self.session.is_some(),
+            diff = self.diff,
+            "fetch start"
+        );
+
         let start = Instant::now();
         let client: &AcceleratedClient = get_client().await;
         let profile = client.profile().await;
