@@ -95,7 +95,9 @@ impl LoginFlow {
         let form_result = Form::find_login_form(&page_html).context("Failed to parse forms")?;
 
         // If no form found, try QuickJS execution for SPA forms
-        let mut form = if let Some(f) = form_result { f } else {
+        let mut form = if let Some(f) = form_result {
+            f
+        } else {
             // Check if page has inline scripts that might render forms
             let has_inline_scripts = Self::has_inline_scripts(&page_html);
 
@@ -124,9 +126,7 @@ impl LoginFlow {
 
                                     // Try cookie-based auth as fallback
                                     if self.cookie_header.is_some() {
-                                        info!(
-                                            "Attempting cookie-based authentication instead..."
-                                        );
+                                        info!("Attempting cookie-based authentication instead...");
                                         return self.cookie_auth_fallback(url).await;
                                     }
 
@@ -311,17 +311,19 @@ impl LoginFlow {
 
         // Find and fill username field
         if let Some(ref username) = credential.username
-            && let Some(key) = Self::find_matching_field(&form.fields, &username_patterns) {
-                debug!("Filling username field: {}", key);
-                form.fields.insert(key, username.clone());
-            }
+            && let Some(key) = Self::find_matching_field(&form.fields, &username_patterns)
+        {
+            debug!("Filling username field: {}", key);
+            form.fields.insert(key, username.clone());
+        }
 
         // Find and fill password field
         if let Some(ref password) = credential.password
-            && let Some(key) = Self::find_matching_field(&form.fields, &password_patterns) {
-                debug!("Filling password field: {}", key);
-                form.fields.insert(key, password.clone());
-            }
+            && let Some(key) = Self::find_matching_field(&form.fields, &password_patterns)
+        {
+            debug!("Filling password field: {}", key);
+            form.fields.insert(key, password.clone());
+        }
 
         Ok(())
     }
@@ -693,8 +695,7 @@ mod tests {
             passkey_credential_id: None,
         };
 
-        LoginFlow::fill_form_with_credential(&mut form, &credential)
-            .unwrap();
+        LoginFlow::fill_form_with_credential(&mut form, &credential).unwrap();
 
         assert_eq!(form.fields.get("username"), Some(&"testuser".to_string()));
         assert_eq!(form.fields.get("password"), Some(&"testpass".to_string()));

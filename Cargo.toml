@@ -157,7 +157,7 @@ bumpalo = { version = "3.16", features = ["collections"] }
 clap = { version = "4", features = ["derive"], optional = true }
 http = "1.4.0"
 dirs = "6.0.0"
-rust-mcp-sdk = { version = "0.7.2", features = ["server", "macros", "stdio", "2025-06-18"] }
+rust-mcp-sdk = { version = "0.7.4", features = ["server", "macros", "stdio", "2025-06-18"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # NATIVE COOKIE DECRYPTION (macOS: AES-128-CBC + PBKDF2-SHA1 + Keychain)

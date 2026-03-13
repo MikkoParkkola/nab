@@ -2,11 +2,17 @@
 //!
 //! Each struct corresponds to one MCP tool exposed by the server.
 
+use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
+use std::sync::Arc;
 use std::time::Instant;
 
+use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
-use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
+use rust_mcp_sdk::schema::{
+    CallToolResult, ElicitRequestedSchema, ElicitResultAction, EnumSchema,
+    PrimitiveSchemaDefinition, StringSchema, TextContent, schema_utils::CallToolError,
+};
 use serde::{Deserialize, Serialize};
 
 use tokio::sync::OnceCell;
@@ -81,12 +87,12 @@ impl FetchTool {
         } else {
             Some(cookie_header.as_str())
         };
-        if let Some(site_content) =
-            site_router.try_extract(&self.url, client, cookie_opt).await
-        {
+        if let Some(site_content) = site_router.try_extract(&self.url, client, cookie_opt).await {
             output.push_str("\n📄 Content (from specialized provider):\n\n");
             output.push_str(&site_content.markdown);
-            return Ok(CallToolResult::text_content(vec![TextContent::from(output)]));
+            return Ok(CallToolResult::text_content(vec![TextContent::from(
+                output,
+            )]));
         }
 
         let config = SafeFetchConfig::default();
@@ -98,7 +104,13 @@ impl FetchTool {
                 fetch_with_cookies(client, &self.url, &cookie_header, &profile, start).await?
             };
 
-        write_response_summary(&mut output, status, elapsed, self.headers, &response_headers);
+        write_response_summary(
+            &mut output,
+            status,
+            elapsed,
+            self.headers,
+            &response_headers,
+        );
         write_body_info(&mut output, body_bytes.len());
 
         let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
@@ -116,7 +128,9 @@ impl FetchTool {
             let _ = write!(output, "\n{truncated}");
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -187,7 +201,9 @@ impl FetchBatchTool {
             self.urls.len()
         );
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -215,7 +231,9 @@ impl AuthLookupTool {
         if !OnePasswordAuth::is_available() {
             output.push_str("❌ 1Password CLI not available or not authenticated\n");
             output.push_str("   Run: op signin\n");
-            return Ok(CallToolResult::text_content(vec![TextContent::from(output)]));
+            return Ok(CallToolResult::text_content(vec![TextContent::from(
+                output,
+            )]));
         }
 
         match CredentialRetriever::get_credential_for_url(&self.url) {
@@ -241,7 +259,9 @@ impl AuthLookupTool {
             }
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -255,7 +275,9 @@ Creates browser profiles for Chrome, Firefox, or Safari.
 Includes User-Agent, Sec-CH-UA headers, Accept-Language, platform info.
 
 Returns: Generated fingerprint profiles.",
-    read_only_hint = true
+    read_only_hint = true,
+    destructive_hint = false,
+    open_world_hint = false
 )]
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct FingerprintTool {
@@ -291,7 +313,9 @@ impl FingerprintTool {
             output.push('\n');
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -305,6 +329,7 @@ Tests: HTTP/2, HTTP/3, compression, fingerprinting, TLS 1.3, 1Password.
 
 Returns: Validation results with timing.",
     read_only_hint = true,
+    destructive_hint = false,
     open_world_hint = true
 )]
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
@@ -316,8 +341,22 @@ impl ValidateTool {
         let client: &AcceleratedClient = get_client().await;
         let mut output = String::from("🧪 MicroFetch Validation Suite\n\n");
 
-        run_validation_test(client, &mut output, "1️⃣  Basic fetch (example.com)... ", "https://example.com", "Example Domain").await;
-        run_validation_test(client, &mut output, "2️⃣  Brotli compression (httpbin.org)... ", "https://httpbin.org/brotli", "brotli").await;
+        run_validation_test(
+            client,
+            &mut output,
+            "1️⃣  Basic fetch (example.com)... ",
+            "https://example.com",
+            "Example Domain",
+        )
+        .await;
+        run_validation_test(
+            client,
+            &mut output,
+            "2️⃣  Brotli compression (httpbin.org)... ",
+            "https://httpbin.org/brotli",
+            "brotli",
+        )
+        .await;
         run_tls_test(client, &mut output).await;
 
         output.push_str("4️⃣  1Password CLI... ");
@@ -333,7 +372,9 @@ impl ValidateTool {
             start.elapsed().as_secs_f64()
         );
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -394,7 +435,9 @@ impl BenchmarkTool {
             }
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -492,7 +535,9 @@ impl SubmitTool {
 
         output.push_str(&truncate_markdown(&conversion.markdown, 4000));
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
     }
 }
 
@@ -519,15 +564,53 @@ pub struct LoginTool {
 }
 
 impl LoginTool {
-    pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
+    pub async fn run(&self, runtime: Arc<dyn McpServer>) -> Result<CallToolResult, CallToolError> {
         use nab::LoginFlow;
 
         let mut output = format!("🔐 Auto-login: {}\n", self.url);
 
         if !OnePasswordAuth::is_available() {
-            return Err(CallToolError::from_message(
-                "1Password CLI not available. Install: brew install 1password-cli",
-            ));
+            // Elicit manual credentials when 1Password is unavailable.
+            let (username, password) = elicit_credentials(&runtime, &self.url).await?;
+            return run_login_with_credentials(&self.url, &username, &password, output).await;
+        }
+
+        // Collect all matching credentials to detect ambiguity.
+        let op_auth = OnePasswordAuth::new(None);
+        let all_creds = op_auth
+            .get_all_credentials_for_url(&self.url)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+        let credential = match all_creds.len() {
+            0 => {
+                // No stored credentials — elicit from user.
+                let (username, password) = elicit_credentials(&runtime, &self.url).await?;
+                return run_login_with_credentials(&self.url, &username, &password, output).await;
+            }
+            1 => {
+                let cred = &all_creds[0];
+                let _ = writeln!(output, "   Credential: {}", cred.title);
+                cred.clone()
+            }
+            _ => {
+                // Multiple matches — let the user choose via elicitation.
+                let chosen_title =
+                    elicit_credential_choice(&runtime, &self.url, &all_creds).await?;
+                let cred = all_creds
+                    .into_iter()
+                    .find(|c| c.title == chosen_title)
+                    .ok_or_else(|| CallToolError::from_message("Selected credential not found"))?;
+                let _ = writeln!(output, "   Credential: {}", cred.title);
+                cred
+            }
+        };
+
+        // Verify we have a usable password before attempting the login flow.
+        if credential.password.is_none() {
+            return Err(CallToolError::from_message(format!(
+                "No password found in credential '{}' for {}",
+                credential.title, self.url
+            )));
         }
 
         let client =
@@ -543,14 +626,212 @@ impl LoginTool {
         output.push_str("   Status: ✅ Login successful\n\n");
 
         let router = ContentRouter::new();
-        let content_type = if result.body.starts_with('<') { "text/html" } else { "text/plain" };
+        let content_type = if result.body.starts_with('<') {
+            "text/html"
+        } else {
+            "text/plain"
+        };
         let conversion = router
             .convert(result.body.as_bytes(), content_type)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         output.push_str(&truncate_markdown(&conversion.markdown, 4000));
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(output)]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            output,
+        )]))
+    }
+}
+
+// ─── Elicitation helpers ──────────────────────────────────────────────────────
+
+/// Ask the user to provide a username and password when no stored credential exists.
+async fn elicit_credentials(
+    runtime: &Arc<dyn McpServer>,
+    url: &str,
+) -> Result<(String, String), CallToolError> {
+    let mut properties = HashMap::new();
+    properties.insert(
+        "username".into(),
+        PrimitiveSchemaDefinition::StringSchema(StringSchema::new(
+            Some("Your username or email address".into()),
+            None,
+            None,
+            None,
+            Some("Username".into()),
+        )),
+    );
+    properties.insert(
+        "password".into(),
+        PrimitiveSchemaDefinition::StringSchema(StringSchema::new(
+            Some("Your password".into()),
+            None,
+            None,
+            None,
+            Some("Password".into()),
+        )),
+    );
+
+    let schema = ElicitRequestedSchema::new(properties, vec!["username".into(), "password".into()]);
+
+    let result = runtime
+        .elicit_input(
+            format!("No stored credentials found for {url}. Please enter your login details:"),
+            schema,
+        )
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    match result.action {
+        ElicitResultAction::Accept => {
+            let content = result.content.unwrap_or_default();
+            let username = extract_string_field(&content, "username")?;
+            let password = extract_string_field(&content, "password")?;
+            Ok((username, password))
+        }
+        ElicitResultAction::Decline | ElicitResultAction::Cancel => {
+            Err(CallToolError::from_message("Login cancelled by user"))
+        }
+    }
+}
+
+/// Ask the user to choose one credential when multiple match the domain.
+async fn elicit_credential_choice(
+    runtime: &Arc<dyn McpServer>,
+    url: &str,
+    credentials: &[nab::auth::Credential],
+) -> Result<String, CallToolError> {
+    let titles: Vec<String> = credentials.iter().map(|c| c.title.clone()).collect();
+    let title_labels: Vec<String> = titles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let username = credentials[i]
+                .username
+                .as_deref()
+                .map(|u| format!(" ({u})"))
+                .unwrap_or_default();
+            format!("{t}{username}")
+        })
+        .collect();
+
+    let mut properties = HashMap::new();
+    properties.insert(
+        "credential".into(),
+        PrimitiveSchemaDefinition::EnumSchema(EnumSchema::new(
+            titles.clone(),
+            title_labels,
+            Some("Select the credential to use for login".into()),
+            Some("Credential".into()),
+        )),
+    );
+
+    let schema = ElicitRequestedSchema::new(properties, vec!["credential".into()]);
+
+    let result = runtime
+        .elicit_input(
+            format!("Multiple credentials found for {url}. Which one would you like to use?",),
+            schema,
+        )
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    match result.action {
+        ElicitResultAction::Accept => {
+            let content = result.content.unwrap_or_default();
+            extract_string_field(&content, "credential")
+        }
+        ElicitResultAction::Decline | ElicitResultAction::Cancel => {
+            Err(CallToolError::from_message("Login cancelled by user"))
+        }
+    }
+}
+
+/// Perform a credential-based login using a manually-provided username + password.
+///
+/// This path is used when no 1Password entry exists and the user supplies
+/// credentials via elicitation.  The `LoginFlow` cannot be used here because
+/// it pulls credentials from 1Password internally, so we fall back to the
+/// form-submission path (`SubmitTool`-style).
+async fn run_login_with_credentials(
+    url: &str,
+    username: &str,
+    password: &str,
+    mut output: String,
+) -> Result<CallToolResult, CallToolError> {
+    let client = get_client().await;
+
+    let page_html = client
+        .fetch_text(url)
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    let mut forms =
+        nab::Form::parse_all(&page_html).map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    if forms.is_empty() {
+        return Err(CallToolError::from_message("No login form found on page"));
+    }
+
+    let mut form = forms.remove(0);
+    let _ = writeln!(output, "   Form: {} {}", form.method, form.action);
+
+    // Best-effort field injection: typical login forms use username/email + password.
+    form.fields
+        .entry("username".into())
+        .or_insert_with(|| username.to_string());
+    form.fields
+        .entry("email".into())
+        .or_insert_with(|| username.to_string());
+    form.fields.insert("password".into(), password.to_string());
+
+    let action_url = form
+        .resolve_action(url)
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    let form_data = form.encode_urlencoded();
+
+    let response = client
+        .inner()
+        .post(&action_url)
+        .header("Content-Type", form.content_type())
+        .body(form_data)
+        .send()
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    let _ = writeln!(output, "   Status: {status}\n");
+
+    let router = ContentRouter::new();
+    let conversion = router
+        .convert(body.as_bytes(), "text/html")
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    output.push_str(&truncate_markdown(&conversion.markdown, 4000));
+    Ok(CallToolResult::text_content(vec![TextContent::from(
+        output,
+    )]))
+}
+
+/// Extract a string value from the elicitation response content map.
+fn extract_string_field(
+    content: &HashMap<String, rust_mcp_sdk::schema::ElicitResultContentValue>,
+    field: &str,
+) -> Result<String, CallToolError> {
+    use rust_mcp_sdk::schema::ElicitResultContentValue;
+    match content.get(field) {
+        Some(ElicitResultContentValue::String(s)) => Ok(s.clone()),
+        Some(_) => Err(CallToolError::from_message(format!(
+            "Unexpected type for elicitation field '{field}'"
+        ))),
+        None => Err(CallToolError::from_message(format!(
+            "Missing required elicitation field '{field}'"
+        ))),
     }
 }
 
@@ -649,7 +930,7 @@ async fn fetch_with_cookies(
     Ok((status, ct, hdrs, bytes, elapsed))
 }
 
-/// Convert body bytes to markdown asynchronously via spawn_blocking.
+/// Convert body bytes to markdown asynchronously via `spawn_blocking`.
 async fn convert_body_async(
     body_bytes: &bytes::Bytes,
     content_type: &str,

@@ -9,7 +9,7 @@
 
 pub mod cookies;
 
-pub use cookies::{CredentialRetriever, CredentialSource, CookieSource};
+pub use cookies::{CookieSource, CredentialRetriever, CredentialSource};
 
 use std::process::Command;
 
@@ -158,6 +158,51 @@ impl OnePasswordAuth {
         Ok(None)
     }
 
+    /// Get all credentials that match a URL/domain.
+    ///
+    /// Unlike [`Self::get_credential_for_url`] which stops at the first match,
+    /// this method collects every matching item so callers can present a choice
+    /// when multiple credentials exist for the same domain.
+    pub fn get_all_credentials_for_url(&self, url: &str) -> Result<Vec<Credential>> {
+        let domain = url::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(std::string::ToString::to_string))
+            .unwrap_or_else(|| url.to_string());
+
+        debug!("Listing all 1Password credentials for domain: {}", domain);
+
+        let mut cmd = Command::new("op");
+        cmd.args(["item", "list", "--format=json"]);
+        if let Some(ref vault) = self.vault {
+            cmd.args(["--vault", vault]);
+        }
+
+        let output = cmd.output().context("Failed to run 'op item list'")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!("1Password search failed: {}", stderr);
+            return Ok(Vec::new());
+        }
+
+        let items: Vec<OpListItem> =
+            serde_json::from_slice(&output.stdout).context("Failed to parse 1Password items")?;
+
+        let mut credentials = Vec::new();
+        for item in items {
+            let matches = item.title.to_lowercase().contains(&domain.to_lowercase())
+                || item
+                    .urls
+                    .as_ref()
+                    .is_some_and(|urls| urls.iter().any(|u| u.href.contains(&domain)));
+
+            if matches && let Ok(Some(cred)) = Self::get_item_details(&item.id) {
+                credentials.push(cred);
+            }
+        }
+
+        Ok(credentials)
+    }
+
     /// Get full item details by ID.
     fn get_item_details(item_id: &str) -> Result<Option<Credential>> {
         debug!("Getting 1Password item details: {}", item_id);
@@ -190,8 +235,7 @@ impl OnePasswordAuth {
                     _ => {
                         if let Some(ref label) = field.label {
                             let label_lower = label.to_lowercase();
-                            if (label_lower.contains("username")
-                                || label_lower.contains("email"))
+                            if (label_lower.contains("username") || label_lower.contains("email"))
                                 && username.is_none()
                             {
                                 username.clone_from(&field.value);
@@ -199,9 +243,7 @@ impl OnePasswordAuth {
                             if label_lower.contains("password") && password.is_none() {
                                 password.clone_from(&field.value);
                             }
-                            if label_lower.contains("one-time")
-                                || label_lower.contains("totp")
-                            {
+                            if label_lower.contains("one-time") || label_lower.contains("totp") {
                                 has_totp = true;
                                 if field.field_type.as_deref() == Some("OTP") {
                                     totp = Self::get_totp_code(&item.id).ok().flatten();
@@ -298,8 +340,7 @@ impl OnePasswordAuth {
             return Ok(vec![]);
         }
 
-        let items: Vec<OpListItem> =
-            serde_json::from_slice(&output.stdout).unwrap_or_default();
+        let items: Vec<OpListItem> = serde_json::from_slice(&output.stdout).unwrap_or_default();
 
         let mut passkeys = Vec::new();
         for item in items {
@@ -347,9 +388,7 @@ impl OtpRetriever {
         let output = Command::new("mcp-cli")
             .args([
                 "beeper/search_messages",
-                &format!(
-                    r#"{{"query": "{domain} code OR {domain} verification", "limit": 5}}"#
-                ),
+                &format!(r#"{{"query": "{domain} code OR {domain} verification", "limit": 5}}"#),
             ])
             .output();
 
@@ -401,10 +440,8 @@ impl OtpRetriever {
     pub(crate) fn extract_otp_from_text(text: &str) -> Option<String> {
         use std::sync::LazyLock;
         static OTP_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-            regex::Regex::new(
-                r"(?:code|otp|verification)[:\s]*(\d{6,8})|\b(\d{3}[-\s]?\d{3})\b",
-            )
-            .expect("Static regex pattern should compile")
+            regex::Regex::new(r"(?:code|otp|verification)[:\s]*(\d{6,8})|\b(\d{3}[-\s]?\d{3})\b")
+                .expect("Static regex pattern should compile")
         });
         static DIGIT_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
             regex::Regex::new(r"\b(\d{6})\b").expect("Static regex pattern should compile")
