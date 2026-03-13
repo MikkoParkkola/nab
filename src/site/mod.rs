@@ -11,8 +11,8 @@
 //!
 //! Provider loading order (first match wins):
 //! 1. **Rule-based providers** from `~/.config/nab/sites/*.toml` (user overrides)
-//! 2. **Rule-based providers** from embedded defaults (twitter, youtube, wikipedia)
-//! 3. **Hardcoded Rust providers** for platforms NOT covered by a rule
+//! 2. **Rule-based providers** from embedded defaults (twitter, youtube, wikipedia, etc.)
+//! 3. **Hardcoded Rust providers** for platforms NOT covered by a rule (hackernews, github, google, linkedin, reddit)
 //! 4. **CSS extractor plugins** from `~/.config/nab/plugins.toml`
 //!
 //! # Example
@@ -36,15 +36,9 @@ pub mod css_extractor;
 pub mod github;
 pub mod google;
 pub mod hackernews;
-pub mod instagram;
 pub mod linkedin;
-pub mod mastodon;
 pub mod reddit;
 pub mod rules;
-pub mod stackoverflow;
-pub mod twitter;
-pub mod wikipedia;
-pub mod youtube;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -133,18 +127,14 @@ impl SiteRouter {
         let mut providers: Vec<Box<dyn SiteProvider>> = rules::load_site_rules();
         let rule_names = rules::rule_overridden_names();
 
-        // Hardcoded providers — only add those not already covered by rules.
+        // Hardcoded providers — only for platforms NOT covered by a rule.
+        // Rule-covered sites (twitter, youtube, wikipedia, mastodon, instagram,
+        // stackoverflow) have been removed; the rule engine handles them.
         let hardcoded: Vec<Box<dyn SiteProvider>> = vec![
-            Box::new(twitter::TwitterProvider),
             Box::new(reddit::RedditProvider),
             Box::new(hackernews::HackerNewsProvider),
             Box::new(github::GitHubProvider),
             Box::new(google::GoogleWorkspaceProvider),
-            Box::new(instagram::InstagramProvider),
-            Box::new(youtube::YouTubeProvider),
-            Box::new(wikipedia::WikipediaProvider),
-            Box::new(stackoverflow::StackOverflowProvider),
-            Box::new(mastodon::MastodonProvider),
             Box::new(linkedin::LinkedInProvider),
         ];
 
@@ -301,10 +291,11 @@ mod tests {
     #[test]
     fn router_registers_all_builtin_providers() {
         let router = SiteRouter::new();
-        // Rule-based providers (3) + hardcoded non-overridden providers (8: reddit,
-        // hackernews, github, google-workspace, instagram, stackoverflow, mastodon,
-        // linkedin) = 11 minimum; CSS plugins may add more.
-        assert!(router.providers.len() >= 11);
+        // Rule-based providers (8: twitter, youtube, wikipedia, mastodon, reddit,
+        // stackoverflow, instagram, github-issues) + hardcoded non-overridden
+        // providers (4: hackernews, github, google-workspace, linkedin) = 12
+        // minimum; CSS plugins may add more.
+        assert!(router.providers.len() >= 12);
 
         // All expected names must appear somewhere in the provider list.
         let names: Vec<&str> = router.providers.iter().map(|p| p.name()).collect();
@@ -313,6 +304,7 @@ mod tests {
             "reddit",
             "hackernews",
             "github",
+            "github-issues",
             "google-workspace",
             "instagram",
             "youtube",
@@ -328,14 +320,13 @@ mod tests {
     #[test]
     fn router_rule_providers_come_before_hardcoded() {
         let router = SiteRouter::new();
-        // The first "twitter" provider must be the rule-based one (loaded first).
+        // Both twitter (embedded index 0) and reddit (embedded index 4) are
+        // rule-based; twitter should appear before hackernews (hardcoded).
         let twitter_pos = router.providers.iter().position(|p| p.name() == "twitter");
-        let reddit_pos = router.providers.iter().position(|p| p.name() == "reddit");
-        // twitter (rule-based, embedded default index 0) should appear before reddit
-        // (hardcoded, not covered by a rule).
+        let hn_pos = router.providers.iter().position(|p| p.name() == "hackernews");
         assert!(
-            twitter_pos < reddit_pos,
-            "rule-based twitter should precede hardcoded reddit"
+            twitter_pos < hn_pos,
+            "rule-based twitter should precede hardcoded hackernews"
         );
     }
 

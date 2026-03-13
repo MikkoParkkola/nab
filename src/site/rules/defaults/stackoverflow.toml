@@ -65,6 +65,18 @@ likes   = "score"
 replies = "answer_count"
 views   = "view_count"
 
+# Fallback: scrape the original SO page for question and answer body content.
+# Used when the SE API omits body fields (no app key) or returns an error
+# (rate-limited, 400 from invalid filter, etc.).
+[[fallback]]
+rewrite_from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
+rewrite_to   = "https://stackoverflow.com/questions/$1"
+type         = "html"
+
+[fallback.css]
+body     = "#question .s-prose"
+ans_body = "#answers .answer .s-prose"
+
 [[fetch_additional]]
 prefix       = "ans"
 rewrite_from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"

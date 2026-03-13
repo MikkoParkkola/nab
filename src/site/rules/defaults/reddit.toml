@@ -54,3 +54,18 @@ canonical_url_field = "url"
 [engagement]
 likes = "score"
 replies = "comments"
+
+# Fallback: scrape old.reddit.com HTML when the JSON API returns 403/404.
+# Reddit now blocks unauthenticated .json requests; old.reddit.com still
+# renders server-side HTML that we can extract with CSS selectors.
+[[fallback]]
+rewrite_from = "(?i)https?://(?:(?:www\\.)?reddit\\.com|old\\.reddit\\.com)(/r/[^/]+/comments/[^/?#]+(?:/[^/?#]+)?)[?#]?.*"
+rewrite_to   = "https://old.reddit.com$1"
+type         = "html"
+
+[fallback.css]
+title     = ".title a.title"
+author    = ".tagline .author"
+score     = ".score .number"
+selftext  = ".usertext-body .md"
+subreddit = ".redditname a"

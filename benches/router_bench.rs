@@ -9,9 +9,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use nab::content::ContentRouter;
 use nab::site::github::GitHubProvider;
 use nab::site::hackernews::HackerNewsProvider;
-use nab::site::instagram::InstagramProvider;
 use nab::site::reddit::RedditProvider;
-use nab::site::youtube::YouTubeProvider;
 use nab::site::{SiteProvider, SiteRouter};
 use std::hint::black_box;
 
@@ -36,18 +34,6 @@ const GITHUB_URLS: &[&str] = &[
     "https://github.com/rust-lang/rust/issues/12345",
     "https://github.com/tokio-rs/tokio/pull/67890",
     "https://GITHUB.COM/owner/repo/ISSUES/999",
-];
-
-const INSTAGRAM_URLS: &[&str] = &[
-    "https://instagram.com/p/ABC123xyz",
-    "https://www.instagram.com/reel/XYZ789abc",
-    "https://INSTAGRAM.COM/P/test123",
-];
-
-const YOUTUBE_URLS: &[&str] = &[
-    "https://youtube.com/watch?v=dQw4w9WgXcQ",
-    "https://youtu.be/dQw4w9WgXcQ",
-    "https://www.youtube.com/watch?v=ABC123",
 ];
 
 /// URLs that should NOT match any provider.
@@ -147,52 +133,6 @@ fn bench_hackernews_match(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_instagram_match(c: &mut Criterion) {
-    let mut group = c.benchmark_group("provider_match_instagram");
-    let provider = InstagramProvider;
-
-    group.bench_function("hit", |b| {
-        b.iter(|| {
-            for url in INSTAGRAM_URLS {
-                black_box(provider.matches(black_box(url)));
-            }
-        });
-    });
-
-    group.bench_function("miss", |b| {
-        b.iter(|| {
-            for url in NON_MATCHING_URLS {
-                black_box(provider.matches(black_box(url)));
-            }
-        });
-    });
-
-    group.finish();
-}
-
-fn bench_youtube_match(c: &mut Criterion) {
-    let mut group = c.benchmark_group("provider_match_youtube");
-    let provider = YouTubeProvider;
-
-    group.bench_function("hit", |b| {
-        b.iter(|| {
-            for url in YOUTUBE_URLS {
-                black_box(provider.matches(black_box(url)));
-            }
-        });
-    });
-
-    group.bench_function("miss", |b| {
-        b.iter(|| {
-            for url in NON_MATCHING_URLS {
-                black_box(provider.matches(black_box(url)));
-            }
-        });
-    });
-
-    group.finish();
-}
-
 // ---------------------------------------------------------------------------
 // Full router benchmarks (all providers iterated)
 // ---------------------------------------------------------------------------
@@ -200,16 +140,14 @@ fn bench_youtube_match(c: &mut Criterion) {
 fn bench_all_providers_miss(c: &mut Criterion) {
     let mut group = c.benchmark_group("all_providers");
 
-    // Create all public providers (mirrors SiteRouter order minus Twitter)
+    // Remaining hardcoded providers (instagram/youtube now rule-based).
     let providers: Vec<Box<dyn SiteProvider>> = vec![
         Box::new(RedditProvider),
         Box::new(HackerNewsProvider),
         Box::new(GitHubProvider),
-        Box::new(InstagramProvider),
-        Box::new(YouTubeProvider),
     ];
 
-    // Worst case: URL matches no provider, all 5 checked
+    // Worst case: URL matches no provider, all 3 checked
     group.bench_function("full_miss_scan", |b| {
         b.iter(|| {
             for url in NON_MATCHING_URLS {
@@ -335,8 +273,6 @@ criterion_group!(
     bench_reddit_match,
     bench_github_match,
     bench_hackernews_match,
-    bench_instagram_match,
-    bench_youtube_match,
     bench_all_providers_miss,
     bench_content_router_creation,
     bench_site_router_creation,
