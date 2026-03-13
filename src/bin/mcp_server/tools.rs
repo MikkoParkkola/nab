@@ -16,8 +16,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
 use nab::content::ContentRouter;
+use nab::content::budget::truncate_to_budget;
 use nab::content::diff::{ContentSnapshot, compute_diff};
 use nab::content::diff_format::format_diff_markdown;
+use nab::content::focus::extract_focused;
 use nab::content::snapshot_store::SnapshotStore;
 use nab::{
     AcceleratedClient, CredentialRetriever, OnePasswordAuth, SafeFetchConfig, chrome_profile,
@@ -32,7 +34,7 @@ use crate::helpers::{
     convert_body_async, fetch_safe_response, fetch_with_cookies, resolve_cookie_header,
     run_tls_test, run_validation_test, write_body_info, write_response_summary,
 };
-use crate::structured::{build_fetch_structured, build_structured, truncate_markdown};
+use crate::structured::{build_fetch_structured_v2, build_structured, truncate_markdown};
 
 // Global shared client (initialized once, shared with mcp_server main)
 static CLIENT: OnceCell<AcceleratedClient> = OnceCell::const_new();
@@ -67,6 +69,15 @@ Diff mode (diff: true):
 - First fetch caches the page; subsequent fetches return semantic diffs
 - Unchanged content returns a 5-token confirmation instead of full body
 
+Focus mode (focus: query):
+- Keeps only sections relevant to the query (BM25 scoring)
+- Replaces dropped sections with '[N sections omitted]' markers
+- Diff markers are always preserved regardless of relevance
+
+Token budget (max_tokens: N):
+- Structure-aware truncation preserving headings, code, and tables
+- Priority: title > code/tables > headings (30% cap) > body > blockquotes
+
 Returns: Markdown-converted body with timing info (or diff when diff: true).",
     read_only_hint = true,
     open_world_hint = true
@@ -87,6 +98,22 @@ pub struct FetchTool {
     /// tokens for monitoring or change-detection workflows.
     #[serde(default)]
     diff: bool,
+    /// Natural-language query to focus extraction on relevant sections.
+    ///
+    /// When set, uses BM25 scoring to keep only the sections most relevant
+    /// to the query, replacing omitted sections with count markers.
+    /// Dramatically reduces token count for large documents when you know
+    /// what you're looking for.
+    #[serde(default)]
+    focus: Option<String>,
+    /// Maximum token budget for the returned content.
+    ///
+    /// When set, performs structure-aware truncation that preserves
+    /// headings, code blocks, and tables before trimming body text.
+    /// Uses priority scoring: title/summary first, then code/tables,
+    /// then headings (capped at 30% of budget), then body text.
+    #[serde(default)]
+    max_tokens: Option<u64>,
 }
 
 impl FetchTool {
@@ -163,7 +190,7 @@ impl FetchTool {
             )
         };
 
-        // Unified post-processing pipeline: diff → (future: focus → budget → prefetch)
+        // Unified post-processing pipeline: diff → focus → budget
         let has_diff = if self.diff {
             let (diff_output, had_diff) = apply_diff(&self.url, &markdown);
             output.push('\n');
@@ -177,13 +204,37 @@ impl FetchTool {
             false
         };
 
-        let structured = build_fetch_structured(
+        // Focus: keep only sections relevant to the query (BM25 scoring).
+        // Diff markers are automatically exempt from filtering.
+        let (processed_markdown, omitted_sections, total_sections) =
+            if let Some(ref query) = self.focus {
+                let focus_result = extract_focused(&markdown, query);
+                (
+                    focus_result.markdown,
+                    focus_result.omitted_sections,
+                    focus_result.total_sections,
+                )
+            } else {
+                (markdown.clone(), 0, 0)
+            };
+
+        // Budget: structure-aware truncation with priority scoring.
+        let max_tok = self
+            .max_tokens
+            .map(|t| usize::try_from(t).unwrap_or(usize::MAX));
+        let budget_result = truncate_to_budget(&processed_markdown, max_tok);
+
+        let structured = build_fetch_structured_v2(
             &self.url,
             status_u16,
             &content_type,
-            &markdown,
+            &budget_result.markdown,
             elapsed_ms,
             has_diff,
+            omitted_sections,
+            total_sections,
+            budget_result.truncated,
+            budget_result.total_tokens,
         );
 
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use rust_mcp_sdk::schema::{ElicitResultContent, ElicitResultContentPrimitive};
 
 use crate::elicitation::{extract_multiselect_field, is_oauth_redirect};
-use crate::structured::{build_fetch_structured, build_structured, server_icons};
+use crate::structured::{build_fetch_structured_v2, build_structured, server_icons};
 
 // ── is_oauth_redirect ────────────────────────────────────────────────────────
 
@@ -121,13 +121,17 @@ fn build_structured_produces_correct_keys() {
 #[test]
 fn fetch_structured_has_all_required_fields() {
     // GIVEN a complete fetch result
-    let map = build_fetch_structured(
+    let map = build_fetch_structured_v2(
         "https://example.com",
         200,
         "text/html",
         "# Hello\n\nworld",
         42.5,
         false,
+        0,
+        0,
+        false,
+        0,
     );
     // WHEN inspected
     // THEN all outputSchema fields are present
@@ -144,13 +148,17 @@ fn fetch_structured_has_all_required_fields() {
 fn fetch_structured_truncates_long_content() {
     // GIVEN content longer than 4000 chars
     let long_content = "x".repeat(5000);
-    let map = build_fetch_structured(
+    let map = build_fetch_structured_v2(
         "https://example.com",
         200,
         "text/plain",
         &long_content,
         10.0,
         false,
+        0,
+        0,
+        false,
+        0,
     );
     // WHEN inspected
     // THEN content is truncated

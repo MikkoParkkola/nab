@@ -31,28 +31,28 @@ pub(crate) fn build_structured<const N: usize>(
 
 /// Build the `structuredContent` map for the `fetch` tool response.
 ///
-/// `has_diff` is `true` when `diff: true` was requested and content has changed
-/// since the last snapshot; `false` on first fetch, unchanged content, or when
-/// diff mode was not requested.
-pub(crate) fn build_fetch_structured(
+/// Includes focus and budget metadata fields when applicable.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_fetch_structured_v2(
     url: &str,
     status: u16,
     content_type: &str,
     markdown: &str,
     timing_ms: f64,
     has_diff: bool,
+    omitted_sections: usize,
+    total_sections: usize,
+    truncated: bool,
+    full_tokens: usize,
 ) -> serde_json::Map<String, serde_json::Value> {
-    build_structured([
+    let mut map = build_structured([
         ("url", serde_json::Value::String(url.to_string())),
         ("status", serde_json::Value::Number(status.into())),
         (
             "content_type",
             serde_json::Value::String(content_type.to_string()),
         ),
-        (
-            "content",
-            serde_json::Value::String(truncate_markdown(markdown, 4000)),
-        ),
+        ("content", serde_json::Value::String(markdown.to_string())),
         (
             "timing_ms",
             serde_json::Value::Number(
@@ -60,7 +60,30 @@ pub(crate) fn build_fetch_structured(
             ),
         ),
         ("has_diff", serde_json::Value::Bool(has_diff)),
-    ])
+    ]);
+
+    // Focus metadata (only present when focus was used)
+    if total_sections > 0 {
+        map.insert(
+            "omitted_sections".to_string(),
+            serde_json::Value::Number(omitted_sections.into()),
+        );
+        map.insert(
+            "total_sections".to_string(),
+            serde_json::Value::Number(total_sections.into()),
+        );
+    }
+
+    // Budget metadata (only present when truncation occurred)
+    if truncated {
+        map.insert("truncated".to_string(), serde_json::Value::Bool(true));
+        map.insert(
+            "full_tokens".to_string(),
+            serde_json::Value::Number(full_tokens.into()),
+        );
+    }
+
+    map
 }
 
 // ─── Server icon ─────────────────────────────────────────────────────────────
