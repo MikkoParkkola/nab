@@ -1,0 +1,56 @@
+# Reddit post extraction via Reddit JSON API.
+#
+# Reddit returns a bare JSON array: [post_listing, comments_listing].
+# Appending `.json` to any post URL gives the API response.
+#
+# The `client = "standard"` option is required because Reddit returns HTML
+# instead of JSON when the client forces HTTP/2 via prior knowledge (no ALPN).
+# A standard reqwest client negotiates the HTTP version via TLS ALPN.
+
+[site]
+name = "reddit"
+patterns = [
+    "(?i)(?:www\\.)?reddit\\.com/r/[^/]+/comments/",
+    "(?i)old\\.reddit\\.com/r/[^/]+/comments/",
+]
+
+[rewrite]
+# Strip query string and add .json suffix.
+from = "(?i)(https?://(?:(?:www\\.|old\\.)?reddit\\.com/r/[^/]+/comments/[^/?#]+(?:/[^/?#]+)?))[?#]?.*"
+to = "$1.json"
+
+[request]
+client = "standard"
+headers = { "User-Agent" = "nab/1.0 (by /u/nab-cli)" }
+accept = "application/json"
+
+[json]
+# Post data lives in the first listing: [0].data.children[0].data
+title    = "[0].data.children[0].data.title"
+author   = "[0].data.children[0].data.author"
+score    = "[0].data.children[0].data.score"
+comments = "[0].data.children[0].data.num_comments"
+selftext = "[0].data.children[0].data.selftext"
+url      = "[0].data.children[0].data.url"
+subreddit = "[0].data.children[0].data.subreddit"
+
+[template]
+format = """
+## {title}
+
+r/{subreddit} · by u/{author} · {score|number} points · {comments|number} comments
+
+{selftext}
+
+[View on Reddit]({url})
+"""
+
+[metadata]
+platform = "Reddit"
+author = "u/{author}"
+title_field = "title"
+canonical_url_field = "url"
+
+[engagement]
+likes = "score"
+replies = "comments"

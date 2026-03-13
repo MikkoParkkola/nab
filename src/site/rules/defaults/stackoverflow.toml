@@ -1,0 +1,73 @@
+# Stack Overflow question extraction via Stack Exchange API v2.3.
+#
+# Primary fetch: question metadata and body.
+# Additional fetch: top-voted answers (up to 3).
+#
+# The SE API always returns gzip-compressed responses; reqwest decompresses
+# transparently.  Responses are wrapped in {"items": [...]} — paths use the
+# [N] indexed accessor (e.g. `.items[0].title`).
+
+[site]
+name = "stackoverflow"
+patterns = ["(?i)stackoverflow\\.com/questions/\\d+"]
+
+[rewrite]
+from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
+to   = "https://api.stackexchange.com/2.3/questions/$1?site=stackoverflow&filter=withbody&order=desc&sort=votes"
+
+[request]
+accept = "application/json"
+
+[json]
+title        = ".items[0].title"
+body         = ".items[0].body"
+score        = ".items[0].score"
+answer_count = ".items[0].answer_count"
+view_count   = ".items[0].view_count"
+link         = ".items[0].link"
+creation_date = ".items[0].creation_date"
+author       = ".items[0].owner.display_name"
+
+[template]
+format = """
+## {title|strip_html}
+
+Asked by {author} · {score|number} votes · {answer_count} answers · {view_count|number} views
+
+### Question
+
+{body|strip_html}
+
+### Top Answer
+
+**{ans_author}** ({ans_score|number} votes)
+
+{ans_body|strip_html}
+
+---
+
+[View on Stack Overflow]({link})
+"""
+
+[metadata]
+platform          = "Stack Overflow"
+author_field      = "author"
+title_field       = "title"
+canonical_url_field = "link"
+
+[engagement]
+likes   = "score"
+replies = "answer_count"
+views   = "view_count"
+
+[[fetch_additional]]
+prefix       = "ans"
+rewrite_from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
+rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=withbody&order=desc&sort=votes&pagesize=3"
+accept       = "application/json"
+
+[fetch_additional.json]
+body        = ".items[0].body"
+score       = ".items[0].score"
+is_accepted = ".items[0].is_accepted"
+author      = ".items[0].owner.display_name"

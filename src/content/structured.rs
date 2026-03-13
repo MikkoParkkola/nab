@@ -777,7 +777,9 @@ mod tests {
 
     #[test]
     fn parse_number_handles_floats() {
-        assert_eq!(parse_number("3.14").and_then(|v| v.as_f64()), Some(3.14));
+        #[allow(clippy::approx_constant)] // Testing literal 3.14 parsing, not π
+        let expected = 3.14;
+        assert_eq!(parse_number("3.14").and_then(|v| v.as_f64()), Some(expected));
     }
 
     #[test]

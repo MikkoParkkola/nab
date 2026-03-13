@@ -409,6 +409,15 @@ enum Commands {
         #[command(subcommand)]
         action: CookiesAction,
     },
+
+    /// Export embedded default site rules to ~/.config/nab/sites/
+    ///
+    /// Writes each built-in TOML rule file to the user config directory so it
+    /// can be inspected and customised.  Existing files are never overwritten.
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -422,6 +431,14 @@ enum CookiesAction {
         #[arg(short, long, default_value = "auto")]
         cookies: String,
     },
+}
+
+#[derive(Subcommand)]
+enum RulesAction {
+    /// Export all embedded default TOML rules to ~/.config/nab/sites/
+    ///
+    /// Existing files are skipped so user customisations are preserved.
+    Export,
 }
 
 #[tokio::main]
@@ -656,6 +673,11 @@ async fn main() -> Result<()> {
         Commands::Cookies { action } => match action {
             CookiesAction::Export { domain, cookies } => {
                 cmd::cmd_cookies("export", &domain, &cookies).await?;
+            }
+        },
+        Commands::Rules { action } => match action {
+            RulesAction::Export => {
+                cmd::cmd_export_rules()?;
             }
         },
     }

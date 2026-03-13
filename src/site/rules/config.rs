@@ -29,6 +29,14 @@ pub struct SiteRuleConfig {
     pub request: RequestConfig,
     /// JSON field extraction paths.
     pub json: JsonConfig,
+    /// Additional sequential fetches merged into the main field map.
+    ///
+    /// Each entry specifies its own URL rewrite, optional `Accept` header,
+    /// and a `json` mapping.  Extracted field names are prefixed with the
+    /// entry's `prefix` value (e.g., `prefix = "ans"` turns `body` into
+    /// `ans_body`) to avoid collisions with primary fields.
+    #[serde(default, rename = "fetch_additional")]
+    pub additional_fetches: Vec<AdditionalFetchConfig>,
     /// Markdown output template.
     pub template: TemplateConfig,
     /// Metadata field mapping.
@@ -37,6 +45,42 @@ pub struct SiteRuleConfig {
     /// Engagement metrics field mapping.
     #[serde(default)]
     pub engagement: EngagementConfig,
+}
+
+/// `[[fetch_additional]]` — one additional sequential HTTP fetch.
+///
+/// After the primary fetch, each `fetch_additional` entry is executed in
+/// order.  Fields extracted from the response are merged into the main fields
+/// map under the given `prefix`.
+///
+/// # Example (TOML)
+///
+/// ```toml
+/// [[fetch_additional]]
+/// prefix     = "ans"
+/// rewrite_from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
+/// rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=withbody&sort=votes"
+/// accept     = "application/json"
+///
+/// [fetch_additional.json]
+/// body  = ".items[0].body"
+/// score = ".items[0].score"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdditionalFetchConfig {
+    /// Short prefix prepended to every field name extracted from this fetch.
+    ///
+    /// A field named `body` with `prefix = "ans"` becomes `ans_body`.
+    pub prefix: String,
+    /// Regex applied to the **original** URL to produce the new fetch URL.
+    pub rewrite_from: String,
+    /// Replacement template for the URL (uses `$1`, `$2`, … capture groups).
+    pub rewrite_to: String,
+    /// Value for the `Accept` header on this request.
+    pub accept: Option<String>,
+    /// JSON field extraction paths for this response.
+    #[serde(default)]
+    pub json: JsonConfig,
 }
 
 /// `[site]` — name and URL patterns for a rule.
@@ -64,9 +108,36 @@ pub struct RewriteConfig {
     pub to: String,
 }
 
+/// HTTP client selection for `[request] client`.
+///
+/// - `Default` (or omitted): use the shared [`AcceleratedClient`] which forces
+///   HTTP/2 via `http2_prior_knowledge`.  Works for most modern APIs.
+/// - `Standard`: build a fresh `reqwest::Client` that negotiates HTTP version
+///   via TLS ALPN.  Required for servers that return unexpected content (e.g.
+///   HTML instead of JSON) when forced to HTTP/2 without ALPN, such as Reddit.
+///
+/// [`AcceleratedClient`]: crate::http_client::AcceleratedClient
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClientKind {
+    /// Use the shared `AcceleratedClient` (HTTP/2 prior knowledge).  Default.
+    #[default]
+    Default,
+    /// Use a plain `reqwest::Client` with ALPN protocol negotiation.
+    Standard,
+}
+
 /// `[request]` — HTTP request options.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RequestConfig {
+    /// HTTP client to use for this rule.
+    ///
+    /// `"standard"` builds a fresh `reqwest::Client` that negotiates the HTTP
+    /// version via TLS ALPN, which is required for servers that misbehave when
+    /// forced to HTTP/2 (e.g. Reddit).  Omitting this field (or `"default"`)
+    /// uses the shared `AcceleratedClient`.
+    #[serde(default)]
+    pub client: ClientKind,
     /// Extra request headers.
     #[serde(default)]
     pub headers: HashMap<String, String>,
@@ -165,6 +236,21 @@ impl SiteRuleConfig {
             .with_context(|| format!("invalid rewrite.from regex '{}' in rule '{}'", self.rewrite.from, self.site.name))?;
         if self.template.format.is_empty() {
             bail!("template.format must not be empty in rule '{}'", self.site.name);
+        }
+        // Validate additional fetch regexes.
+        for (i, af) in self.additional_fetches.iter().enumerate() {
+            if af.prefix.is_empty() {
+                bail!(
+                    "fetch_additional[{i}].prefix must not be empty in rule '{}'",
+                    self.site.name
+                );
+            }
+            regex::Regex::new(&af.rewrite_from).with_context(|| {
+                format!(
+                    "invalid fetch_additional[{i}].rewrite_from regex '{}' in rule '{}'",
+                    af.rewrite_from, self.site.name
+                )
+            })?;
         }
         Ok(())
     }
@@ -351,5 +437,249 @@ format = "hello"
         let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
         assert!(cfg.request.headers.is_empty());
         assert!(cfg.request.accept.is_none());
+    }
+
+    #[test]
+    fn request_config_client_defaults_to_default_variant() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["foo\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+
+[template]
+format = "hello"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        assert_eq!(cfg.request.client, ClientKind::Default);
+    }
+
+    #[test]
+    fn request_config_client_parses_standard_variant() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["foo\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[request]
+client = "standard"
+
+[json]
+
+[template]
+format = "hello"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        assert_eq!(cfg.request.client, ClientKind::Standard);
+    }
+
+    #[test]
+    fn request_config_client_parses_default_explicit() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["foo\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[request]
+client = "default"
+
+[json]
+
+[template]
+format = "hello"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        assert_eq!(cfg.request.client, ClientKind::Default);
+    }
+
+    #[test]
+    fn parse_reddit_toml_succeeds() {
+        let cfg = SiteRuleConfig::from_toml(include_str!("defaults/reddit.toml")).unwrap();
+        assert_eq!(cfg.site.name, "reddit");
+        assert_eq!(cfg.request.client, ClientKind::Standard);
+        assert!(cfg.request.headers.contains_key("User-Agent"));
+        // Verify key JSON paths are present
+        let fields = &cfg.json.0;
+        assert!(fields.contains_key("title"));
+        assert!(fields.contains_key("author"));
+        assert!(fields.contains_key("score"));
+        assert!(fields.contains_key("comments"));
+    }
+
+    #[test]
+    fn additional_fetches_default_to_empty() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["foo\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+
+[template]
+format = "hello"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        assert!(cfg.additional_fetches.is_empty());
+    }
+
+    #[test]
+    fn parse_additional_fetch_with_json_fields() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com/q/(\\d+)"]
+
+[rewrite]
+from = "(?i)https?://example\\.com/q/(\\d+)"
+to = "https://api.example.com/questions/$1"
+
+[json]
+title = ".items[0].title"
+
+[template]
+format = "{title}"
+
+[[fetch_additional]]
+prefix = "ans"
+rewrite_from = "(?i)https?://example\\.com/q/(\\d+)"
+rewrite_to = "https://api.example.com/questions/$1/answers"
+accept = "application/json"
+
+[fetch_additional.json]
+body  = ".items[0].body"
+score = ".items[0].score"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        assert_eq!(cfg.additional_fetches.len(), 1);
+        let af = &cfg.additional_fetches[0];
+        assert_eq!(af.prefix, "ans");
+        assert_eq!(
+            af.rewrite_to,
+            "https://api.example.com/questions/$1/answers"
+        );
+        assert_eq!(af.accept.as_deref(), Some("application/json"));
+        assert_eq!(af.json.0.get("body").map(String::as_str), Some(".items[0].body"));
+        assert_eq!(af.json.0.get("score").map(String::as_str), Some(".items[0].score"));
+    }
+
+    #[test]
+    fn parse_multiple_additional_fetches() {
+        let toml_str = r#"
+[site]
+name = "multi"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com/primary"
+
+[json]
+title = ".title"
+
+[template]
+format = "{title}"
+
+[[fetch_additional]]
+prefix = "first"
+rewrite_from = ".*"
+rewrite_to = "https://api.example.com/first"
+
+[fetch_additional.json]
+x = ".x"
+
+[[fetch_additional]]
+prefix = "second"
+rewrite_from = ".*"
+rewrite_to = "https://api.example.com/second"
+
+[fetch_additional.json]
+y = ".y"
+"#;
+        let cfg = SiteRuleConfig::from_toml(toml_str).unwrap();
+        assert_eq!(cfg.additional_fetches.len(), 2);
+        assert_eq!(cfg.additional_fetches[0].prefix, "first");
+        assert_eq!(cfg.additional_fetches[1].prefix, "second");
+    }
+
+    #[test]
+    fn validate_rejects_empty_additional_fetch_prefix() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+
+[template]
+format = "hello"
+
+[[fetch_additional]]
+prefix = ""
+rewrite_from = ".*"
+rewrite_to = "https://api.example.com/extra"
+"#;
+        let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
+        assert!(err.to_string().contains("prefix"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_additional_fetch_regex() {
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+
+[template]
+format = "hello"
+
+[[fetch_additional]]
+prefix = "ans"
+rewrite_from = "[invalid"
+rewrite_to = "https://api.example.com/extra"
+"#;
+        let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
+        assert!(err.to_string().contains("fetch_additional") || err.to_string().contains("invalid"));
+    }
+
+    fn stackoverflow_toml() -> &'static str {
+        include_str!("defaults/stackoverflow.toml")
+    }
+
+    #[test]
+    fn parse_stackoverflow_toml_succeeds() {
+        let cfg = SiteRuleConfig::from_toml(stackoverflow_toml()).unwrap();
+        assert_eq!(cfg.site.name, "stackoverflow");
+        assert_eq!(cfg.additional_fetches.len(), 1);
+        let af = &cfg.additional_fetches[0];
+        assert_eq!(af.prefix, "ans");
+        assert!(af.json.0.contains_key("body"));
+        assert!(af.json.0.contains_key("score"));
     }
 }

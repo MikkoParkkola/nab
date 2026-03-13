@@ -47,6 +47,8 @@ pub fn embedded_rules() -> Vec<(&'static str, &'static str)> {
         ("youtube", include_str!("defaults/youtube.toml")),
         ("wikipedia", include_str!("defaults/wikipedia.toml")),
         ("mastodon", include_str!("defaults/mastodon.toml")),
+        ("reddit", include_str!("defaults/reddit.toml")),
+        ("stackoverflow", include_str!("defaults/stackoverflow.toml")),
     ]
 }
 
@@ -175,14 +177,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_rules_returns_three_entries() {
+    fn embedded_rules_returns_six_entries() {
         let rules = embedded_rules();
-        assert_eq!(rules.len(), 4);
+        assert_eq!(rules.len(), 6);
         let names: Vec<&str> = rules.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"twitter"));
         assert!(names.contains(&"youtube"));
         assert!(names.contains(&"wikipedia"));
         assert!(names.contains(&"mastodon"));
+        assert!(names.contains(&"reddit"));
+        assert!(names.contains(&"stackoverflow"));
     }
 
     #[test]
@@ -201,12 +205,12 @@ mod tests {
     }
 
     #[test]
-    fn load_site_rules_returns_three_providers_no_user_overrides() {
-        // Without any user config files, we get all three embedded rules.
+    fn load_site_rules_returns_all_providers_no_user_overrides() {
+        // Without any user config files, we get all embedded rules.
         let providers = load_site_rules();
-        // At minimum we get the 3 embedded defaults (user may have overrides, but
+        // At minimum we get the 6 embedded defaults (user may have overrides, but
         // the test env should not have them).
-        assert!(providers.len() >= 4);
+        assert!(providers.len() >= 6);
     }
 
     #[test]
@@ -228,6 +232,18 @@ mod tests {
         let mastodon = providers.iter().find(|p| p.name() == "mastodon");
         assert!(mastodon.is_some(), "mastodon provider should be loaded");
         assert!(mastodon.unwrap().matches("https://mastodon.social/@user/123456789"));
+
+        let reddit = providers.iter().find(|p| p.name() == "reddit");
+        assert!(reddit.is_some(), "reddit provider should be loaded");
+        assert!(reddit
+            .unwrap()
+            .matches("https://www.reddit.com/r/rust/comments/abc123/some_title/"));
+
+        let stackoverflow = providers.iter().find(|p| p.name() == "stackoverflow");
+        assert!(stackoverflow.is_some(), "stackoverflow provider should be loaded");
+        assert!(stackoverflow
+            .unwrap()
+            .matches("https://stackoverflow.com/questions/12345/title"));
     }
 
     #[test]
@@ -236,6 +252,9 @@ mod tests {
         assert!(names.contains("twitter"));
         assert!(names.contains("youtube"));
         assert!(names.contains("wikipedia"));
+        assert!(names.contains("mastodon"));
+        assert!(names.contains("reddit"));
+        assert!(names.contains("stackoverflow"));
     }
 
     #[test]
@@ -246,16 +265,18 @@ mod tests {
 
         let defaults = load_embedded_defaults(&overridden);
         assert!(!defaults.iter().any(|p| p.name() == "twitter"));
-        // Other three still present.
+        // Other five still present.
         assert!(defaults.iter().any(|p| p.name() == "youtube"));
         assert!(defaults.iter().any(|p| p.name() == "wikipedia"));
         assert!(defaults.iter().any(|p| p.name() == "mastodon"));
+        assert!(defaults.iter().any(|p| p.name() == "reddit"));
+        assert!(defaults.iter().any(|p| p.name() == "stackoverflow"));
     }
 
     #[test]
     fn load_embedded_defaults_empty_overrides_loads_all() {
         let defaults = load_embedded_defaults(&HashSet::new());
-        assert_eq!(defaults.len(), 4);
+        assert_eq!(defaults.len(), 6);
     }
 
     #[test]

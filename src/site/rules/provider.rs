@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use regex::Regex;
 
 use super::super::{Engagement, SiteContent, SiteMetadata, SiteProvider};
-use super::config::SiteRuleConfig;
+use super::config::{ClientKind, JsonConfig, SiteRuleConfig};
 use super::json_path;
 use super::template;
 use crate::http_client::AcceleratedClient;
@@ -28,6 +28,9 @@ pub struct ApiRuleProvider {
     patterns: Vec<Regex>,
     /// Compiled rewrite `from` regex.
     rewrite_from: Regex,
+    /// Compiled `rewrite_from` regexes for each additional fetch (parallel
+    /// to `config.additional_fetches`).
+    additional_rewrite_froms: Vec<Regex>,
 }
 
 impl ApiRuleProvider {
@@ -52,7 +55,17 @@ impl ApiRuleProvider {
         let rewrite_from = Regex::new(&config.rewrite.from)
             .with_context(|| format!("invalid rewrite.from regex '{}'", config.rewrite.from))?;
 
-        Ok(Self { config, patterns, rewrite_from })
+        let additional_rewrite_froms = config
+            .additional_fetches
+            .iter()
+            .map(|af| {
+                Regex::new(&af.rewrite_from).with_context(|| {
+                    format!("invalid fetch_additional rewrite_from regex '{}'", af.rewrite_from)
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self { config, patterns, rewrite_from, additional_rewrite_froms })
     }
 
     /// Rewrite `url` according to the rule's `[rewrite]` config.
@@ -85,6 +98,53 @@ impl ApiRuleProvider {
                 Some((name.clone(), value))
             })
             .collect()
+    }
+
+    /// Execute all configured additional fetches and merge their fields into
+    /// `fields` in place.
+    ///
+    /// Fields from each additional fetch are prefixed: a field `body` with
+    /// `prefix = "ans"` is inserted as `ans_body`.  Failures are logged as
+    /// warnings and do not abort the overall extraction.
+    async fn apply_additional_fetches(
+        &self,
+        original_url: &str,
+        client: &AcceleratedClient,
+        fields: &mut HashMap<String, String>,
+    ) {
+        for (af, rewrite_re) in self
+            .config
+            .additional_fetches
+            .iter()
+            .zip(self.additional_rewrite_froms.iter())
+        {
+            let api_url = rewrite_re
+                .replace(original_url, af.rewrite_to.as_str())
+                .into_owned();
+
+            tracing::debug!(
+                "ApiRuleProvider '{}': additional fetch ({}) {}",
+                self.config.site.name,
+                af.prefix,
+                api_url
+            );
+
+            let extra = match fetch_and_extract_json(client, &api_url, af.accept.as_deref(), &af.json).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!(
+                        "Additional fetch '{}' for rule '{}' failed: {e}",
+                        af.prefix,
+                        self.config.site.name
+                    );
+                    continue;
+                }
+            };
+
+            for (key, value) in extra {
+                fields.insert(format!("{}_{}", af.prefix, key), value);
+            }
+        }
     }
 
     /// Build [`SiteMetadata`] from extracted fields and config.
@@ -130,6 +190,123 @@ impl ApiRuleProvider {
             engagement,
         }
     }
+
+    /// Fetch the raw response body from `api_url`.
+    ///
+    /// Uses a plain `reqwest::Client` when `request.client = "standard"` (e.g.
+    /// for Reddit, which returns HTML when forced to HTTP/2 without ALPN).
+    /// Falls back to the shared [`AcceleratedClient`] otherwise.
+    async fn fetch_body(&self, client: &AcceleratedClient, api_url: &str) -> Result<String> {
+        match self.config.request.client {
+            ClientKind::Standard => self.fetch_body_standard(api_url).await,
+            ClientKind::Default => self.fetch_body_accelerated(client, api_url).await,
+        }
+    }
+
+    /// Fetch using a fresh standard `reqwest::Client` (ALPN negotiation).
+    async fn fetch_body_standard(&self, api_url: &str) -> Result<String> {
+        let standard_client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .gzip(true)
+            .brotli(true)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .context("failed to build standard HTTP client")?;
+
+        let request = self.apply_headers(standard_client.get(api_url));
+
+        request
+            .send()
+            .await
+            .with_context(|| format!("request failed for '{api_url}'"))?
+            .text()
+            .await
+            .with_context(|| format!("failed to read response body from '{api_url}'"))
+    }
+
+    /// Fetch using the shared `AcceleratedClient`.
+    async fn fetch_body_accelerated(
+        &self,
+        client: &AcceleratedClient,
+        api_url: &str,
+    ) -> Result<String> {
+        let request = self.apply_headers(client.inner().get(api_url));
+
+        request
+            .send()
+            .await
+            .with_context(|| format!("request failed for '{api_url}'"))?
+            .text()
+            .await
+            .with_context(|| format!("failed to read response body from '{api_url}'"))
+    }
+
+    /// Apply configured `Accept` header and custom headers to a request builder.
+    fn apply_headers(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(accept) = &self.config.request.accept {
+            request = request.header(reqwest::header::ACCEPT, accept.as_str());
+        }
+        for (key, value) in &self.config.request.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+        request
+    }
+}
+
+/// Parse a JSON response body.
+///
+/// Both JSON objects and bare JSON arrays (e.g. Reddit's `[listing, comments]`
+/// response) are accepted.  Paths in the TOML rule use `[N].field` notation to
+/// index into root arrays, which [`json_path::extract`] handles natively.
+fn parse_response_json(body: &str, api_url: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(body)
+        .with_context(|| format!("failed to parse JSON from '{api_url}'"))
+}
+
+/// Fetch a URL and extract JSON fields according to `json_config`.
+///
+/// Used for additional fetches.  Returns an empty map (rather than an error)
+/// when no fields match — the caller decides whether that warrants a warning.
+async fn fetch_and_extract_json(
+    client: &AcceleratedClient,
+    url: &str,
+    accept: Option<&str>,
+    json_config: &JsonConfig,
+) -> Result<HashMap<String, String>> {
+    let mut request = client.inner().get(url);
+    if let Some(accept_val) = accept {
+        request = request.header(reqwest::header::ACCEPT, accept_val);
+    }
+
+    let body = request
+        .send()
+        .await
+        .with_context(|| format!("additional fetch request failed for '{url}'"))?
+        .text()
+        .await
+        .with_context(|| format!("failed to read additional fetch body from '{url}'"))?;
+
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .with_context(|| format!("failed to parse JSON from additional fetch '{url}'"))?;
+
+    let fields = json_config
+        .0
+        .iter()
+        .filter_map(|(name, path)| {
+            let value = if path.contains("[]") {
+                let arr = json_path::extract_array(&json, path);
+                if arr.is_empty() { return None; }
+                arr.join(", ")
+            } else {
+                json_path::extract(&json, path)?
+            };
+            Some((name.clone(), value))
+        })
+        .collect();
+
+    Ok(fields)
 }
 
 /// Extract name string from a static `LazyLock<String>`.
@@ -172,29 +349,10 @@ impl SiteProvider for ApiRuleProvider {
         let api_url = self.rewrite_url(url);
         tracing::debug!("ApiRuleProvider '{}': fetching {}", self.config.site.name, api_url);
 
-        // Build request with configured headers.
-        let mut request = client.inner().get(&api_url);
+        let body = self.fetch_body(client, &api_url).await?;
 
-        if let Some(accept) = &self.config.request.accept {
-            request = request.header(reqwest::header::ACCEPT, accept.as_str());
-        }
-        for (key, value) in &self.config.request.headers {
-            request = request.header(key.as_str(), value.as_str());
-        }
-
-        let body = request
-            .send()
-            .await
-            .with_context(|| format!("request failed for '{api_url}'"))?
-            .text()
-            .await
-            .with_context(|| format!("failed to read response body from '{api_url}'"))?;
-
-        let json: serde_json::Value =
-            serde_json::from_str(&body)
-                .with_context(|| format!("failed to parse JSON from '{api_url}'"))?;
-
-        let fields = self.extract_fields(&json);
+        let json = parse_response_json(&body, &api_url)?;
+        let mut fields = self.extract_fields(&json);
 
         if fields.is_empty() {
             bail!(
@@ -203,6 +361,8 @@ impl SiteProvider for ApiRuleProvider {
                 self.config.site.name
             );
         }
+
+        self.apply_additional_fetches(url, client, &mut fields).await;
 
         let markdown = template::render(&self.config.template.format, &fields, url);
         let metadata = self.build_metadata(&fields, url);
@@ -486,5 +646,235 @@ mod tests {
     fn parse_u64_returns_none_for_non_numeric() {
         assert_eq!(parse_u64("n/a"), None);
         assert_eq!(parse_u64(""), None);
+    }
+
+    // ── Reddit provider ────────────────────────────────────────────────────────
+
+    fn reddit_provider() -> ApiRuleProvider {
+        make_provider(include_str!("defaults/reddit.toml"))
+    }
+
+    #[test]
+    fn reddit_provider_matches_www_reddit_com_comments() {
+        let p = reddit_provider();
+        assert!(p.matches("https://www.reddit.com/r/rust/comments/abc123/some_title/"));
+        assert!(p.matches("https://www.reddit.com/r/programming/comments/xyz789"));
+    }
+
+    #[test]
+    fn reddit_provider_matches_reddit_com_without_www() {
+        let p = reddit_provider();
+        assert!(p.matches("https://reddit.com/r/rust/comments/abc123"));
+    }
+
+    #[test]
+    fn reddit_provider_matches_old_reddit() {
+        let p = reddit_provider();
+        assert!(p.matches("https://old.reddit.com/r/rust/comments/abc123"));
+        assert!(p.matches("https://OLD.REDDIT.COM/r/rust/COMMENTS/xyz"));
+    }
+
+    #[test]
+    fn reddit_provider_does_not_match_subreddit_listing() {
+        let p = reddit_provider();
+        assert!(!p.matches("https://reddit.com/r/rust"));
+        assert!(!p.matches("https://reddit.com/r/rust/"));
+        assert!(!p.matches("https://reddit.com/user/someone"));
+    }
+
+    #[test]
+    fn reddit_provider_does_not_match_other_sites() {
+        let p = reddit_provider();
+        assert!(!p.matches("https://x.com/user/status/123"));
+        assert!(!p.matches("https://youtube.com/watch?v=abc"));
+    }
+
+    #[test]
+    fn reddit_rewrite_appends_json_suffix() {
+        let p = reddit_provider();
+        let rewritten = p.rewrite_url("https://www.reddit.com/r/rust/comments/abc123/some_title/");
+        assert!(rewritten.ends_with(".json"), "expected .json suffix, got: {rewritten}");
+        assert!(!rewritten.contains('?'), "query string should be stripped, got: {rewritten}");
+    }
+
+    #[test]
+    fn reddit_rewrite_strips_query_string() {
+        let p = reddit_provider();
+        let rewritten =
+            p.rewrite_url("https://reddit.com/r/rust/comments/abc123?utm_source=share");
+        assert!(rewritten.ends_with(".json"), "expected .json suffix, got: {rewritten}");
+        assert!(!rewritten.contains("utm_source"), "utm param should be gone, got: {rewritten}");
+    }
+
+    #[test]
+    fn reddit_uses_standard_client_config() {
+        use crate::site::rules::config::ClientKind;
+        let p = reddit_provider();
+        assert_eq!(p.config.request.client, ClientKind::Standard);
+    }
+
+    #[test]
+    fn reddit_extract_fields_from_api_array_response() {
+        // GIVEN: a Reddit-style bare array JSON response
+        let p = reddit_provider();
+        let json = json!([
+            {
+                "data": {
+                    "children": [{
+                        "data": {
+                            "title": "Rust 2024 edition released",
+                            "author": "rustacean42",
+                            "score": 4200,
+                            "num_comments": 350,
+                            "selftext": "Big news for the Rust community.",
+                            "url": "https://reddit.com/r/rust/comments/abc123",
+                            "subreddit": "rust"
+                        }
+                    }]
+                }
+            },
+            {"data": {"children": []}}
+        ]);
+        // WHEN: extracting fields
+        let fields = p.extract_fields(&json);
+        // THEN: all key fields are present
+        assert_eq!(fields.get("title").map(String::as_str), Some("Rust 2024 edition released"));
+        assert_eq!(fields.get("author").map(String::as_str), Some("rustacean42"));
+        assert_eq!(fields.get("score").map(String::as_str), Some("4200"));
+        assert_eq!(fields.get("comments").map(String::as_str), Some("350"));
+        assert_eq!(fields.get("subreddit").map(String::as_str), Some("rust"));
+    }
+
+    #[test]
+    fn reddit_build_metadata_sets_platform_and_author() {
+        let p = reddit_provider();
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("title".to_string(), "My Post".to_string());
+        fields.insert("author".to_string(), "testuser".to_string());
+        fields.insert("url".to_string(), "https://reddit.com/r/rust/comments/x".to_string());
+        fields.insert("subreddit".to_string(), "rust".to_string());
+
+        let meta = p.build_metadata(&fields, "https://reddit.com/r/rust/comments/x");
+        assert_eq!(meta.platform, "Reddit");
+        assert_eq!(meta.author.as_deref(), Some("u/testuser"));
+        assert_eq!(meta.title.as_deref(), Some("My Post"));
+    }
+
+    #[test]
+    fn parse_response_json_accepts_bare_array() {
+        // GIVEN: Reddit-style bare array JSON body
+        let body = r#"[{"data": {"children": []}}, {"data": {"children": []}}]"#;
+        // WHEN: parsing
+        let result = parse_response_json(body, "https://example.com");
+        // THEN: parses as an array value without error
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_array());
+    }
+
+    #[test]
+    fn parse_response_json_accepts_object() {
+        let body = r#"{"tweet": {"text": "hello"}}"#;
+        let result = parse_response_json(body, "https://example.com");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_object());
+    }
+
+    #[test]
+    fn parse_response_json_fails_on_invalid_json() {
+        let body = "not json at all %%%";
+        let result = parse_response_json(body, "https://example.com");
+        assert!(result.is_err());
+    }
+
+    // ── stackoverflow provider (multi-fetch config) ───────────────────────────
+
+    fn stackoverflow_provider() -> ApiRuleProvider {
+        make_provider(include_str!("defaults/stackoverflow.toml"))
+    }
+
+    #[test]
+    fn stackoverflow_provider_matches_question_urls() {
+        let p = stackoverflow_provider();
+        assert!(p.matches("https://stackoverflow.com/questions/12345/some-title"));
+        assert!(p.matches("https://STACKOVERFLOW.COM/questions/99999/title"));
+        assert!(p.matches("https://stackoverflow.com/questions/42/x?noredirect=1"));
+    }
+
+    #[test]
+    fn stackoverflow_provider_does_not_match_non_question_urls() {
+        let p = stackoverflow_provider();
+        assert!(!p.matches("https://stackoverflow.com/"));
+        assert!(!p.matches("https://stackoverflow.com/tags/rust"));
+        assert!(!p.matches("https://stackoverflow.com/questions/tagged/rust"));
+        assert!(!p.matches("https://youtube.com/watch?v=abc"));
+    }
+
+    #[test]
+    fn stackoverflow_provider_rewrite_constructs_question_api_url() {
+        let p = stackoverflow_provider();
+        let url = "https://stackoverflow.com/questions/26946646/how-to-do-x";
+        let rewritten = p.rewrite_url(url);
+        assert!(rewritten.contains("api.stackexchange.com"));
+        assert!(rewritten.contains("26946646"));
+        assert!(rewritten.contains("site=stackoverflow"));
+        assert!(rewritten.contains("filter=withbody"));
+    }
+
+    #[test]
+    fn stackoverflow_provider_has_one_additional_fetch() {
+        let p = stackoverflow_provider();
+        assert_eq!(p.config.additional_fetches.len(), 1);
+        assert_eq!(p.additional_rewrite_froms.len(), 1);
+    }
+
+    #[test]
+    fn stackoverflow_additional_fetch_rewrite_constructs_answers_api_url() {
+        let p = stackoverflow_provider();
+        let url = "https://stackoverflow.com/questions/26946646/how-to-do-x";
+        let af = &p.config.additional_fetches[0];
+        let re = &p.additional_rewrite_froms[0];
+        let api_url = re.replace(url, af.rewrite_to.as_str()).into_owned();
+        assert!(api_url.contains("api.stackexchange.com"));
+        assert!(api_url.contains("26946646"));
+        assert!(api_url.contains("/answers"));
+        assert!(api_url.contains("site=stackoverflow"));
+    }
+
+    #[test]
+    fn stackoverflow_extract_fields_from_question_json() {
+        let p = stackoverflow_provider();
+        let json = json!({
+            "items": [{
+                "title": "How to use Vec in Rust?",
+                "body": "<p>I want a vector.</p>",
+                "score": 42,
+                "answer_count": 3,
+                "view_count": 15000,
+                "link": "https://stackoverflow.com/questions/12345",
+                "creation_date": 1_700_000_000u64,
+                "tags": ["rust", "vector"],
+                "owner": {"display_name": "rustacean"}
+            }]
+        });
+        let fields = p.extract_fields(&json);
+        assert_eq!(fields.get("title").map(String::as_str), Some("How to use Vec in Rust?"));
+        assert_eq!(fields.get("score").map(String::as_str), Some("42"));
+        assert_eq!(fields.get("answer_count").map(String::as_str), Some("3"));
+    }
+
+    #[test]
+    fn stackoverflow_additional_fetch_prefix_applied() {
+        // Verify that additional fetch fields are prefixed correctly
+        // by exercising the apply_additional_fetches logic structurally.
+        // We test prefix naming: if the additional fetch config has prefix "ans"
+        // and field name "body", the merged key must be "ans_body".
+        let p = stackoverflow_provider();
+        let af = &p.config.additional_fetches[0];
+        assert_eq!(af.prefix, "ans");
+        // Confirm the json config has the expected fields
+        assert!(af.json.0.contains_key("body"));
+        assert!(af.json.0.contains_key("score"));
+        assert!(af.json.0.contains_key("is_accepted"));
+        assert!(af.json.0.contains_key("author"));
     }
 }
