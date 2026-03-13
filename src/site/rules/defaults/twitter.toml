@@ -31,7 +31,8 @@ format = """
 
 {text}
 
-📊 {likes|number} likes · {retweets|number} reposts · {replies|number} replies · {views|number} views
+📊 {likes|number} likes · {retweets|number} reposts · {replies|number} replies
+👁 {views|number} views
 🕐 {date}
 
 [View on X]({url})

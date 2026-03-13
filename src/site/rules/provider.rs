@@ -92,18 +92,19 @@ impl ApiRuleProvider {
 
     /// Fetch the primary API URL as JSON and extract configured fields.
     ///
-    /// Returns `Ok(empty_map)` when:
-    /// - the response body cannot be parsed as JSON, or
-    /// - `request.success_path` is set and resolves to `null`/missing
-    ///   (application-level error envelope — e.g. `FxTwitter` `tweet: null`), or
-    /// - no configured paths match.
-    ///
-    /// All of these indicate that fallbacks should be tried.
+    /// Return values:
+    /// - `Ok(Some(fields))` — JSON fetched and fields extracted (may be empty
+    ///   if no configured paths matched).
+    /// - `Ok(None)` — `request.success_path` resolved to `null`/missing,
+    ///   indicating an API-level "not found" envelope (e.g. `FxTwitter`
+    ///   `{"tweet": null}`).  The caller should treat this as a content-not-
+    ///   found signal rather than a misconfiguration.
+    /// - `Err(e)` — HTTP or JSON parse failure; propagated to the caller.
     async fn try_primary_json(
         &self,
         client: &AcceleratedClient,
         api_url: &str,
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<Option<HashMap<String, String>>> {
         let body = self.fetch_body(client, api_url).await?;
         let json = parse_response_json(&body, api_url)?;
         if let Some(path) = &self.config.request.success_path
@@ -111,13 +112,13 @@ impl ApiRuleProvider {
         {
             tracing::debug!(
                 "ApiRuleProvider '{}': success_path '{}' resolved to null/missing — \
-                 treating as no fields (API returned error envelope)",
+                 content not found at API level",
                 self.config.site.name,
                 path
             );
-            return Ok(HashMap::new());
+            return Ok(None);
         }
-        Ok(self.extract_fields(&json))
+        Ok(Some(self.extract_fields(&json)))
     }
 
     /// Rewrite `url` according to the rule's `[rewrite]` config.
@@ -674,33 +675,70 @@ impl SiteProvider for ApiRuleProvider {
             api_url
         );
 
-        // Attempt primary JSON fetch; fall through to fallbacks on any failure.
-        let primary_fields = self
-            .try_primary_json(client, &api_url)
-            .await
-            .unwrap_or_default();
+        // Attempt primary JSON fetch; fall through to fallbacks on failure or
+        // when the API returns a content-not-found envelope (success_path null).
+        let primary_result = self.try_primary_json(client, &api_url).await;
 
-        let mut fields = if primary_fields.is_empty() && !self.config.fallback.is_empty() {
-            tracing::debug!(
-                "ApiRuleProvider '{}': primary yielded no fields, trying fallbacks",
-                self.config.site.name
-            );
-            let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
-            if fb_fields.is_empty() {
+        // `Ok(None)` → API-level not-found; `Err` → HTTP/parse failure.
+        // Both cases trigger fallback or a bail with a clear message.
+        let primary_fields: Option<HashMap<String, String>> = match primary_result {
+            Ok(opt) => opt,
+            Err(e) => {
+                tracing::debug!(
+                    "ApiRuleProvider '{}': primary fetch failed: {e}",
+                    self.config.site.name
+                );
+                None
+            }
+        };
+
+        let mut fields = match primary_fields {
+            Some(f) if !f.is_empty() => f,
+            Some(_empty) if !self.config.fallback.is_empty() => {
+                // Extracted successfully but no paths matched — try fallbacks.
+                tracing::debug!(
+                    "ApiRuleProvider '{}': primary yielded no fields, trying fallbacks",
+                    self.config.site.name
+                );
+                let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
+                if fb_fields.is_empty() {
+                    bail!(
+                        "no fields extracted from primary or fallbacks for rule '{}'",
+                        self.config.site.name
+                    );
+                }
+                fb_fields
+            }
+            Some(_empty) => {
                 bail!(
-                    "no fields extracted from primary or fallbacks for rule '{}'",
+                    "no fields extracted from '{}' response (check json paths in rule '{}')",
+                    api_url,
                     self.config.site.name
                 );
             }
-            fb_fields
-        } else if primary_fields.is_empty() {
-            bail!(
-                "no fields extracted from '{}' response (check json paths in rule '{}')",
-                api_url,
-                self.config.site.name
-            );
-        } else {
-            primary_fields
+            None if !self.config.fallback.is_empty() => {
+                // API-level not-found or fetch error — try fallbacks.
+                tracing::debug!(
+                    "ApiRuleProvider '{}': primary not-found/failed, trying fallbacks",
+                    self.config.site.name
+                );
+                let fb_fields = self.apply_fallbacks(url, client, prefetched_html).await;
+                if fb_fields.is_empty() {
+                    bail!(
+                        "content not found via '{}' and no fallback succeeded for rule '{}'",
+                        api_url,
+                        self.config.site.name
+                    );
+                }
+                fb_fields
+            }
+            None => {
+                bail!(
+                    "content not found via '{}' (API returned not-found envelope) for rule '{}'",
+                    api_url,
+                    self.config.site.name
+                );
+            }
         };
 
         self.apply_additional_fetches(url, client, &mut fields)
@@ -1790,5 +1828,85 @@ format = "{{{{title}}}}"
         assert!(css.contains_key("image"));
         assert!(css["title"].contains("og:title"));
         assert!(css["image"].contains("og:image"));
+    }
+
+    // ── Twitter template: views is optional ───────────────────────────────────
+
+    #[test]
+    fn twitter_template_renders_engagement_line_without_views() {
+        // GIVEN: FxTwitter response where views is null — a common case for older
+        // tweets and accounts that haven't enabled view counts.
+        let p = twitter_provider();
+        let mut fields = HashMap::new();
+        fields.insert("author_handle".to_string(), "jack".to_string());
+        fields.insert("author_name".to_string(), "jack".to_string());
+        fields.insert("text".to_string(), "just setting up my twttr".to_string());
+        fields.insert("likes".to_string(), "290120".to_string());
+        fields.insert("retweets".to_string(), "123262".to_string());
+        fields.insert("replies".to_string(), "16455".to_string());
+        // No "views" field — null in JSON → absent from map.
+        fields.insert(
+            "date".to_string(),
+            "Tue Mar 21 20:50:14 +0000 2006".to_string(),
+        );
+        fields.insert("url".to_string(), "https://x.com/jack/status/20".to_string());
+
+        let markdown = template::render(
+            &p.config.template.format,
+            &fields,
+            "https://x.com/jack/status/20",
+        );
+
+        // THEN: the engagement line is present (likes/retweets/replies)
+        assert!(
+            markdown.contains("290.1K likes"),
+            "engagement line must render even without views; got:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("123.3K reposts"),
+            "retweets must render; got:\n{markdown}"
+        );
+        // AND: the views line is silently omitted (not an error)
+        assert!(
+            !markdown.contains("views"),
+            "views line must be omitted when views field is absent; got:\n{markdown}"
+        );
+        // AND: the rest of the template renders correctly
+        assert!(markdown.contains("## @jack (jack)"));
+        assert!(markdown.contains("just setting up my twttr"));
+        assert!(markdown.contains("[View on X](https://x.com/jack/status/20)"));
+    }
+
+    #[test]
+    fn twitter_template_renders_views_line_when_views_present() {
+        // GIVEN: a tweet with views populated (X Premium / newer tweets)
+        let p = twitter_provider();
+        let mut fields = HashMap::new();
+        fields.insert("author_handle".to_string(), "rustlang".to_string());
+        fields.insert("author_name".to_string(), "The Rust Programming Language".to_string());
+        fields.insert("text".to_string(), "Rust 2024 edition is stable!".to_string());
+        fields.insert("likes".to_string(), "8800".to_string());
+        fields.insert("retweets".to_string(), "1200".to_string());
+        fields.insert("replies".to_string(), "344".to_string());
+        fields.insert("views".to_string(), "3800000".to_string());
+        fields.insert("date".to_string(), "Mon Nov 28 00:00:00 +0000 2024".to_string());
+        fields.insert(
+            "url".to_string(),
+            "https://x.com/rustlang/status/1861000000000000000".to_string(),
+        );
+
+        let markdown = template::render(
+            &p.config.template.format,
+            &fields,
+            "https://x.com/rustlang/status/1861000000000000000",
+        );
+
+        // THEN: views line is present
+        assert!(
+            markdown.contains("3.8M views"),
+            "views line must render when views field is present; got:\n{markdown}"
+        );
+        // AND: engagement line also present
+        assert!(markdown.contains("8.8K likes"));
     }
 }
