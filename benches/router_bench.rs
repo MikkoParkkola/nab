@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo bench --bench router_bench`
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use nab::content::ContentRouter;
 use nab::site::github::GitHubProvider;
 use nab::site::hackernews::HackerNewsProvider;
@@ -13,6 +13,7 @@ use nab::site::instagram::InstagramProvider;
 use nab::site::reddit::RedditProvider;
 use nab::site::youtube::YouTubeProvider;
 use nab::site::{SiteProvider, SiteRouter};
+use std::hint::black_box;
 
 // ---------------------------------------------------------------------------
 // URL datasets

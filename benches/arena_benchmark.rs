@@ -2,8 +2,9 @@
 //!
 //! Run with: `cargo bench --bench arena_benchmark`
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use nab::arena::{ArenaResponse, ResponseArena, ResponseBuffer, StringInterner};
+use std::hint::black_box;
 
 /// Simulate typical HTTP response headers (10 headers, ~500 bytes)
 const TYPICAL_HEADERS: &[&str] = &[

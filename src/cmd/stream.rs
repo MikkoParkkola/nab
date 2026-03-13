@@ -130,12 +130,12 @@ pub async fn cmd_stream(
 
     if provider.name() == "yle" {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let ip = format!(
             "91.{}.{}.{}",
-            rng.gen_range(152..160),
-            rng.gen_range(0..256),
-            rng.gen_range(1..255)
+            rng.random_range(152..160),
+            rng.random_range(0..256),
+            rng.random_range(1..255)
         );
         headers.insert("X-Forwarded-For".to_string(), ip);
 

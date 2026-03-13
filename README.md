@@ -7,6 +7,8 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.93-blue.svg)](https://github.com/MikkoParkkola/nab)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<a href="https://glama.ai/mcp/servers/MikkoParkkola/nab"><img width="380" height="200" src="https://glama.ai/mcp/servers/MikkoParkkola/nab/badge" alt="nab MCP server" /></a>
+
 **Fetch any URL as clean markdown — with your browser cookies, anti-bot evasion, and 25x fewer tokens than raw HTML.**
 
 ![demo](demo.gif)

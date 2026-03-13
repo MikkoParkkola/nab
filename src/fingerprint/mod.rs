@@ -6,7 +6,7 @@
 pub mod autoupdate;
 
 use rand::Rng;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use reqwest::header::{
     ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, USER_AGENT,
 };
@@ -44,9 +44,9 @@ pub enum Platform {
 
 impl Platform {
     fn random() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         // Realistic distribution: Windows 65%, macOS 20%, Linux 15%
-        let roll: f32 = rng.r#gen();
+        let roll: f32 = rng.random();
         if roll < 0.65 {
             Platform::Windows
         } else if roll < 0.85 {
@@ -76,7 +76,7 @@ impl Platform {
 /// Generate a realistic Chrome browser profile
 #[must_use]
 pub fn chrome_profile() -> BrowserProfile {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let platform = Platform::random();
     let (major, full) = BROWSER_VERSIONS
         .chrome
@@ -114,7 +114,7 @@ pub fn chrome_profile() -> BrowserProfile {
 /// Generate a realistic Firefox browser profile
 #[must_use]
 pub fn firefox_profile() -> BrowserProfile {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let platform = Platform::random();
     let version = BROWSER_VERSIONS
         .firefox
@@ -149,7 +149,7 @@ pub fn firefox_profile() -> BrowserProfile {
 /// Generate a realistic Safari browser profile
 #[must_use]
 pub fn safari_profile() -> BrowserProfile {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let (version, webkit) = BROWSER_VERSIONS
         .safari
         .choose(&mut rng)
@@ -179,9 +179,9 @@ pub fn safari_profile() -> BrowserProfile {
 /// Generate a random browser profile (weighted by market share)
 #[must_use]
 pub fn random_profile() -> BrowserProfile {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     // Realistic distribution: Chrome 65%, Safari 20%, Firefox 10%, Edge 5%
-    let roll: f32 = rng.r#gen();
+    let roll: f32 = rng.random();
     if roll < 0.65 {
         chrome_profile()
     } else if roll < 0.85 {
@@ -193,7 +193,7 @@ pub fn random_profile() -> BrowserProfile {
 
 /// Generate random Accept-Language header
 fn random_accept_language() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let languages = [
         "en-US,en;q=0.9",
         "en-GB,en;q=0.9",
