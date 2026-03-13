@@ -552,7 +552,7 @@ mod tests {
         let query_terms: Vec<String> = vec!["authentication".into()];
         let idf = vec![1.0_f64];
         let score = bm25_score(&tokens, &query_terms, &idf, 2.0);
-        assert_eq!(score, 0.0);
+        assert!(score.abs() < f64::EPSILON);
     }
 
     #[test]

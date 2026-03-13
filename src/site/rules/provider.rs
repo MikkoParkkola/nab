@@ -800,7 +800,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::site::rules::config::SiteRuleConfig;
+    use crate::site::rules::config::{FallbackType, SiteRuleConfig};
 
     fn make_provider(toml: &str) -> ApiRuleProvider {
         let cfg = SiteRuleConfig::from_toml(toml).expect("valid config");
@@ -920,7 +920,7 @@ mod tests {
                 "likes": 8800,
                 "retweets": 1000,
                 "replies": 344,
-                "views": 3800000,
+                "views": 3_800_000,
                 "created_at": "Wed Feb 12 10:00:00 +0000 2025",
                 "url": "https://x.com/naval/status/123"
             }
@@ -1193,7 +1193,7 @@ format = "{title} by {author}"
         let p = reddit_provider();
         let rewritten = p.rewrite_url("https://www.reddit.com/r/rust/comments/abc123/some_title/");
         assert!(
-            rewritten.ends_with(".json"),
+            std::path::Path::new(&rewritten).extension().is_some_and(|e| e.eq_ignore_ascii_case("json")),
             "expected .json suffix, got: {rewritten}"
         );
         assert!(
@@ -1207,7 +1207,7 @@ format = "{title} by {author}"
         let p = reddit_provider();
         let rewritten = p.rewrite_url("https://reddit.com/r/rust/comments/abc123?utm_source=share");
         assert!(
-            rewritten.ends_with(".json"),
+            std::path::Path::new(&rewritten).extension().is_some_and(|e| e.eq_ignore_ascii_case("json")),
             "expected .json suffix, got: {rewritten}"
         );
         assert!(
@@ -1717,7 +1717,7 @@ format = "{{{{title}}}}"
         // WHEN: extracting
         let fields = extract_css_fields(html, &css_map);
         // THEN: field absent (no element found)
-        assert!(fields.get("title").is_none());
+        assert!(!fields.contains_key("title"));
     }
 
     #[test]
@@ -1732,7 +1732,7 @@ format = "{{{{title}}}}"
         // WHEN: extracting
         let fields = extract_css_fields(html, &css_map);
         // THEN: empty attribute value is omitted
-        assert!(fields.get("title").is_none());
+        assert!(!fields.contains_key("title"));
     }
 
     #[test]
@@ -1815,7 +1815,6 @@ format = "{{{{title}}}}"
         let p = instagram_provider();
         assert_eq!(p.config.fallback.len(), 1);
         assert_eq!(p.fallback_rewrite_froms.len(), 1);
-        use crate::site::rules::config::FallbackType;
         assert_eq!(p.config.fallback[0].fallback_type, FallbackType::Html);
     }
 

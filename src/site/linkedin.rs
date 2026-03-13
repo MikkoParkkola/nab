@@ -1781,10 +1781,10 @@ mod tests {
         // GIVEN: same post JSON appears in two different <code> elements
         let post_json = r#"{"commentary":"Unique post text."}"#;
         let html = format!(
-            r#"<!DOCTYPE html><html><head></head><body>
+            r"<!DOCTYPE html><html><head></head><body>
             <code><!--{post_json}--></code>
             <code><!--{post_json}--></code>
-            </body></html>"#
+            </body></html>"
         );
 
         // WHEN

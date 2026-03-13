@@ -51,6 +51,7 @@ pub fn cmd_export_rules() -> Result<()> {
 ///
 /// This function is infallible; it never returns an error.  The `Result`
 /// return type exists only for consistency with the other `cmd_*` functions.
+#[allow(clippy::unnecessary_wraps)]
 pub fn cmd_list_rules() -> Result<()> {
     let user_dir = user_sites_dir();
     let user_names = collect_user_rule_names(&user_dir);

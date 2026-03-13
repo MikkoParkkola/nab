@@ -333,12 +333,12 @@ fn extract_with_explicit_css_selectors() {
 
 #[test]
 fn extract_title_from_h1_heuristic() {
-    let html = r#"
+    let html = r"
         <html><body>
             <h1>My Great Product</h1>
             <p>Some description text here</p>
         </body></html>
-    "#;
+    ";
 
     let schema = ExtractionSchema::from_json(r#"{"title": "string"}"#).unwrap();
     let result = extract_structured(html, &schema);

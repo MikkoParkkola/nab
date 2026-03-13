@@ -444,6 +444,8 @@ fn build_output(selected: &[&Block], total_tokens: usize, budget: usize) -> Budg
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use super::*;
 
     // ── estimate_tokens ───────────────────────────────────────────────────────
@@ -743,7 +745,7 @@ mod tests {
         // GIVEN: 20 headings and tiny content, budget that would fit all headings
         let mut md = String::new();
         for i in 0..20 {
-            md.push_str(&format!("## Section {i}\n\nParagraph {i}.\n\n"));
+            write!(md, "## Section {i}\n\nParagraph {i}.\n\n").unwrap();
         }
         // WHEN: budget is such that headings would exceed 30% cap
         let result = truncate_to_budget(&md, Some(50));
@@ -752,10 +754,11 @@ mod tests {
             .markdown
             .lines()
             .filter(|l| l.starts_with("##"))
-            .map(|l| l.len())
+            .map(str::len)
             .sum();
         let total_content_chars = result.markdown.len();
         // Allow some slack for the truncation marker text itself
+        #[allow(clippy::cast_precision_loss)]
         let heading_fraction = heading_chars as f64 / total_content_chars as f64;
         assert!(
             heading_fraction <= 0.65,

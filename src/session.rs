@@ -447,12 +447,13 @@ mod tests {
 
     #[test]
     fn seed_jar_populates_from_cookie_header() {
+        use reqwest::cookie::CookieStore as _;
+
         let jar = reqwest::cookie::Jar::default();
         let url: url::Url = "https://example.com/path".parse().unwrap();
         seed_jar(&jar, "SID=abc; HSID=def", Some("https://example.com/path"));
 
         // Verify the jar returns cookies for the seeded domain.
-        use reqwest::cookie::CookieStore as _;
         let headers = jar.cookies(&url);
         assert!(headers.is_some(), "jar should have cookies for example.com");
         let hdr = headers.unwrap().to_str().unwrap().to_string();
@@ -461,10 +462,11 @@ mod tests {
 
     #[test]
     fn seed_jar_handles_single_cookie() {
+        use reqwest::cookie::CookieStore as _;
+
         let jar = reqwest::cookie::Jar::default();
         seed_jar(&jar, "token=xyz", Some("https://api.example.com/"));
 
-        use reqwest::cookie::CookieStore as _;
         let url: url::Url = "https://api.example.com/endpoint".parse().unwrap();
         let headers = jar.cookies(&url);
         assert!(headers.is_some());
@@ -581,11 +583,12 @@ mod tests {
 
     #[test]
     fn build_session_entry_with_seed_cookies_succeeds() {
+        use reqwest::cookie::CookieStore as _;
+
         let entry =
             build_session_entry(Some("sid=abc; token=xyz"), Some("https://example.com/")).unwrap();
         assert!(!entry.profile.user_agent.is_empty());
         // Jar should have content for the seeded domain.
-        use reqwest::cookie::CookieStore as _;
         let url: url::Url = "https://example.com/".parse().unwrap();
         assert!(entry.jar.cookies(&url).is_some());
     }

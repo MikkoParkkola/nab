@@ -276,6 +276,8 @@ fn tokenise(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use super::*;
 
     // ── parse_inline_link ─────────────────────────────────────────────────────
@@ -450,13 +452,13 @@ mod tests {
     fn term_overlap_score_no_match_returns_zero() {
         let terms = vec!["authentication".to_owned()];
         let score = term_overlap_score("unrelated text", &terms);
-        assert_eq!(score, 0.0);
+        assert!(score.abs() < f64::EPSILON);
     }
 
     #[test]
     fn term_overlap_score_empty_query_returns_zero() {
         let score = term_overlap_score("some text", &[]);
-        assert_eq!(score, 0.0);
+        assert!(score.abs() < f64::EPSILON);
     }
 
     // ── deduplicate ───────────────────────────────────────────────────────────
@@ -582,7 +584,7 @@ mod tests {
         // Build a markdown with 300 links.
         let mut md = String::new();
         for i in 0..300 {
-            md.push_str(&format!("[link {i}](https://example.com/{i}) "));
+            write!(md, "[link {i}](https://example.com/{i}) ").unwrap();
         }
         let links = extract_links(&md, "https://example.com/", None);
         assert!(
