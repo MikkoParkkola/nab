@@ -11,9 +11,10 @@ use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{
     CallToolResult, ElicitFormSchema, ElicitRequestFormParams, ElicitRequestParams,
-    ElicitResultAction, ElicitResultContent, ElicitResultContentPrimitive,
-    LegacyTitledEnumSchema, PrimitiveSchemaDefinition, StringSchema, TextContent,
-    schema_utils::CallToolError,
+    ElicitRequestUrlParams, ElicitResultAction, ElicitResultContent,
+    ElicitResultContentPrimitive, LegacyTitledEnumSchema, PrimitiveSchemaDefinition,
+    StringSchema, TextContent, TitledMultiSelectEnumSchema, TitledMultiSelectEnumSchemaItems,
+    TitledMultiSelectEnumSchemaItemsAnyOfItem, schema_utils::CallToolError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -130,9 +131,17 @@ impl FetchTool {
             let _ = write!(output, "\n{truncated}");
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = build_fetch_structured(
+            &self.url,
+            status.as_u16(),
+            &content_type,
+            &conversion.markdown,
+            elapsed.as_secs_f64() * 1000.0,
+        );
+
+        let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 }
 
@@ -175,23 +184,37 @@ impl FetchBatchTool {
         let results = futures::future::join_all(tasks).await;
         let total_elapsed = start.elapsed();
         let mut output = format!("🚀 Batch fetch: {} URLs\n\n", self.urls.len());
+        let mut structured_items: Vec<serde_json::Value> = Vec::new();
 
         for (url, result, elapsed) in results {
             let _ = writeln!(output, "=== {url} ===");
+            let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
             match result {
                 Ok(response) => {
-                    let status = response.status();
+                    let status = response.status().as_u16();
                     let body = response.text().await.unwrap_or_default();
                     let preview = truncate_markdown(&body, 500);
                     let _ = writeln!(
                         output,
-                        "Status: {status} | {:.0}ms | {} bytes\n{preview}\n",
-                        elapsed.as_secs_f64() * 1000.0,
+                        "Status: {status} | {elapsed_ms:.0}ms | {} bytes\n{preview}\n",
                         body.len()
                     );
+                    structured_items.push(serde_json::json!({
+                        "url": url,
+                        "status": status,
+                        "content": preview,
+                        "timing_ms": elapsed_ms,
+                    }));
                 }
                 Err(e) => {
-                    let _ = writeln!(output, "Error: {e}\n");
+                    let msg = e.to_string();
+                    let _ = writeln!(output, "Error: {msg}\n");
+                    structured_items.push(serde_json::json!({
+                        "url": url,
+                        "status": null,
+                        "content": msg,
+                        "timing_ms": elapsed_ms,
+                    }));
                 }
             }
         }
@@ -203,9 +226,10 @@ impl FetchBatchTool {
             self.urls.len()
         );
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = build_structured([("results", serde_json::Value::Array(structured_items))]);
+        let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 }
 
@@ -233,17 +257,22 @@ impl AuthLookupTool {
         if !OnePasswordAuth::is_available() {
             output.push_str("❌ 1Password CLI not available or not authenticated\n");
             output.push_str("   Run: op signin\n");
-            return Ok(CallToolResult::text_content(vec![TextContent::from(
-                output,
-            )]));
+            let structured = build_structured([
+                ("domain", serde_json::Value::String(self.url.clone())),
+                ("username", serde_json::Value::Null),
+                ("has_totp", serde_json::Value::Bool(false)),
+            ]);
+            let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+            result.structured_content = Some(structured);
+            return Ok(result);
         }
 
-        match CredentialRetriever::get_credential_for_url(&self.url) {
+        let (username, has_totp) = match CredentialRetriever::get_credential_for_url(&self.url) {
             Ok(Some(cred)) => {
                 output.push_str("✅ Found credential:\n");
                 let _ = writeln!(output, "   Title: {}", cred.title);
-                if let Some(ref username) = cred.username {
-                    let _ = writeln!(output, "   Username: {username}");
+                if let Some(ref u) = cred.username {
+                    let _ = writeln!(output, "   Username: {u}");
                 }
                 if cred.password.is_some() {
                     output.push_str("   Password: [present]\n");
@@ -254,16 +283,29 @@ impl AuthLookupTool {
                 if let Some(ref passkey) = cred.passkey_credential_id {
                     let _ = writeln!(output, "   Passkey: {passkey}");
                 }
+                (cred.username, cred.has_totp)
             }
-            Ok(None) => output.push_str("❌ No credential found for this URL\n"),
+            Ok(None) => {
+                output.push_str("❌ No credential found for this URL\n");
+                (None, false)
+            }
             Err(e) => {
                 let _ = writeln!(output, "⚠️ Error: {e}");
+                (None, false)
             }
-        }
+        };
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = build_structured([
+            ("domain", serde_json::Value::String(self.url.clone())),
+            (
+                "username",
+                username.map_or(serde_json::Value::Null, serde_json::Value::String),
+            ),
+            ("has_totp", serde_json::Value::Bool(has_totp)),
+        ]);
+        let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 }
 
@@ -298,6 +340,7 @@ impl FingerprintTool {
         let count = self.count.min(10) as usize;
         let browser_type = self.browser.clone().unwrap_or_else(|| "random".to_string());
         let mut output = format!("🎭 Generating {count} browser fingerprints:\n\n");
+        let mut profiles: Vec<serde_json::Value> = Vec::with_capacity(count);
 
         for i in 0..count {
             let profile = match browser_type.to_lowercase().as_str() {
@@ -313,11 +356,17 @@ impl FingerprintTool {
                 let _ = writeln!(output, "   Sec-CH-UA: {}", profile.sec_ch_ua);
             }
             output.push('\n');
+            profiles.push(serde_json::json!({
+                "user_agent": profile.user_agent,
+                "accept_language": profile.accept_language,
+                "sec_ch_ua": profile.sec_ch_ua,
+            }));
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = build_structured([("profiles", serde_json::Value::Array(profiles))]);
+        let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 }
 
@@ -414,6 +463,7 @@ impl BenchmarkTool {
             url_list.len(),
             iterations
         );
+        let mut structured_items: Vec<serde_json::Value> = Vec::new();
 
         for url in url_list {
             let mut times = Vec::with_capacity(iterations);
@@ -434,12 +484,20 @@ impl BenchmarkTool {
                     output,
                     "   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms\n"
                 );
+                structured_items.push(serde_json::json!({
+                    "url": url,
+                    "min_ms": min,
+                    "avg_ms": avg,
+                    "max_ms": max,
+                    "iterations": times.len(),
+                }));
             }
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = build_structured([("results", serde_json::Value::Array(structured_items))]);
+        let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 }
 
@@ -571,6 +629,27 @@ impl LoginTool {
 
         let mut output = format!("🔐 Auto-login: {}\n", self.url);
 
+        // P0: Detect OAuth/SSO redirect URLs and use URL elicitation so the
+        // user can complete the flow in their browser rather than via a form.
+        if is_oauth_redirect(&self.url) {
+            let service = oauth_service_name(&self.url);
+            output.push_str("   Detected OAuth/SSO flow — directing to browser\n");
+            let action = elicit_oauth_url(&runtime, &self.url, &service).await?;
+            match action {
+                ElicitResultAction::Accept => {
+                    output.push_str("   ✅ OAuth flow completed by user\n");
+                    output.push_str(
+                        "   Note: Use the `fetch` tool with `cookies: \"brave\"` (or your browser) \
+                         to access the authenticated session.\n",
+                    );
+                }
+                ElicitResultAction::Decline | ElicitResultAction::Cancel => {
+                    output.push_str("   ⚠️ OAuth flow cancelled by user\n");
+                }
+            }
+            return Ok(CallToolResult::text_content(vec![TextContent::from(output)]));
+        }
+
         if !OnePasswordAuth::is_available() {
             // Elicit manual credentials when 1Password is unavailable.
             let (username, password) = elicit_credentials(&runtime, &self.url).await?;
@@ -615,9 +694,14 @@ impl LoginTool {
             )));
         }
 
+        // P2: When no explicit cookie source was supplied, offer multi-select
+        // so the user can choose one or more browser cookie stores to inject
+        // into the login request.  An empty selection means no cookies.
+        let resolved_cookies = resolve_login_cookies(&self.url, self.cookies.as_deref(), &runtime).await?;
+
         let client =
             AcceleratedClient::new().map_err(|e| CallToolError::from_message(e.to_string()))?;
-        let login_flow = LoginFlow::new(client, true, None);
+        let login_flow = LoginFlow::new(client, true, resolved_cookies);
 
         let result = login_flow
             .login(&self.url)
@@ -1040,6 +1124,499 @@ async fn run_tls_test(client: &AcceleratedClient, output: &mut String) {
         }
         Err(e) => {
             let _ = writeln!(output, "❌ {e}");
+        }
+    }
+}
+
+// ─── Server icon ─────────────────────────────────────────────────────────────
+
+/// Inline SVG globe icon for light backgrounds (~200 bytes).
+///
+/// Embedded as a `data:` URI — no external URL required.
+/// The SVG renders a simple wireframe globe (circle + meridian ellipse + equator).
+pub(crate) const GLOBE_SVG_LIGHT: &str = concat!(
+    "data:image/svg+xml;base64,",
+    "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+",
+    "PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzMzMyIgc3",
+    "Ryb2tlLXdpZHRoPSIxLjUiLz48ZWxsaXBzZSBjeD0iMTYiIGN5PSIxNiIgcng9IjYiIHJ5PSIxNCIg",
+    "ZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzMzIiBzdHJva2Utd2lkdGg9IjEuNSIvPjxsaW5lIHgxPSIyIiB",
+    "5MT0iMTYiIHgyPSIzMCIgeTI9IjE2IiBzdHJva2U9IiMzMzMiIHN0cm9rZS13aWR0aD0iMS41Ii8+PC",
+    "9zdmc+"
+);
+
+/// Inline SVG globe icon for dark backgrounds (~200 bytes).
+pub(crate) const GLOBE_SVG_DARK: &str = concat!(
+    "data:image/svg+xml;base64,",
+    "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+",
+    "PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2VlZSIgc3",
+    "Ryb2tlLXdpZHRoPSIxLjUiLz48ZWxsaXBzZSBjeD0iMTYiIGN5PSIxNiIgcng9IjYiIHJ5PSIxNCIg",
+    "ZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZWVlIiBzdHJva2Utd2lkdGg9IjEuNSIvPjxsaW5lIHgxPSIyIiB",
+    "5MT0iMTYiIHgyPSIzMCIgeTI9IjE2IiBzdHJva2U9IiNlZWUiIHN0cm9rZS13aWR0aD0iMS41Ii8+PC",
+    "9zdmc+"
+);
+
+/// Build the server icon list: one light-theme and one dark-theme globe SVG.
+///
+/// Both icons use scalable SVG with `sizes: ["any"]` so clients can render them
+/// at any resolution.  The data URIs embed the image inline — no external
+/// requests are needed.
+pub(crate) fn server_icons() -> Vec<rust_mcp_sdk::schema::Icon> {
+    use rust_mcp_sdk::schema::{Icon, IconTheme};
+    vec![
+        Icon {
+            src: GLOBE_SVG_LIGHT.to_string(),
+            mime_type: Some("image/svg+xml".to_string()),
+            sizes: vec!["any".to_string()],
+            theme: Some(IconTheme::Light),
+        },
+        Icon {
+            src: GLOBE_SVG_DARK.to_string(),
+            mime_type: Some("image/svg+xml".to_string()),
+            sizes: vec!["any".to_string()],
+            theme: Some(IconTheme::Dark),
+        },
+    ]
+}
+
+// ─── structured_content helpers ───────────────────────────────────────────────
+
+/// Build a `structuredContent` map from a fixed-size array of `(key, value)` pairs.
+///
+/// This is a zero-allocation helper for the common case of building a flat JSON
+/// object with a known set of fields at compile time.
+fn build_structured<const N: usize>(
+    fields: [(&'static str, serde_json::Value); N],
+) -> serde_json::Map<String, serde_json::Value> {
+    fields
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect()
+}
+
+/// Build the `structuredContent` map for the `fetch` tool response.
+fn build_fetch_structured(
+    url: &str,
+    status: u16,
+    content_type: &str,
+    markdown: &str,
+    timing_ms: f64,
+) -> serde_json::Map<String, serde_json::Value> {
+    build_structured([
+        ("url", serde_json::Value::String(url.to_string())),
+        ("status", serde_json::Value::Number(status.into())),
+        (
+            "content_type",
+            serde_json::Value::String(content_type.to_string()),
+        ),
+        (
+            "content",
+            serde_json::Value::String(truncate_markdown(markdown, 4000)),
+        ),
+        (
+            "timing_ms",
+            serde_json::Value::Number(
+                serde_json::Number::from_f64(timing_ms).unwrap_or(serde_json::Number::from(0)),
+            ),
+        ),
+    ])
+}
+
+// ─── OAuth URL elicitation ────────────────────────────────────────────────────
+
+/// Known OAuth/SSO redirect hostname patterns.
+const OAUTH_HOSTS: &[&str] = &[
+    "accounts.google.com",
+    "github.com/login/oauth",
+    "login.microsoftonline.com",
+    "appleid.apple.com",
+    "facebook.com/login",
+    "twitter.com/i/oauth",
+    "x.com/i/oauth",
+    "linkedin.com/oauth",
+    "auth0.com",
+    "okta.com",
+    "pingidentity.com",
+    "onelogin.com",
+    "login.live.com",
+];
+
+/// Returns `true` when `url` looks like an OAuth/SSO provider redirect.
+pub(crate) fn is_oauth_redirect(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    OAUTH_HOSTS.iter().any(|&host| lower.contains(host))
+}
+
+/// Extract a human-readable service name from an OAuth URL for display in
+/// the elicitation message.
+fn oauth_service_name(url: &str) -> String {
+    let lower = url.to_lowercase();
+    if lower.contains("google") {
+        "Google"
+    } else if lower.contains("github") {
+        "GitHub"
+    } else if lower.contains("microsoft") || lower.contains("live.com") {
+        "Microsoft"
+    } else if lower.contains("apple") {
+        "Apple"
+    } else if lower.contains("facebook") {
+        "Facebook"
+    } else if lower.contains("twitter") || lower.contains("x.com") {
+        "X (Twitter)"
+    } else if lower.contains("linkedin") {
+        "LinkedIn"
+    } else if lower.contains("auth0") {
+        "Auth0"
+    } else if lower.contains("okta") {
+        "Okta"
+    } else {
+        "the OAuth provider"
+    }
+    .to_string()
+}
+
+/// Send a URL elicitation to guide the user through an OAuth/SSO flow.
+///
+/// The 2025-11-25 protocol's `ElicitRequestUrlParams` lets the client open a
+/// URL directly in the user's browser rather than showing a form.  After the
+/// user completes the OAuth flow the server can capture the resulting cookies
+/// via a follow-up form elicitation.
+///
+/// Returns the elicitation result action so the caller can branch on
+/// accept/cancel.
+pub(crate) async fn elicit_oauth_url(
+    runtime: &Arc<dyn McpServer>,
+    oauth_url: &str,
+    service_name: &str,
+) -> Result<ElicitResultAction, CallToolError> {
+    // elicitation_id must be unique per request; use a short random suffix.
+    let elicitation_id = format!("oauth-{}-{}", service_name, std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_millis())
+        .unwrap_or(0));
+
+    let result = runtime
+        .request_elicitation(ElicitRequestParams::UrlParams(
+            ElicitRequestUrlParams::new(
+                elicitation_id,
+                format!(
+                    "OAuth login required for {service_name}. \
+                     Please complete the sign-in in your browser. \
+                     The page will reload once authentication is complete."
+                ),
+                oauth_url.to_string(),
+                None,
+                None,
+            ),
+        ))
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    Ok(result.action)
+}
+
+// ─── Cookie resolution ───────────────────────────────────────────────────────
+
+/// Resolve the cookie header to use for login.
+///
+/// When `explicit_cookies` is provided (the tool's `cookies` parameter), use it
+/// directly.  Otherwise, offer multi-select elicitation so the user can choose
+/// one or more browser cookie stores; cookies from all selected stores are
+/// concatenated with `"; "` as separator.
+///
+/// # Errors
+///
+/// Returns `CallToolError` if the elicitation RPC fails.
+async fn resolve_login_cookies(
+    url: &str,
+    explicit_cookies: Option<&str>,
+    runtime: &Arc<dyn McpServer>,
+) -> Result<Option<String>, CallToolError> {
+    if let Some(cookie) = explicit_cookies {
+        return Ok(Some(cookie.to_string()));
+    }
+
+    let sources = elicit_cookie_sources(runtime, url).await?;
+    if sources.is_empty() {
+        return Ok(None);
+    }
+
+    let domain = url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
+        .unwrap_or_default();
+
+    let combined = sources
+        .iter()
+        .filter_map(|s| {
+            let source = match s.as_str() {
+                "chrome" => CookieSource::Chrome,
+                "firefox" => CookieSource::Firefox,
+                "safari" => CookieSource::Safari,
+                _ => CookieSource::Brave,
+            };
+            source.get_cookie_header(&domain).ok()
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    Ok(if combined.is_empty() { None } else { Some(combined) })
+}
+
+// ─── Multi-select cookie source elicitation ───────────────────────────────────
+
+/// Ask the user which browser cookie stores to use for the login, allowing
+/// multiple sources to be selected simultaneously.
+///
+/// Uses `TitledMultiSelectEnumSchema` from the 2025-11-25 protocol spec.
+/// Returns the selected browser names (e.g. `["brave", "chrome"]`).
+pub(crate) async fn elicit_cookie_sources(
+    runtime: &Arc<dyn McpServer>,
+    url: &str,
+) -> Result<Vec<String>, CallToolError> {
+    let options: &[(&str, &str)] = &[
+        ("brave", "Brave Browser"),
+        ("chrome", "Google Chrome"),
+        ("firefox", "Mozilla Firefox"),
+        ("safari", "Apple Safari"),
+    ];
+
+    let items = TitledMultiSelectEnumSchemaItems {
+        any_of: options
+            .iter()
+            .map(|&(value, label)| TitledMultiSelectEnumSchemaItemsAnyOfItem {
+                const_: value.to_string(),
+                title: label.to_string(),
+            })
+            .collect(),
+    };
+
+    let multi_select = TitledMultiSelectEnumSchema::new(
+        vec!["brave".to_string()], // default: Brave
+        items,
+        Some("Cookie stores to import for authentication".into()),
+        None, // max_items
+        None, // min_items
+        Some("Cookie Sources".into()),
+    );
+
+    let mut properties = HashMap::new();
+    properties.insert(
+        "sources".into(),
+        PrimitiveSchemaDefinition::TitledMultiSelectEnumSchema(multi_select),
+    );
+
+    let schema = ElicitFormSchema::new(properties, vec!["sources".into()], None);
+
+    let result = runtime
+        .request_elicitation(ElicitRequestParams::FormParams(ElicitRequestFormParams::new(
+            format!(
+                "Which browser cookie stores should be used for login to {url}? \
+                 Select all that apply."
+            ),
+            schema,
+            None,
+            None,
+        )))
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
+    match result.action {
+        ElicitResultAction::Accept => {
+            // The multi-select result comes back as a JSON array of selected values.
+            // The SDK encodes it as ElicitResultContent::Primitive::String (JSON-serialised
+            // array) or as individual entries — extract and decode defensively.
+            let content = result.content.unwrap_or_default();
+            let sources = extract_multiselect_field(&content, "sources");
+            Ok(sources)
+        }
+        ElicitResultAction::Decline | ElicitResultAction::Cancel => {
+            // User skipped — return empty list so caller can fall back to no cookies.
+            Ok(vec![])
+        }
+    }
+}
+
+/// Extract a multi-select field (array of strings) from elicitation result content.
+///
+/// Clients MAY encode the array as a JSON string `"[\"a\",\"b\"]"` or as a
+/// comma-separated string `"a,b"`.  Both forms are handled here.  Returns an
+/// empty `Vec` when the field is absent or has an unexpected type.
+fn extract_multiselect_field(
+    content: &HashMap<String, ElicitResultContent>,
+    field: &str,
+) -> Vec<String> {
+    match content.get(field) {
+        Some(ElicitResultContent::Primitive(ElicitResultContentPrimitive::String(s))) => {
+            // Try JSON array first.
+            if let Ok(vals) = serde_json::from_str::<Vec<String>>(s) {
+                return vals;
+            }
+            // Fall back to comma-separated.
+            s.split(',')
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect()
+        }
+        Some(_) | None => vec![],
+    }
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_oauth_redirect ────────────────────────────────────────────────────
+
+    #[test]
+    fn oauth_redirect_detects_google() {
+        // GIVEN a Google OAuth URL
+        let url = "https://accounts.google.com/o/oauth2/auth?client_id=xxx";
+        // WHEN checked for OAuth redirect
+        // THEN it is detected
+        assert!(is_oauth_redirect(url));
+    }
+
+    #[test]
+    fn oauth_redirect_detects_github() {
+        assert!(is_oauth_redirect("https://github.com/login/oauth/authorize?client_id=abc"));
+    }
+
+    #[test]
+    fn oauth_redirect_detects_microsoft() {
+        assert!(is_oauth_redirect(
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+        ));
+    }
+
+    #[test]
+    fn oauth_redirect_rejects_normal_site() {
+        // GIVEN a regular website URL
+        let url = "https://example.com/login";
+        // WHEN checked for OAuth redirect
+        // THEN it is NOT detected
+        assert!(!is_oauth_redirect(url));
+    }
+
+    #[test]
+    fn oauth_redirect_case_insensitive() {
+        assert!(is_oauth_redirect("https://ACCOUNTS.GOOGLE.COM/o/oauth2/auth"));
+    }
+
+    // ── extract_multiselect_field ────────────────────────────────────────────
+
+    #[test]
+    fn multiselect_parses_json_array() {
+        // GIVEN a JSON-encoded array string in the content map
+        let mut content = HashMap::new();
+        content.insert(
+            "sources".to_string(),
+            ElicitResultContent::Primitive(ElicitResultContentPrimitive::String(
+                r#"["brave","chrome"]"#.to_string(),
+            )),
+        );
+        // WHEN extracted
+        let result = extract_multiselect_field(&content, "sources");
+        // THEN the values are returned as a Vec
+        assert_eq!(result, vec!["brave", "chrome"]);
+    }
+
+    #[test]
+    fn multiselect_parses_comma_separated() {
+        // GIVEN a comma-separated string (fallback encoding)
+        let mut content = HashMap::new();
+        content.insert(
+            "sources".to_string(),
+            ElicitResultContent::Primitive(ElicitResultContentPrimitive::String(
+                "brave, firefox".to_string(),
+            )),
+        );
+        // WHEN extracted
+        let result = extract_multiselect_field(&content, "sources");
+        // THEN whitespace is trimmed and values are split
+        assert_eq!(result, vec!["brave", "firefox"]);
+    }
+
+    #[test]
+    fn multiselect_returns_empty_on_missing_field() {
+        // GIVEN content without the requested field
+        let content: HashMap<String, ElicitResultContent> = HashMap::new();
+        // WHEN extracted
+        let result = extract_multiselect_field(&content, "sources");
+        // THEN empty vec is returned
+        assert!(result.is_empty());
+    }
+
+    // ── build_structured ────────────────────────────────────────────────────
+
+    #[test]
+    fn build_structured_produces_correct_keys() {
+        // GIVEN a set of key-value pairs
+        // WHEN built into a structured map
+        let map = build_structured([
+            ("url", serde_json::Value::String("https://example.com".into())),
+            ("status", serde_json::Value::Number(200.into())),
+        ]);
+        // THEN all keys are present with correct values
+        assert_eq!(map["url"], serde_json::Value::String("https://example.com".into()));
+        assert_eq!(map["status"], serde_json::Value::Number(200.into()));
+    }
+
+    // ── build_fetch_structured ───────────────────────────────────────────────
+
+    #[test]
+    fn fetch_structured_has_all_required_fields() {
+        // GIVEN a complete fetch result
+        let map = build_fetch_structured(
+            "https://example.com",
+            200,
+            "text/html",
+            "# Hello\n\nworld",
+            42.5,
+        );
+        // WHEN inspected
+        // THEN all outputSchema fields are present
+        assert!(map.contains_key("url"));
+        assert!(map.contains_key("status"));
+        assert!(map.contains_key("content_type"));
+        assert!(map.contains_key("content"));
+        assert!(map.contains_key("timing_ms"));
+        assert_eq!(map["status"], serde_json::Value::Number(200.into()));
+    }
+
+    #[test]
+    fn fetch_structured_truncates_long_content() {
+        // GIVEN content longer than 4000 chars
+        let long_content = "x".repeat(5000);
+        let map = build_fetch_structured("https://example.com", 200, "text/plain", &long_content, 10.0);
+        // WHEN inspected
+        // THEN content is truncated
+        let content = map["content"].as_str().unwrap();
+        assert!(content.len() < 5000);
+        assert!(content.contains("truncated"));
+    }
+
+    // ── server_icons ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn server_icons_returns_light_and_dark() {
+        use rust_mcp_sdk::schema::IconTheme;
+        // GIVEN the server icon list
+        let icons = server_icons();
+        // WHEN inspected
+        // THEN both light and dark variants are present
+        assert_eq!(icons.len(), 2);
+        assert!(icons.iter().any(|i| i.theme == Some(IconTheme::Light)));
+        assert!(icons.iter().any(|i| i.theme == Some(IconTheme::Dark)));
+    }
+
+    #[test]
+    fn server_icons_have_svg_mime_type() {
+        for icon in server_icons() {
+            assert_eq!(icon.mime_type.as_deref(), Some("image/svg+xml"));
+            assert_eq!(icon.sizes, vec!["any"]);
+            assert!(icon.src.starts_with("data:image/svg+xml;base64,"));
         }
     }
 }

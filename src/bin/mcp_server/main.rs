@@ -1,8 +1,9 @@
 //! `MicroFetch` MCP Server - Native Rust implementation
 //!
 //! Ultra-fast MCP server for web fetching with HTTP/3, fingerprint spoofing,
-//! and 1Password integration. Uses MCP protocol 2025-06-18 with full
-//! tool annotations, structured output schemas, and elicitation support.
+//! and 1Password integration. Uses MCP protocol 2025-11-25 with full
+//! tool annotations, structured output schemas, task-augmented execution,
+//! and elicitation support.
 //!
 //! # Usage
 //!
@@ -19,16 +20,19 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_mcp_sdk::mcp_server::{McpServerOptions, ServerHandler, server_runtime};
 use rust_mcp_sdk::schema::{
-    CallToolRequestParams, CallToolResult, Implementation, InitializeResult,
+    CallToolRequestParams, CallToolResult, CreateTaskResult, Implementation, InitializeResult,
     LATEST_PROTOCOL_VERSION, ListToolsResult, PaginatedRequestParams, RpcError, ServerCapabilities,
-    ServerCapabilitiesTools, ToolOutputSchema, schema_utils::CallToolError,
+    ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, ToolExecution,
+    ToolExecutionTaskSupport, ToolOutputSchema, schema_utils::CallToolError,
 };
 use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
+use rust_mcp_sdk::schema::{TaskStatus, schema_utils::{ClientJsonrpcRequest, ResultFromServer}};
+use rust_mcp_sdk::task_store::{CreateTaskOptions, InMemoryTaskStore, ServerTaskCreator};
 use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 
 use tools::{
     AuthLookupTool, BenchmarkTool, FetchBatchTool, FetchTool, FingerprintTool, LoginTool,
-    SubmitTool, ValidateTool, get_client,
+    SubmitTool, ValidateTool, get_client, server_icons,
 };
 
 // Generate the tools enum
@@ -260,6 +264,11 @@ fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
 
 // ─── Server Handler ───────────────────────────────────────────────────────────
 
+/// MCP server handler for the `MicroFetch` tool suite.
+///
+/// Handles all standard MCP tool requests synchronously, and routes
+/// `fetch_batch` through task-augmented execution when the client requests it,
+/// enabling non-blocking parallel fetches for long-running batch operations.
 pub struct MicroFetchHandler;
 
 #[async_trait]
@@ -271,9 +280,9 @@ impl ServerHandler for MicroFetchHandler {
     ) -> Result<ListToolsResult, RpcError> {
         let mut tools = MicroFetchTools::tools();
 
-        // Inject outputSchema into the five tools that return structured data.
-        // The #[mcp_tool] macro always emits `output_schema: None`, so we
-        // patch the list after generation — no unsafe, no bypass of the macro.
+        // Inject outputSchema and task execution metadata after macro generation.
+        // The #[mcp_tool] macro always emits `output_schema: None` and
+        // `execution: None`, so we patch both fields here.
         for tool in &mut tools {
             tool.output_schema = match tool.name.as_str() {
                 "fetch" => Some(fetch_output_schema()),
@@ -283,6 +292,14 @@ impl ServerHandler for MicroFetchHandler {
                 "benchmark" => Some(benchmark_output_schema()),
                 _ => None,
             };
+
+            // Advertise that fetch_batch supports optional task-augmented execution.
+            // Clients that understand tasks can opt in; others get synchronous execution.
+            if tool.name == "fetch_batch" {
+                tool.execution = Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Optional),
+                });
+            }
         }
 
         Ok(ListToolsResult {
@@ -311,6 +328,79 @@ impl ServerHandler for MicroFetchHandler {
             MicroFetchTools::BenchmarkTool(t) => t.run().await,
         }
     }
+
+    /// Handles task-augmented `fetch_batch` calls.
+    ///
+    /// When a client sends `tools/call` with `_meta: {taskMode: "async"}` for
+    /// `fetch_batch`, this handler:
+    /// 1. Creates a task immediately and returns `CreateTaskResult` to the client.
+    /// 2. Spawns the actual batch fetch in the background.
+    /// 3. Stores the result via `task_store.store_task_result()` when done.
+    /// 4. The runtime automatically pushes a `notifications/task/status` notification.
+    ///
+    /// Only `fetch_batch` supports task-augmented execution; all other tools
+    /// fall through to `handle_call_tool_request`.
+    async fn handle_task_augmented_tool_call(
+        &self,
+        params: CallToolRequestParams,
+        task_creator: ServerTaskCreator,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<CreateTaskResult, CallToolError> {
+        if params.name != "fetch_batch" {
+            return Err(CallToolError::from_message(format!(
+                "Tool '{}' does not support task-augmented execution",
+                params.name
+            )));
+        }
+
+        // Deserialize the batch tool from params before creating the task,
+        // so we fail fast on bad input before spawning.
+        let tool = MicroFetchTools::try_from(params)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let MicroFetchTools::FetchBatchTool(batch_tool) = tool else {
+            return Err(CallToolError::from_message("Expected fetch_batch tool"));
+        };
+
+        // Create the task synchronously — this returns the task metadata
+        // (task_id, status=pending, timestamps) that the client polls.
+        let task = task_creator
+            .create_task(CreateTaskOptions {
+                ttl: None,
+                poll_interval: Some(1000), // suggest 1-second polling
+                meta: None,
+            })
+            .await;
+
+        let task_id = task.task_id.clone();
+        let task_store = _runtime
+            .task_store()
+            .ok_or_else(|| CallToolError::from_message("Task store not configured"))?;
+
+        // Spawn the actual fetch work in the background.
+        // When complete, store_task_result() signals completion and the
+        // runtime pushes a notifications/task/status event to the client.
+        tokio::spawn(async move {
+            let (status, call_result) = match batch_tool.run().await {
+                Ok(r) => (TaskStatus::Completed, ResultFromServer::CallToolResult(r)),
+                Err(e) => {
+                    // Convert error to String before any await point to satisfy
+                    // the Send bound — CallToolError contains dyn StdError.
+                    let msg = e.to_string();
+                    (
+                        TaskStatus::Failed,
+                        ResultFromServer::CallToolResult(
+                            CallToolError::from_message(msg).into(),
+                        ),
+                    )
+                }
+            };
+            task_store
+                .store_task_result(&task_id, status, call_result, None)
+                .await;
+        });
+
+        Ok(CreateTaskResult { task, meta: None })
+    }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -324,17 +414,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = get_client().await;
 
+    // Wire the InMemoryTaskStore so that task-augmented fetch_batch calls work.
+    // The runtime subscribes to the store's broadcast channel and sends
+    // notifications/task/status to the client whenever a task changes state.
+    let task_store: Arc<rust_mcp_sdk::task_store::ServerTaskStore> = Arc::new(
+        InMemoryTaskStore::<ClientJsonrpcRequest, ResultFromServer>::new(None),
+    );
+
     let server_details = InitializeResult {
         server_info: Implementation {
             name: "nab".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("MicroFetch Browser Engine".into()),
-            description: None,
-            icons: vec![],
+            description: Some(
+                "Token-optimized web fetcher with HTTP/3, browser fingerprinting, \
+                 and 1Password integration."
+                    .into(),
+            ),
+            icons: server_icons(),
             website_url: None,
         },
         capabilities: ServerCapabilities {
             tools: Some(ServerCapabilitiesTools { list_changed: None }),
+            // Advertise task support: clients can create tasks, cancel them,
+            // list them, and use task-augmented tool calls.
+            tasks: Some(ServerTasks {
+                cancel: Some(serde_json::Map::new()),
+                list: Some(serde_json::Map::new()),
+                requests: Some(ServerTaskRequest {
+                    tools: Some(ServerTaskTools {
+                        call: Some(serde_json::Map::new()),
+                    }),
+                }),
+            }),
             ..Default::default()
         },
         meta: None,
@@ -342,7 +454,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "nab provides ultra-fast web fetching with automatic content conversion \
              (HTML/PDF→markdown), SPA data extraction, form submission with CSRF handling, \
              auto-login via 1Password with interactive credential selection, \
-             HTTP/3, and browser fingerprinting."
+             HTTP/3, and browser fingerprinting. \
+             fetch_batch supports task-augmented execution for non-blocking parallel fetches."
                 .into(),
         ),
         protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
@@ -354,7 +467,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_details,
         transport,
         handler: handler.to_mcp_server_handler(),
-        task_store: None,
+        task_store: Some(task_store),
         client_task_store: None,
     });
 
