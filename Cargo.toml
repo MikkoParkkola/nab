@@ -1,6 +1,6 @@
 [package]
 name = "nab"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 authors = ["Mikko Parkkola"]
 description = "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown"
@@ -119,6 +119,7 @@ toml = "0.8"                          # Plugin config parsing
 # ═══════════════════════════════════════════════════════════════════════════════
 html2md = "0.2"                     # HTML to Markdown
 url = "2"                           # URL parsing
+addr = "0.15"                       # eTLD+1 via Mozilla's public suffix list
 urlencoding = "2"                   # URL encoding for forms
 readability = { version = "0.3", default-features = false }  # Mozilla-style article extraction
 

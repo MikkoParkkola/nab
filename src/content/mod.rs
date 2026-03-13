@@ -28,6 +28,7 @@ pub mod diff;
 pub mod diff_format;
 pub mod focus;
 pub mod html;
+pub mod link_extract;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 pub mod plain;

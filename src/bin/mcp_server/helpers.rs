@@ -109,6 +109,52 @@ pub(crate) async fn fetch_with_cookies(
     Ok((status, ct, hdrs, bytes, elapsed))
 }
 
+/// Fetch a URL using a session-owned `reqwest::Client` whose cookie jar
+/// already contains the session's cookies.
+///
+/// The caller is responsible for any URL-level SSRF validation before invoking
+/// this helper.  The session client follows redirects via its own policy (up to
+/// 10 hops); body bytes are returned without a size cap (same as the
+/// `fetch_with_cookies` path).
+pub(crate) async fn fetch_with_session_response(
+    session_client: &reqwest::Client,
+    url: &str,
+    start: Instant,
+) -> Result<
+    (
+        reqwest::StatusCode,
+        String,
+        Vec<(String, String)>,
+        bytes::Bytes,
+        std::time::Duration,
+    ),
+    CallToolError,
+> {
+    let response = session_client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    let elapsed = start.elapsed();
+    let status = response.status();
+    let ct = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/html")
+        .to_string();
+    let hdrs: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
+        .collect();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    Ok((status, ct, hdrs, bytes, elapsed))
+}
+
 /// Convert body bytes to markdown asynchronously via `spawn_blocking`.
 pub(crate) async fn convert_body_async(
     body_bytes: &bytes::Bytes,

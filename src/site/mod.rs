@@ -9,6 +9,9 @@
 //! - [`SiteRouter`]: Dispatches URLs to the appropriate provider
 //! - [`SiteContent`]: Structured content with metadata
 //!
+//! Built-in providers are checked first.  User-defined CSS extractors loaded
+//! from `~/.config/nab/plugins.toml` are appended after the built-ins.
+//!
 //! # Example
 //!
 //! ```rust,no_run
@@ -26,6 +29,7 @@
 //! # }
 //! ```
 
+pub mod css_extractor;
 pub mod github;
 pub mod google;
 pub mod hackernews;
@@ -89,9 +93,8 @@ pub trait SiteProvider: Send + Sync {
     ///
     /// `prefetched_html` is an optional pre-fetched raw HTML body for the URL.
     /// When present, providers that need the HTML body can use it directly to
-    /// avoid a redundant HTTP round-trip (e.g. CSS extractor providers in P4).
-    /// All current providers ignore this parameter — it exists for forward
-    /// compatibility with Phase 4 (CSS extractors).
+    /// avoid a redundant HTTP round-trip (e.g. CSS extractor providers).
+    /// All built-in providers ignore this parameter.
     async fn extract(
         &self,
         url: &str,
@@ -103,17 +106,24 @@ pub trait SiteProvider: Send + Sync {
 
 /// Routes URLs to specialized site providers.
 ///
-/// Providers are checked in registration order. First match wins.
+/// Built-in providers are checked first (in registration order).  CSS extractor
+/// providers loaded from `~/.config/nab/plugins.toml` are appended after the
+/// built-ins.  First match wins.
+///
 /// Returns `None` if no provider matches or extraction fails.
 pub struct SiteRouter {
     providers: Vec<Box<dyn SiteProvider>>,
 }
 
 impl SiteRouter {
-    /// Create a router with all available site providers.
+    /// Create a router with all built-in site providers plus any CSS extractor
+    /// plugins loaded from `~/.config/nab/plugins.toml`.
+    ///
+    /// Invalid CSS plugin entries are skipped with a warning; they never
+    /// prevent the built-in providers from loading.
     #[must_use]
     pub fn new() -> Self {
-        let providers: Vec<Box<dyn SiteProvider>> = vec![
+        let mut providers: Vec<Box<dyn SiteProvider>> = vec![
             Box::new(twitter::TwitterProvider),
             Box::new(reddit::RedditProvider),
             Box::new(hackernews::HackerNewsProvider),
@@ -127,20 +137,30 @@ impl SiteRouter {
             Box::new(linkedin::LinkedInProvider),
         ];
 
+        append_css_providers(&mut providers);
+
         Self { providers }
+    }
+
+    /// Create a router with the built-in providers plus the given additional
+    /// providers appended at the end.  Useful for testing without touching the
+    /// plugins config file.
+    #[must_use]
+    pub fn with_extra_providers(mut extra: Vec<Box<dyn SiteProvider>>) -> Self {
+        let mut router = Self::new();
+        router.providers.append(&mut extra);
+        router
+    }
+
+    /// Number of registered providers (built-ins + CSS plugins).
+    #[must_use]
+    pub fn provider_count(&self) -> usize {
+        self.providers.len()
     }
 
     /// Try to extract content using a specialized provider.
     ///
-    /// `cookies` is an optional browser cookie header (e.g., `"SID=abc; HSID=def"`) forwarded
-    /// to providers that require authentication (e.g., Google Workspace).
-    ///
-    /// `prefetched_html` is an optional pre-fetched raw HTML body for the URL, passed through
-    /// to providers that can use it to avoid a redundant HTTP round-trip.
-    ///
-    /// Returns `None` if:
-    /// - No provider matches the URL
-    /// - Provider extraction fails (logged as warning)
+    /// Returns `None` if no provider matches or extraction fails (logged as warning).
     pub async fn try_extract(
         &self,
         url: &str,
@@ -188,14 +208,84 @@ impl Default for SiteRouter {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CSS provider loading
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Load CSS extractor configs from plugins.toml and append valid providers.
+/// Invalid entries are skipped with a warning.
+fn append_css_providers(providers: &mut Vec<Box<dyn SiteProvider>>) {
+    use crate::plugin::config::load_all_plugins;
+    use css_extractor::{CssExtractorConfig, CssExtractorProvider};
+
+    let loaded = match load_all_plugins() {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!("Failed to load plugins.toml: {e}");
+            return;
+        }
+    };
+
+    for css_cfg in loaded.css {
+        // CSS configs support multiple patterns; we compile one provider per
+        // config and pass the first pattern as the URL regex.  For multiple
+        // patterns the caller should create separate entries.  This matches
+        // how the binary PluginRunner handles `patterns` (any match wins).
+        let url_pattern = build_pattern_regex(&css_cfg.patterns);
+        let config = CssExtractorConfig {
+            name: css_cfg.name.clone(),
+            url_pattern,
+            content_selector: css_cfg.content.selector,
+            title_selector: css_cfg.metadata.title,
+            author_selector: css_cfg.metadata.author,
+            date_selector: css_cfg.metadata.published,
+            remove_selectors: css_cfg.content.remove,
+        };
+
+        match CssExtractorProvider::new(config) {
+            Ok(provider) => {
+                tracing::debug!("Loaded CSS extractor plugin: {}", css_cfg.name);
+                providers.push(Box::new(provider));
+            }
+            Err(e) => {
+                tracing::warn!("CSS extractor '{}' failed to load: {e}", css_cfg.name);
+            }
+        }
+    }
+}
+
+/// Build a single regex from a list of patterns using `|` alternation.
+/// An empty list produces a regex that never matches.
+fn build_pattern_regex(patterns: &[String]) -> String {
+    if patterns.is_empty() {
+        // `\A\z` anchors start+end with nothing in between — only matches the
+        // empty string, which no URL ever is.  The `regex` crate does not
+        // support look-ahead (`(?!x)x`), so we use this anchor pair instead.
+        return r"\A\z".to_string();
+    }
+    if patterns.len() == 1 {
+        return patterns[0].clone();
+    }
+    patterns
+        .iter()
+        .map(|p| format!("(?:{p})"))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn router_registers_all_providers() {
+    fn router_registers_all_builtin_providers() {
         let router = SiteRouter::new();
-        assert_eq!(router.providers.len(), 11);
+        // At least 11 built-in providers; CSS plugins may add more.
+        assert!(router.providers.len() >= 11);
         assert_eq!(router.providers[0].name(), "twitter");
         assert_eq!(router.providers[1].name(), "reddit");
         assert_eq!(router.providers[2].name(), "hackernews");
@@ -219,10 +309,76 @@ mod tests {
     #[test]
     fn router_does_not_match_non_provider_urls() {
         let router = SiteRouter::new();
-        // None of the providers should match this generic URL
         let generic_url = "https://example.com/page";
-        for provider in &router.providers {
+        // Only check the 11 built-ins; CSS user plugins are not deterministic.
+        for provider in router.providers.iter().take(11) {
             assert!(!provider.matches(generic_url));
         }
+    }
+
+    #[test]
+    fn router_with_extra_provider_increases_count() {
+        use css_extractor::{CssExtractorConfig, CssExtractorProvider};
+
+        let base_count = SiteRouter::new().provider_count();
+        let config = CssExtractorConfig {
+            name: "extra".to_string(),
+            url_pattern: r"extra\.example\.com".to_string(),
+            content_selector: "main".to_string(),
+            title_selector: None,
+            author_selector: None,
+            date_selector: None,
+            remove_selectors: vec![],
+        };
+        let provider = CssExtractorProvider::new(config).unwrap();
+        let router = SiteRouter::with_extra_providers(vec![Box::new(provider)]);
+        assert_eq!(router.provider_count(), base_count + 1);
+    }
+
+    #[test]
+    fn extra_css_provider_matches_its_url() {
+        use css_extractor::{CssExtractorConfig, CssExtractorProvider};
+
+        let config = CssExtractorConfig {
+            name: "my-extra".to_string(),
+            url_pattern: r"myextra\.com".to_string(),
+            content_selector: "article".to_string(),
+            title_selector: None,
+            author_selector: None,
+            date_selector: None,
+            remove_selectors: vec![],
+        };
+        let provider = CssExtractorProvider::new(config).unwrap();
+        let router = SiteRouter::with_extra_providers(vec![Box::new(provider)]);
+
+        // Built-ins must not claim myextra.com
+        for p in router.providers.iter().take(11) {
+            assert!(!p.matches("https://myextra.com/article/1"));
+        }
+        // Extra provider should match
+        let last = router.providers.last().unwrap();
+        assert!(last.matches("https://myextra.com/article/1"));
+    }
+
+    #[test]
+    fn build_pattern_regex_empty_never_matches() {
+        let pattern = build_pattern_regex(&[]);
+        let re = regex::Regex::new(&pattern).unwrap();
+        assert!(!re.is_match("anything"));
+    }
+
+    #[test]
+    fn build_pattern_regex_single_pattern_unchanged() {
+        let pattern = build_pattern_regex(&[r"foo\.com".to_string()]);
+        assert_eq!(pattern, r"foo\.com");
+    }
+
+    #[test]
+    fn build_pattern_regex_multiple_patterns_alternate() {
+        let pattern = build_pattern_regex(&[r"foo\.com".to_string(), r"bar\.com".to_string()]);
+        let re = regex::Regex::new(&pattern).unwrap();
+        assert!(re.is_match("https://foo.com/page"));
+        assert!(re.is_match("https://bar.com/page"));
+        assert!(!re.is_match("https://baz.com/page"));
     }
 }

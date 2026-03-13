@@ -145,14 +145,15 @@ fn fetch_structured_has_all_required_fields() {
 }
 
 #[test]
-fn fetch_structured_truncates_long_content() {
-    // GIVEN content longer than 4000 chars
-    let long_content = "x".repeat(5000);
+fn fetch_structured_preserves_content_verbatim() {
+    // GIVEN content passed to the structured builder
+    // (truncation is now handled upstream by budget::truncate_to_budget)
+    let content_str = "x".repeat(5000);
     let map = build_fetch_structured_v2(
         "https://example.com",
         200,
         "text/plain",
-        &long_content,
+        &content_str,
         10.0,
         false,
         0,
@@ -161,10 +162,29 @@ fn fetch_structured_truncates_long_content() {
         0,
     );
     // WHEN inspected
-    // THEN content is truncated
+    // THEN content is stored verbatim (no internal truncation)
     let content = map["content"].as_str().unwrap();
-    assert!(content.len() < 5000);
-    assert!(content.contains("truncated"));
+    assert_eq!(content.len(), 5000);
+}
+
+#[test]
+fn fetch_structured_includes_truncation_metadata_when_flagged() {
+    // GIVEN a response marked as truncated with known full_tokens
+    let map = build_fetch_structured_v2(
+        "https://example.com",
+        200,
+        "text/html",
+        "truncated content",
+        10.0,
+        false,
+        0,
+        0,
+        true,
+        8000,
+    );
+    // THEN truncation metadata fields are present
+    assert_eq!(map["truncated"], serde_json::Value::Bool(true));
+    assert_eq!(map["full_tokens"], serde_json::Value::Number(8000.into()));
 }
 
 // ── server_icons ─────────────────────────────────────────────────────────────

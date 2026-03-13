@@ -21,6 +21,7 @@ use nab::content::diff::{ContentSnapshot, compute_diff};
 use nab::content::diff_format::format_diff_markdown;
 use nab::content::focus::extract_focused;
 use nab::content::snapshot_store::SnapshotStore;
+use nab::session::SessionStore;
 use nab::{
     AcceleratedClient, CredentialRetriever, OnePasswordAuth, SafeFetchConfig, chrome_profile,
     firefox_profile, random_profile, safari_profile,
@@ -31,8 +32,9 @@ use crate::elicitation::{
     oauth_service_name, resolve_login_cookies, run_login_with_credentials,
 };
 use crate::helpers::{
-    convert_body_async, fetch_safe_response, fetch_with_cookies, resolve_cookie_header,
-    run_tls_test, run_validation_test, write_body_info, write_response_summary,
+    convert_body_async, fetch_safe_response, fetch_with_cookies, fetch_with_session_response,
+    resolve_cookie_header, run_tls_test, run_validation_test, write_body_info,
+    write_response_summary,
 };
 use crate::structured::{build_fetch_structured_v2, build_structured, truncate_markdown};
 
@@ -43,6 +45,31 @@ pub async fn get_client() -> &'static AcceleratedClient {
     CLIENT
         .get_or_init(|| async { AcceleratedClient::new().expect("Failed to create HTTP client") })
         .await
+}
+
+// Global session store (initialized once, shared across all tool calls)
+static SESSION_STORE: OnceCell<SessionStore> = OnceCell::const_new();
+
+pub(crate) async fn get_session_store() -> &'static SessionStore {
+    SESSION_STORE
+        .get_or_init(|| async { SessionStore::new() })
+        .await
+}
+
+/// Look up (or create) the named session, seeding it with browser cookies when
+/// `seed_cookies` is non-empty.  Returns the session's dedicted `reqwest::Client`.
+async fn resolve_session_client(
+    name: &str,
+    seed_cookies: Option<&str>,
+    seed_url: &str,
+) -> Result<reqwest::Client, CallToolError> {
+    let store = get_session_store().await;
+    let seed = seed_cookies.filter(|s| !s.is_empty());
+    let entry = store
+        .get_or_create(name, seed, Some(seed_url))
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    Ok(entry.client)
 }
 
 // ─── fetch ────────────────────────────────────────────────────────────────────
@@ -114,6 +141,18 @@ pub struct FetchTool {
     /// then headings (capped at 30% of budget), then body text.
     #[serde(default)]
     max_tokens: Option<u64>,
+    /// Named session for cookie persistence across calls.
+    ///
+    /// When set, nab uses an isolated per-session cookie jar so that
+    /// `Set-Cookie` response headers from one call are automatically included
+    /// on the next call with the same session name.  Use this to maintain
+    /// authenticated state across multiple `fetch` calls after a `login`.
+    ///
+    /// Session names: 1-64 chars, alphanumeric + hyphens + underscores.
+    /// Sessions are created implicitly on first use and live for the
+    /// process lifetime.  Absent = stateless global client (no change).
+    #[serde(default)]
+    session: Option<String>,
 }
 
 impl FetchTool {
@@ -131,6 +170,49 @@ impl FetchTool {
         );
 
         let cookie_header = resolve_cookie_header(&self.url, self.cookies.as_deref());
+
+        // ── Session path: use isolated cookie jar client ──────────────────────
+        // When a named session is requested the session's client handles cookie
+        // persistence automatically through its baked-in reqwest::Jar.  We skip
+        // the SiteRouter (which requires AcceleratedClient) and go straight to
+        // the HTTP fetch so the session jar receives all Set-Cookie responses.
+        if let Some(ref session_name) = self.session {
+            let session_client =
+                resolve_session_client(session_name, Some(&cookie_header), &self.url).await?;
+            if let Some(ref sn) = self.session {
+                let _ = writeln!(output, "🔑 Session: {sn}");
+            }
+
+            let (status, content_type, response_headers, body_bytes, elapsed) =
+                fetch_with_session_response(&session_client, &self.url, start).await?;
+
+            write_response_summary(
+                &mut output,
+                status,
+                elapsed,
+                self.headers,
+                &response_headers,
+            );
+            write_body_info(&mut output, body_bytes.len());
+
+            let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
+
+            if let Some(pages) = conversion.page_count {
+                let _ = writeln!(
+                    output,
+                    "📑 Pages: {} | Conversion: {:.1}ms",
+                    pages, conversion.elapsed_ms
+                );
+            }
+
+            let markdown = conversion.markdown;
+            let status_u16 = status.as_u16();
+            let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+
+            return Ok(self.finish_fetch(output, markdown, status_u16, &content_type, elapsed_ms));
+        }
+
+        // ── Standard path (no session) ────────────────────────────────────────
 
         let site_router = nab::site::SiteRouter::new();
         let cookie_opt = if cookie_header.is_empty() {
@@ -190,6 +272,19 @@ impl FetchTool {
             )
         };
 
+        Ok(self.finish_fetch(output, markdown, status_u16, &content_type, elapsed_ms))
+    }
+
+    /// Unified post-processing pipeline shared by both the session and the
+    /// standard fetch paths: diff → body preview → focus → budget → structured.
+    fn finish_fetch(
+        &self,
+        mut output: String,
+        markdown: String,
+        status_u16: u16,
+        content_type: &str,
+        elapsed_ms: f64,
+    ) -> CallToolResult {
         // Unified post-processing pipeline: diff → focus → budget
         let has_diff = if self.diff {
             let (diff_output, had_diff) = apply_diff(&self.url, &markdown);
@@ -215,7 +310,7 @@ impl FetchTool {
                     focus_result.total_sections,
                 )
             } else {
-                (markdown.clone(), 0, 0)
+                (markdown, 0, 0)
             };
 
         // Budget: structure-aware truncation with priority scoring.
@@ -227,7 +322,7 @@ impl FetchTool {
         let structured = build_fetch_structured_v2(
             &self.url,
             status_u16,
-            &content_type,
+            content_type,
             &budget_result.markdown,
             elapsed_ms,
             has_diff,
@@ -239,7 +334,7 @@ impl FetchTool {
 
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
         result.structured_content = Some(structured);
-        Ok(result)
+        result
     }
 }
 
@@ -669,17 +764,41 @@ pub struct SubmitTool {
     csrf_selector: Option<String>,
     #[serde(default)]
     cookies: Option<String>,
+    /// Named session for cookie persistence.  When set, the form page fetch
+    /// and the POST submission both use the session's cookie jar, preserving
+    /// authentication state.  See `fetch` `session` for full documentation.
+    #[serde(default)]
+    session: Option<String>,
 }
 
 impl SubmitTool {
     pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
-        let client: &AcceleratedClient = get_client().await;
         let mut output = format!("📝 Submitting form on: {}\n", self.url);
 
-        let page_html = client
-            .fetch_text(&self.url)
-            .await
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        // Resolve inner reqwest::Client: session-owned or global.
+        let (page_html, inner_client) = if let Some(ref session_name) = self.session {
+            let cookie_header = resolve_cookie_header(&self.url, self.cookies.as_deref());
+            let session_client =
+                resolve_session_client(session_name, Some(&cookie_header), &self.url).await?;
+            let _ = writeln!(output, "   Session: {session_name}");
+            let resp = session_client
+                .get(&self.url)
+                .send()
+                .await
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            let html = resp
+                .text()
+                .await
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            (html, session_client)
+        } else {
+            let client: &AcceleratedClient = get_client().await;
+            let html = client
+                .fetch_text(&self.url)
+                .await
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            (html, client.inner().clone())
+        };
 
         let mut forms = nab::Form::parse_all(&page_html)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
@@ -716,8 +835,7 @@ impl SubmitTool {
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
         let form_data = form.encode_urlencoded();
 
-        let response = client
-            .inner()
+        let response = inner_client
             .post(&action_url)
             .header("Content-Type", form.content_type())
             .body(form_data)
@@ -766,6 +884,16 @@ pub struct LoginTool {
     url: String,
     #[serde(default)]
     cookies: Option<String>,
+    /// Named session to store authenticated cookies in after login.
+    ///
+    /// When set, the login flow uses the session's isolated cookie jar.
+    /// All `Set-Cookie` headers from the login flow are automatically stored
+    /// in the jar and will be sent on subsequent `fetch` or `submit` calls
+    /// that use the same session name — no manual cookie extraction needed.
+    ///
+    /// Session names: 1-64 chars, alphanumeric + hyphens + underscores.
+    #[serde(default)]
+    session: Option<String>,
 }
 
 impl LoginTool {
@@ -847,8 +975,20 @@ impl LoginTool {
         let resolved_cookies =
             resolve_login_cookies(&self.url, self.cookies.as_deref(), &runtime).await?;
 
-        let client =
-            AcceleratedClient::new().map_err(|e| CallToolError::from_message(e.to_string()))?;
+        // Build the AcceleratedClient for the login flow.
+        // When a session is named, wrap the session's dedicated reqwest::Client
+        // so that all Set-Cookie headers from the login flow are stored in the
+        // session's cookie jar and available to subsequent fetch/submit calls.
+        let client = if let Some(ref session_name) = self.session {
+            let session_client =
+                resolve_session_client(session_name, resolved_cookies.as_deref(), &self.url)
+                    .await?;
+            let _ = writeln!(output, "   Session: {session_name}");
+            AcceleratedClient::from_client(session_client)
+                .map_err(|e| CallToolError::from_message(e.to_string()))?
+        } else {
+            AcceleratedClient::new().map_err(|e| CallToolError::from_message(e.to_string()))?
+        };
         let login_flow = LoginFlow::new(client, true, resolved_cookies);
 
         let result = login_flow
