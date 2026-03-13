@@ -1341,3 +1341,120 @@ type = "html"
         assert!(fb.css.contains_key("image"));
     }
 }
+
+#[cfg(test)]
+mod concurrent_fetch_tests {
+    use super::*;
+
+    /// Minimal valid TOML with a single `[[fetch_concurrent]]` block.
+    fn concurrent_toml() -> &'static str {
+        r#"
+[site]
+name = "hn"
+patterns = ["news\\.ycombinator\\.com"]
+
+[rewrite]
+from = "(?i)https?://news\\.ycombinator\\.com.*"
+to = "https://hacker-news.firebaseio.com/v0/topstories.json"
+
+[json]
+
+[template]
+format = "{story_0_title}"
+
+[[fetch_concurrent]]
+prefix = "story"
+rewrite_from = "(?i)https?://news\\.ycombinator\\.com.*"
+rewrite_to = "https://hacker-news.firebaseio.com/v0/topstories.json"
+items_path = "."
+max_items = 5
+
+[fetch_concurrent.json]
+title = ".title"
+url   = ".url"
+"#
+    }
+
+    #[test]
+    fn parse_toml_with_fetch_concurrent_section_succeeds() {
+        // GIVEN: a valid TOML containing a [[fetch_concurrent]] block
+        // WHEN: parsed
+        let cfg = SiteRuleConfig::from_toml(concurrent_toml()).unwrap();
+        // THEN: exactly one concurrent fetch config is present with correct fields
+        assert_eq!(cfg.concurrent_fetches.len(), 1);
+        let cf = &cfg.concurrent_fetches[0];
+        assert_eq!(cf.prefix, "story");
+        assert_eq!(cf.items_path, ".");
+        assert_eq!(cf.max_items, Some(5));
+        assert!(cf.json.0.contains_key("title"));
+        assert!(cf.json.0.contains_key("url"));
+    }
+
+    #[test]
+    fn item_limit_defaults_to_ten_when_max_items_is_none() {
+        // GIVEN: a ConcurrentFetchConfig with no max_items set
+        let cf = ConcurrentFetchConfig {
+            prefix: "p".to_string(),
+            rewrite_from: ".*".to_string(),
+            rewrite_to: "https://example.com".to_string(),
+            items_path: ".".to_string(),
+            json: JsonConfig::default(),
+            accept: None,
+            max_items: None,
+        };
+        // WHEN: calling item_limit()
+        let limit = cf.item_limit();
+        // THEN: returns the default of 10
+        assert_eq!(limit, 10);
+    }
+
+    #[test]
+    fn item_limit_uses_custom_value_when_max_items_is_some() {
+        // GIVEN: a ConcurrentFetchConfig with max_items = Some(5)
+        let cf = ConcurrentFetchConfig {
+            prefix: "p".to_string(),
+            rewrite_from: ".*".to_string(),
+            rewrite_to: "https://example.com".to_string(),
+            items_path: ".".to_string(),
+            json: JsonConfig::default(),
+            accept: None,
+            max_items: Some(5),
+        };
+        // WHEN: calling item_limit()
+        let limit = cf.item_limit();
+        // THEN: returns the configured value
+        assert_eq!(limit, 5);
+    }
+
+    #[test]
+    fn validate_rejects_empty_concurrent_fetch_prefix() {
+        // GIVEN: a TOML with [[fetch_concurrent]] that has an empty prefix
+        let toml_str = r#"
+[site]
+name = "test"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+
+[template]
+format = "hello"
+
+[[fetch_concurrent]]
+prefix = ""
+rewrite_from = ".*"
+rewrite_to = "https://api.example.com/list"
+items_path = "."
+"#;
+        // WHEN: parsed
+        let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
+        // THEN: validation error mentions the empty prefix
+        assert!(
+            err.to_string().contains("prefix"),
+            "expected 'prefix' in error, got: {err}"
+        );
+    }
+}

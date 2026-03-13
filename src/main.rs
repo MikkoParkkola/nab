@@ -404,6 +404,21 @@ enum Commands {
         browser: bool,
     },
 
+    /// Fetch multiple URLs in parallel and combine into LLM-ready markdown
+    Context {
+        /// One or more URLs to fetch
+        #[arg(required = true)]
+        urls: Vec<String>,
+
+        /// Use cookies from browser (auto, brave, chrome, firefox, safari, edge). Use 'none' to disable.
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
+
+        /// Approximate token budget for the combined output (default: 8000)
+        #[arg(long, default_value = "8000")]
+        max_tokens: usize,
+    },
+
     /// Export or manage browser cookies
     Cookies {
         #[command(subcommand)]
@@ -676,6 +691,9 @@ async fn main() -> Result<()> {
                 browser,
             )
             .await?;
+        }
+        Commands::Context { urls, cookies, max_tokens } => {
+            cmd::cmd_context(&urls, &cookies, max_tokens).await?;
         }
         Commands::Cookies { action } => match action {
             CookiesAction::Export { domain, cookies } => {

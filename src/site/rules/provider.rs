@@ -2097,3 +2097,56 @@ format = "{{{{title}}}}"
         assert!(markdown.contains("8.8K likes"));
     }
 }
+
+#[cfg(test)]
+mod extract_items_tests {
+    use serde_json::json;
+
+    use super::extract_items_array;
+
+    #[test]
+    fn extract_items_array_returns_all_elements_for_root_array() {
+        // GIVEN: a JSON root array with two objects
+        let json = json!([{"title": "A"}, {"title": "B"}]);
+        // WHEN: extracting with path "."
+        let items = extract_items_array(&json, ".").unwrap();
+        // THEN: both items are returned
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn extract_items_array_navigates_nested_dot_path() {
+        // GIVEN: JSON with nested structure .data.results containing one item
+        let json = json!({"data": {"results": [{"x": 1}]}});
+        // WHEN: extracting with path ".data.results"
+        let items = extract_items_array(&json, ".data.results").unwrap();
+        // THEN: the single item is returned
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn extract_items_array_errors_on_missing_path() {
+        // GIVEN: JSON that does not contain the requested path
+        let json = json!({"other": 1});
+        // WHEN: extracting with a missing path segment
+        let err = extract_items_array(&json, ".items").unwrap_err();
+        // THEN: error message references the missing segment
+        assert!(
+            err.to_string().contains("items"),
+            "expected 'items' in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn extract_items_array_errors_on_non_array_value() {
+        // GIVEN: JSON where the target path resolves to a string, not an array
+        let json = json!({"items": "not_array"});
+        // WHEN: extracting with that path
+        let err = extract_items_array(&json, ".items").unwrap_err();
+        // THEN: error message references the path that did not resolve to an array
+        assert!(
+            err.to_string().contains(".items"),
+            "expected path in error, got: {err}"
+        );
+    }
+}

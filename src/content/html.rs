@@ -323,3 +323,53 @@ pub fn is_boilerplate(line: &str) -> bool {
         || lower.starts_with("copyright")
         || (lower.len() < 3 && !lower.chars().any(char::is_alphanumeric))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::is_thin_content;
+
+    #[test]
+    fn is_thin_content_returns_false_for_small_html_below_threshold() {
+        // GIVEN: HTML smaller than the 5 KB minimum threshold
+        // WHEN: checking thin content
+        let result = is_thin_content(1_000, 10);
+        // THEN: not considered thin (threshold not reached)
+        assert!(!result);
+    }
+
+    #[test]
+    fn is_thin_content_returns_false_for_adequate_markdown() {
+        // GIVEN: large HTML but markdown of 500 chars (>= 200 minimum)
+        // WHEN: checking thin content
+        let result = is_thin_content(10_000, 500);
+        // THEN: not considered thin (markdown exceeds minimum length)
+        assert!(!result);
+    }
+
+    #[test]
+    fn is_thin_content_returns_true_for_thin_spa_page() {
+        // GIVEN: 50 KB HTML with only 50 chars of markdown output
+        // WHEN: checking thin content
+        let result = is_thin_content(50_000, 50);
+        // THEN: flagged as thin (50/50000 = 0.1%, well below 2% threshold)
+        assert!(result);
+    }
+
+    #[test]
+    fn is_thin_content_boundary_at_199_chars_is_thin() {
+        // GIVEN: 20 KB HTML with 199 chars of markdown (one below the 200-char boundary)
+        // WHEN: checking thin content
+        let result = is_thin_content(20_000, 199);
+        // THEN: flagged as thin (199 < 200 minimum, ratio < 2%)
+        assert!(result);
+    }
+
+    #[test]
+    fn is_thin_content_boundary_at_200_chars_is_not_thin() {
+        // GIVEN: 20 KB HTML with exactly 200 chars of markdown (at the boundary)
+        // WHEN: checking thin content
+        let result = is_thin_content(20_000, 200);
+        // THEN: NOT flagged as thin (200 >= 200 minimum satisfies the condition)
+        assert!(!result);
+    }
+}
