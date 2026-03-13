@@ -133,9 +133,115 @@ nab otp github.com
 nab fingerprint -c 5
 ```
 
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `nab fetch <url>` | Fetch a URL and convert to clean markdown |
+| `nab spa <url>` | Extract data from JavaScript-heavy SPA pages |
+| `nab submit <url>` | Submit a form with smart field extraction and CSRF handling |
+| `nab login <url>` | Auto-login to a website using 1Password credentials |
+| `nab stream <source> <id>` | Stream media from various providers (Yle, NRK, SVT, DR) |
+| `nab analyze <video>` | Analyze video with transcription and vision pipeline |
+| `nab annotate <video> <output>` | Add subtitles and overlays to video |
+| `nab bench <urls>` | Benchmark fetching with timing statistics |
+| `nab fingerprint` | Generate and display browser fingerprint profiles |
+| `nab auth <url>` | Test 1Password credential lookup for a URL |
+| `nab validate` | Run validation tests against real websites |
+| `nab otp <domain>` | Get OTP code from 1Password |
+| `nab cookies export <domain>` | Export browser cookies in Netscape format |
+
+Common flags for `fetch`:
+
+| Flag | Description |
+|------|-------------|
+| `--cookies <browser>` | Use cookies from browser: `auto`, `brave`, `chrome`, `firefox`, `safari`, `edge`, `none` |
+| `--1password` / `--op` | Use 1Password credentials for this URL |
+| `--proxy <url>` | HTTP or SOCKS5 proxy URL |
+| `--format <fmt>` | Output format: `full` (default), `compact`, `json` |
+| `--raw-html` | Output raw HTML instead of markdown |
+| `--links` | Extract links only |
+| `--diff` | Show what changed since the last fetch |
+| `--no-spa` | Disable SPA data extraction |
+| `--batch <file>` | Batch fetch URLs from file (one per line) |
+| `--parallel <n>` | Max concurrent requests for batch mode (default: 5) |
+| `-X <method>` | HTTP method: GET, POST, PUT, DELETE, PATCH |
+| `-d <data>` | Request body data (for POST/PUT/PATCH) |
+| `--add-header <h>` | Custom request header (repeatable) |
+| `-o <path>` | Save body to file |
+| `-v` | Enable verbose debug logging |
+
+## PDF Extraction
+
+nab converts PDF files to markdown with heading detection and table reconstruction. Requires [pdfium](https://pdfium.googlesource.com/pdfium/) (ships with Chromium, or install via Homebrew).
+
+```bash
+# Fetch a PDF and convert to markdown
+nab fetch https://example.com/report.pdf
+
+# Save PDF conversion to file
+nab fetch https://arxiv.org/pdf/2301.00001 -o paper.md
+```
+
+The PDF pipeline extracts character positions via pdfium, reconstructs text lines, detects tables through column alignment, and renders clean markdown. Target performance is ~10ms/page. Maximum input size is 50 MB.
+
+## Proxy Support
+
+nab supports HTTP and SOCKS5 proxies via the `--proxy` flag or environment variables.
+
+```bash
+# Explicit proxy
+nab fetch https://example.com --proxy socks5://127.0.0.1:1080
+nab fetch https://example.com --proxy http://proxy.company.com:8080
+
+# Environment variables (checked in this order)
+export HTTPS_PROXY=http://proxy:8080
+export HTTP_PROXY=http://proxy:8080
+export ALL_PROXY=socks5://proxy:1080
+```
+
+The `--proxy` flag takes precedence over environment variables. Both uppercase and lowercase variants (`HTTPS_PROXY` / `https_proxy`) are recognized.
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `HTTPS_PROXY` / `https_proxy` | HTTPS proxy URL |
+| `HTTP_PROXY` / `http_proxy` | HTTP proxy URL |
+| `ALL_PROXY` / `all_proxy` | Proxy for all protocols |
+| `ANTHROPIC_API_KEY` | Claude API key for `analyze` command vision features |
+| `RUST_LOG` | Logging level (e.g., `nab=debug`) |
+| `PUSHOVER_USER` / `PUSHOVER_TOKEN` | Pushover notifications for MFA |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram notifications for MFA |
+
+## Configuration
+
+nab requires no configuration files. It uses smart defaults: auto-detected browser cookies, randomized fingerprints, and markdown output.
+
+**Optional plugin configuration** at `~/.config/nab/plugins.toml`:
+
+```toml
+[[plugins]]
+name = "my-provider"
+binary = "/usr/local/bin/nab-plugin-example"
+patterns = ["example\\.com/.*"]
+```
+
+Plugins are external binaries that receive a URL as JSON on stdin and return markdown content on stdout. See [Plugin System](https://github.com/MikkoParkkola/nab/wiki/Architecture#extension-points) for the protocol specification.
+
+**Persistent state** stored in `~/.nab/`:
+
+| Path | Purpose |
+|------|---------|
+| `~/.nab/snapshots/` | Content snapshots for `--diff` change detection |
+| `~/.nab/sessions/` | Saved login sessions |
+| `~/.nab/fingerprint_versions.json` | Cached browser versions (auto-updates every 14 days) |
+
 ## MCP Server
 
-nab ships a native Rust MCP server (`nab-mcp`) for integration with Claude Code:
+nab ships a native Rust MCP server (`nab-mcp`) for integration with Claude Code and other MCP clients.
+
+**Setup** -- add to your MCP client configuration:
 
 ```json
 {
@@ -147,7 +253,20 @@ nab ships a native Rust MCP server (`nab-mcp`) for integration with Claude Code:
 }
 ```
 
-Tools: `fetch`, `fetch_batch`, `submit`, `login`, `auth_lookup`, `fingerprint`, `validate`, `benchmark`.
+**Available tools:**
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `fetch` | Fetch URL and convert to markdown | `url` (required), `headers`, `body`, `cookies` |
+| `fetch_batch` | Fetch multiple URLs in parallel | `urls` (required, array) |
+| `submit` | Submit a web form with CSRF extraction | `url`, `fields` (required), `csrf_selector`, `cookies` |
+| `login` | Auto-login via 1Password | `url` (required), `cookies` |
+| `auth_lookup` | Look up 1Password credentials | `url` (required) |
+| `fingerprint` | Generate browser fingerprints | `count` (default: 1), `browser` |
+| `validate` | Run validation test suite | (none) |
+| `benchmark` | Benchmark URL fetching | `urls` (required), `iterations` (default: 3) |
+
+The MCP server uses the latest MCP protocol (2025-06-18), communicates over stdio, and shares a single `AcceleratedClient` instance across all tool calls for connection pooling.
 
 ## Benchmarks
 
@@ -227,6 +346,14 @@ async fn main() -> anyhow::Result<()> {
 - **Rust 1.93+** (for building from source)
 - **ffmpeg** (optional, for streaming/analyze commands): `brew install ffmpeg`
 - **1Password CLI** (optional): [Install guide](https://developer.1password.com/docs/cli/get-started/)
+
+## Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full internal architecture, module organization, data flow diagrams, and extension points.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style guidelines, testing instructions, and pull request process.
 
 ## Responsible Use
 
