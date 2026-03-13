@@ -16,6 +16,7 @@
 //! let content = provider.extract(
 //!     "https://news.ycombinator.com/item?id=38471822",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

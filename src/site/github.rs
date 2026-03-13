@@ -17,6 +17,7 @@
 //! let content = provider.extract(
 //!     "https://github.com/rust-lang/rust/issues/12345",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

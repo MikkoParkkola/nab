@@ -16,6 +16,7 @@
 //! let content = provider.extract(
 //!     "https://en.wikipedia.org/wiki/Rust_(programming_language)",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

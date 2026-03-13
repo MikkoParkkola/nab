@@ -16,6 +16,7 @@
 //! let content = provider.extract(
 //!     "https://youtube.com/watch?v=dQw4w9WgXcQ",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

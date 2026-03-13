@@ -30,6 +30,7 @@
 //!     "https://docs.google.com/document/d/DOCID/edit",
 //!     &client,
 //!     Some("SID=abc; HSID=def"),
+//!     None,
 //! ).await?;
 //!
 //! println!("{}", content.markdown);

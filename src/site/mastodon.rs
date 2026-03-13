@@ -17,6 +17,7 @@
 //! let content = provider.extract(
 //!     "https://mastodon.social/@user/123456789",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

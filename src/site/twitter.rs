@@ -19,6 +19,7 @@
 //! let content = provider.extract(
 //!     "https://x.com/naval/status/1234567890",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

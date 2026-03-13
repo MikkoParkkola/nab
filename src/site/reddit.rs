@@ -16,6 +16,7 @@
 //! let content = provider.extract(
 //!     "https://reddit.com/r/rust/comments/abc123",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

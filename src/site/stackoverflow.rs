@@ -16,6 +16,7 @@
 //! let content = provider.extract(
 //!     "https://stackoverflow.com/questions/26946646/how-do-i-do-x-in-rust",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!

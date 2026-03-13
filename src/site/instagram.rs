@@ -17,6 +17,7 @@
 //! let content = provider.extract(
 //!     "https://instagram.com/p/ABC123xyz",
 //!     &client,
+//!     None,
 //!     None
 //! ).await?;
 //!
