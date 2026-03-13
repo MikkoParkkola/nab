@@ -1393,7 +1393,7 @@ format = "{title} by {author}"
         assert!(rewritten.contains("api.stackexchange.com"));
         assert!(rewritten.contains("26946646"));
         assert!(rewritten.contains("site=stackoverflow"));
-        assert!(rewritten.contains("filter=!6WPIomnMOOD*e"));
+        assert!(rewritten.contains("filter=withbody"));
     }
 
     #[test]

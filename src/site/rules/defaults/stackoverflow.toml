@@ -18,7 +18,7 @@ patterns = ["(?i)stackoverflow\\.com/questions/\\d+"]
 
 [rewrite]
 from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
-to   = "https://api.stackexchange.com/2.3/questions/$1?site=stackoverflow&filter=!6WPIomnMOOD*e&order=desc&sort=votes"
+to   = "https://api.stackexchange.com/2.3/questions/$1?site=stackoverflow&filter=withbody&order=desc&sort=votes"
 
 [request]
 accept = "application/json"
@@ -68,7 +68,7 @@ views   = "view_count"
 [[fetch_additional]]
 prefix       = "ans"
 rewrite_from = "(?i)https?://stackoverflow\\.com/questions/(\\d+).*"
-rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=!6WPIomnMOOD*e&order=desc&sort=votes&pagesize=3"
+rewrite_to   = "https://api.stackexchange.com/2.3/questions/$1/answers?site=stackoverflow&filter=withbody&order=desc&sort=votes&pagesize=3"
 accept       = "application/json"
 
 [fetch_additional.json]
