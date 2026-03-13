@@ -1,0 +1,46 @@
+[site]
+name = "twitter"
+patterns = ["(?i)(?:x|twitter)\\.com/.+/status/\\d+"]
+
+[rewrite]
+from = "(?i)https?://(?:x|twitter)\\.com/([^/?#]+)/status/(\\d+).*"
+to = "https://api.fxtwitter.com/$1/status/$2"
+
+[request]
+accept = "application/json"
+
+[json]
+author_name = ".tweet.author.name"
+author_handle = ".tweet.author.screen_name"
+text = ".tweet.text"
+date = ".tweet.created_at"
+url = ".tweet.url"
+likes = ".tweet.likes"
+retweets = ".tweet.retweets"
+replies = ".tweet.replies"
+views = ".tweet.views"
+
+[template]
+format = """
+## @{author_handle} ({author_name})
+
+{text}
+
+📊 {likes|number} likes · {retweets|number} reposts · {replies|number} replies · {views|number} views
+🕐 {date}
+
+[View on X]({url})
+"""
+
+[metadata]
+platform = "Twitter/X"
+author = "{author_name} (@{author_handle})"
+title_field = ""
+published_field = "date"
+canonical_url_field = "url"
+
+[engagement]
+likes = "likes"
+reposts = "retweets"
+replies = "replies"
+views = "views"

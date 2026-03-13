@@ -1,0 +1,32 @@
+[site]
+name = "youtube"
+patterns = ["(?i)youtube\\.com/watch", "(?i)youtu\\.be/"]
+
+[rewrite]
+from = ".*"
+to = "https://www.youtube.com/oembed?url={url}&format=json"
+
+[request]
+accept = "application/json"
+
+[json]
+title = ".title"
+author = ".author_name"
+thumbnail = ".thumbnail_url"
+
+[template]
+format = """
+## {title}
+
+by {author}
+
+![YouTube video]({thumbnail})
+
+[Watch on YouTube]({original_url})
+"""
+
+[metadata]
+platform = "YouTube"
+author_field = "author"
+title_field = "title"
+media_urls_field = "thumbnail"

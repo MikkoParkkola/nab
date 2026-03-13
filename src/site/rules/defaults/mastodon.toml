@@ -1,0 +1,65 @@
+# Mastodon status extraction via Mastodon API.
+#
+# Matches known Fediverse instances with /@user/digits URL pattern.
+# Extracts status content, engagement metrics, and media attachments.
+
+[site]
+name = "mastodon"
+patterns = [
+    "(?i)mastodon\\.social/@[^/]+/\\d+",
+    "(?i)mastodon\\.online/@[^/]+/\\d+",
+    "(?i)hachyderm\\.io/@[^/]+/\\d+",
+    "(?i)fosstodon\\.org/@[^/]+/\\d+",
+    "(?i)infosec\\.exchange/@[^/]+/\\d+",
+    "(?i)techhub\\.social/@[^/]+/\\d+",
+    "(?i)mstdn\\.social/@[^/]+/\\d+",
+    "(?i)mas\\.to/@[^/]+/\\d+",
+    "(?i)mastodon\\.world/@[^/]+/\\d+",
+    "(?i)universeodon\\.com/@[^/]+/\\d+",
+    "(?i)mastodon\\.gamedev\\.place/@[^/]+/\\d+",
+    "(?i)ruby\\.social/@[^/]+/\\d+",
+    "(?i)mathstodon\\.xyz/@[^/]+/\\d+",
+    "(?i)social\\.vivaldi\\.net/@[^/]+/\\d+",
+    "(?i)toot\\.community/@[^/]+/\\d+",
+]
+
+[rewrite]
+from = "(?i)https?://([^/]+)/@[^/]+/(\\d+)"
+to = "https://$1/api/v1/statuses/$2"
+
+[request]
+accept = "application/json"
+
+[json]
+display_name = ".account.display_name"
+username = ".account.username"
+content = ".content"
+date = ".created_at"
+url = ".url"
+favourites = ".favourites_count"
+reblogs = ".reblogs_count"
+replies = ".replies_count"
+
+[template]
+format = """
+## {display_name} (@{username})
+
+{content|strip_html}
+
+{favourites|number} favourites · {reblogs|number} boosts · {replies|number} replies
+{date}
+
+[View on Mastodon]({url})
+"""
+
+[metadata]
+platform = "Mastodon"
+author = "{display_name} (@{username})"
+title_field = ""
+published_field = "date"
+canonical_url_field = "url"
+
+[engagement]
+likes = "favourites"
+reposts = "reblogs"
+replies = "replies"

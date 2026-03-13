@@ -9,8 +9,11 @@
 //! - [`SiteRouter`]: Dispatches URLs to the appropriate provider
 //! - [`SiteContent`]: Structured content with metadata
 //!
-//! Built-in providers are checked first.  User-defined CSS extractors loaded
-//! from `~/.config/nab/plugins.toml` are appended after the built-ins.
+//! Provider loading order (first match wins):
+//! 1. **Rule-based providers** from `~/.config/nab/sites/*.toml` (user overrides)
+//! 2. **Rule-based providers** from embedded defaults (twitter, youtube, wikipedia)
+//! 3. **Hardcoded Rust providers** for platforms NOT covered by a rule
+//! 4. **CSS extractor plugins** from `~/.config/nab/plugins.toml`
 //!
 //! # Example
 //!
@@ -37,6 +40,7 @@ pub mod instagram;
 pub mod linkedin;
 pub mod mastodon;
 pub mod reddit;
+pub mod rules;
 pub mod stackoverflow;
 pub mod twitter;
 pub mod wikipedia;
@@ -116,14 +120,21 @@ pub struct SiteRouter {
 }
 
 impl SiteRouter {
-    /// Create a router with all built-in site providers plus any CSS extractor
-    /// plugins loaded from `~/.config/nab/plugins.toml`.
+    /// Create a router with all providers in priority order:
     ///
-    /// Invalid CSS plugin entries are skipped with a warning; they never
-    /// prevent the built-in providers from loading.
+    /// 1. Rule-based providers (user overrides + embedded defaults)
+    /// 2. Hardcoded Rust providers for platforms not covered by a rule
+    /// 3. CSS extractor plugins from `~/.config/nab/plugins.toml`
+    ///
+    /// Invalid rule/CSS plugin entries are skipped with a warning.
     #[must_use]
     pub fn new() -> Self {
-        let mut providers: Vec<Box<dyn SiteProvider>> = vec![
+        // Load rule-based providers first; track which names they cover.
+        let mut providers: Vec<Box<dyn SiteProvider>> = rules::load_site_rules();
+        let rule_names = rules::rule_overridden_names();
+
+        // Hardcoded providers — only add those not already covered by rules.
+        let hardcoded: Vec<Box<dyn SiteProvider>> = vec![
             Box::new(twitter::TwitterProvider),
             Box::new(reddit::RedditProvider),
             Box::new(hackernews::HackerNewsProvider),
@@ -136,6 +147,12 @@ impl SiteRouter {
             Box::new(mastodon::MastodonProvider),
             Box::new(linkedin::LinkedInProvider),
         ];
+
+        for p in hardcoded {
+            if !rule_names.contains(p.name()) {
+                providers.push(p);
+            }
+        }
 
         append_css_providers(&mut providers);
 
@@ -284,35 +301,54 @@ mod tests {
     #[test]
     fn router_registers_all_builtin_providers() {
         let router = SiteRouter::new();
-        // At least 11 built-in providers; CSS plugins may add more.
+        // Rule-based providers (3) + hardcoded non-overridden providers (8: reddit,
+        // hackernews, github, google-workspace, instagram, stackoverflow, mastodon,
+        // linkedin) = 11 minimum; CSS plugins may add more.
         assert!(router.providers.len() >= 11);
-        assert_eq!(router.providers[0].name(), "twitter");
-        assert_eq!(router.providers[1].name(), "reddit");
-        assert_eq!(router.providers[2].name(), "hackernews");
-        assert_eq!(router.providers[3].name(), "github");
-        assert_eq!(router.providers[4].name(), "google-workspace");
-        assert_eq!(router.providers[5].name(), "instagram");
-        assert_eq!(router.providers[6].name(), "youtube");
-        assert_eq!(router.providers[7].name(), "wikipedia");
-        assert_eq!(router.providers[8].name(), "stackoverflow");
-        assert_eq!(router.providers[9].name(), "mastodon");
-        assert_eq!(router.providers[10].name(), "linkedin");
+
+        // All expected names must appear somewhere in the provider list.
+        let names: Vec<&str> = router.providers.iter().map(|p| p.name()).collect();
+        for expected in &[
+            "twitter", "reddit", "hackernews", "github", "google-workspace",
+            "instagram", "youtube", "wikipedia", "stackoverflow", "mastodon", "linkedin",
+        ] {
+            assert!(names.contains(expected), "missing provider '{expected}'");
+        }
+    }
+
+    #[test]
+    fn router_rule_providers_come_before_hardcoded() {
+        let router = SiteRouter::new();
+        // The first "twitter" provider must be the rule-based one (loaded first).
+        let twitter_pos = router.providers.iter().position(|p| p.name() == "twitter");
+        let reddit_pos = router.providers.iter().position(|p| p.name() == "reddit");
+        // twitter (rule-based, embedded default index 0) should appear before reddit
+        // (hardcoded, not covered by a rule).
+        assert!(twitter_pos < reddit_pos, "rule-based twitter should precede hardcoded reddit");
     }
 
     #[test]
     fn router_matches_twitter_urls() {
         let router = SiteRouter::new();
-        assert!(router.providers[0].matches("https://x.com/user/status/123"));
-        assert!(router.providers[0].matches("https://twitter.com/user/status/456"));
+        // Find the first provider that matches twitter URLs.
+        let twitter = router.providers.iter()
+            .find(|p| p.matches("https://x.com/user/status/123"))
+            .expect("some provider should match twitter URLs");
+        assert_eq!(twitter.name(), "twitter");
+        assert!(twitter.matches("https://twitter.com/user/status/456"));
     }
 
     #[test]
     fn router_does_not_match_non_provider_urls() {
         let router = SiteRouter::new();
         let generic_url = "https://example.com/page";
-        // Only check the 11 built-ins; CSS user plugins are not deterministic.
-        for provider in router.providers.iter().take(11) {
-            assert!(!provider.matches(generic_url));
+        // All providers (rule-based + hardcoded) must not match a generic URL.
+        for provider in &router.providers {
+            assert!(
+                !provider.matches(generic_url),
+                "provider '{}' should not match generic URL",
+                provider.name()
+            );
         }
     }
 
@@ -351,8 +387,10 @@ mod tests {
         let provider = CssExtractorProvider::new(config).unwrap();
         let router = SiteRouter::with_extra_providers(vec![Box::new(provider)]);
 
-        // Built-ins must not claim myextra.com
-        for p in router.providers.iter().take(11) {
+        // All built-in providers (rule-based + hardcoded) must not claim myextra.com.
+        // The extra provider is the last one and should match.
+        let base_count = SiteRouter::new().provider_count();
+        for p in router.providers.iter().take(base_count) {
             assert!(!p.matches("https://myextra.com/article/1"));
         }
         // Extra provider should match

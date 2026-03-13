@@ -1,0 +1,39 @@
+[site]
+name = "wikipedia"
+patterns = ["(?i)[a-z]{2,3}\\.wikipedia\\.org/wiki/"]
+
+[rewrite]
+from = "(?i)https?://([a-z]{2,3})\\.wikipedia\\.org/wiki/([^?#]+)"
+to = "https://$1.wikipedia.org/api/rest_v1/page/summary/$2"
+
+[request]
+headers = { "User-Agent" = "nab/0.5 (https://github.com/MikkoParkkola/nab)" }
+accept = "application/json"
+
+[json]
+title = ".title"
+description = ".description"
+extract = ".extract"
+thumbnail = ".thumbnail.source"
+timestamp = ".timestamp"
+page_url = ".content_urls.desktop.page"
+
+[template]
+format = """
+## {title}
+
+*{description}*
+
+![{title}]({thumbnail})
+
+{extract}
+
+[Read full article on Wikipedia]({page_url})
+"""
+
+[metadata]
+platform = "Wikipedia"
+title_field = "title"
+published_field = "timestamp"
+canonical_url_field = "page_url"
+media_urls_field = "thumbnail"
