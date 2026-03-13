@@ -344,7 +344,7 @@ pub fn find_content_by_key(value: &serde_json::Value, key: &str) -> Option<Strin
 
 /// Extract content from hidden `<code>` elements containing JSON.
 ///
-/// Some SPAs (notably LinkedIn) embed server-fetched data in hidden `<code>`
+/// Some SPAs (notably `LinkedIn`) embed server-fetched data in hidden `<code>`
 /// elements rather than `<script>` tags:
 ///
 /// ```text
@@ -391,7 +391,7 @@ fn extract_hidden_code_json(document: &scraper::Html) -> Option<String> {
 
 /// Strip `<!--` prefix and `-->` suffix from an HTML comment wrapper.
 ///
-/// LinkedIn wraps `<code>` JSON in HTML comments: `<!--{...}-->`.
+/// `LinkedIn` wraps `<code>` JSON in HTML comments: `<!--{...}-->`.
 /// Returns the inner content unchanged if no wrapper is present.
 fn strip_html_comment_wrapper(s: &str) -> &str {
     let s = s.strip_prefix("<!--").unwrap_or(s);
@@ -410,20 +410,19 @@ fn strip_html_comment_wrapper(s: &str) -> &str {
 /// This function finds such envelopes, parses the `body` string as JSON,
 /// and recursively collects text content from the parsed payload.
 ///
-/// This pattern is used by LinkedIn, Instagram, and other Meta-family SPAs.
+/// This pattern is used by `LinkedIn`, Instagram, and other Meta-family SPAs.
 pub fn unwrap_api_response_bodies(value: &serde_json::Value, texts: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(map) => {
             // Check if this object is an API response envelope
             if let (Some(status), Some(body_str)) = (
-                map.get("status").and_then(|v| v.as_u64()),
+                map.get("status").and_then(serde_json::Value::as_u64),
                 map.get("body").and_then(|v| v.as_str()),
-            ) {
-                if status == 200 && !body_str.is_empty() {
-                    if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str) {
-                        collect_text_from_json(&body_json, texts);
-                    }
-                }
+            ) && status == 200
+                && !body_str.is_empty()
+                && let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str)
+            {
+                collect_text_from_json(&body_json, texts);
             }
             // Recurse into all values to find nested envelopes
             for v in map.values() {

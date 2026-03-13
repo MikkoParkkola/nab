@@ -1,8 +1,8 @@
 //! TLS fingerprint impersonation for anti-bot bypass.
 //!
-//! Uses `rquest` (reqwest fork with BoringSSL) to produce Chrome/Safari/Firefox
+//! Uses `rquest` (reqwest fork with `BoringSSL`) to produce Chrome/Safari/Firefox
 //! TLS fingerprints that pass edge-level JA3/JA4 checks. This is the only
-//! reliable way to fetch content from sites like LinkedIn that reject non-browser
+//! reliable way to fetch content from sites like `LinkedIn` that reject non-browser
 //! TLS handshakes with HTTP 999.
 //!
 //! Key design: do NOT mix nab's `BrowserProfile` headers with rquest's emulation.
@@ -35,7 +35,7 @@ pub fn needs_impersonation(url: &str) -> bool {
 /// Select the browser emulation profile for the given URL.
 ///
 /// Chrome 136 is chosen as the default: highest version available = highest
-/// probability of matching LinkedIn's browser whitelist.
+/// probability of matching `LinkedIn`'s browser whitelist.
 fn select_emulation(_url: &str) -> Emulation {
     Emulation::Chrome136
 }

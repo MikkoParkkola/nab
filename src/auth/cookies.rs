@@ -456,6 +456,7 @@ pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
 pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8], has_domain_tag: bool) -> Result<String> {
     use aes::Aes128;
     use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
+    type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
     anyhow::ensure!(
         encrypted.len() > V10_PREFIX.len(),
@@ -471,12 +472,11 @@ pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8], has_domain_tag: bool) 
 
     let ciphertext = &encrypted[V10_PREFIX.len()..];
     anyhow::ensure!(
-        !ciphertext.is_empty() && ciphertext.len() % 16 == 0,
+        !ciphertext.is_empty() && ciphertext.len().is_multiple_of(16),
         "Ciphertext length {} is not a nonzero multiple of 16",
         ciphertext.len()
     );
 
-    type Aes128CbcDec = cbc::Decryptor<Aes128>;
     let decryptor = Aes128CbcDec::new_from_slices(key, &AES_CBC_IV)
         .map_err(|e| anyhow::anyhow!("AES key/IV setup failed: {e}"))?;
 

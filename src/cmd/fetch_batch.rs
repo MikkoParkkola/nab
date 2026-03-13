@@ -115,6 +115,7 @@ pub async fn cmd_fetch_batch(
 }
 
 /// Fetch a single URL in a batch context and return a JSON result.
+#[allow(clippy::too_many_arguments)]
 async fn fetch_one_batch_url(
     url: String,
     no_redirect: bool,

@@ -389,7 +389,7 @@ async fn convert_body_to_markdown(
 }
 
 /// Print the response according to the requested output format.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 fn print_output(
     format: OutputFormat,
     url: &str,

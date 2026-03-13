@@ -6,7 +6,7 @@
 //!    Required for profiles, companies, and activity pages. Falls back to oEmbed
 //!    for posts/pulse when authentication fails.
 //!
-//!    Primary parsing strategy: `<code>` tag JSON extraction. LinkedIn serves a 1.3 MB
+//!    Primary parsing strategy: `<code>` tag JSON extraction. `LinkedIn` serves a 1.3 MB
 //!    SPA shell with no server-rendered CSS-selectable content. All profile and feed data
 //!    is embedded as JSON inside hidden `<code>` elements:
 //!    `<code style="display:none" id="bpr-guid-XXXX"><!--{...}--></code>`.
@@ -195,7 +195,7 @@ impl SiteProvider for LinkedInProvider {
 /// Top-level authenticated extraction: fetch HTML, parse `<code>` JSON first.
 ///
 /// The Voyager REST API (`/voyager/api/identity/profiles/{id}`) was deprecated
-/// and returns HTTP 410 Gone. LinkedIn now embeds all profile/feed data as JSON
+/// and returns HTTP 410 Gone. `LinkedIn` now embeds all profile/feed data as JSON
 /// inside hidden `<code>` elements in the initial HTML response — that is the
 /// only reliable server-side data source.
 #[cfg(feature = "impersonate")]
@@ -300,7 +300,7 @@ async fn fetch_authenticated_html(
 /// Parse `LinkedIn` HTML into structured markdown content.
 ///
 /// Extraction priority:
-/// 1. `<code>` tag JSON — primary data source on 2026 LinkedIn SPA pages.
+/// 1. `<code>` tag JSON — primary data source on 2026 `LinkedIn` SPA pages.
 /// 2. JSON-LD (`<script type="application/ld+json">`) — present on some pages.
 /// 3. CSS selectors — last resort; unreliable on the fully JS-rendered shell.
 #[cfg(feature = "impersonate")]
@@ -321,9 +321,9 @@ fn parse_linkedin_html(html: &str, url: &str, kind: LinkedInUrlKind) -> Result<S
     extract_from_selectors(&document, url, kind)
 }
 
-/// Extract LinkedIn profile and post data from hidden `<code>` elements.
+/// Extract `LinkedIn` profile and post data from hidden `<code>` elements.
 ///
-/// LinkedIn's 2026 SPA architecture embeds all server-side rendered data as JSON
+/// `LinkedIn`'s 2026 SPA architecture embeds all server-side rendered data as JSON
 /// inside `<code style="display:none"><!--{...}--></code>` elements. This is the
 /// only reliable extraction path for authenticated pages — the rest of the DOM is
 /// a skeleton shell with no meaningful content.
@@ -353,26 +353,25 @@ fn extract_code_json(document: &Html, url: &str, kind: LinkedInUrlKind) -> Optio
         scan_json_value(&value, &mut profile, &mut posts);
 
         // Type 2: Pre-fetched API response envelopes — parse the body string
-        if let Some(obj) = value.as_object() {
-            if let (Some(status), Some(body_str)) = (
-                obj.get("status").and_then(|v| v.as_u64()),
+        if let Some(obj) = value.as_object()
+            && let (Some(status), Some(body_str)) = (
+                obj.get("status").and_then(serde_json::Value::as_u64),
                 obj.get("body").and_then(|v| v.as_str()),
-            ) {
-                if status == 200 && !body_str.is_empty() {
-                    if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str) {
-                        scan_json_value(&body_json, &mut profile, &mut posts);
-                    }
-                }
-            }
+            )
+            && status == 200
+            && !body_str.is_empty()
+            && let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str)
+        {
+            scan_json_value(&body_json, &mut profile, &mut posts);
         }
     }
 
-    build_code_json_content(url, kind, profile, &posts)
+    build_code_json_content(url, kind, profile.as_ref(), &posts)
 }
 
-/// Recursively walk a JSON value tree looking for LinkedIn data objects.
+/// Recursively walk a JSON value tree looking for `LinkedIn` data objects.
 ///
-/// LinkedIn embeds many small JSON blobs; relevant objects can appear at any
+/// `LinkedIn` embeds many small JSON blobs; relevant objects can appear at any
 /// nesting depth. We search until we find a profile object (one with at least
 /// `firstName` or `headline`) and collect post commentary strings.
 #[cfg(feature = "impersonate")]
@@ -416,10 +415,10 @@ fn scan_json_value(
             }
 
             // Check if this object looks like a post/commentary.
-            if let Some(text) = extract_post_text(map) {
-                if !posts.contains(&text) {
-                    posts.push(text);
-                }
+            if let Some(text) = extract_post_text(map)
+                && !posts.contains(&text)
+            {
+                posts.push(text);
             }
 
             // Recurse into all values.
@@ -436,9 +435,9 @@ fn scan_json_value(
     }
 }
 
-/// Manually extract profile fields from a LinkedIn JSON object.
+/// Manually extract profile fields from a `LinkedIn` JSON object.
 ///
-/// LinkedIn's `<code>` JSON uses several naming conventions:
+/// `LinkedIn`'s `<code>` JSON uses several naming conventions:
 /// - Simple: `firstName`, `headline` (string values)
 /// - Multi-locale: `multiLocaleHeadline` (object with locale keys)
 /// - Nested geo: `geoLocation` → lookup in `included` array
@@ -454,19 +453,19 @@ fn extract_profile_manual(
         multi_key: &str,
     ) -> Option<String> {
         // Try plain string first
-        if let Some(v) = map.get(key).and_then(|v| v.as_str()) {
-            if !v.is_empty() {
-                return Some(decode_html_entities(v));
-            }
+        if let Some(v) = map.get(key).and_then(|v| v.as_str())
+            && !v.is_empty()
+        {
+            return Some(decode_html_entities(v));
         }
         // Try multi-locale object: {"en_US": "value"}
         if let Some(obj) = map.get(multi_key).and_then(|v| v.as_object()) {
             // Take the first non-empty locale value
             for v in obj.values() {
-                if let Some(s) = v.as_str() {
-                    if !s.is_empty() {
-                        return Some(decode_html_entities(s));
-                    }
+                if let Some(s) = v.as_str()
+                    && !s.is_empty()
+                {
+                    return Some(decode_html_entities(s));
                 }
             }
         }
@@ -494,7 +493,7 @@ fn extract_profile_manual(
     }
 }
 
-/// Return `true` when a JSON object has enough fields to be a LinkedIn profile.
+/// Return `true` when a JSON object has enough fields to be a `LinkedIn` profile.
 #[cfg(feature = "impersonate")]
 fn looks_like_profile(map: &serde_json::Map<String, serde_json::Value>) -> bool {
     let profile_keys = ["firstName", "lastName", "headline", "summary"];
@@ -545,18 +544,17 @@ fn extract_post_text(map: &serde_json::Map<String, serde_json::Value>) -> Option
 
 /// Strip HTML comment wrappers (`<!--` ... `-->`) from a string.
 ///
-/// LinkedIn's `<code>` element content is `<!--{...}-->` — the JSON is
+/// `LinkedIn`'s `<code>` element content is `<!--{...}-->` — the JSON is
 /// wrapped in an HTML comment so browsers ignore it until JS reads it.
 fn strip_html_comment(s: &str) -> &str {
     s.strip_prefix("<!--")
         .and_then(|inner| inner.strip_suffix("-->"))
-        .map(str::trim)
-        .unwrap_or(s)
+        .map_or(s, str::trim)
 }
 
 /// Decode common HTML entities in a string.
 ///
-/// Profile fields extracted from LinkedIn's embedded JSON arrive pre-HTML-escaped
+/// Profile fields extracted from `LinkedIn`'s embedded JSON arrive pre-HTML-escaped
 /// (e.g. `&amp;` instead of `&`). This helper decodes the five standard XML/HTML
 /// entities that appear in practice.
 fn decode_html_entities(s: &str) -> String {
@@ -575,12 +573,12 @@ fn decode_html_entities(s: &str) -> String {
 fn build_code_json_content(
     url: &str,
     kind: LinkedInUrlKind,
-    profile: Option<VoyagerProfileResponse>,
+    profile: Option<&VoyagerProfileResponse>,
     posts: &[String],
 ) -> Option<SiteContent> {
     let mut md = String::new();
 
-    let (author, title) = if let Some(ref p) = profile {
+    let (author, title) = if let Some(p) = profile {
         let name = build_full_name(p.first_name.as_deref(), p.last_name.as_deref());
 
         if let Some(ref n) = name {
@@ -708,6 +706,7 @@ fn extract_json_ld(document: &Html, url: &str, kind: LinkedInUrlKind) -> Option<
 
 /// Extract content from HTML using CSS selectors.
 #[cfg(feature = "impersonate")]
+#[allow(clippy::too_many_lines)]
 fn extract_from_selectors(
     document: &Html,
     url: &str,
@@ -718,13 +717,13 @@ fn extract_from_selectors(
     let mut author = None;
 
     // Profile name
-    if let Ok(sel) = Selector::parse("h1") {
-        if let Some(el) = document.select(&sel).next() {
-            let text = el.text().collect::<String>().trim().to_string();
-            if !text.is_empty() {
-                title = Some(text.clone());
-                let _ = writeln!(md, "## {text}\n");
-            }
+    if let Ok(sel) = Selector::parse("h1")
+        && let Some(el) = document.select(&sel).next()
+    {
+        let text = el.text().collect::<String>().trim().to_string();
+        if !text.is_empty() {
+            title = Some(text.clone());
+            let _ = writeln!(md, "## {text}\n");
         }
     }
 
@@ -734,13 +733,13 @@ fn extract_from_selectors(
         ".top-card-layout__headline", // Public profile
         ".break-words",               // Various content
     ] {
-        if let Ok(sel) = Selector::parse(selector_str) {
-            if let Some(el) = document.select(&sel).next() {
-                let text = el.text().collect::<String>().trim().to_string();
-                if !text.is_empty() && Some(&text) != title.as_ref() {
-                    let _ = writeln!(md, "{text}\n");
-                    break;
-                }
+        if let Ok(sel) = Selector::parse(selector_str)
+            && let Some(el) = document.select(&sel).next()
+        {
+            let text = el.text().collect::<String>().trim().to_string();
+            if !text.is_empty() && Some(&text) != title.as_ref() {
+                let _ = writeln!(md, "{text}\n");
+                break;
             }
         }
     }
@@ -751,13 +750,13 @@ fn extract_from_selectors(
         ".pv-about__summary-text",
         "section.summary .description",
     ] {
-        if let Ok(sel) = Selector::parse(selector_str) {
-            if let Some(el) = document.select(&sel).next() {
-                let text = el.text().collect::<String>().trim().to_string();
-                if !text.is_empty() {
-                    let _ = writeln!(md, "### About\n\n{text}\n");
-                    break;
-                }
+        if let Ok(sel) = Selector::parse(selector_str)
+            && let Some(el) = document.select(&sel).next()
+        {
+            let text = el.text().collect::<String>().trim().to_string();
+            if !text.is_empty() {
+                let _ = writeln!(md, "### About\n\n{text}\n");
+                break;
             }
         }
     }
@@ -795,37 +794,34 @@ fn extract_from_selectors(
     }
 
     // Author from meta tag
-    if author.is_none() {
-        if let Ok(sel) = Selector::parse(r#"meta[name="author"]"#) {
-            if let Some(el) = document.select(&sel).next() {
-                author = el.attr("content").map(String::from);
-            }
-        }
+    if author.is_none()
+        && let Ok(sel) = Selector::parse(r#"meta[name="author"]"#)
+        && let Some(el) = document.select(&sel).next()
+    {
+        author = el.attr("content").map(String::from);
     }
 
     // Page title from <title> or og:title as fallback
-    if title.is_none() {
-        if let Ok(sel) = Selector::parse("title") {
-            if let Some(el) = document.select(&sel).next() {
-                let text = el.text().collect::<String>().trim().to_string();
-                // LinkedIn titles often end with " | LinkedIn"
-                title = Some(
-                    text.strip_suffix(" | LinkedIn")
-                        .unwrap_or(&text)
-                        .to_string(),
-                );
-            }
-        }
+    if title.is_none()
+        && let Ok(sel) = Selector::parse("title")
+        && let Some(el) = document.select(&sel).next()
+    {
+        let text = el.text().collect::<String>().trim().to_string();
+        // LinkedIn titles often end with " | LinkedIn"
+        title = Some(
+            text.strip_suffix(" | LinkedIn")
+                .unwrap_or(&text)
+                .to_string(),
+        );
     }
 
     if md.trim().is_empty() {
         // Last resort: try og:description
-        if let Ok(sel) = Selector::parse(r#"meta[property="og:description"]"#) {
-            if let Some(el) = document.select(&sel).next() {
-                if let Some(desc) = el.attr("content") {
-                    let _ = writeln!(md, "{desc}\n");
-                }
-            }
+        if let Ok(sel) = Selector::parse(r#"meta[property="og:description"]"#)
+            && let Some(el) = document.select(&sel).next()
+            && let Some(desc) = el.attr("content")
+        {
+            let _ = writeln!(md, "{desc}\n");
         }
     }
 
@@ -966,7 +962,7 @@ async fn fetch_oembed(url: &str, client: &AcceleratedClient) -> Result<SiteConte
     Ok(SiteContent { markdown, metadata })
 }
 
-/// Format LinkedIn oEmbed data as markdown.
+/// Format `LinkedIn` oEmbed data as markdown.
 fn format_oembed_markdown(oembed: &LinkedInOEmbed, url: &str) -> String {
     let mut md = String::new();
 

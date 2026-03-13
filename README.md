@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml/badge.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/nab.svg)](https://crates.io/crates/nab)
+[![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
+[![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
+[![MSRV](https://img.shields.io/badge/MSRV-1.93-blue.svg)](https://github.com/MikkoParkkola/nab)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Fetch any URL as clean markdown — with your browser cookies, anti-bot evasion, and 25x fewer tokens than raw HTML.**
