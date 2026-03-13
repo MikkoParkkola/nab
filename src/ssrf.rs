@@ -350,4 +350,3 @@ pub fn validate_redirect_target(url: &Url) -> Result<()> {
 
     validate_url(url).map(|_| ())
 }
-

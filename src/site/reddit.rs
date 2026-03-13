@@ -157,10 +157,11 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
 
     // Post body (selftext for text posts, url for link posts)
     if let Some(selftext) = &post.selftext
-        && !selftext.is_empty() {
-            md.push_str(selftext);
-            md.push_str("\n\n");
-        }
+        && !selftext.is_empty()
+    {
+        md.push_str(selftext);
+        md.push_str("\n\n");
+    }
 
     // If it's a link post, include the URL
     if !post.is_self {
@@ -204,8 +205,10 @@ fn format_timestamp(timestamp: f64) -> String {
     let duration = std::time::Duration::from_secs(secs);
     let datetime = UNIX_EPOCH + duration;
 
-    datetime
-        .duration_since(UNIX_EPOCH).map_or_else(|_| "Unknown".to_string(), |d| format!("{} seconds since epoch", d.as_secs()))
+    datetime.duration_since(UNIX_EPOCH).map_or_else(
+        |_| "Unknown".to_string(),
+        |d| format!("{} seconds since epoch", d.as_secs()),
+    )
 }
 
 /// Format signed score values with K/M suffixes.
@@ -304,8 +307,7 @@ mod tests {
 
     #[test]
     fn parse_reddit_url_strips_query() {
-        let result =
-            parse_reddit_url("https://reddit.com/r/rust/comments/abc123?utm_source=x");
+        let result = parse_reddit_url("https://reddit.com/r/rust/comments/abc123?utm_source=x");
         assert_eq!(result, "https://reddit.com/r/rust/comments/abc123.json");
     }
 

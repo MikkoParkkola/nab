@@ -43,7 +43,10 @@ async fn main() -> Result<()> {
     let progress_cb = Box::new(|p: StreamProgress| {
         #[allow(clippy::cast_precision_loss)] // display only; sub-MB precision acceptable
         let mb = p.bytes_downloaded as f64 / 1_000_000.0;
-        eprintln!("\rDownloaded: {mb:.2} MB | Elapsed: {:.1}s", p.elapsed_seconds);
+        eprintln!(
+            "\rDownloaded: {mb:.2} MB | Elapsed: {:.1}s",
+            p.elapsed_seconds
+        );
     });
 
     // Stream to stdout (can pipe to player: | mpv -)

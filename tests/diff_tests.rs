@@ -5,9 +5,7 @@
 
 use std::time::{Duration, SystemTime};
 
-use nab::content::diff::{
-    ChangeKind, ContentSnapshot, compute_diff, split_paragraphs,
-};
+use nab::content::diff::{ChangeKind, ContentSnapshot, compute_diff, split_paragraphs};
 use nab::content::diff_format::{format_diff_markdown, format_diff_terminal};
 use nab::content::snapshot_store::SnapshotStore;
 use tempfile::TempDir;
@@ -19,7 +17,11 @@ fn snap(url: &str, text: &str) -> ContentSnapshot {
 }
 
 fn snap_at(url: &str, text: &str, secs: u64) -> ContentSnapshot {
-    ContentSnapshot::new(url, text, SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+    ContentSnapshot::new(
+        url,
+        text,
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs),
+    )
 }
 
 fn tmp_store() -> (TempDir, SnapshotStore) {
@@ -153,7 +155,11 @@ fn diff_removed_paragraph_at_end_counted() {
     let old = snap("https://x.com", "Intro.\n\nFooter.");
     let new = snap("https://x.com", "Intro.");
     let diff = compute_diff(&old, &new);
-    assert!(diff.removed_count >= 1, "removed_count={}", diff.removed_count);
+    assert!(
+        diff.removed_count >= 1,
+        "removed_count={}",
+        diff.removed_count
+    );
     assert_eq!(diff.added_count, 0);
 }
 
@@ -196,7 +202,11 @@ fn diff_added_section_has_new_text_only() {
     let old = snap("https://x.com", "A.");
     let new = snap("https://x.com", "A.\n\nB.");
     let diff = compute_diff(&old, &new);
-    let added: Vec<_> = diff.sections.iter().filter(|s| s.kind == ChangeKind::Added).collect();
+    let added: Vec<_> = diff
+        .sections
+        .iter()
+        .filter(|s| s.kind == ChangeKind::Added)
+        .collect();
     assert!(!added.is_empty());
     assert!(added[0].new_text.is_some());
     assert!(added[0].old_text.is_none());
@@ -207,7 +217,11 @@ fn diff_removed_section_has_old_text_only() {
     let old = snap("https://x.com", "A.\n\nB.");
     let new = snap("https://x.com", "A.");
     let diff = compute_diff(&old, &new);
-    let removed: Vec<_> = diff.sections.iter().filter(|s| s.kind == ChangeKind::Removed).collect();
+    let removed: Vec<_> = diff
+        .sections
+        .iter()
+        .filter(|s| s.kind == ChangeKind::Removed)
+        .collect();
     assert!(!removed.is_empty());
     assert!(removed[0].old_text.is_some());
     assert!(removed[0].new_text.is_none());
@@ -221,7 +235,9 @@ fn store_save_and_load_latest_roundtrip() {
     let (_dir, store) = tmp_store();
     let snap_val = snap_at("https://example.com", "Hello snapshot.", 500);
     // WHEN: saved and loaded
-    store.save_snapshot("https://example.com", &snap_val).unwrap();
+    store
+        .save_snapshot("https://example.com", &snap_val)
+        .unwrap();
     let loaded = store.load_latest_snapshot("https://example.com").unwrap();
     // THEN: content matches
     assert_eq!(loaded.text, snap_val.text);
@@ -334,5 +350,8 @@ fn markdown_includes_url_in_header() {
     let new = snap("https://target.com/path", "New text.");
     let diff = compute_diff(&old, &new);
     let out = format_diff_markdown(&diff);
-    assert!(out.contains("target.com"), "URL missing from markdown header");
+    assert!(
+        out.contains("target.com"),
+        "URL missing from markdown header"
+    );
 }

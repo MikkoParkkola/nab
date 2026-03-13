@@ -12,8 +12,7 @@ use anyhow::{Context, Result};
 // ─── OOXML Namespace URIs ──────────────────────────────────────────────────────
 
 /// `WordprocessingML` namespace (used in `.docx` files).
-pub(super) const W_NS: &str =
-    "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+pub(super) const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 // ─── ZIP helpers ──────────────────────────────────────────────────────────────
 
@@ -148,10 +147,8 @@ pub(crate) fn parse_xlsx_sheet_xml(xml: &str, shared_strings: &[String]) -> Vec<
         return vec![];
     };
 
-    let mut row_map: std::collections::BTreeMap<
-        usize,
-        std::collections::BTreeMap<usize, String>,
-    > = std::collections::BTreeMap::new();
+    let mut row_map: std::collections::BTreeMap<usize, std::collections::BTreeMap<usize, String>> =
+        std::collections::BTreeMap::new();
 
     for row in doc.descendants().filter(|n| n.has_tag_name("row")) {
         let row_idx = row
@@ -558,10 +555,7 @@ fn collect_text_in_range(
 }
 
 /// Parse `word/comments.xml` and return formatted comment strings.
-pub(super) fn parse_docx_comment_xml(
-    xml: &str,
-    anchors: &HashMap<String, String>,
-) -> Vec<String> {
+pub(super) fn parse_docx_comment_xml(xml: &str, anchors: &HashMap<String, String>) -> Vec<String> {
     let Ok(doc) = roxmltree::Document::parse(xml) else {
         return vec![];
     };
@@ -658,4 +652,3 @@ fn collect_del_text(node: &roxmltree::Node<'_, '_>) -> String {
 
 #[cfg(test)]
 mod tests;
-

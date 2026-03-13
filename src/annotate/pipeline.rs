@@ -367,7 +367,10 @@ impl AnnotationPipeline {
         let json_path = output_dir.join(format!("{stem}.json"));
 
         if !json_path.exists() {
-            return Err(anyhow!("Whisper output file not found: {}", json_path.display()));
+            return Err(anyhow!(
+                "Whisper output file not found: {}",
+                json_path.display()
+            ));
         }
 
         let json_content = fs::read_to_string(&json_path).await?;

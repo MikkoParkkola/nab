@@ -144,9 +144,11 @@ impl AnalysisReport {
             }
 
             if let Some(ref vis) = seg.visual
-                && vis.action != "unknown" && vis.action != "none" {
-                    write!(annotation, " [{}]", vis.action)?;
-                }
+                && vis.action != "unknown"
+                && vis.action != "none"
+            {
+                write!(annotation, " [{}]", vis.action)?;
+            }
 
             writeln!(md, "**{time}** {speaker}{annotation}\n> {text}\n")?;
         }

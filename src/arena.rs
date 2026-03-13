@@ -105,9 +105,10 @@ impl StringInterner {
     pub fn intern(&self, s: &str) -> Option<&'static str> {
         // Fast path: read lock for common case
         if let Ok(cache) = self.cache.read()
-            && let Some(&interned) = cache.get(s) {
-                return Some(interned);
-            }
+            && let Some(&interned) = cache.get(s)
+        {
+            return Some(interned);
+        }
         None
     }
 }

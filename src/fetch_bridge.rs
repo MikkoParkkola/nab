@@ -480,10 +480,7 @@ mod tests {
         let client = FetchClient::new(None, None);
         // httpbin.org/redirect/1 redirects once to /get
         let result = client.fetch_sync("https://httpbin.org/redirect/1".to_string());
-        assert!(
-            result.is_ok(),
-            "Should follow valid redirects: {result:?}"
-        );
+        assert!(result.is_ok(), "Should follow valid redirects: {result:?}");
         let body = result.unwrap();
         assert!(body.contains("httpbin"), "Should reach final destination");
     }

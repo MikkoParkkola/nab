@@ -7,7 +7,11 @@ use nab::{AcceleratedClient, ApiDiscovery, FetchClient, JsEngine, inject_fetch_s
 
 use super::fetch::{resolve_browser_name, resolve_cookie_source};
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::fn_params_excessive_bools)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::fn_params_excessive_bools
+)]
 pub async fn cmd_spa(
     url: &str,
     cookies: &str,
@@ -162,24 +166,23 @@ pub async fn cmd_spa(
     }
 
     // STEP 1: Try embedded JSON extraction (fast path ~100ms)
-    if !found_data
-        && let Some(data) = extract_script_json(&html, "__NEXT_DATA__") {
-            println!(
-                "\n📊 Extraction complete in {:.2}ms",
-                elapsed.as_secs_f64() * 1000.0
-            );
-            println!("\n✅ __NEXT_DATA__ found:");
-            output_spa_data(
-                &data,
-                output,
-                extract_path,
-                summary,
-                minify,
-                max_array,
-                max_depth,
-            )?;
-            found_data = true;
-        }
+    if !found_data && let Some(data) = extract_script_json(&html, "__NEXT_DATA__") {
+        println!(
+            "\n📊 Extraction complete in {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        println!("\n✅ __NEXT_DATA__ found:");
+        output_spa_data(
+            &data,
+            output,
+            extract_path,
+            summary,
+            minify,
+            max_array,
+            max_depth,
+        )?;
+        found_data = true;
+    }
 
     if let Some(data) = extract_script_json(&html, "__INITIAL_STATE__") {
         if !found_data {
@@ -317,56 +320,58 @@ pub async fn cmd_spa(
         for (js_path, name) in patterns_to_check {
             if let Ok(json_str) = js_engine.eval(&format!("JSON.stringify({js_path} || null)"))
                 && json_str != "null"
-                    && let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                        println!("\n✅ {name} found via JavaScript execution:");
-                        output_spa_data(
-                            &data,
-                            output,
-                            extract_path,
-                            summary,
-                            minify,
-                            max_array,
-                            max_depth,
-                        )?;
-                        found_data = true;
-                        break;
-                    }
+                && let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str)
+            {
+                println!("\n✅ {name} found via JavaScript execution:");
+                output_spa_data(
+                    &data,
+                    output,
+                    extract_path,
+                    summary,
+                    minify,
+                    max_array,
+                    max_depth,
+                )?;
+                found_data = true;
+                break;
+            }
         }
 
         if !found_data
             && let Ok(window_json) = js_engine.eval("JSON.stringify(window)")
-                && let Ok(window_data) = serde_json::from_str::<serde_json::Value>(&window_json)
-                    && let Some(obj) = window_data.as_object() {
-                        let mut clean_data = serde_json::Map::new();
-                        for (key, value) in obj {
-                            if !key.starts_with('_')
-                                && key != "document"
-                                && key != "window"
-                                && key != "console"
-                                && key != "navigator"
-                                && key != "location"
-                                && key != "localStorage"
-                                && key != "sessionStorage"
-                            {
-                                clean_data.insert(key.clone(), value.clone());
-                            }
-                        }
+            && let Ok(window_data) = serde_json::from_str::<serde_json::Value>(&window_json)
+            && let Some(obj) = window_data.as_object()
+        {
+            let mut clean_data = serde_json::Map::new();
+            for (key, value) in obj {
+                if !key.starts_with('_')
+                    && key != "document"
+                    && key != "window"
+                    && key != "console"
+                    && key != "navigator"
+                    && key != "location"
+                    && key != "localStorage"
+                    && key != "sessionStorage"
+                {
+                    clean_data.insert(key.clone(), value.clone());
+                }
+            }
 
-                        if !clean_data.is_empty() {
-                            println!("\n✅ Extracted window data via JavaScript:");
-                            let data = serde_json::Value::Object(clean_data);
-                            output_spa_data(
-                                &data,
-                                output,
-                                extract_path,
-                                summary,
-                                minify,
-                                max_array,
-                                max_depth,
-                            )?;
-                            found_data = true;
-                        }
-                    }
+            if !clean_data.is_empty() {
+                println!("\n✅ Extracted window data via JavaScript:");
+                let data = serde_json::Value::Object(clean_data);
+                output_spa_data(
+                    &data,
+                    output,
+                    extract_path,
+                    summary,
+                    minify,
+                    max_array,
+                    max_depth,
+                )?;
+                found_data = true;
+            }
+        }
 
         let fetched_urls = fetch_client.get_fetch_log();
         if !fetched_urls.is_empty() {

@@ -23,9 +23,7 @@ fn cmd_cookies_export(domain: &str, browser: &str) -> Result<()> {
         _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
     };
 
-    eprintln!(
-        "🍪 Exporting cookies for '{domain}' from {browser_name}"
-    );
+    eprintln!("🍪 Exporting cookies for '{domain}' from {browser_name}");
 
     let cookies = source.get_cookies(domain)?;
 

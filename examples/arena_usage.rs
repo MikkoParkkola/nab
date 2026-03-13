@@ -115,9 +115,8 @@ fn example_memory_stats() {
     println!("Bytes allocated: {} KB", arena.bytes_allocated() / 1024);
     println!("Content size: {} bytes", buffer.len());
     #[allow(clippy::cast_precision_loss)] // Display only; sub-percent precision acceptable
-    let overhead_pct = (arena.bytes_allocated() - buffer.len()) as f64
-        / arena.bytes_allocated() as f64
-        * 100.0;
+    let overhead_pct =
+        (arena.bytes_allocated() - buffer.len()) as f64 / arena.bytes_allocated() as f64 * 100.0;
     println!("Overhead: {overhead_pct:.1}%");
     println!();
 }

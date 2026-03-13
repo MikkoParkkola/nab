@@ -202,3 +202,29 @@
 **Documentation**:
 - `docs/browser-automation.md` - Comprehensive guide (300+ lines)
 - `PHASE3_IMPLEMENTATION.md` - Implementation summary
+
+### Chromium Cookie Decryption Bug Fix (2026-03-12)
+
+**Two root-cause bugs** in `src/auth/cookies.rs` that caused ALL cookies to decrypt as garbage:
+
+**Bug 1 — Wrong AES IV**:
+- Old (wrong): `AES_CBC_IV = [0u8; 16]` (16 zero bytes)
+- Correct: `AES_CBC_IV = [b' '; 16]` (16 space/0x20 bytes)
+- Source: `chromium/components/os_crypt/os_crypt_mac.mm`, `OSCryptImpl::DecryptString`
+- Python reference: `self.iv = b' ' * 16` in `browser_cookie3/ChromiumBased.__init__`
+
+**Bug 2 — Missing schema v24+ domain-integrity prefix**:
+- Chromium cookie DB schema version 24 (Chrome 130+, Brave 1.70+) prepends `SHA-256(host_key)` (32 bytes) to every decrypted plaintext
+- Query `SELECT value FROM meta WHERE key='version'` to get schema version
+- If version >= 24: strip first 32 bytes after PKCS7 unpadding
+- Both Brave and Chrome on this machine report schema version 24
+- Reference: https://issues.chromium.org/issues/40185252
+
+**Fix**:
+- `query_db_schema_version()` function added — queries sqlite3 CLI for `meta.version`
+- `decrypt_cookie_value(encrypted, key, has_domain_tag: bool)` — added `has_domain_tag` param
+- `decrypt_rows(rows, key, has_domain_tag: bool)` — threaded through
+- `get_cookies_native()` queries schema version, sets `has_domain_tag = version >= 24`
+- Added `sha2 = "0.10"` to `Cargo.toml` (was only transitive before)
+- 26 unit tests pass, 537/537 lib tests pass
+- Verified live: 19 Brave cookies decrypted for linkedin.com, zero UTF-8 errors

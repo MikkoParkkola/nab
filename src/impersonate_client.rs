@@ -61,9 +61,7 @@ pub async fn fetch_impersonated(
 ) -> Result<ImpersonatedResponse> {
     let emulation = select_emulation(url);
 
-    let emulation_option = EmulationOption::builder()
-        .emulation(emulation)
-        .build();
+    let emulation_option = EmulationOption::builder().emulation(emulation).build();
 
     let client = rquest::Client::builder()
         .emulation(emulation_option)
@@ -76,7 +74,10 @@ pub async fn fetch_impersonated(
 
     let mut request = client
         .get(url)
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
         .header("Accept-Language", "en-US,en;q=0.9");
 
     if let Some(cookie_val) = cookies {
@@ -121,7 +122,9 @@ mod tests {
     #[test]
     fn detects_linkedin_domains() {
         assert!(needs_impersonation("https://www.linkedin.com/in/someuser"));
-        assert!(needs_impersonation("https://linkedin.com/company/somecompany"));
+        assert!(needs_impersonation(
+            "https://linkedin.com/company/somecompany"
+        ));
         assert!(needs_impersonation(
             "https://www.linkedin.com/posts/user_topic-123"
         ));

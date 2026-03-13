@@ -117,20 +117,21 @@ impl FusionEngine {
 
             // Flag: emotion mismatch between audio sentiment and visual
             if let (Some(vis), Some(trans)) = (&visual, transcript.words.as_ref())
-                && let Some(ref emo) = vis.emotion {
-                    // Simple sentiment heuristics
-                    let has_negative_words = trans.iter().any(|w| {
-                        let word = w.word.to_lowercase();
-                        word.contains("not")
-                            || word.contains("never")
-                            || word.contains("hate")
-                            || word.contains("terrible")
-                    });
+                && let Some(ref emo) = vis.emotion
+            {
+                // Simple sentiment heuristics
+                let has_negative_words = trans.iter().any(|w| {
+                    let word = w.word.to_lowercase();
+                    word.contains("not")
+                        || word.contains("never")
+                        || word.contains("hate")
+                        || word.contains("terrible")
+                });
 
-                    if has_negative_words && emo.primary == "happy" {
-                        flags.push("sentiment_mismatch".to_string());
-                    }
+                if has_negative_words && emo.primary == "happy" {
+                    flags.push("sentiment_mismatch".to_string());
                 }
+            }
 
             segments.push(AnalysisSegment {
                 start: transcript.start,

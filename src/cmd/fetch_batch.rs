@@ -169,9 +169,7 @@ async fn fetch_one_batch_url(
         request = request.header("Cookie", &cookie_header);
     }
 
-    if auto_referer
-        && let Ok(parsed) = url::Url::parse(&url)
-    {
+    if auto_referer && let Ok(parsed) = url::Url::parse(&url) {
         let referer = format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
         request = request.header("Referer", referer);
     }
@@ -202,9 +200,10 @@ async fn fetch_one_batch_url(
                 raw_text
             } else {
                 let router = ContentRouter::new();
-                router
-                    .convert(&body_bytes, &content_type)
-                    .map_or_else(|_| String::from_utf8_lossy(&body_bytes).to_string(), |r| r.markdown)
+                router.convert(&body_bytes, &content_type).map_or_else(
+                    |_| String::from_utf8_lossy(&body_bytes).to_string(),
+                    |r| r.markdown,
+                )
             };
 
             let title = extract_title_from_bytes(&body_bytes);
@@ -264,12 +263,16 @@ fn print_batch_compact(results: &[serde_json::Value]) {
         } else {
             println!(
                 "{} {}B {:.0}ms {}",
-                r.get("status").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                r.get("status")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
                 r.get("metadata")
                     .and_then(|m| m.get("content_length"))
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0),
-                r.get("elapsed_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
+                r.get("elapsed_ms")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0),
                 r.get("url").and_then(|u| u.as_str()).unwrap_or("?"),
             );
         }
@@ -288,12 +291,14 @@ fn print_batch_full(results: &[serde_json::Value], show_body: bool, max_body: us
             println!(
                 "\n🌐 {} [{} {:.0}ms]",
                 r.get("url").and_then(|u| u.as_str()).unwrap_or("?"),
-                r.get("status").and_then(serde_json::Value::as_u64).unwrap_or(0),
-                r.get("elapsed_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
+                r.get("status")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                r.get("elapsed_ms")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0),
             );
-            if show_body
-                && let Some(md) = r.get("markdown").and_then(|m| m.as_str())
-            {
+            if show_body && let Some(md) = r.get("markdown").and_then(|m| m.as_str()) {
                 let display = if max_body > 0 && md.len() > max_body {
                     &md[..max_body]
                 } else {

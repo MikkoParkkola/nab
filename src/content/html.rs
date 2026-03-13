@@ -84,7 +84,8 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 
     // Try readability extraction with real URL (or fallback placeholder)
     let effective_url = url.unwrap_or("https://example.com");
-    let markdown = if let Some(article) = readability::extract_article(&cleaned_html, effective_url) {
+    let markdown = if let Some(article) = readability::extract_article(&cleaned_html, effective_url)
+    {
         let md = html2md::parse_html(&article.content_html);
         let lines: Vec<&str> = md
             .lines()
@@ -298,4 +299,3 @@ pub fn is_boilerplate(line: &str) -> bool {
         || lower.starts_with("copyright")
         || (lower.len() < 3 && !lower.chars().any(char::is_alphanumeric))
 }
-

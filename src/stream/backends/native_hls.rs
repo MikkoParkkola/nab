@@ -75,21 +75,22 @@ impl NativeHlsBackend {
                 let codecs = attrs.get("CODECS").cloned();
 
                 if let Some(uri_line) = lines.next()
-                    && !uri_line.starts_with('#') {
-                        let uri = Self::resolve_url(base_url, uri_line);
-                        let height = resolution
-                            .as_ref()
-                            .and_then(|r| r.split('x').nth(1))
-                            .and_then(|h| h.parse().ok())
-                            .unwrap_or(0);
+                    && !uri_line.starts_with('#')
+                {
+                    let uri = Self::resolve_url(base_url, uri_line);
+                    let height = resolution
+                        .as_ref()
+                        .and_then(|r| r.split('x').nth(1))
+                        .and_then(|h| h.parse().ok())
+                        .unwrap_or(0);
 
-                        variants.push(HlsVariant {
-                            bandwidth,
-                            height,
-                            codecs,
-                            uri,
-                        });
-                    }
+                    variants.push(HlsVariant {
+                        bandwidth,
+                        height,
+                        codecs,
+                        uri,
+                    });
+                }
             }
         }
 
@@ -289,10 +290,11 @@ impl NativeHlsBackend {
         loop {
             // Check if we've reached duration limit
             if let Some(max_dur) = duration_secs
-                && start_time.elapsed().as_secs() >= max_dur {
-                    info!("Duration limit reached ({max_dur}s), stopping live stream");
-                    break;
-                }
+                && start_time.elapsed().as_secs() >= max_dur
+            {
+                info!("Duration limit reached ({max_dur}s), stopping live stream");
+                break;
+            }
 
             let playlist = self.parse_media_playlist(playlist_url, headers).await?;
 
@@ -325,10 +327,11 @@ impl NativeHlsBackend {
 
                     // Check duration limit after each segment
                     if let Some(max_dur) = duration_secs
-                        && start_time.elapsed().as_secs() >= max_dur {
-                            info!("Duration limit reached ({max_dur}s), stopping live stream");
-                            return Ok(());
-                        }
+                        && start_time.elapsed().as_secs() >= max_dur
+                    {
+                        info!("Duration limit reached ({max_dur}s), stopping live stream");
+                        return Ok(());
+                    }
                 }
             }
 
@@ -414,7 +417,11 @@ impl NativeHlsBackend {
                     // Estimate segments from target duration
                     let avg_seg_duration = playlist.target_duration;
                     // Truncation/sign/precision acceptable: segment count is a finite non-negative value
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        clippy::cast_precision_loss
+                    )]
                     Some((dur as f64 / avg_seg_duration).ceil() as usize)
                 }
             });
@@ -619,8 +626,7 @@ mod tests {
             },
         ];
 
-        let best = NativeHlsBackend::select_variant(&variants, StreamQuality::Best)
-            .unwrap();
+        let best = NativeHlsBackend::select_variant(&variants, StreamQuality::Best).unwrap();
         assert_eq!(best.height, 1080);
     }
 
@@ -641,8 +647,7 @@ mod tests {
             },
         ];
 
-        let worst = NativeHlsBackend::select_variant(&variants, StreamQuality::Worst)
-            .unwrap();
+        let worst = NativeHlsBackend::select_variant(&variants, StreamQuality::Worst).unwrap();
         assert_eq!(worst.height, 360);
     }
 
@@ -669,8 +674,8 @@ mod tests {
             },
         ];
 
-        let specific = NativeHlsBackend::select_variant(&variants, StreamQuality::Specific(700))
-            .unwrap();
+        let specific =
+            NativeHlsBackend::select_variant(&variants, StreamQuality::Specific(700)).unwrap();
         assert_eq!(specific.height, 720, "should pick closest to 700p");
     }
 

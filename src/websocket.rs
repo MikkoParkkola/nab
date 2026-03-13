@@ -141,7 +141,6 @@ impl WebSocket {
                         return Ok(Some(WebSocketMessage::Close));
                     }
                     Message::Frame(_) => {}
-
                 },
                 Some(Err(e)) => {
                     return Err(anyhow::Error::new(e).context("WebSocket receive failed"));

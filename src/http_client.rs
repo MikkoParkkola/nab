@@ -355,12 +355,13 @@ async fn read_body_capped(response: Response, max_size: usize) -> Result<Bytes> 
     // Truncation acceptable: content_length is used only as a size hint for logging
     #[allow(clippy::cast_possible_truncation)]
     if let Some(len) = response.content_length()
-        && len as usize > max_size {
-            warn!(
-                content_length = len,
-                max_size, "Response body exceeds size cap; will truncate"
-            );
-        }
+        && len as usize > max_size
+    {
+        warn!(
+            content_length = len,
+            max_size, "Response body exceeds size cap; will truncate"
+        );
+    }
 
     // Read body in chunks to avoid OOM on huge responses
     let mut body = Vec::with_capacity(max_size.min(1024 * 1024)); // Pre-alloc max 1MB

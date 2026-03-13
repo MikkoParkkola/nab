@@ -253,7 +253,10 @@ fn xlsx_to_all_sheets_markdown_single_sheet_no_header() {
 </worksheet>"#,
     )]);
     let md = xlsx_to_all_sheets_markdown(&xlsx_bytes).unwrap();
-    assert!(!md.contains("## Sheet:"), "single sheet must not have section header");
+    assert!(
+        !md.contains("## Sheet:"),
+        "single sheet must not have section header"
+    );
     assert!(md.contains("Revenue"), "cell data must appear: {md}");
 }
 
@@ -276,8 +279,14 @@ fn xlsx_to_all_sheets_markdown_multi_sheet_adds_section_headers() {
         ),
     ]);
     let md = xlsx_to_all_sheets_markdown(&xlsx_bytes).unwrap();
-    assert!(md.contains("## Sheet: Alpha"), "first sheet header missing: {md}");
-    assert!(md.contains("## Sheet: Beta"), "second sheet header missing: {md}");
+    assert!(
+        md.contains("## Sheet: Alpha"),
+        "first sheet header missing: {md}"
+    );
+    assert!(
+        md.contains("## Sheet: Beta"),
+        "second sheet header missing: {md}"
+    );
 }
 
 #[test]
@@ -489,8 +498,8 @@ pub(super) fn create_minimal_zip(entries: &[(&str, &str)]) -> Vec<u8> {
     use std::io::Cursor;
     let buf = Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(buf);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for (name, content) in entries {
         zip.start_file(*name, options).unwrap();
         zip.write_all(content.as_bytes()).unwrap();
@@ -517,8 +526,8 @@ pub(super) fn create_minimal_xlsx(sheets: &[(&str, &str)]) -> Vec<u8> {
 
     let buf = Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(buf);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     zip.start_file("xl/workbook.xml", options).unwrap();
     zip.write_all(workbook.as_bytes()).unwrap();

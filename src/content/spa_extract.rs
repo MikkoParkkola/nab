@@ -482,7 +482,11 @@ fn collect_text_from_json(value: &serde_json::Value, texts: &mut Vec<String>) {
 pub fn find_longest_string(value: &serde_json::Value, min_len: usize) -> Option<String> {
     match value {
         serde_json::Value::String(s) => {
-            if s.len() >= min_len { Some(s.clone()) } else { None }
+            if s.len() >= min_len {
+                Some(s.clone())
+            } else {
+                None
+            }
         }
         serde_json::Value::Object(map) => map
             .values()
@@ -512,7 +516,10 @@ mod tests {
 
     #[test]
     fn strip_html_comment_wrapper_trims_whitespace() {
-        assert_eq!(strip_html_comment_wrapper("<!-- {\"a\":1} -->"), "{\"a\":1}");
+        assert_eq!(
+            strip_html_comment_wrapper("<!-- {\"a\":1} -->"),
+            "{\"a\":1}"
+        );
     }
 
     #[test]
@@ -599,7 +606,10 @@ mod tests {
         let result = extract_hidden_code_json(&document);
         assert!(result.is_some());
         let content = result.unwrap();
-        assert!(content.contains("substantial article body"), "got: {content}");
+        assert!(
+            content.contains("substantial article body"),
+            "got: {content}"
+        );
     }
 
     #[test]
@@ -631,4 +641,3 @@ mod tests {
         assert!(extract_hidden_code_json(&document).is_none());
     }
 }
-

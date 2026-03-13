@@ -59,12 +59,18 @@ impl SnapshotStore {
     /// Create a store rooted at `~/.nab/snapshots/`.
     pub fn new() -> Self {
         let root = default_root();
-        Self { root, max_per_url: Self::MAX_SNAPSHOTS_DEFAULT }
+        Self {
+            root,
+            max_per_url: Self::MAX_SNAPSHOTS_DEFAULT,
+        }
     }
 
     /// Create a store with a custom root (useful for tests).
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into(), max_per_url: Self::MAX_SNAPSHOTS_DEFAULT }
+        Self {
+            root: root.into(),
+            max_per_url: Self::MAX_SNAPSHOTS_DEFAULT,
+        }
     }
 
     /// Override max snapshots per URL.
@@ -184,7 +190,11 @@ fn meta_from_entry(path: &Path) -> Option<SnapshotMeta> {
     let bytes = fs::read(path).ok()?;
     let snap: ContentSnapshot = serde_json::from_slice(&bytes).ok()?;
 
-    Some(SnapshotMeta { timestamp, content_hash: snap.content_hash, path: path.to_owned() })
+    Some(SnapshotMeta {
+        timestamp,
+        content_hash: snap.content_hash,
+        path: path.to_owned(),
+    })
 }
 
 /// Atomically write `data` to `path` via a sibling temp file + rename.
@@ -210,8 +220,7 @@ mod tests {
     }
 
     fn make_snap(url: &str, text: &str, ts_secs: u64) -> ContentSnapshot {
-        let ts = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(ts_secs);
+        let ts = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(ts_secs);
         ContentSnapshot::new(url, text, ts)
     }
 

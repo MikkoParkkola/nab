@@ -4,7 +4,11 @@ use nab::CookieSource;
 
 use super::fetch::resolve_browser_name;
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::fn_params_excessive_bools)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::fn_params_excessive_bools
+)]
 pub async fn cmd_stream(
     source: &str,
     id: &str,
@@ -55,7 +59,8 @@ pub async fn cmd_stream(
                 Box::new(YleProvider::new()?)
             } else if std::path::Path::new(id.split('?').next().unwrap_or(id))
                 .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("mpd")) {
+                .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("mpd"))
+            {
                 Box::new(GenericHlsProvider::new())
             } else {
                 anyhow::bail!("Unknown source: {source}. Use 'yle', 'generic', or a direct URL.");
@@ -323,9 +328,7 @@ pub async fn cmd_stream(
             let mb: f64 = p.bytes_downloaded as f64 / 1_000_000.0;
             eprint!(
                 "\r   📥 {mb:.1} MB, {}{} segments, {:.1}s    ",
-                p.segments_completed,
-                total,
-                p.elapsed_seconds
+                p.segments_completed, total, p.elapsed_seconds
             );
         };
 

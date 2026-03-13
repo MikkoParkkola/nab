@@ -358,14 +358,15 @@ impl StreamBackend for StreamlinkBackend {
 
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(prog) = Self::parse_progress(&line)
-                && let Some(ref cb) = progress {
-                    cb(StreamProgress {
-                        bytes_downloaded: prog.bytes_downloaded,
-                        segments_completed: 0,
-                        segments_total: None,
-                        elapsed_seconds: start_time.elapsed().as_secs_f64(),
-                    });
-                }
+                && let Some(ref cb) = progress
+            {
+                cb(StreamProgress {
+                    bytes_downloaded: prog.bytes_downloaded,
+                    segments_completed: 0,
+                    segments_total: None,
+                    elapsed_seconds: start_time.elapsed().as_secs_f64(),
+                });
+            }
 
             if line.contains("error") || line.contains("Error") {
                 warn!("streamlink: {}", line);

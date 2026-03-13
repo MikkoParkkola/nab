@@ -128,8 +128,7 @@ impl SiteProvider for LinkedInProvider {
         client: &AcceleratedClient,
         cookies: Option<&str>,
     ) -> Result<SiteContent> {
-        let kind = classify_linkedin_url(url)
-            .context("URL does not match any LinkedIn pattern")?;
+        let kind = classify_linkedin_url(url).context("URL does not match any LinkedIn pattern")?;
 
         // Try authenticated extraction first (requires impersonate feature + cookies)
         #[cfg(feature = "impersonate")]
@@ -140,11 +139,7 @@ impl SiteProvider for LinkedInProvider {
                 match fetch_authenticated(url, cookie_header, kind).await {
                     Ok(content) => return Ok(content),
                     Err(e) => {
-                        tracing::warn!(
-                            "LinkedIn authenticated fetch failed for {}: {}",
-                            url,
-                            e
-                        );
+                        tracing::warn!("LinkedIn authenticated fetch failed for {}: {}", url, e);
                         // Fall through to oEmbed for compatible URL kinds
                         if !kind.has_oembed_fallback() {
                             return Err(e);
@@ -245,7 +240,11 @@ pub fn extract_username_from_url(url: &str) -> Option<String> {
     let after_in = &without_query[in_offset + 4..]; // 4 == len("/in/")
 
     let username = after_in.split('/').next()?;
-    if username.is_empty() { None } else { Some(username.to_string()) }
+    if username.is_empty() {
+        None
+    } else {
+        Some(username.to_string())
+    }
 }
 
 fn build_full_name(first: Option<&str>, last: Option<&str>) -> Option<String> {
@@ -386,11 +385,29 @@ fn scan_json_value(
             // Check if this object looks like a profile — keep the richest one.
             if looks_like_profile(map) {
                 let p = extract_profile_manual(map);
-                let new_field_count = [&p.first_name, &p.last_name, &p.headline, &p.summary, &p.location_name, &p.industry_name]
-                    .iter().filter(|f| f.is_some()).count();
+                let new_field_count = [
+                    &p.first_name,
+                    &p.last_name,
+                    &p.headline,
+                    &p.summary,
+                    &p.location_name,
+                    &p.industry_name,
+                ]
+                .iter()
+                .filter(|f| f.is_some())
+                .count();
                 let old_field_count = profile.as_ref().map_or(0, |old| {
-                    [&old.first_name, &old.last_name, &old.headline, &old.summary, &old.location_name, &old.industry_name]
-                        .iter().filter(|f| f.is_some()).count()
+                    [
+                        &old.first_name,
+                        &old.last_name,
+                        &old.headline,
+                        &old.summary,
+                        &old.location_name,
+                        &old.industry_name,
+                    ]
+                    .iter()
+                    .filter(|f| f.is_some())
+                    .count()
                 });
                 if new_field_count > old_field_count {
                     *profile = Some(p);
@@ -425,10 +442,16 @@ fn scan_json_value(
 /// - Multi-locale: `multiLocaleHeadline` (object with locale keys)
 /// - Nested geo: `geoLocation` → lookup in `included` array
 #[cfg(feature = "impersonate")]
-fn extract_profile_manual(map: &serde_json::Map<String, serde_json::Value>) -> VoyagerProfileResponse {
+fn extract_profile_manual(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> VoyagerProfileResponse {
     /// Try to get a string value from a field, handling both plain strings
     /// and multi-locale objects like `{"en_US": "value"}`.
-    fn get_str(map: &serde_json::Map<String, serde_json::Value>, key: &str, multi_key: &str) -> Option<String> {
+    fn get_str(
+        map: &serde_json::Map<String, serde_json::Value>,
+        key: &str,
+        multi_key: &str,
+    ) -> Option<String> {
         // Try plain string first
         if let Some(v) = map.get(key).and_then(|v| v.as_str()) {
             if !v.is_empty() {
@@ -454,9 +477,19 @@ fn extract_profile_manual(map: &serde_json::Map<String, serde_json::Value>) -> V
         last_name: get_str(map, "lastName", "multiLocaleLastName"),
         headline: get_str(map, "headline", "multiLocaleHeadline"),
         summary: get_str(map, "summary", "multiLocaleSummary"),
-        location_name: map.get("geoLocationName").and_then(|v| v.as_str()).map(decode_html_entities)
-            .or_else(|| map.get("locationName").and_then(|v| v.as_str()).map(decode_html_entities)),
-        industry_name: map.get("industryName").and_then(|v| v.as_str()).map(decode_html_entities),
+        location_name: map
+            .get("geoLocationName")
+            .and_then(|v| v.as_str())
+            .map(decode_html_entities)
+            .or_else(|| {
+                map.get("locationName")
+                    .and_then(|v| v.as_str())
+                    .map(decode_html_entities)
+            }),
+        industry_name: map
+            .get("industryName")
+            .and_then(|v| v.as_str())
+            .map(decode_html_entities),
     }
 }
 
@@ -464,7 +497,11 @@ fn extract_profile_manual(map: &serde_json::Map<String, serde_json::Value>) -> V
 #[cfg(feature = "impersonate")]
 fn looks_like_profile(map: &serde_json::Map<String, serde_json::Value>) -> bool {
     let profile_keys = ["firstName", "lastName", "headline", "summary"];
-    profile_keys.iter().filter(|k| map.contains_key(**k)).count() >= 2
+    profile_keys
+        .iter()
+        .filter(|k| map.contains_key(**k))
+        .count()
+        >= 2
 }
 
 /// - `{"commentary": {"text": {"text": "..."}}}` — Voyager activity feed format
@@ -607,27 +644,30 @@ fn extract_json_ld(document: &Html, url: &str, kind: LinkedInUrlKind) -> Option<
     for element in document.select(&selector) {
         let json_text = element.text().collect::<String>();
         if let Ok(ld) = serde_json::from_str::<serde_json::Value>(&json_text) {
-            let name = ld.get("name")
+            let name = ld
+                .get("name")
                 .or_else(|| ld.get("headline"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            let description = ld.get("description")
+            let description = ld
+                .get("description")
                 .or_else(|| ld.get("articleBody"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            let author = ld.get("author")
-                .and_then(|a| {
-                    a.get("name").and_then(|n| n.as_str()).map(String::from)
-                        .or_else(|| a.as_str().map(String::from))
-                });
+            let author = ld.get("author").and_then(|a| {
+                a.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(String::from)
+                    .or_else(|| a.as_str().map(String::from))
+            });
 
-            let image = ld.get("image")
-                .and_then(|i| {
-                    i.as_str().map(String::from)
-                        .or_else(|| i.get("url").and_then(|u| u.as_str()).map(String::from))
-                });
+            let image = ld.get("image").and_then(|i| {
+                i.as_str()
+                    .map(String::from)
+                    .or_else(|| i.get("url").and_then(|u| u.as_str()).map(String::from))
+            });
 
             if name.is_some() || description.is_some() {
                 let mut md = String::new();
@@ -645,7 +685,8 @@ fn extract_json_ld(document: &Html, url: &str, kind: LinkedInUrlKind) -> Option<
                 let metadata = SiteMetadata {
                     author,
                     title: name,
-                    published: ld.get("datePublished")
+                    published: ld
+                        .get("datePublished")
                         .and_then(|v| v.as_str())
                         .map(String::from),
                     platform: format!("LinkedIn ({})", kind_label(kind)),
@@ -654,7 +695,10 @@ fn extract_json_ld(document: &Html, url: &str, kind: LinkedInUrlKind) -> Option<
                     engagement: None,
                 };
 
-                return Some(SiteContent { markdown: md, metadata });
+                return Some(SiteContent {
+                    markdown: md,
+                    metadata,
+                });
             }
         }
     }
@@ -663,7 +707,11 @@ fn extract_json_ld(document: &Html, url: &str, kind: LinkedInUrlKind) -> Option<
 
 /// Extract content from HTML using CSS selectors.
 #[cfg(feature = "impersonate")]
-fn extract_from_selectors(document: &Html, url: &str, kind: LinkedInUrlKind) -> Result<SiteContent> {
+fn extract_from_selectors(
+    document: &Html,
+    url: &str,
+    kind: LinkedInUrlKind,
+) -> Result<SiteContent> {
     let mut md = String::new();
     let mut title = None;
     let mut author = None;
@@ -681,9 +729,9 @@ fn extract_from_selectors(document: &Html, url: &str, kind: LinkedInUrlKind) -> 
 
     // Profile headline / tagline
     for selector_str in &[
-        ".text-body-medium",              // Profile headline
-        ".top-card-layout__headline",     // Public profile
-        ".break-words",                   // Various content
+        ".text-body-medium",          // Profile headline
+        ".top-card-layout__headline", // Public profile
+        ".break-words",               // Various content
     ] {
         if let Ok(sel) = Selector::parse(selector_str) {
             if let Some(el) = document.select(&sel).next() {
@@ -720,10 +768,7 @@ fn extract_from_selectors(document: &Html, url: &str, kind: LinkedInUrlKind) -> 
             let _ = writeln!(md, "### Experience\n");
             for item in items {
                 let text = item.text().collect::<String>();
-                let clean: String = text
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let clean: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
                 if !clean.is_empty() {
                     let _ = writeln!(md, "- {clean}");
                 }
@@ -799,7 +844,10 @@ fn extract_from_selectors(document: &Html, url: &str, kind: LinkedInUrlKind) -> 
         engagement: None,
     };
 
-    Ok(SiteContent { markdown: md, metadata })
+    Ok(SiteContent {
+        markdown: md,
+        metadata,
+    })
 }
 
 #[cfg(feature = "impersonate")]
@@ -1082,7 +1130,9 @@ mod tests {
     #[test]
     fn classifies_post_urls() {
         assert_eq!(
-            classify_linkedin_url("https://www.linkedin.com/posts/someuser_topic-activity-123456789"),
+            classify_linkedin_url(
+                "https://www.linkedin.com/posts/someuser_topic-activity-123456789"
+            ),
             Some(LinkedInUrlKind::Post)
         );
     }
@@ -1098,7 +1148,9 @@ mod tests {
     #[test]
     fn classifies_feed_update_urls() {
         assert_eq!(
-            classify_linkedin_url("https://www.linkedin.com/feed/update/urn:li:activity:7654321098765432109"),
+            classify_linkedin_url(
+                "https://www.linkedin.com/feed/update/urn:li:activity:7654321098765432109"
+            ),
             Some(LinkedInUrlKind::FeedUpdate)
         );
     }
@@ -1106,7 +1158,9 @@ mod tests {
     #[test]
     fn classifies_activity_urls() {
         assert_eq!(
-            classify_linkedin_url("https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/"),
+            classify_linkedin_url(
+                "https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/"
+            ),
             Some(LinkedInUrlKind::Activity)
         );
     }
@@ -1121,8 +1175,14 @@ mod tests {
 
     #[test]
     fn rejects_non_linkedin_urls() {
-        assert_eq!(classify_linkedin_url("https://youtube.com/watch?v=abc"), None);
-        assert_eq!(classify_linkedin_url("https://twitter.com/user/status/123"), None);
+        assert_eq!(
+            classify_linkedin_url("https://youtube.com/watch?v=abc"),
+            None
+        );
+        assert_eq!(
+            classify_linkedin_url("https://twitter.com/user/status/123"),
+            None
+        );
     }
 
     #[test]
@@ -1444,9 +1504,18 @@ mod tests {
         </html>
         "#;
 
-        let content = parse_linkedin_html(html, "https://linkedin.com/in/mikko", LinkedInUrlKind::Profile).unwrap();
+        let content = parse_linkedin_html(
+            html,
+            "https://linkedin.com/in/mikko",
+            LinkedInUrlKind::Profile,
+        )
+        .unwrap();
         assert!(content.markdown.contains("## Mikko Parkkola"));
-        assert!(content.markdown.contains("Building things with Rust and AI"));
+        assert!(
+            content
+                .markdown
+                .contains("Building things with Rust and AI")
+        );
         assert_eq!(content.metadata.platform, "LinkedIn (Profile)");
     }
 
@@ -1467,7 +1536,12 @@ mod tests {
         </html>
         "#;
 
-        let content = parse_linkedin_html(html, "https://linkedin.com/in/mikko", LinkedInUrlKind::Profile).unwrap();
+        let content = parse_linkedin_html(
+            html,
+            "https://linkedin.com/in/mikko",
+            LinkedInUrlKind::Profile,
+        )
+        .unwrap();
         assert!(content.markdown.contains("## Mikko Parkkola"));
         assert!(content.markdown.contains("Senior Engineer at Some Company"));
     }
@@ -1484,8 +1558,17 @@ mod tests {
         </html>
         "#;
 
-        let content = parse_linkedin_html(html, "https://linkedin.com/in/user", LinkedInUrlKind::Profile).unwrap();
-        assert!(content.markdown.contains("This is the only content available"));
+        let content = parse_linkedin_html(
+            html,
+            "https://linkedin.com/in/user",
+            LinkedInUrlKind::Profile,
+        )
+        .unwrap();
+        assert!(
+            content
+                .markdown
+                .contains("This is the only content available")
+        );
     }
 
     // ── strip_html_comment ──────────────────────────────────────────────
@@ -1592,10 +1675,8 @@ mod tests {
     #[test]
     fn looks_like_profile_with_two_profile_keys() {
         // GIVEN: object with firstName + headline (2 profile keys — minimum threshold)
-        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
-            r#"{"firstName":"Jane","headline":"Staff Engineer"}"#,
-        )
-        .unwrap();
+        let map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"firstName":"Jane","headline":"Staff Engineer"}"#).unwrap();
         assert!(looks_like_profile(&map));
     }
 
@@ -1632,14 +1713,39 @@ mod tests {
         );
 
         // WHEN
-        let content = parse_linkedin_html(&html, "https://linkedin.com/in/janeengineer", LinkedInUrlKind::Profile).unwrap();
+        let content = parse_linkedin_html(
+            &html,
+            "https://linkedin.com/in/janeengineer",
+            LinkedInUrlKind::Profile,
+        )
+        .unwrap();
 
         // THEN: profile fields appear in markdown
-        assert!(content.markdown.contains("## Jane Engineer"), "Missing name: {}", content.markdown);
-        assert!(content.markdown.contains("Staff Engineer at Acme"), "Missing headline: {}", content.markdown);
-        assert!(content.markdown.contains("Helsinki, Finland"), "Missing location: {}", content.markdown);
-        assert!(content.markdown.contains("Computer Software"), "Missing industry: {}", content.markdown);
-        assert!(content.markdown.contains("Building systems in Rust."), "Missing summary: {}", content.markdown);
+        assert!(
+            content.markdown.contains("## Jane Engineer"),
+            "Missing name: {}",
+            content.markdown
+        );
+        assert!(
+            content.markdown.contains("Staff Engineer at Acme"),
+            "Missing headline: {}",
+            content.markdown
+        );
+        assert!(
+            content.markdown.contains("Helsinki, Finland"),
+            "Missing location: {}",
+            content.markdown
+        );
+        assert!(
+            content.markdown.contains("Computer Software"),
+            "Missing industry: {}",
+            content.markdown
+        );
+        assert!(
+            content.markdown.contains("Building systems in Rust."),
+            "Missing summary: {}",
+            content.markdown
+        );
         assert_eq!(content.metadata.platform, "LinkedIn (Profile)");
     }
 
@@ -1659,10 +1765,17 @@ mod tests {
             &html,
             "https://linkedin.com/posts/jane_rust-123",
             LinkedInUrlKind::Post,
-        ).unwrap();
+        )
+        .unwrap();
 
         // THEN
-        assert!(content.markdown.contains("Just shipped Rust HTTP/3 client."), "Missing post text: {}", content.markdown);
+        assert!(
+            content
+                .markdown
+                .contains("Just shipped Rust HTTP/3 client."),
+            "Missing post text: {}",
+            content.markdown
+        );
     }
 
     #[cfg(feature = "impersonate")]
@@ -1682,7 +1795,8 @@ mod tests {
             &html,
             "https://linkedin.com/posts/user_post-123",
             LinkedInUrlKind::Post,
-        ).unwrap();
+        )
+        .unwrap();
 
         // THEN: appears exactly once
         assert_eq!(
@@ -1710,11 +1824,20 @@ mod tests {
             html,
             "https://linkedin.com/in/fallback",
             LinkedInUrlKind::Profile,
-        ).unwrap();
+        )
+        .unwrap();
 
         // THEN: JSON-LD fallback used
-        assert!(content.markdown.contains("## Fallback Person"), "Expected JSON-LD fallback: {}", content.markdown);
-        assert!(content.markdown.contains("JSON-LD description"), "Expected JSON-LD desc: {}", content.markdown);
+        assert!(
+            content.markdown.contains("## Fallback Person"),
+            "Expected JSON-LD fallback: {}",
+            content.markdown
+        );
+        assert!(
+            content.markdown.contains("JSON-LD description"),
+            "Expected JSON-LD desc: {}",
+            content.markdown
+        );
     }
 
     #[cfg(feature = "impersonate")]
@@ -1733,10 +1856,15 @@ mod tests {
             html,
             "https://linkedin.com/in/user",
             LinkedInUrlKind::Profile,
-        ).unwrap();
+        )
+        .unwrap();
 
         // THEN: og fallback used
-        assert!(content.markdown.contains("og fallback works"), "Expected og fallback: {}", content.markdown);
+        assert!(
+            content.markdown.contains("og fallback works"),
+            "Expected og fallback: {}",
+            content.markdown
+        );
     }
 
     #[cfg(feature = "impersonate")]
@@ -1752,11 +1880,20 @@ mod tests {
             html,
             "https://linkedin.com/in/nested",
             LinkedInUrlKind::Profile,
-        ).unwrap();
+        )
+        .unwrap();
 
         // THEN: recursive scan finds the nested profile
-        assert!(content.markdown.contains("## Nested Profile"), "Missing nested profile: {}", content.markdown);
-        assert!(content.markdown.contains("CTO at Example"), "Missing headline: {}", content.markdown);
+        assert!(
+            content.markdown.contains("## Nested Profile"),
+            "Missing nested profile: {}",
+            content.markdown
+        );
+        assert!(
+            content.markdown.contains("CTO at Example"),
+            "Missing headline: {}",
+            content.markdown
+        );
     }
 
     #[cfg(feature = "impersonate")]
@@ -1771,7 +1908,8 @@ mod tests {
             html,
             "https://linkedin.com/in/alice",
             LinkedInUrlKind::Profile,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(content.markdown.contains("## Alice Smith"));
         assert!(content.markdown.contains("Engineer"));

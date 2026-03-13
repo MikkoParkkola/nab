@@ -110,15 +110,17 @@ fn extract_with_scraper(html: &str) -> Option<Article> {
 fn try_semantic_extraction(document: &Html) -> Option<Article> {
     // Try <article> first
     if let Ok(article_selector) = Selector::parse("article")
-        && let Some(article_elem) = document.select(&article_selector).next() {
-            return extract_from_element(article_elem, document);
-        }
+        && let Some(article_elem) = document.select(&article_selector).next()
+    {
+        return extract_from_element(article_elem, document);
+    }
 
     // Try <main>
     if let Ok(main_selector) = Selector::parse("main")
-        && let Some(main_elem) = document.select(&main_selector).next() {
-            return extract_from_element(main_elem, document);
-        }
+        && let Some(main_elem) = document.select(&main_selector).next()
+    {
+        return extract_from_element(main_elem, document);
+    }
 
     None
 }
@@ -237,36 +239,39 @@ fn is_unlikely_candidate(element: &scraper::element_ref::ElementRef) -> bool {
 fn extract_title(document: &Html) -> String {
     // Try <h1> first
     if let Ok(h1_selector) = Selector::parse("h1")
-        && let Some(h1) = document.select(&h1_selector).next() {
-            let title = h1.text().collect::<Vec<_>>().join(" ").trim().to_string();
-            if !title.is_empty() {
-                return title;
-            }
+        && let Some(h1) = document.select(&h1_selector).next()
+    {
+        let title = h1.text().collect::<Vec<_>>().join(" ").trim().to_string();
+        if !title.is_empty() {
+            return title;
         }
+    }
 
     // Try <title>
     if let Ok(title_selector) = Selector::parse("title")
-        && let Some(title) = document.select(&title_selector).next() {
-            let title = title
-                .text()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .trim()
-                .to_string();
-            if !title.is_empty() {
-                return title;
-            }
+        && let Some(title) = document.select(&title_selector).next()
+    {
+        let title = title
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string();
+        if !title.is_empty() {
+            return title;
         }
+    }
 
     // Try OpenGraph meta tag
     if let Ok(og_selector) = Selector::parse("meta[property='og:title']")
         && let Some(og) = document.select(&og_selector).next()
-            && let Some(content) = og.value().attr("content") {
-                let title = content.trim().to_string();
-                if !title.is_empty() {
-                    return title;
-                }
-            }
+        && let Some(content) = og.value().attr("content")
+    {
+        let title = content.trim().to_string();
+        if !title.is_empty() {
+            return title;
+        }
+    }
 
     "Untitled".to_string()
 }

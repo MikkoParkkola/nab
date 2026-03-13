@@ -114,7 +114,11 @@ fn push_section_terminal(out: &mut String, section: &DiffSection) {
 }
 
 fn push_summary_terminal(out: &mut String, diff: &ContentDiff) {
-    let _ = writeln!(out, "\n{YELLOW}Summary: {summary}{RESET}", summary = diff.summary());
+    let _ = writeln!(
+        out,
+        "\n{YELLOW}Summary: {summary}{RESET}",
+        summary = diff.summary()
+    );
 }
 
 // ── Markdown rendering ────────────────────────────────────────────────────────
@@ -159,7 +163,7 @@ fn push_summary_markdown(out: &mut String, diff: &ContentDiff) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::diff::{compute_diff, ContentSnapshot};
+    use crate::content::diff::{ContentSnapshot, compute_diff};
     use std::time::SystemTime;
 
     fn snap(text: &str) -> ContentSnapshot {
@@ -238,8 +242,10 @@ mod tests {
         // WHEN: formatted
         let out = format_diff_terminal(&diff);
         // THEN: change markers present
-        let has_change = out.contains("Old paragraph") || out.contains("New paragraph")
-            || out.contains('-') || out.contains('+');
+        let has_change = out.contains("Old paragraph")
+            || out.contains("New paragraph")
+            || out.contains('-')
+            || out.contains('+');
         assert!(has_change, "expected change markers in: {out}");
     }
 
@@ -288,7 +294,10 @@ mod tests {
         // WHEN: formatted as markdown
         let out = format_diff_markdown(&diff);
         // THEN: no ANSI escape sequences
-        assert!(!out.contains('\x1b'), "ANSI escape found in markdown output");
+        assert!(
+            !out.contains('\x1b'),
+            "ANSI escape found in markdown output"
+        );
     }
 
     #[test]

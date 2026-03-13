@@ -2,11 +2,11 @@
 //!
 //! Extracted from inline tests in `src/content/html.rs`.
 
-use nab::content::html::{
-    detect_thin_content, html_to_markdown, html_to_markdown_with_readability,
-    html_to_markdown_with_url, is_boilerplate, strip_comment_sections, HtmlHandler,
-};
 use nab::content::ContentHandler;
+use nab::content::html::{
+    HtmlHandler, detect_thin_content, html_to_markdown, html_to_markdown_with_readability,
+    html_to_markdown_with_url, is_boilerplate, strip_comment_sections,
+};
 
 #[test]
 fn converts_basic_html() {
@@ -277,7 +277,10 @@ fn detect_thin_content_warns_when_ratio_below_threshold() {
         msg.contains("JavaScript rendering"),
         "message should explain likely cause"
     );
-    assert!(msg.contains("--cookies"), "message should suggest a workaround");
+    assert!(
+        msg.contains("--cookies"),
+        "message should suggest a workaround"
+    );
     assert!(
         msg.contains("nab spa"),
         "message should suggest nab spa as alternative"
@@ -412,7 +415,10 @@ fn detect_thin_content_fires_for_js_rendered_page_shell() {
         "34 KB HTML -> 200 char markdown must trigger thin-content warning"
     );
     let msg = warning.unwrap();
-    assert!(msg.contains("200"), "warning should include actual markdown length");
+    assert!(
+        msg.contains("200"),
+        "warning should include actual markdown length"
+    );
     assert!(
         msg.contains("34936") || msg.contains("34,936") || msg.contains("bytes"),
         "warning should include HTML size"
@@ -494,8 +500,7 @@ fn extract_jsonld_handles_array_of_schemas() {
 
     let markdown = html_to_markdown_with_url(&html, Some("https://example.com/blog/test"));
     assert!(
-        markdown.contains("array of JSON-LD schemas")
-            || markdown.contains("complete article body"),
+        markdown.contains("array of JSON-LD schemas") || markdown.contains("complete article body"),
         "expected article body from JSON-LD array, got: {markdown}"
     );
 }

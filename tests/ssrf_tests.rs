@@ -5,8 +5,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use nab::ssrf::{
-    extract_mapped_ipv4, is_denied_ipv4, is_denied_ipv6, validate_ip, validate_redirect_target,
-    validate_url, DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS,
+    DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS, extract_mapped_ipv4, is_denied_ipv4,
+    is_denied_ipv6, validate_ip, validate_redirect_target, validate_url,
 };
 use url::Url;
 
@@ -178,9 +178,7 @@ fn denies_ipv6_teredo() {
     // 2001::/32 -- Teredo tunneling (RFC 4380)
     let ip: Ipv6Addr = "2001:0000::1".parse().unwrap();
     assert!(is_denied_ipv6(ip));
-    let ip: Ipv6Addr = "2001:0000:4136:e378:8000:63bf:3fff:fdd2"
-        .parse()
-        .unwrap();
+    let ip: Ipv6Addr = "2001:0000:4136:e378:8000:63bf:3fff:fdd2".parse().unwrap();
     assert!(is_denied_ipv6(ip));
 }
 

@@ -188,20 +188,22 @@ impl MfaHandler {
     /// Handle TOTP via 1Password
     fn handle_totp(domain: &str) -> Result<Option<String>> {
         if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)?
-            && otp.source == OtpSource::OnePasswordTotp {
-                info!("   ✅ Got TOTP from 1Password");
-                return Ok(Some(otp.code));
-            }
+            && otp.source == OtpSource::OnePasswordTotp
+        {
+            info!("   ✅ Got TOTP from 1Password");
+            return Ok(Some(otp.code));
+        }
         Err(anyhow::anyhow!("No TOTP found in 1Password"))
     }
 
     /// Handle SMS OTP via Beeper
     fn handle_sms_otp(&self, domain: &str) -> Result<Option<String>> {
         if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)?
-            && otp.source == OtpSource::SmsBeeper {
-                info!("   ✅ Got SMS OTP via Beeper");
-                return Ok(Some(otp.code));
-            }
+            && otp.source == OtpSource::SmsBeeper
+        {
+            info!("   ✅ Got SMS OTP via Beeper");
+            return Ok(Some(otp.code));
+        }
         // Fall back to human-in-loop if SMS not synced
         warn!("   ⚠️ SMS not available via Beeper, requesting manual input");
         self.handle_human_in_loop(domain, "Enter SMS code")
@@ -210,10 +212,11 @@ impl MfaHandler {
     /// Handle Email OTP via Gmail
     fn handle_email_otp(&self, domain: &str) -> Result<Option<String>> {
         if let Some(otp) = OtpRetriever::get_otp_for_domain(domain)?
-            && otp.source == OtpSource::EmailGmail {
-                info!("   ✅ Got Email OTP via Gmail");
-                return Ok(Some(otp.code));
-            }
+            && otp.source == OtpSource::EmailGmail
+        {
+            info!("   ✅ Got Email OTP via Gmail");
+            return Ok(Some(otp.code));
+        }
         // Fall back to human-in-loop
         warn!("   ⚠️ Email OTP not found, requesting manual input");
         self.handle_human_in_loop(domain, "Enter email verification code")
@@ -225,14 +228,15 @@ impl MfaHandler {
         let passkeys = self.op_auth.list_passkeys()?;
         for passkey in passkeys {
             if let Some(ref url) = passkey.url
-                && url.contains(domain) {
-                    info!("   ✅ Found passkey in 1Password: {}", passkey.title);
-                    // Note: Actual passkey signing requires 1Password browser extension
-                    // or their SDK. For now, we notify the user to use 1Password.
-                    if let Some(id) = passkey.passkey_credential_id {
-                        return Ok(Some(id));
-                    }
+                && url.contains(domain)
+            {
+                info!("   ✅ Found passkey in 1Password: {}", passkey.title);
+                // Note: Actual passkey signing requires 1Password browser extension
+                // or their SDK. For now, we notify the user to use 1Password.
+                if let Some(id) = passkey.passkey_credential_id {
+                    return Ok(Some(id));
                 }
+            }
         }
 
         // Try using op CLI to sign (if supported)
@@ -242,11 +246,12 @@ impl MfaHandler {
             .output();
 
         if let Ok(output) = output
-            && output.status.success() {
-                // Found passkeys, but signing requires browser extension
-                info!("   ⚠️ Passkey found but signing requires 1Password browser extension");
-                return self.handle_human_in_loop(domain, "Complete passkey authentication");
-            }
+            && output.status.success()
+        {
+            // Found passkeys, but signing requires browser extension
+            info!("   ⚠️ Passkey found but signing requires 1Password browser extension");
+            return self.handle_human_in_loop(domain, "Complete passkey authentication");
+        }
 
         Err(anyhow::anyhow!("No passkey found for {domain}"))
     }

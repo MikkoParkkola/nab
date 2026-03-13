@@ -65,15 +65,13 @@ impl CookieSource {
     fn cookie_path(self) -> Option<std::path::PathBuf> {
         let home = dirs::home_dir()?;
         let path = match self {
-            CookieSource::Brave => home.join(
-                "Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies",
-            ),
+            CookieSource::Brave => {
+                home.join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies")
+            }
             CookieSource::Chrome => {
                 home.join("Library/Application Support/Google/Chrome/Default/Cookies")
             }
-            CookieSource::Firefox => {
-                home.join("Library/Application Support/Firefox/Profiles")
-            }
+            CookieSource::Firefox => home.join("Library/Application Support/Firefox/Profiles"),
             CookieSource::Safari => home.join("Library/Cookies/Cookies.binarycookies"),
         };
         Some(path)
@@ -111,9 +109,7 @@ impl CookieSource {
 
         // The Keychain account name for the cookie key is the browser's name,
         // which matches the service name (e.g., "Brave" for "Brave Safe Storage").
-        let account = service
-            .strip_suffix(" Safe Storage")
-            .unwrap_or(service);
+        let account = service.strip_suffix(" Safe Storage").unwrap_or(service);
 
         get_generic_password(service, account)
             .with_context(|| format!("Keychain access denied for service '{service}'"))
@@ -144,7 +140,10 @@ impl CookieSource {
 
         match self.get_cookies_native(domain) {
             Ok(cookies) if !cookies.is_empty() => {
-                info!("Native cookie extraction succeeded: {} cookies", cookies.len());
+                info!(
+                    "Native cookie extraction succeeded: {} cookies",
+                    cookies.len()
+                );
                 return Ok(cookies);
             }
             Ok(_) => debug!("Native extraction returned empty, trying Python fallback"),
@@ -173,9 +172,7 @@ impl CookieSource {
         let temp_db = copy_db_to_temp(&cookie_path)?;
         let schema_version = query_db_schema_version(&temp_db);
         let rows = query_cookie_db(&temp_db, domain)?;
-        let _ = std::fs::remove_dir_all(
-            temp_db.parent().expect("temp_db always has a parent"),
-        );
+        let _ = std::fs::remove_dir_all(temp_db.parent().expect("temp_db always has a parent"));
 
         let key = self.get_keychain_key().ok();
         let has_domain_tag = schema_version >= SCHEMA_VERSION_WITH_DOMAIN_TAG;
@@ -188,7 +185,11 @@ impl CookieSource {
         if cookies.is_empty() {
             debug!("Native extraction: 0 cookies for {}", domain);
         } else {
-            info!("Native extraction: {} cookies for {}", cookies.len(), domain);
+            info!(
+                "Native extraction: {} cookies for {}",
+                cookies.len(),
+                domain
+            );
         }
         Ok(cookies)
     }
@@ -233,8 +234,7 @@ except Exception as e:
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let cookies: HashMap<String, String> =
-            serde_json::from_str(&stdout).unwrap_or_default();
+        let cookies: HashMap<String, String> = serde_json::from_str(&stdout).unwrap_or_default();
 
         if cookies.contains_key("__error__") {
             return Ok(HashMap::new());
@@ -259,8 +259,7 @@ except Exception as e:
 
 /// Copy the browser cookie database to a temp directory (avoids locking issues).
 fn copy_db_to_temp(cookie_path: &std::path::Path) -> Result<std::path::PathBuf> {
-    let temp_dir =
-        std::env::temp_dir().join(format!("nab_cookies_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("nab_cookies_{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir)?;
     let temp_db = temp_dir.join("Cookies");
     std::fs::copy(cookie_path, &temp_db)?;
@@ -307,16 +306,12 @@ fn query_db_schema_version(temp_db: &std::path::Path) -> u32 {
 ///
 /// Uses `hex(encrypted_value)` to avoid binary corruption when reading blobs
 /// through the sqlite3 CLI and `String::from_utf8_lossy`.
-fn query_cookie_db(
-    temp_db: &std::path::Path,
-    domain: &str,
-) -> Result<Vec<CookieRow>> {
+fn query_cookie_db(temp_db: &std::path::Path, domain: &str) -> Result<Vec<CookieRow>> {
     let conditions = build_domain_conditions(domain);
     let where_clause = conditions.join(" OR ");
     // Use hex() on the encrypted blob so binary bytes survive the CLI round-trip.
-    let query = format!(
-        "SELECT name, value, hex(encrypted_value) FROM cookies WHERE {where_clause}"
-    );
+    let query =
+        format!("SELECT name, value, hex(encrypted_value) FROM cookies WHERE {where_clause}");
     debug!("Cookie SQL query for '{}': WHERE {}", domain, where_clause);
 
     let temp_db_str = temp_db
@@ -399,7 +394,10 @@ fn decrypt_rows(
         }
 
         let Some(k) = key else {
-            debug!("Skipping encrypted cookie '{}' — no key available", row.name);
+            debug!(
+                "Skipping encrypted cookie '{}' — no key available",
+                row.name
+            );
             continue;
         };
 
@@ -428,8 +426,13 @@ pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
     use sha1::Sha1;
 
     let mut key = [0u8; CHROME_KEY_LEN];
-    pbkdf2::<Hmac<Sha1>>(password, CHROME_PBKDF2_SALT, CHROME_PBKDF2_ITERATIONS, &mut key)
-        .map_err(|e| anyhow::anyhow!("PBKDF2 key derivation failed: {e}"))?;
+    pbkdf2::<Hmac<Sha1>>(
+        password,
+        CHROME_PBKDF2_SALT,
+        CHROME_PBKDF2_ITERATIONS,
+        &mut key,
+    )
+    .map_err(|e| anyhow::anyhow!("PBKDF2 key derivation failed: {e}"))?;
     Ok(key.to_vec())
 }
 
@@ -450,11 +453,7 @@ pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
 /// # Errors
 /// Returns an error if the blob is too short, the prefix is wrong, AES
 /// decryption/unpadding fails, or the result is not valid UTF-8.
-pub fn decrypt_cookie_value(
-    encrypted: &[u8],
-    key: &[u8],
-    has_domain_tag: bool,
-) -> Result<String> {
+pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8], has_domain_tag: bool) -> Result<String> {
     use aes::Aes128;
     use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
 
@@ -498,8 +497,7 @@ pub fn decrypt_cookie_value(
         plaintext
     };
 
-    String::from_utf8(value_bytes.to_vec())
-        .context("Decrypted cookie value is not valid UTF-8")
+    String::from_utf8(value_bytes.to_vec()).context("Decrypted cookie value is not valid UTF-8")
 }
 
 // ─── Credential source ────────────────────────────────────────────────────────
@@ -616,12 +614,9 @@ impl CredentialRetriever {
         let home = dirs::home_dir().context("No home directory")?;
 
         let login_data_path = match browser {
-            "brave" => home.join(
-                "Library/Application Support/BraveSoftware/Brave-Browser/Default/Login Data",
-            ),
-            "chrome" => {
-                home.join("Library/Application Support/Google/Chrome/Default/Login Data")
-            }
+            "brave" => home
+                .join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Login Data"),
+            "chrome" => home.join("Library/Application Support/Google/Chrome/Default/Login Data"),
             _ => return Ok(None),
         };
 
@@ -629,8 +624,7 @@ impl CredentialRetriever {
             return Ok(None);
         }
 
-        let temp_dir =
-            std::env::temp_dir().join(format!("nab_logins_{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!("nab_logins_{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir)?;
         let temp_db = temp_dir.join("Login Data");
         std::fs::copy(&login_data_path, &temp_db)?;
@@ -796,8 +790,7 @@ mod tests {
         let blob = encrypt_v10(plaintext, &key);
 
         // WHEN: decrypted without domain-tag stripping
-        let result =
-            decrypt_cookie_value(&blob, &key, false).expect("decryption must succeed");
+        let result = decrypt_cookie_value(&blob, &key, false).expect("decryption must succeed");
 
         // THEN: plaintext recovered
         assert_eq!(result, "session_token_abc123");
@@ -828,7 +821,10 @@ mod tests {
         // THEN: result is either an error or contains the SHA-256 garbage bytes
         // (not equal to "val"), proving the flag matters
         let result = decrypt_cookie_value(&blob, &key, false).unwrap_or_default();
-        assert_ne!(result, "val", "domain tag must be stripped for correct result");
+        assert_ne!(
+            result, "val",
+            "domain tag must be stripped for correct result"
+        );
     }
 
     #[test]
@@ -1002,8 +998,16 @@ mod tests {
     fn decrypt_rows_plaintext_passthrough() {
         // GIVEN: rows with only plaintext values (no encryption)
         let rows = vec![
-            CookieRow { name: "a".into(), value: "v1".into(), encrypted_bytes: vec![] },
-            CookieRow { name: "b".into(), value: "v2".into(), encrypted_bytes: vec![] },
+            CookieRow {
+                name: "a".into(),
+                value: "v1".into(),
+                encrypted_bytes: vec![],
+            },
+            CookieRow {
+                name: "b".into(),
+                value: "v2".into(),
+                encrypted_bytes: vec![],
+            },
         ];
 
         // WHEN: decrypted with no key

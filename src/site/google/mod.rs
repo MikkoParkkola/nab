@@ -49,7 +49,6 @@ use ooxml::{
     xlsx_to_all_sheets_markdown,
 };
 
-
 // ─── Document kind ─────────────────────────────────────────────────────────────
 
 /// Document kind as inferred from the URL path segment.
@@ -268,11 +267,7 @@ fn extract_html_title(html: &str) -> Option<String> {
 
 // ─── Google Sheets ────────────────────────────────────────────────────────────
 
-async fn extract_sheet(
-    id: &str,
-    canonical_url: &str,
-    cookie_header: &str,
-) -> Result<SiteContent> {
+async fn extract_sheet(id: &str, canonical_url: &str, cookie_header: &str) -> Result<SiteContent> {
     let xlsx_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx");
     let xlsx_bytes = fetch_export(&xlsx_url, cookie_header).await?;
 
@@ -280,8 +275,7 @@ async fn extract_sheet(
         Ok(md) if !md.is_empty() => md,
         Ok(_) | Err(_) => {
             tracing::debug!("xlsx parsing produced no content, falling back to CSV");
-            let csv_url =
-                format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv");
+            let csv_url = format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv");
             let csv_bytes = fetch_export(&csv_url, cookie_header).await?;
             csv_to_markdown(&String::from_utf8_lossy(&csv_bytes))
         }
@@ -306,11 +300,7 @@ async fn extract_sheet(
 
 // ─── Google Slides ────────────────────────────────────────────────────────────
 
-async fn extract_slide(
-    id: &str,
-    canonical_url: &str,
-    cookie_header: &str,
-) -> Result<SiteContent> {
+async fn extract_slide(id: &str, canonical_url: &str, cookie_header: &str) -> Result<SiteContent> {
     let txt_url = format!("https://docs.google.com/presentation/d/{id}/export?format=txt");
     let txt_bytes = fetch_export(&txt_url, cookie_header).await?;
     let slide_text = String::from_utf8_lossy(&txt_bytes).into_owned();
@@ -397,8 +387,7 @@ mod tests {
     #[test]
     fn parse_google_sheet_url_extracts_id_and_kind() {
         let parsed =
-            parse_google_url("https://docs.google.com/spreadsheets/d/1abc_XYZ/edit#gid=0")
-                .unwrap();
+            parse_google_url("https://docs.google.com/spreadsheets/d/1abc_XYZ/edit#gid=0").unwrap();
         assert_eq!(parsed.id, "1abc_XYZ");
         assert_eq!(parsed.kind, DocKind::Sheet);
     }

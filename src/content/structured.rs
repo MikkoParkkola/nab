@@ -83,8 +83,8 @@ impl ExtractionSchema {
     ///
     /// Returns an error if the JSON is invalid or not an object.
     pub fn from_json(json: &str) -> Result<Self, ExtractionError> {
-        let value: Value =
-            serde_json::from_str(json).map_err(|e| ExtractionError::InvalidSchema(e.to_string()))?;
+        let value: Value = serde_json::from_str(json)
+            .map_err(|e| ExtractionError::InvalidSchema(e.to_string()))?;
 
         let obj = value
             .as_object()
@@ -302,10 +302,9 @@ fn extract_og_tags(document: &scraper::Html) -> HashMap<String, String> {
     };
 
     for meta in document.select(&sel) {
-        if let (Some(property), Some(content)) = (
-            meta.value().attr("property"),
-            meta.value().attr("content"),
-        ) {
+        if let (Some(property), Some(content)) =
+            (meta.value().attr("property"), meta.value().attr("content"))
+        {
             let prop_lower = property.to_lowercase();
             if let Some(key) = prop_lower.strip_prefix("og:") {
                 tags.insert(key.to_string(), content.to_string());
@@ -324,7 +323,8 @@ fn extract_twitter_tags(document: &scraper::Html) -> HashMap<String, String> {
     };
 
     for meta in document.select(&sel) {
-        if let (Some(name), Some(content)) = (meta.value().attr("name"), meta.value().attr("content"))
+        if let (Some(name), Some(content)) =
+            (meta.value().attr("name"), meta.value().attr("content"))
         {
             let name_lower = name.to_lowercase();
             if let Some(key) = name_lower.strip_prefix("twitter:") {
@@ -344,7 +344,8 @@ fn extract_meta_tags(document: &scraper::Html) -> HashMap<String, String> {
     };
 
     for meta in document.select(&sel) {
-        if let (Some(name), Some(content)) = (meta.value().attr("name"), meta.value().attr("content"))
+        if let (Some(name), Some(content)) =
+            (meta.value().attr("name"), meta.value().attr("content"))
         {
             let name_lower = name.to_lowercase();
             // Skip twitter: prefixed (handled separately)
@@ -408,10 +409,7 @@ const FIELD_ALIASES: &[(&str, &[&str])] = &[
     ("name", &["title", "headline"]),
     ("description", &["summary", "abstract", "excerpt"]),
     ("price", &["offers.price", "offers.lowprice", "lowprice"]),
-    (
-        "image",
-        &["image", "thumbnailurl", "thumbnail", "og:image"],
-    ),
+    ("image", &["image", "thumbnailurl", "thumbnail", "og:image"]),
     ("author", &["author.name", "creator", "author"]),
     (
         "date",
@@ -437,10 +435,7 @@ const FIELD_ALIASES: &[(&str, &[&str])] = &[
     ("category", &["category", "articleSection"]),
     ("sku", &["sku", "mpn", "gtin13", "isbn"]),
     ("currency", &["offers.pricecurrency", "pricecurrency"]),
-    (
-        "availability",
-        &["offers.availability", "availability"],
-    ),
+    ("availability", &["offers.availability", "availability"]),
 ];
 
 /// Try extracting a field from all data sources in priority order.
@@ -472,7 +467,8 @@ fn try_extract_field(
         for candidate in &candidates {
             // Try exact match
             if let Some(val) = jsonld.get(candidate.as_str()) {
-                let coerced = coerce_value(&Value::String(value_to_string(val)), &field_spec.field_type);
+                let coerced =
+                    coerce_value(&Value::String(value_to_string(val)), &field_spec.field_type);
                 return Some((coerced, DataSource::JsonLd));
             }
             // Try case-insensitive match
@@ -532,17 +528,17 @@ fn heuristic_css_extract(document: &scraper::Html, field_name: &str) -> Option<V
     // Map field names to likely CSS selectors
     let selectors: &[&str] = match field_name {
         "title" | "name" | "headline" => &["h1", "[class*='title']", "[class*='headline']"],
-        "price" => &[
-            "[class*='price']",
-            "[data-price]",
-            "[itemprop='price']",
-        ],
+        "price" => &["[class*='price']", "[data-price]", "[itemprop='price']"],
         "description" | "summary" => &[
             "meta[name='description']",
             "[class*='description']",
             "[class*='summary']",
         ],
-        "rating" => &["[class*='rating']", "[data-rating]", "[itemprop='ratingValue']"],
+        "rating" => &[
+            "[class*='rating']",
+            "[data-rating]",
+            "[itemprop='ratingValue']",
+        ],
         "author" => &["[class*='author']", "[rel='author']", "[itemprop='author']"],
         "date" | "published" => &["time[datetime]", "[class*='date']", "[class*='published']"],
         "image" => &["[class*='product'] img", "article img", "main img"],
@@ -786,9 +782,6 @@ mod tests {
 
     #[test]
     fn parse_number_strips_currency() {
-        assert_eq!(
-            parse_number("$19.99").and_then(|v| v.as_f64()),
-            Some(19.99)
-        );
+        assert_eq!(parse_number("$19.99").and_then(|v| v.as_f64()), Some(19.99));
     }
 }

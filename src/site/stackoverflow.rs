@@ -269,7 +269,10 @@ fn html_decode(s: &str) -> String {
 /// Format Unix timestamp as ISO 8601 date string.
 fn format_timestamp(timestamp: u64) -> String {
     let secs = i64::try_from(timestamp).unwrap_or(0);
-    chrono::DateTime::from_timestamp(secs, 0).map_or_else(|| "Unknown".to_string(), |dt| dt.format("%Y-%m-%d").to_string())
+    chrono::DateTime::from_timestamp(secs, 0).map_or_else(
+        || "Unknown".to_string(),
+        |dt| dt.format("%Y-%m-%d").to_string(),
+    )
 }
 
 /// Format large numbers with K/M suffixes.

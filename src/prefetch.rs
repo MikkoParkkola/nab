@@ -262,14 +262,14 @@ pub fn extract_link_hints(html: &str) -> Vec<EarlyHintLink> {
                     || rel.contains("dns-prefetch")
                     || rel.contains("preload")
                     || rel.contains("prefetch"))
-                {
-                    links.push(EarlyHintLink {
-                        url,
-                        rel,
-                        as_type,
-                        crossorigin,
-                    });
-                }
+            {
+                links.push(EarlyHintLink {
+                    url,
+                    rel,
+                    as_type,
+                    crossorigin,
+                });
+            }
 
             pos = abs_start + end + 1;
         } else {

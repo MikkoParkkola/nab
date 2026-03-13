@@ -88,7 +88,12 @@ pub struct DiffSection {
 
 impl DiffSection {
     fn added(new_text: impl Into<String>, context: Vec<String>) -> Self {
-        Self { kind: ChangeKind::Added, old_text: None, new_text: Some(new_text.into()), context }
+        Self {
+            kind: ChangeKind::Added,
+            old_text: None,
+            new_text: Some(new_text.into()),
+            context,
+        }
     }
 
     fn removed(old_text: impl Into<String>, context: Vec<String>) -> Self {
@@ -180,9 +185,18 @@ pub fn compute_diff(old: &ContentSnapshot, new: &ContentSnapshot) -> ContentDiff
     }
 
     let sections = diff_paragraphs(&old.paragraphs, &new.paragraphs);
-    let added_count = sections.iter().filter(|s| s.kind == ChangeKind::Added).count();
-    let removed_count = sections.iter().filter(|s| s.kind == ChangeKind::Removed).count();
-    let modified_count = sections.iter().filter(|s| s.kind == ChangeKind::Modified).count();
+    let added_count = sections
+        .iter()
+        .filter(|s| s.kind == ChangeKind::Added)
+        .count();
+    let removed_count = sections
+        .iter()
+        .filter(|s| s.kind == ChangeKind::Removed)
+        .count();
+    let modified_count = sections
+        .iter()
+        .filter(|s| s.kind == ChangeKind::Modified)
+        .count();
 
     ContentDiff {
         url: new.url.clone(),
@@ -208,11 +222,7 @@ fn diff_paragraphs(old: &[String], new: &[String]) -> Vec<DiffSection> {
 }
 
 /// Build diff sections from the LCS alignment.
-fn build_sections(
-    old: &[String],
-    new: &[String],
-    lcs: &[(usize, usize)],
-) -> Vec<DiffSection> {
+fn build_sections(old: &[String], new: &[String], lcs: &[(usize, usize)]) -> Vec<DiffSection> {
     let mut sections = Vec::new();
     let mut oi = 0usize;
     let mut ni = 0usize;
@@ -258,12 +268,7 @@ fn emit_gap_sections(
 }
 
 /// Collect up to one preceding unchanged paragraph as context.
-fn context_lines(
-    old: &[String],
-    new: &[String],
-    oi: usize,
-    ni: usize,
-) -> Vec<String> {
+fn context_lines(old: &[String], new: &[String], oi: usize, ni: usize) -> Vec<String> {
     let mut ctx = Vec::new();
     if oi > 0 {
         ctx.push(old[oi - 1].clone());
@@ -465,8 +470,14 @@ mod tests {
         // GIVEN: shared structure with one changed paragraph
         // WHEN: diff computed
         // THEN: modified_count >= 1
-        let old = snap("https://x.com", "Intro.\n\nOld body text here.\n\nConclusion.");
-        let new = snap("https://x.com", "Intro.\n\nNew body text here.\n\nConclusion.");
+        let old = snap(
+            "https://x.com",
+            "Intro.\n\nOld body text here.\n\nConclusion.",
+        );
+        let new = snap(
+            "https://x.com",
+            "Intro.\n\nNew body text here.\n\nConclusion.",
+        );
         let diff = compute_diff(&old, &new);
         assert!(!diff.unchanged);
         assert!(diff.modified_count >= 1 || diff.added_count + diff.removed_count >= 1);

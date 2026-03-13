@@ -13,7 +13,11 @@ use nab::{AcceleratedClient, CookieSource, OnePasswordAuth, SafeFetchConfig};
 use super::output::output_body;
 use crate::OutputFormat;
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::fn_params_excessive_bools)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::fn_params_excessive_bools
+)]
 pub async fn cmd_fetch(
     url: &str,
     show_headers: bool,
@@ -289,9 +293,7 @@ async fn execute_manual_request(
         request = request.header("Cookie", cookie_header);
     }
 
-    if auto_referer
-        && let Ok(parsed) = url::Url::parse(url)
-    {
+    if auto_referer && let Ok(parsed) = url::Url::parse(url) {
         let referer = format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
         request = request.header("Referer", referer);
     }
@@ -338,7 +340,14 @@ async fn execute_manual_request(
 
     let bytes = response.bytes().await?;
 
-    Ok((status, version_str, set_cookies, content_type, resp_headers, bytes))
+    Ok((
+        status,
+        version_str,
+        set_cookies,
+        content_type,
+        resp_headers,
+        bytes,
+    ))
 }
 
 /// Convert body bytes to markdown via `ContentRouter`.
@@ -356,9 +365,7 @@ async fn convert_body_to_markdown(
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        tokio::task::spawn_blocking(move || {
-            router.convert_with_url(&bytes, &ct, Some(&fetch_url))
-        }),
+        tokio::task::spawn_blocking(move || router.convert_with_url(&bytes, &ct, Some(&fetch_url))),
     )
     .await
     .map_err(|_| anyhow::anyhow!("Content conversion timed out after 60s"))???;
@@ -444,7 +451,11 @@ fn print_output(
                 println!(
                     "🍪 Loaded {} cookies from {}",
                     cookie_header.matches('=').count(),
-                    if cookies == "auto" { "browser (auto-detected)" } else { cookies }
+                    if cookies == "auto" {
+                        "browser (auto-detected)"
+                    } else {
+                        cookies
+                    }
                 );
             }
             println!("\n📊 Response:");
@@ -598,7 +609,10 @@ mod tests {
         let body = "<html><body>Vercel Security Checkpoint</body></html>";
         let result = detect_bot_challenge(429, body);
         let warning = result.expect("expected a warning for Vercel checkpoint");
-        assert!(warning.contains("Vercel"), "warning should mention Vercel, got: {warning}");
+        assert!(
+            warning.contains("Vercel"),
+            "warning should mention Vercel, got: {warning}"
+        );
         assert!(
             warning.contains("--cookies"),
             "warning should suggest --cookies workaround, got: {warning}"
@@ -617,7 +631,10 @@ mod tests {
     #[test]
     fn detect_bot_challenge_vercel_wrong_status_no_warning() {
         let body = "Vercel Security Checkpoint";
-        assert!(detect_bot_challenge(200, body).is_none(), "should not warn when status is 200");
+        assert!(
+            detect_bot_challenge(200, body).is_none(),
+            "should not warn when status is 200"
+        );
     }
 
     // ── Cloudflare browser verification ────────────────────────────────────
@@ -636,7 +653,10 @@ mod tests {
     #[test]
     fn detect_bot_challenge_cloudflare_503_returns_warning() {
         let body = "cf-browser-verification required";
-        assert!(detect_bot_challenge(503, body).is_some(), "expected a warning for Cloudflare 503");
+        assert!(
+            detect_bot_challenge(503, body).is_some(),
+            "expected a warning for Cloudflare 503"
+        );
     }
 
     #[test]
@@ -653,17 +673,26 @@ mod tests {
     #[test]
     fn detect_bot_challenge_normal_200_html_no_warning() {
         let body = "<html><body><h1>Hello world</h1></body></html>";
-        assert!(detect_bot_challenge(200, body).is_none(), "should not warn for normal 200 response");
+        assert!(
+            detect_bot_challenge(200, body).is_none(),
+            "should not warn for normal 200 response"
+        );
     }
 
     #[test]
     fn detect_bot_challenge_empty_body_no_warning() {
-        assert!(detect_bot_challenge(200, "").is_none(), "should not warn for empty body");
+        assert!(
+            detect_bot_challenge(200, "").is_none(),
+            "should not warn for empty body"
+        );
     }
 
     #[test]
     fn detect_bot_challenge_429_unrelated_body_no_warning() {
         let body = "Rate limit exceeded. Please slow down.";
-        assert!(detect_bot_challenge(429, body).is_none(), "should not warn for generic 429");
+        assert!(
+            detect_bot_challenge(429, body).is_none(),
+            "should not warn for generic 429"
+        );
     }
 }

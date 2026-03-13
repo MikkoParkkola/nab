@@ -43,14 +43,15 @@ impl NrkProvider {
                 // Return series-id/season/episode format
                 let serie_idx = parts.iter().position(|&p| p == "serie");
                 if let Some(idx) = serie_idx
-                    && idx + 4 < parts.len() {
-                        return format!(
-                            "{}/s{}/e{}",
-                            parts[idx + 1],
-                            parts[idx + 3], // sesong number
-                            parts[idx + 5].split('?').next().unwrap_or(parts[idx + 5]) // episode number
-                        );
-                    }
+                    && idx + 4 < parts.len()
+                {
+                    return format!(
+                        "{}/s{}/e{}",
+                        parts[idx + 1],
+                        parts[idx + 3], // sesong number
+                        parts[idx + 5].split('?').next().unwrap_or(parts[idx + 5])  // episode number
+                    );
+                }
             }
 
             // Fallback: last path segment

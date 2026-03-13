@@ -4,7 +4,7 @@
 //! meta tags, microdata, CSS selectors) and type coercion.
 
 use nab::content::structured::{
-    extract_structured, DataSource, ExtractionError, ExtractionSchema, FieldType,
+    DataSource, ExtractionError, ExtractionSchema, FieldType, extract_structured,
 };
 
 // ── Schema parsing ───────────────────────────────────────────────────────────
@@ -112,11 +112,12 @@ fn extract_from_jsonld_product() {
     assert_eq!(result.fields["name"].as_str(), Some("Widget Pro"));
     assert_eq!(result.fields["price"].as_f64(), Some(29.99));
     assert_eq!(result.fields["rating"].as_f64(), Some(4.7));
-    assert!(result
-        .fields["description"]
-        .as_str()
-        .unwrap()
-        .contains("best widget"));
+    assert!(
+        result.fields["description"]
+            .as_str()
+            .unwrap()
+            .contains("best widget")
+    );
     assert_eq!(result.sources["name"], DataSource::JsonLd);
     assert!(result.missing.is_empty());
 }
@@ -169,8 +170,7 @@ fn extract_from_jsonld_array() {
         </head><body></body></html>
     "#;
 
-    let schema =
-        ExtractionSchema::from_json(r#"{"name": "string", "price": "number"}"#).unwrap();
+    let schema = ExtractionSchema::from_json(r#"{"name": "string", "price": "number"}"#).unwrap();
     let result = extract_structured(html, &schema);
 
     // Should find "name" from the first object and "price" from the second
@@ -202,10 +202,12 @@ fn extract_from_og_tags() {
         result.fields["title"].as_str(),
         Some("Widget Pro - Best Widget")
     );
-    assert!(result.fields["description"]
-        .as_str()
-        .unwrap()
-        .contains("Premium widget"));
+    assert!(
+        result.fields["description"]
+            .as_str()
+            .unwrap()
+            .contains("Premium widget")
+    );
     assert_eq!(
         result.fields["image"].as_str(),
         Some("https://example.com/widget.jpg")
@@ -251,17 +253,17 @@ fn extract_from_meta_tags() {
         </head><body></body></html>
     "#;
 
-    let schema = ExtractionSchema::from_json(
-        r#"{"description": "string", "author": "string"}"#,
-    )
-    .unwrap();
+    let schema =
+        ExtractionSchema::from_json(r#"{"description": "string", "author": "string"}"#).unwrap();
 
     let result = extract_structured(html, &schema);
 
-    assert!(result.fields["description"]
-        .as_str()
-        .unwrap()
-        .contains("fantastic product"));
+    assert!(
+        result.fields["description"]
+            .as_str()
+            .unwrap()
+            .contains("fantastic product")
+    );
     assert_eq!(result.fields["author"].as_str(), Some("John Doe"));
     assert_eq!(result.sources["description"], DataSource::MetaTag);
     assert_eq!(result.sources["author"], DataSource::MetaTag);
@@ -382,7 +384,10 @@ fn og_takes_priority_over_meta_tags() {
     let schema = ExtractionSchema::from_json(r#"{"description": "string"}"#).unwrap();
     let result = extract_structured(html, &schema);
 
-    assert_eq!(result.fields["description"].as_str(), Some("OG description"));
+    assert_eq!(
+        result.fields["description"].as_str(),
+        Some("OG description")
+    );
     assert_eq!(result.sources["description"], DataSource::OpenGraph);
 }
 
@@ -419,10 +424,9 @@ fn reports_missing_fields() {
         </head><body></body></html>
     "#;
 
-    let schema = ExtractionSchema::from_json(
-        r#"{"title": "string", "price": "number", "sku": "string"}"#,
-    )
-    .unwrap();
+    let schema =
+        ExtractionSchema::from_json(r#"{"title": "string", "price": "number", "sku": "string"}"#)
+            .unwrap();
 
     let result = extract_structured(html, &schema);
 
@@ -478,10 +482,8 @@ fn result_to_json() {
         </head><body></body></html>
     "#;
 
-    let schema = ExtractionSchema::from_json(
-        r#"{"title": "string", "description": "string"}"#,
-    )
-    .unwrap();
+    let schema =
+        ExtractionSchema::from_json(r#"{"title": "string", "description": "string"}"#).unwrap();
 
     let result = extract_structured(html, &schema);
     let json_str = result.to_json().unwrap();
@@ -575,10 +577,12 @@ fn extract_from_e_commerce_product_page() {
     assert_eq!(result.fields["name"].as_str(), Some("Widget Pro"));
     assert_eq!(result.fields["price"].as_f64(), Some(149.99));
     assert_eq!(result.fields["rating"].as_f64(), Some(4.8));
-    assert!(result.fields["description"]
-        .as_str()
-        .unwrap()
-        .contains("ultimate widget"));
+    assert!(
+        result.fields["description"]
+            .as_str()
+            .unwrap()
+            .contains("ultimate widget")
+    );
     assert_eq!(
         result.fields["image"].as_str(),
         Some("https://widgetstore.com/img/widget-pro.jpg")
@@ -586,7 +590,11 @@ fn extract_from_e_commerce_product_page() {
     assert_eq!(result.fields["sku"].as_str(), Some("WP-2026"));
     assert_eq!(result.fields["brand"].as_str(), Some("WidgetCo"));
     assert_eq!(result.fields["currency"].as_str(), Some("USD"));
-    assert!(result.missing.is_empty(), "no fields should be missing: {:?}", result.missing);
+    assert!(
+        result.missing.is_empty(),
+        "no fields should be missing: {:?}",
+        result.missing
+    );
 }
 
 #[test]
@@ -638,10 +646,7 @@ fn extract_from_blog_post_page() {
 #[test]
 fn extract_empty_page_reports_all_missing() {
     let html = "<html><head></head><body></body></html>";
-    let schema = ExtractionSchema::from_json(
-        r#"{"title": "string", "price": "number"}"#,
-    )
-    .unwrap();
+    let schema = ExtractionSchema::from_json(r#"{"title": "string", "price": "number"}"#).unwrap();
 
     let result = extract_structured(html, &schema);
 
@@ -683,8 +688,7 @@ fn handles_multiple_jsonld_blocks() {
         </head><body></body></html>
     "#;
 
-    let schema =
-        ExtractionSchema::from_json(r#"{"name": "string", "price": "number"}"#).unwrap();
+    let schema = ExtractionSchema::from_json(r#"{"name": "string", "price": "number"}"#).unwrap();
     let result = extract_structured(html, &schema);
 
     assert!(result.fields.contains_key("name"));
@@ -693,7 +697,8 @@ fn handles_multiple_jsonld_blocks() {
 
 #[test]
 fn handles_empty_schema() {
-    let html = r#"<html><head><meta property="og:title" content="Title"></head><body></body></html>"#;
+    let html =
+        r#"<html><head><meta property="og:title" content="Title"></head><body></body></html>"#;
     let schema = ExtractionSchema::from_json("{}").unwrap();
     let result = extract_structured(html, &schema);
 

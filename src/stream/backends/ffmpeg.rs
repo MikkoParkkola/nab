@@ -317,12 +317,11 @@ impl StreamBackend for FfmpegBackend {
             let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
 
             while let Ok(Some(line)) = lines.next_line().await {
-                if progress_active
-                    && let Some(_prog) = FfmpegBackend::parse_progress(&line) {
-                        // Progress is available but we can't easily pass it back
-                        // due to ownership. Log it instead.
-                        debug!("ffmpeg: {}", line);
-                    }
+                if progress_active && let Some(_prog) = FfmpegBackend::parse_progress(&line) {
+                    // Progress is available but we can't easily pass it back
+                    // due to ownership. Log it instead.
+                    debug!("ffmpeg: {}", line);
+                }
                 // Log warnings/errors
                 if line.contains("Error") || line.contains("Warning") {
                     warn!("ffmpeg: {}", line);
@@ -403,16 +402,17 @@ impl StreamBackend for FfmpegBackend {
 
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(prog) = Self::parse_progress(&line)
-                && let Some(ref cb) = progress {
-                    cb(StreamProgress {
-                        bytes_downloaded: 0, // Not easily available for file output
-                        // Truncation/sign-loss acceptable: time_seconds is non-negative display value
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        segments_completed: prog.time_seconds as u32,
-                        segments_total: None,
-                        elapsed_seconds: start_time.elapsed().as_secs_f64(),
-                    });
-                }
+                && let Some(ref cb) = progress
+            {
+                cb(StreamProgress {
+                    bytes_downloaded: 0, // Not easily available for file output
+                    // Truncation/sign-loss acceptable: time_seconds is non-negative display value
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    segments_completed: prog.time_seconds as u32,
+                    segments_total: None,
+                    elapsed_seconds: start_time.elapsed().as_secs_f64(),
+                });
+            }
 
             if line.contains("Error") {
                 warn!("ffmpeg: {}", line);
