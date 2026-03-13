@@ -14,9 +14,9 @@
 //! ```rust
 //! use nab::content::focus::extract_focused;
 //!
-//! let md = "# Intro\n\nWelcome.\n\n## Authentication\n\nUse bearer tokens.\n\n## Styling\n\nUse CSS.";
+//! let md = "# Intro\n\nWelcome.\n\n## Auth\n\nBearer tokens.\n\n## Styling\n\nCSS.\n\n## Deploy\n\nDocker.\n\n## Logging\n\nJSON.\n\n## Metrics\n\nProm.";
 //! let result = extract_focused(md, "authentication bearer tokens");
-//! assert!(result.markdown.contains("## Authentication"));
+//! assert!(result.markdown.contains("## Auth"));
 //! assert!(result.omitted_sections > 0);
 //! ```
 
