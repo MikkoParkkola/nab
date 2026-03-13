@@ -17,12 +17,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rust_mcp_sdk::mcp_server::{ServerHandler, server_runtime};
+use rust_mcp_sdk::mcp_server::{McpServerOptions, ServerHandler, server_runtime};
 use rust_mcp_sdk::schema::{
-    CallToolRequest, CallToolResult, Implementation, InitializeResult, LATEST_PROTOCOL_VERSION,
-    ListToolsRequest, ListToolsResult, RpcError, ServerCapabilities, ServerCapabilitiesTools,
-    ToolOutputSchema, schema_utils::CallToolError,
+    CallToolRequestParams, CallToolResult, Implementation, InitializeResult,
+    LATEST_PROTOCOL_VERSION, ListToolsResult, PaginatedRequestParams, RpcError, ServerCapabilities,
+    ServerCapabilitiesTools, ToolOutputSchema, schema_utils::CallToolError,
 };
+use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
 use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 
 use tools::{
@@ -74,6 +75,7 @@ fn fetch_output_schema() -> ToolOutputSchema {
             "timing_ms".into(),
         ],
         Some(props),
+        None,
     )
 }
 
@@ -118,7 +120,7 @@ fn fetch_batch_output_schema() -> ToolOutputSchema {
     results_schema.insert("items".into(), serde_json::Value::Object(results_items));
     props.insert("results".into(), results_schema);
 
-    ToolOutputSchema::new(vec!["results".into()], Some(props))
+    ToolOutputSchema::new(vec!["results".into()], Some(props), None)
 }
 
 /// Build the `outputSchema` for the `auth_lookup` tool.
@@ -132,7 +134,7 @@ fn auth_lookup_output_schema() -> ToolOutputSchema {
         "has_totp".into(),
         bool_prop("Whether a TOTP credential is stored"),
     );
-    ToolOutputSchema::new(vec!["domain".into(), "has_totp".into()], Some(props))
+    ToolOutputSchema::new(vec!["domain".into(), "has_totp".into()], Some(props), None)
 }
 
 /// Build the `outputSchema` for the `fingerprint` tool.
@@ -175,7 +177,7 @@ fn fingerprint_output_schema() -> ToolOutputSchema {
     profiles_schema.insert("items".into(), serde_json::Value::Object(profiles_items));
     props.insert("profiles".into(), profiles_schema);
 
-    ToolOutputSchema::new(vec!["profiles".into()], Some(props))
+    ToolOutputSchema::new(vec!["profiles".into()], Some(props), None)
 }
 
 /// Build the `outputSchema` for the `benchmark` tool.
@@ -223,7 +225,7 @@ fn benchmark_output_schema() -> ToolOutputSchema {
     results_schema.insert("items".into(), serde_json::Value::Object(results_items));
     props.insert("results".into(), results_schema);
 
-    ToolOutputSchema::new(vec!["results".into()], Some(props))
+    ToolOutputSchema::new(vec!["results".into()], Some(props), None)
 }
 
 // ─── Schema property helpers ──────────────────────────────────────────────────
@@ -264,7 +266,7 @@ pub struct MicroFetchHandler;
 impl ServerHandler for MicroFetchHandler {
     async fn handle_list_tools_request(
         &self,
-        _request: ListToolsRequest,
+        _params: Option<PaginatedRequestParams>,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<ListToolsResult, RpcError> {
         let mut tools = MicroFetchTools::tools();
@@ -292,10 +294,10 @@ impl ServerHandler for MicroFetchHandler {
 
     async fn handle_call_tool_request(
         &self,
-        request: CallToolRequest,
+        params: CallToolRequestParams,
         runtime: Arc<dyn McpServer>,
     ) -> Result<CallToolResult, CallToolError> {
-        let tool = MicroFetchTools::try_from(request.params)
+        let tool = MicroFetchTools::try_from(params)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         match tool {
@@ -327,6 +329,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: "nab".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("MicroFetch Browser Engine".into()),
+            description: None,
+            icons: vec![],
+            website_url: None,
         },
         capabilities: ServerCapabilities {
             tools: Some(ServerCapabilitiesTools { list_changed: None }),
@@ -345,7 +350,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let transport = StdioTransport::new(TransportOptions::default())?;
     let handler = MicroFetchHandler;
-    let server = server_runtime::create_server(server_details, transport, handler);
+    let server = server_runtime::create_server(McpServerOptions {
+        server_details,
+        transport,
+        handler: handler.to_mcp_server_handler(),
+        task_store: None,
+        client_task_store: None,
+    });
 
     Ok(server.start().await?)
 }

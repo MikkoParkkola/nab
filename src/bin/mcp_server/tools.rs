@@ -10,8 +10,10 @@ use std::time::Instant;
 use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{
-    CallToolResult, ElicitRequestedSchema, ElicitResultAction, EnumSchema,
-    PrimitiveSchemaDefinition, StringSchema, TextContent, schema_utils::CallToolError,
+    CallToolResult, ElicitFormSchema, ElicitRequestFormParams, ElicitRequestParams,
+    ElicitResultAction, ElicitResultContent, ElicitResultContentPrimitive,
+    LegacyTitledEnumSchema, PrimitiveSchemaDefinition, StringSchema, TextContent,
+    schema_utils::CallToolError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -654,6 +656,7 @@ async fn elicit_credentials(
     properties.insert(
         "username".into(),
         PrimitiveSchemaDefinition::StringSchema(StringSchema::new(
+            None,
             Some("Your username or email address".into()),
             None,
             None,
@@ -664,6 +667,7 @@ async fn elicit_credentials(
     properties.insert(
         "password".into(),
         PrimitiveSchemaDefinition::StringSchema(StringSchema::new(
+            None,
             Some("Your password".into()),
             None,
             None,
@@ -672,13 +676,15 @@ async fn elicit_credentials(
         )),
     );
 
-    let schema = ElicitRequestedSchema::new(properties, vec!["username".into(), "password".into()]);
+    let schema = ElicitFormSchema::new(properties, vec!["username".into(), "password".into()], None);
 
     let result = runtime
-        .elicit_input(
+        .request_elicitation(ElicitRequestParams::FormParams(ElicitRequestFormParams::new(
             format!("No stored credentials found for {url}. Please enter your login details:"),
             schema,
-        )
+            None,
+            None,
+        )))
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
@@ -718,21 +724,24 @@ async fn elicit_credential_choice(
     let mut properties = HashMap::new();
     properties.insert(
         "credential".into(),
-        PrimitiveSchemaDefinition::EnumSchema(EnumSchema::new(
+        PrimitiveSchemaDefinition::LegacyTitledEnumSchema(LegacyTitledEnumSchema::new(
             titles.clone(),
             title_labels,
+            None,
             Some("Select the credential to use for login".into()),
             Some("Credential".into()),
         )),
     );
 
-    let schema = ElicitRequestedSchema::new(properties, vec!["credential".into()]);
+    let schema = ElicitFormSchema::new(properties, vec!["credential".into()], None);
 
     let result = runtime
-        .elicit_input(
-            format!("Multiple credentials found for {url}. Which one would you like to use?",),
+        .request_elicitation(ElicitRequestParams::FormParams(ElicitRequestFormParams::new(
+            format!("Multiple credentials found for {url}. Which one would you like to use?"),
             schema,
-        )
+            None,
+            None,
+        )))
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
@@ -820,12 +829,13 @@ async fn run_login_with_credentials(
 
 /// Extract a string value from the elicitation response content map.
 fn extract_string_field(
-    content: &HashMap<String, rust_mcp_sdk::schema::ElicitResultContentValue>,
+    content: &HashMap<String, ElicitResultContent>,
     field: &str,
 ) -> Result<String, CallToolError> {
-    use rust_mcp_sdk::schema::ElicitResultContentValue;
     match content.get(field) {
-        Some(ElicitResultContentValue::String(s)) => Ok(s.clone()),
+        Some(ElicitResultContent::Primitive(ElicitResultContentPrimitive::String(s))) => {
+            Ok(s.clone())
+        }
         Some(_) => Err(CallToolError::from_message(format!(
             "Unexpected type for elicitation field '{field}'"
         ))),
