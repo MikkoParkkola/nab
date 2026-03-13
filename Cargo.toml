@@ -23,19 +23,17 @@ pkg-fmt = "bin"
 # ═══════════════════════════════════════════════════════════════════════════════
 # HTTP CLIENT - ALL ACCELERATION FEATURES
 # ═══════════════════════════════════════════════════════════════════════════════
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "cookies",           # Cookie jar support
     "brotli",            # Brotli decompression (20-25% better than gzip)
     "zstd",              # Zstd decompression (40% faster than brotli)
     "gzip",              # Gzip fallback
     "deflate",           # Deflate fallback
-    "rustls-tls-webpki-roots", # TLS 1.3 + bundled Mozilla root certs
-    "rustls-tls-native-roots", # Native OS cert store fallback (legacy CAs not in Mozilla bundle)
-    "http2",             # HTTP/2 multiplexing (100 streams/connection)
+    "rustls",            # TLS via rustls-platform-verifier (native OS certs + bundled roots)
+    "http2",             # HTTP/2 multiplexing (now an explicit feature in 0.13)
     "stream",            # Streaming responses
     "hickory-dns",       # DNS caching + Happy Eyeballs (IPv4/6 racing)
     "charset",           # Auto charset detection
-    "macos-system-configuration", # macOS proxy detection
     "blocking",          # Blocking client for auto-update initialization
     "json",              # JSON support for API responses
 ] }
@@ -68,9 +66,8 @@ rustls-native-certs = "0.8"
 # ═══════════════════════════════════════════════════════════════════════════════
 # HTML PARSING (Browser-grade, from Servo)
 # ═══════════════════════════════════════════════════════════════════════════════
-html5ever = "0.29"
 # markup5ever_rcdom removed - scraper provides DOM manipulation
-scraper = "0.22"                    # CSS selectors + DOM manipulation
+scraper = "0.25"                    # CSS selectors + DOM manipulation
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # JAVASCRIPT ENGINE (QuickJS - 1MB, ES2020)
