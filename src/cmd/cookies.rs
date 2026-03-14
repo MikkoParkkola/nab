@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use nab::CookieSource;
 
-use super::fetch::resolve_browser_name;
+use super::resolve_browser_name;
 
 pub async fn cmd_cookies(subcommand: &str, domain: &str, browser: &str) -> Result<()> {
     match subcommand {

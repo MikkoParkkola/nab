@@ -2,7 +2,6 @@ use anyhow::Result;
 
 use nab::AcceleratedClient;
 
-use super::fetch::{resolve_browser_name, resolve_cookie_source};
 use super::output::output_body;
 use crate::OutputFormat;
 
@@ -84,15 +83,13 @@ fn create_login_client(
 
     let domain = super::extract_domain(url);
 
-    let mut cookie_header = None;
-    if let Some(browser) = resolve_browser_name(cookies) {
-        let source = resolve_cookie_source(&browser);
-        let header = source.get_cookie_header(&domain).unwrap_or_default();
-        if !header.is_empty() {
-            println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
-            cookie_header = Some(header);
-        }
-    }
+    let header = super::resolve_cookie_header(cookies, &domain);
+    let cookie_header = if header.is_empty() {
+        None
+    } else {
+        println!("🍪 Loading cookies for {domain}");
+        Some(header)
+    };
 
     Ok((client, cookie_header))
 }

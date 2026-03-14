@@ -5,8 +5,6 @@ use scraper::{Html, Selector};
 
 use nab::{AcceleratedClient, ApiDiscovery, FetchClient, JsEngine, inject_fetch_sync};
 
-use super::fetch::{resolve_browser_name, resolve_cookie_source};
-
 /// Configuration for the `nab spa` command.
 #[allow(clippy::struct_excessive_bools)] // 1:1 map of CLI boolean flags
 pub struct SpaConfig {
@@ -28,16 +26,9 @@ pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
     let client = AcceleratedClient::new()?;
 
     let domain = super::extract_domain(&cfg.url);
-
-    let mut cookie_header = String::new();
-    let browser_name = resolve_browser_name(&cfg.cookies);
-
-    if let Some(browser) = &browser_name {
-        let source = resolve_cookie_source(browser);
-        cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
-        if !cookie_header.is_empty() {
-            println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
-        }
+    let cookie_header = super::resolve_cookie_header(&cfg.cookies, &domain);
+    if !cookie_header.is_empty() {
+        println!("🍪 Loading cookies for {domain}");
     }
 
     let profile = client.profile().await;

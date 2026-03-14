@@ -10,7 +10,7 @@ use anyhow::Result;
 use nab::content::ContentRouter;
 use nab::rate_limit::DomainRateLimiter;
 
-use super::fetch::{FetchConfig, build_client, resolve_browser_name, resolve_cookie_source};
+use super::fetch::{FetchConfig, build_client};
 use crate::OutputFormat;
 
 /// Default minimum delay between requests to the same domain (milliseconds).
@@ -123,11 +123,7 @@ async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_
 
     let domain = super::extract_domain(&url);
 
-    let mut cookie_header = String::new();
-    if let Some(browser) = resolve_browser_name(&params.cookies) {
-        let source = resolve_cookie_source(&browser);
-        cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
-    }
+    let cookie_header = super::resolve_cookie_header(&params.cookies, &domain);
 
     let mut request = match params.method.to_uppercase().as_str() {
         "POST" => client.inner().post(&url),

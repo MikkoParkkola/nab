@@ -8,7 +8,7 @@ use anyhow::Result;
 use nab::content::diff::ContentSnapshot;
 use nab::content::diff_format::format_diff_terminal;
 use nab::content::snapshot_store::SnapshotStore;
-use nab::{AcceleratedClient, CookieSource, OnePasswordAuth, SafeFetchConfig};
+use nab::{AcceleratedClient, OnePasswordAuth, SafeFetchConfig};
 
 use super::output::output_body;
 use crate::OutputFormat;
@@ -54,15 +54,9 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let domain = super::extract_domain(&cfg.url);
 
-    let mut cookie_header = String::new();
-    let browser_name = resolve_browser_name(&cfg.cookies);
-
-    if let Some(browser) = &browser_name {
-        let source = resolve_cookie_source(browser);
-        cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
-        if !cookie_header.is_empty() && matches!(cfg.format, OutputFormat::Full) {
-            println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
-        }
+    let cookie_header = super::resolve_cookie_header(&cfg.cookies, &domain);
+    if !cookie_header.is_empty() && matches!(cfg.format, OutputFormat::Full) {
+        println!("🍪 Loading cookies for {domain}");
     }
 
     let site_router = nab::site::SiteRouter::new();
@@ -519,30 +513,6 @@ pub(super) fn build_client(no_redirect: bool, proxy: Option<&str>) -> Result<Acc
     }
 }
 
-/// Resolve browser name from cookie flag value.
-///
-/// Returns `None` for `"none"`, auto-detects for `"auto"`, or passes
-/// through the explicit browser name.
-pub(super) fn resolve_browser_name(cookies: &str) -> Option<String> {
-    match cookies.to_lowercase().as_str() {
-        "none" => None,
-        "auto" => Some(
-            nab::detect_default_browser()
-                .map_or_else(|_| "chrome".to_string(), |b| b.as_str().to_string()),
-        ),
-        _ => Some(cookies.to_string()),
-    }
-}
-
-/// Resolve `CookieSource` from browser name string.
-pub(super) fn resolve_cookie_source(browser: &str) -> CookieSource {
-    match browser.to_lowercase().as_str() {
-        "brave" => CookieSource::Brave,
-        "firefox" => CookieSource::Firefox,
-        "safari" => CookieSource::Safari,
-        _ => CookieSource::Chrome,
-    }
-}
 
 /// Return `Some(header)` if non-empty, `None` otherwise.
 ///

@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use nab::CookieSource;
 
-use super::fetch::resolve_browser_name;
+use super::resolve_browser_name;
 
 /// Configuration for the `nab stream` command.
 #[allow(clippy::struct_excessive_bools)] // 1:1 map of CLI boolean flags

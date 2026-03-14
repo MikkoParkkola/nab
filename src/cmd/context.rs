@@ -12,7 +12,7 @@ use nab::content::ContentRouter;
 use nab::rate_limit::DomainRateLimiter;
 use nab::site::SiteRouter;
 
-use super::fetch::{build_client, non_empty, resolve_browser_name, resolve_cookie_source};
+use super::fetch::{build_client, non_empty};
 
 /// Maximum concurrent in-flight requests.
 const DEFAULT_CONCURRENCY: usize = 10;
@@ -128,12 +128,7 @@ async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
 
     let domain = super::extract_domain(url);
 
-    let cookie_header = resolve_browser_name(cookies)
-        .map(|browser| {
-            let source = resolve_cookie_source(&browser);
-            source.get_cookie_header(&domain).unwrap_or_default()
-        })
-        .unwrap_or_default();
+    let cookie_header = super::resolve_cookie_header(cookies, &domain);
 
     let cookie_opt = non_empty(&cookie_header);
 
