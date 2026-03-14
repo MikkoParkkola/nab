@@ -558,31 +558,28 @@ async fn main() -> Result<()> {
             html,
             console,
             wait,
-            patterns,
             output,
             extract,
             summary,
             minify,
             max_array,
             max_depth,
-            http1,
+            ..
         } => {
-            cmd::cmd_spa(
-                &url,
-                &cookies,
-                html,
-                console,
-                wait,
-                patterns.as_deref(),
-                &output,
-                extract.as_deref(),
+            let cfg = cmd::SpaConfig {
+                url,
+                cookies,
+                show_html: html,
+                show_console: console,
+                wait_ms: wait,
+                output,
+                extract_path: extract,
                 summary,
                 minify,
                 max_array,
                 max_depth,
-                http1,
-            )
-            .await?;
+            };
+            cmd::cmd_spa(&cfg).await?;
         }
         Commands::Bench { urls, iterations } => {
             cmd::cmd_bench(&urls, iterations).await?;
@@ -613,21 +610,21 @@ async fn main() -> Result<()> {
             ffmpeg_opts,
             player,
         } => {
-            cmd::cmd_stream(
-                &source,
-                &id,
-                &output,
-                &quality,
-                native,
-                ffmpeg,
-                info,
-                list,
-                &cookies,
-                duration.as_deref(),
-                ffmpeg_opts.as_deref(),
-                player.as_deref(),
-            )
-            .await?;
+            let cfg = cmd::StreamCmdConfig {
+                source,
+                id,
+                output,
+                quality,
+                force_native: native,
+                force_ffmpeg: ffmpeg,
+                info_only: info,
+                list_episodes: list,
+                cookies,
+                duration,
+                ffmpeg_opts,
+                player,
+            };
+            cmd::cmd_stream(&cfg).await?;
         }
         Commands::Analyze {
             video,
@@ -676,7 +673,7 @@ async fn main() -> Result<()> {
             cookies,
             use_1password,
             headers,
-            format,
+            ..
         } => {
             cmd::cmd_submit(
                 &url,
@@ -685,7 +682,6 @@ async fn main() -> Result<()> {
                 &cookies,
                 use_1password,
                 headers,
-                format,
             )
             .await?;
         }

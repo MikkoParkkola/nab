@@ -4,25 +4,25 @@ use nab::CookieSource;
 
 use super::fetch::resolve_browser_name;
 
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::fn_params_excessive_bools
-)]
-pub async fn cmd_stream(
-    source: &str,
-    id: &str,
-    output: &str,
-    quality: &str,
-    force_native: bool,
-    force_ffmpeg: bool,
-    info_only: bool,
-    list_episodes: bool,
-    cookies: &str,
-    duration: Option<&str>,
-    ffmpeg_opts: Option<&str>,
-    player: Option<&str>,
-) -> Result<()> {
+/// Configuration for the `nab stream` command.
+#[allow(clippy::struct_excessive_bools)] // 1:1 map of CLI boolean flags
+pub struct StreamCmdConfig {
+    pub source: String,
+    pub id: String,
+    pub output: String,
+    pub quality: String,
+    pub force_native: bool,
+    pub force_ffmpeg: bool,
+    pub info_only: bool,
+    pub list_episodes: bool,
+    pub cookies: String,
+    pub duration: Option<String>,
+    pub ffmpeg_opts: Option<String>,
+    pub player: Option<String>,
+}
+
+#[allow(clippy::too_many_lines)]
+pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
     use nab::stream::{
         StreamBackend, StreamProvider, StreamQuality,
         backend::StreamConfig,
@@ -34,7 +34,7 @@ pub async fn cmd_stream(
     use tokio::io::{AsyncWriteExt, stdout};
 
     // Parse quality
-    let stream_quality = match quality.to_lowercase().as_str() {
+    let stream_quality = match cfg.quality.to_lowercase().as_str() {
         "best" => StreamQuality::Best,
         "worst" => StreamQuality::Worst,
         q => q
@@ -44,7 +44,7 @@ pub async fn cmd_stream(
     };
 
     // Select provider based on source
-    let provider: Box<dyn StreamProvider> = match source.to_lowercase().as_str() {
+    let provider: Box<dyn StreamProvider> = match cfg.source.to_lowercase().as_str() {
         "yle" => Box::new(YleProvider::new()?),
         "generic" | "hls" | "dash" => Box::new(GenericHlsProvider::new()),
         url if url.starts_with("http") => {
@@ -55,15 +55,18 @@ pub async fn cmd_stream(
             }
         }
         _ => {
-            if id.contains("areena.yle.fi") || id.starts_with("1-") {
+            if cfg.id.contains("areena.yle.fi") || cfg.id.starts_with("1-") {
                 Box::new(YleProvider::new()?)
-            } else if std::path::Path::new(id.split('?').next().unwrap_or(id))
+            } else if std::path::Path::new(cfg.id.split('?').next().unwrap_or(&cfg.id))
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("mpd"))
             {
                 Box::new(GenericHlsProvider::new())
             } else {
-                anyhow::bail!("Unknown source: {source}. Use 'yle', 'generic', or a direct URL.");
+                anyhow::bail!(
+                    "Unknown source: {}. Use 'yle', 'generic', or a direct URL.",
+                    cfg.source
+                );
             }
         }
     };
@@ -71,9 +74,9 @@ pub async fn cmd_stream(
     eprintln!("🎬 Provider: {}", provider.name());
 
     // List episodes mode
-    if list_episodes {
-        eprintln!("📋 Listing episodes for: {id}");
-        let series = provider.list_series(id).await?;
+    if cfg.list_episodes {
+        eprintln!("📋 Listing episodes for: {}", cfg.id);
+        let series = provider.list_series(&cfg.id).await?;
         println!("Series: {}", series.title);
         println!("Episodes: {}", series.episodes.len());
         for ep in &series.episodes {
@@ -95,11 +98,11 @@ pub async fn cmd_stream(
     }
 
     // Get stream info
-    eprintln!("📡 Fetching stream info for: {id}");
-    let stream_info = provider.get_stream_info(id).await?;
+    eprintln!("📡 Fetching stream info for: {}", cfg.id);
+    let stream_info = provider.get_stream_info(&cfg.id).await?;
 
     // Info only mode
-    if info_only {
+    if cfg.info_only {
         println!("Title: {}", stream_info.title);
         if let Some(ref desc) = stream_info.description {
             println!("Description: {desc}");
@@ -139,7 +142,7 @@ pub async fn cmd_stream(
         );
         headers.insert("X-Forwarded-For".to_string(), ip);
 
-        if cookies.to_lowercase() == "none" {
+        if cfg.cookies.to_lowercase() == "none" {
             eprintln!(
                 "🌍 Using Finnish IP for geo access. Add --cookies to enable authenticated content."
             );
@@ -149,7 +152,7 @@ pub async fn cmd_stream(
     }
 
     // Extract cookies from browser
-    let browser_name = resolve_browser_name(cookies);
+    let browser_name = resolve_browser_name(&cfg.cookies);
 
     if let Some(browser) = browser_name {
         eprintln!("🍪 Extracting cookies from {browser}...");
@@ -182,10 +185,10 @@ pub async fn cmd_stream(
     let config = StreamConfig {
         quality: stream_quality,
         headers,
-        cookies: if cookies.to_lowercase() == "none" {
+        cookies: if cfg.cookies.to_lowercase() == "none" {
             None
         } else {
-            Some(cookies.to_string())
+            Some(cfg.cookies.clone())
         },
     };
 
@@ -193,7 +196,7 @@ pub async fn cmd_stream(
     let manifest_url = if provider.name() == "yle" {
         eprintln!("🔄 Getting fresh manifest URL via yle-dl...");
         let yle_provider = YleProvider::new()?;
-        match yle_provider.get_fresh_manifest_url(id).await {
+        match yle_provider.get_fresh_manifest_url(&cfg.id).await {
             Ok(url) => {
                 eprintln!("   ✅ Got fresh URL");
                 url
@@ -211,14 +214,14 @@ pub async fn cmd_stream(
     let is_dash = manifest_url.contains(".mpd");
     let is_encrypted = false;
 
-    let use_ffmpeg = force_ffmpeg || is_dash || is_encrypted || ffmpeg_opts.is_some();
-    let use_native = force_native && !is_dash && !is_encrypted;
+    let use_ffmpeg = cfg.force_ffmpeg || is_dash || is_encrypted || cfg.ffmpeg_opts.is_some();
+    let use_native = cfg.force_native && !is_dash && !is_encrypted;
 
     if use_ffmpeg && !use_native {
         eprintln!("🔧 Backend: ffmpeg");
         let mut backend = FfmpegBackend::new()?;
 
-        if let Some(opts) = ffmpeg_opts {
+        if let Some(opts) = &cfg.ffmpeg_opts {
             backend = backend.with_transcode_opts(opts);
         }
 
@@ -233,10 +236,10 @@ pub async fn cmd_stream(
             eprint!("\r   📥 {mb:.1} MB, {:.1}s elapsed    ", p.elapsed_seconds);
         };
 
-        if let Some(player_cmd) = player {
+        if let Some(player_cmd) = &cfg.player {
             eprintln!("🎬 Piping to: {player_cmd}");
             let player_args = get_player_stdin_args(player_cmd);
-            let mut child = tokio::process::Command::new(player_cmd)
+            let mut child = tokio::process::Command::new(player_cmd.as_str())
                 .args(&player_args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::inherit())
@@ -249,7 +252,7 @@ pub async fn cmd_stream(
                 .take()
                 .ok_or_else(|| anyhow::anyhow!("Failed to get stdin for {player_cmd}"))?;
 
-            if let Some(dur_str) = duration {
+            if let Some(dur_str) = &cfg.duration {
                 let secs = parse_duration(dur_str)?;
                 backend
                     .stream_with_duration(
@@ -273,9 +276,9 @@ pub async fn cmd_stream(
 
             drop(stdin);
             child.wait().await?;
-        } else if output == "-" {
+        } else if cfg.output == "-" {
             let mut stdout = stdout();
-            if let Some(dur_str) = duration {
+            if let Some(dur_str) = &cfg.duration {
                 let secs = parse_duration(dur_str)?;
                 backend
                     .stream_with_duration(
@@ -298,8 +301,8 @@ pub async fn cmd_stream(
             }
             stdout.flush().await?;
         } else {
-            let path = std::path::Path::new(output);
-            let duration_parsed = duration.map(parse_duration).transpose()?;
+            let path = std::path::Path::new(&cfg.output);
+            let duration_parsed = cfg.duration.as_deref().map(parse_duration).transpose()?;
             backend
                 .stream_to_file(
                     manifest_url,
@@ -332,10 +335,10 @@ pub async fn cmd_stream(
             );
         };
 
-        if let Some(player_cmd) = player {
+        if let Some(player_cmd) = &cfg.player {
             eprintln!("🎬 Piping to: {player_cmd}");
             let player_args = get_player_stdin_args(player_cmd);
-            let mut child = tokio::process::Command::new(player_cmd)
+            let mut child = tokio::process::Command::new(player_cmd.as_str())
                 .args(&player_args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::inherit())
@@ -359,7 +362,7 @@ pub async fn cmd_stream(
 
             drop(stdin);
             child.wait().await?;
-        } else if output == "-" {
+        } else if cfg.output == "-" {
             let mut stdout = stdout();
             backend
                 .stream_to(
@@ -371,8 +374,8 @@ pub async fn cmd_stream(
                 .await?;
             stdout.flush().await?;
         } else {
-            let path = std::path::Path::new(output);
-            let duration_parsed = duration.map(parse_duration).transpose()?;
+            let path = std::path::Path::new(&cfg.output);
+            let duration_parsed = cfg.duration.as_deref().map(parse_duration).transpose()?;
             backend
                 .stream_to_file(
                     manifest_url,

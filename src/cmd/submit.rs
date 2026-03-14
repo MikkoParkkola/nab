@@ -3,9 +3,7 @@ use anyhow::Result;
 use nab::AcceleratedClient;
 
 use super::output::output_response;
-use crate::OutputFormat;
 
-#[allow(clippy::too_many_arguments)]
 pub async fn cmd_submit(
     url: &str,
     field_args: &[String],
@@ -13,7 +11,6 @@ pub async fn cmd_submit(
     cookies: &str,
     use_1password: bool,
     show_headers: bool,
-    _format: OutputFormat,
 ) -> Result<()> {
     use nab::{Form, parse_field_args};
 

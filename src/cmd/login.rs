@@ -1,11 +1,12 @@
 use anyhow::Result;
 
-use nab::{AcceleratedClient, CookieSource};
+use nab::AcceleratedClient;
 
+use super::fetch::{resolve_browser_name, resolve_cookie_source};
 use super::output::output_body;
 use crate::OutputFormat;
 
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)] // CLI commands require multiple independent bool flags
 pub async fn cmd_login(
     url: &str,
     use_1password: bool,
@@ -30,7 +31,7 @@ pub async fn cmd_login(
 
     println!("🔐 Starting auto-login for: {url}");
 
-    let (client, cookie_header) = create_client_with_cookies(cookies, url)?;
+    let (client, cookie_header) = create_login_client(cookies, url)?;
 
     #[cfg(feature = "browser")]
     let login_flow = {
@@ -71,25 +72,21 @@ pub async fn cmd_login(
     Ok(())
 }
 
-/// Create HTTP client with cookie support and return cookie header
-fn create_client_with_cookies(
+/// Create HTTP client with cookie support and return cookie header.
+fn create_login_client(
     cookies: &str,
     url: &str,
 ) -> Result<(AcceleratedClient, Option<String>)> {
     let client = AcceleratedClient::new()?;
 
-    // Extract domain from URL
     let domain = url::Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(std::string::ToString::to_string))
         .unwrap_or_default();
 
-    // Get cookies (auto-detect by default, unless "none")
     let mut cookie_header = None;
-    let browser_name = resolve_browser_name(cookies);
-
-    if let Some(browser) = &browser_name {
-        let source = resolve_cookie_source(browser);
+    if let Some(browser) = resolve_browser_name(cookies) {
+        let source = resolve_cookie_source(&browser);
         let header = source.get_cookie_header(&domain).unwrap_or_default();
         if !header.is_empty() {
             println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
@@ -98,29 +95,4 @@ fn create_client_with_cookies(
     }
 
     Ok((client, cookie_header))
-}
-
-/// Resolve browser name from cookies parameter
-fn resolve_browser_name(cookies: &str) -> Option<String> {
-    if cookies.to_lowercase() == "none" {
-        None
-    } else if cookies.to_lowercase() == "auto" {
-        if let Ok(detected) = nab::detect_default_browser() {
-            Some(detected.as_str().to_string())
-        } else {
-            Some("chrome".to_string()) // fallback
-        }
-    } else {
-        Some(cookies.to_string())
-    }
-}
-
-/// Resolve `CookieSource` from browser name string
-fn resolve_cookie_source(browser: &str) -> CookieSource {
-    match browser.to_lowercase().as_str() {
-        "brave" => CookieSource::Brave,
-        "firefox" => CookieSource::Firefox,
-        "safari" => CookieSource::Safari,
-        _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
-    }
 }

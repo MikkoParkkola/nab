@@ -7,37 +7,33 @@ use nab::{AcceleratedClient, ApiDiscovery, FetchClient, JsEngine, inject_fetch_s
 
 use super::fetch::{resolve_browser_name, resolve_cookie_source};
 
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::fn_params_excessive_bools
-)]
-pub async fn cmd_spa(
-    url: &str,
-    cookies: &str,
-    show_html: bool,
-    show_console: bool,
-    wait_ms: u64,
-    _patterns: Option<&str>,
-    output: &str,
-    extract_path: Option<&str>,
-    summary: bool,
-    minify: bool,
-    max_array: Option<usize>,
-    max_depth: Option<usize>,
-    _http1: bool,
-) -> Result<()> {
+/// Configuration for the `nab spa` command.
+#[allow(clippy::struct_excessive_bools)] // 1:1 map of CLI boolean flags
+pub struct SpaConfig {
+    pub url: String,
+    pub cookies: String,
+    pub show_html: bool,
+    pub show_console: bool,
+    pub wait_ms: u64,
+    pub output: String,
+    pub extract_path: Option<String>,
+    pub summary: bool,
+    pub minify: bool,
+    pub max_array: Option<usize>,
+    pub max_depth: Option<usize>,
+}
+
+#[allow(clippy::too_many_lines)]
+pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
     let client = AcceleratedClient::new()?;
 
-    // Extract domain from URL
-    let domain = url::Url::parse(url)
+    let domain = url::Url::parse(&cfg.url)
         .ok()
         .and_then(|u| u.host_str().map(std::string::ToString::to_string))
         .unwrap_or_default();
 
-    // Get cookies (auto-detect by default, unless "none")
     let mut cookie_header = String::new();
-    let browser_name = resolve_browser_name(cookies);
+    let browser_name = resolve_browser_name(&cfg.cookies);
 
     if let Some(browser) = &browser_name {
         let source = resolve_cookie_source(browser);
@@ -51,11 +47,11 @@ pub async fn cmd_spa(
     let start = Instant::now();
 
     let response = if cookie_header.is_empty() {
-        client.fetch(url).await?
+        client.fetch(&cfg.url).await?
     } else {
         client
             .inner()
-            .get(url)
+            .get(&cfg.url)
             .header("Cookie", &cookie_header)
             .headers(profile.to_headers())
             .send()
@@ -65,16 +61,15 @@ pub async fn cmd_spa(
     let html = response.text().await?;
     let elapsed = start.elapsed();
 
-    println!("🕸️  Extracting SPA data from: {url}");
+    println!("🕸️  Extracting SPA data from: {}", cfg.url);
 
-    // Look for common SPA data patterns
     let mut found_data = false;
 
     // STEP 0: Try static API discovery first (fastest path ~50ms)
     let api_discovery = ApiDiscovery::new()?;
     let discovered_endpoints = api_discovery.discover_from_html(&html);
 
-    if !discovered_endpoints.is_empty() && show_console {
+    if !discovered_endpoints.is_empty() && cfg.show_console {
         println!(
             "\n🔍 Discovered {} API endpoints statically:",
             discovered_endpoints.len()
@@ -108,7 +103,7 @@ pub async fn cmd_spa(
                 if endpoint.url.starts_with("http://") || endpoint.url.starts_with("https://") {
                     endpoint.url.clone()
                 } else if endpoint.url.starts_with('/') {
-                    url::Url::parse(url).ok().map_or_else(
+                    url::Url::parse(&cfg.url).ok().map_or_else(
                         || endpoint.url.clone(),
                         |u| format!("{}{}", u.origin().unicode_serialization(), endpoint.url),
                     )
@@ -116,7 +111,7 @@ pub async fn cmd_spa(
                     continue;
                 };
 
-            if show_console {
+            if cfg.show_console {
                 println!("🌐 Trying endpoint: {endpoint_url}");
             }
 
@@ -150,15 +145,7 @@ pub async fn cmd_spa(
                     elapsed.as_secs_f64() * 1000.0
                 );
                 println!("\n✅ API endpoint {endpoint_url} returned data:");
-                output_spa_data(
-                    &data,
-                    output,
-                    extract_path,
-                    summary,
-                    minify,
-                    max_array,
-                    max_depth,
-                )?;
+                output_spa_data(&data, cfg)?;
                 found_data = true;
                 break;
             }
@@ -166,88 +153,18 @@ pub async fn cmd_spa(
     }
 
     // STEP 1: Try embedded JSON extraction (fast path ~100ms)
-    if !found_data && let Some(data) = extract_script_json(&html, "__NEXT_DATA__") {
-        println!(
-            "\n📊 Extraction complete in {:.2}ms",
-            elapsed.as_secs_f64() * 1000.0
-        );
-        println!("\n✅ __NEXT_DATA__ found:");
-        output_spa_data(
-            &data,
-            output,
-            extract_path,
-            summary,
-            minify,
-            max_array,
-            max_depth,
-        )?;
-        found_data = true;
+    if !found_data {
+        try_extract_and_output(&html, "__NEXT_DATA__", elapsed, &mut found_data, cfg)?;
     }
 
-    if let Some(data) = extract_script_json(&html, "__INITIAL_STATE__") {
-        if !found_data {
-            println!(
-                "\n📊 Extraction complete in {:.2}ms",
-                elapsed.as_secs_f64() * 1000.0
-            );
-        }
-        println!("\n✅ __INITIAL_STATE__ found:");
-        output_spa_data(
-            &data,
-            output,
-            extract_path,
-            summary,
-            minify,
-            max_array,
-            max_depth,
-        )?;
-        found_data = true;
-    }
-
-    if let Some(data) = extract_script_json(&html, "__NUXT__") {
-        if !found_data {
-            println!(
-                "\n📊 Extraction complete in {:.2}ms",
-                elapsed.as_secs_f64() * 1000.0
-            );
-        }
-        println!("\n✅ __NUXT__ found:");
-        output_spa_data(
-            &data,
-            output,
-            extract_path,
-            summary,
-            minify,
-            max_array,
-            max_depth,
-        )?;
-        found_data = true;
-    }
-
-    if let Some(data) = extract_script_json(&html, "__PRELOADED_STATE__") {
-        if !found_data {
-            println!(
-                "\n📊 Extraction complete in {:.2}ms",
-                elapsed.as_secs_f64() * 1000.0
-            );
-        }
-        println!("\n✅ __PRELOADED_STATE__ found:");
-        output_spa_data(
-            &data,
-            output,
-            extract_path,
-            summary,
-            minify,
-            max_array,
-            max_depth,
-        )?;
-        found_data = true;
+    for name in &["__INITIAL_STATE__", "__NUXT__", "__PRELOADED_STATE__"] {
+        try_extract_and_output(&html, name, elapsed, &mut found_data, cfg)?;
     }
 
     if !found_data {
         println!("\n⚙️  No embedded JSON found, trying JavaScript execution...");
 
-        let base_url = url::Url::parse(url)
+        let base_url = url::Url::parse(&cfg.url)
             .ok()
             .map(|u| u.origin().unicode_serialization())
             .unwrap_or_default();
@@ -271,9 +188,10 @@ pub async fn cmd_spa(
         let fetch_client_clone = fetch_client.clone();
         inject_fetch_sync(js_engine.context(), fetch_client_clone)?;
 
-        js_engine.set_global("__PAGE_URL__", url)?;
+        js_engine.set_global("__PAGE_URL__", &cfg.url)?;
         js_engine.eval(&format!(
-            "window.location.href = '{url}'; window.location.hostname = '{domain}';"
+            "window.location.href = '{}'; window.location.hostname = '{domain}';",
+            cfg.url
         ))?;
 
         let document = Html::parse_document(&html);
@@ -290,12 +208,12 @@ pub async fn cmd_spa(
                 continue;
             }
 
-            if show_console {
+            if cfg.show_console {
                 println!("📜 Executing script ({} chars)", script_content.len());
             }
 
             if let Err(e) = js_engine.eval(&script_content) {
-                if show_console {
+                if cfg.show_console {
                     println!("⚠️  Script execution error: {e}");
                 }
             } else {
@@ -305,9 +223,9 @@ pub async fn cmd_spa(
 
         println!("✅ Executed {scripts_executed} inline scripts");
 
-        if wait_ms > 0 {
-            println!("⏳ Waiting {wait_ms}ms for async operations...");
-            std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+        if cfg.wait_ms > 0 {
+            println!("⏳ Waiting {}ms for async operations...", cfg.wait_ms);
+            std::thread::sleep(std::time::Duration::from_millis(cfg.wait_ms));
         }
 
         let patterns_to_check = vec![
@@ -323,15 +241,7 @@ pub async fn cmd_spa(
                 && let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str)
             {
                 println!("\n✅ {name} found via JavaScript execution:");
-                output_spa_data(
-                    &data,
-                    output,
-                    extract_path,
-                    summary,
-                    minify,
-                    max_array,
-                    max_depth,
-                )?;
+                output_spa_data(&data, cfg)?;
                 found_data = true;
                 break;
             }
@@ -360,15 +270,7 @@ pub async fn cmd_spa(
             if !clean_data.is_empty() {
                 println!("\n✅ Extracted window data via JavaScript:");
                 let data = serde_json::Value::Object(clean_data);
-                output_spa_data(
-                    &data,
-                    output,
-                    extract_path,
-                    summary,
-                    minify,
-                    max_array,
-                    max_depth,
-                )?;
+                output_spa_data(&data, cfg)?;
                 found_data = true;
             }
         }
@@ -385,13 +287,35 @@ pub async fn cmd_spa(
             println!("\n❌ No SPA data found even after JavaScript execution");
             println!("   HTML size: {} bytes", html.len());
             println!("   Scripts executed: {scripts_executed}");
-            if show_html {
+            if cfg.show_html {
                 println!("\nHTML preview (first 500 chars):");
                 println!("{}", &html.chars().take(500).collect::<String>());
             }
         }
     }
 
+    Ok(())
+}
+
+/// Try to extract a named SPA JSON variable from HTML and output it.
+fn try_extract_and_output(
+    html: &str,
+    var_name: &str,
+    elapsed: std::time::Duration,
+    found_data: &mut bool,
+    cfg: &SpaConfig,
+) -> Result<()> {
+    if let Some(data) = extract_script_json(html, var_name) {
+        if !*found_data {
+            println!(
+                "\n📊 Extraction complete in {:.2}ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
+        }
+        println!("\n✅ {var_name} found:");
+        output_spa_data(&data, cfg)?;
+        *found_data = true;
+    }
     Ok(())
 }
 
@@ -439,43 +363,6 @@ fn extract_script_json(html: &str, var_name: &str) -> Option<serde_json::Value> 
     None
 }
 
-/// Lightweight SPA data extraction for auto-detection during `nab fetch`.
-#[allow(dead_code)]
-pub fn extract_spa_data_inline(html: &str) -> Option<String> {
-    const SPA_PATTERNS: &[(&str, &str)] = &[
-        ("__NEXT_DATA__", "Next.js"),
-        ("__NUXT__", "Nuxt.js"),
-        ("__INITIAL_STATE__", "Redux/Vuex"),
-        ("__APOLLO_STATE__", "Apollo GraphQL"),
-        ("__RELAY_STORE__", "Relay"),
-        ("__PRELOADED_STATE__", "Redux"),
-    ];
-
-    let mut sections = Vec::new();
-
-    for (var_name, framework) in SPA_PATTERNS {
-        if let Some(data) = extract_script_json(html, var_name) {
-            let json_str = serde_json::to_string_pretty(&data).unwrap_or_default();
-            let truncated = if json_str.len() > 8192 {
-                format!(
-                    "```json\n{}\n... [{} more bytes]\n```",
-                    &json_str[..8192],
-                    json_str.len() - 8192
-                )
-            } else {
-                format!("```json\n{json_str}\n```")
-            };
-            sections.push(format!("### {framework} (`{var_name}`)\n\n{truncated}"));
-        }
-    }
-
-    if sections.is_empty() {
-        None
-    } else {
-        Some(sections.join("\n\n"))
-    }
-}
-
 fn extract_json_object(s: &str) -> Option<&str> {
     let first_char = s.chars().next()?;
     let (open, close) = match first_char {
@@ -512,16 +399,8 @@ fn extract_json_object(s: &str) -> Option<&str> {
     None
 }
 
-fn output_spa_data(
-    data: &serde_json::Value,
-    output: &str,
-    extract_path: Option<&str>,
-    summary: bool,
-    minify: bool,
-    max_array: Option<usize>,
-    max_depth: Option<usize>,
-) -> Result<()> {
-    let target = if let Some(path) = extract_path {
+fn output_spa_data(data: &serde_json::Value, cfg: &SpaConfig) -> Result<()> {
+    let target = if let Some(path) = &cfg.extract_path {
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = data;
         for part in parts {
@@ -532,22 +411,22 @@ fn output_spa_data(
         data.clone()
     };
 
-    let transformed = if max_array.is_some() || max_depth.is_some() {
+    let transformed = if cfg.max_array.is_some() || cfg.max_depth.is_some() {
         transform_json(
             &target,
-            max_array.unwrap_or(usize::MAX),
-            max_depth.unwrap_or(usize::MAX),
+            cfg.max_array.unwrap_or(usize::MAX),
+            cfg.max_depth.unwrap_or(usize::MAX),
             0,
         )
     } else {
         target
     };
 
-    if summary {
+    if cfg.summary {
         println!("   {} bytes", serde_json::to_string(&transformed)?.len());
         print_structure(&transformed, 3, 0);
-    } else if output == "json" || minify {
-        if minify {
+    } else if cfg.output == "json" || cfg.minify {
+        if cfg.minify {
             println!("{}", serde_json::to_string(&transformed)?);
         } else {
             println!("{}", serde_json::to_string_pretty(&transformed)?);
