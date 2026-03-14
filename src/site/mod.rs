@@ -129,9 +129,10 @@ impl SiteRouter {
 
         // Hardcoded providers — only for platforms NOT covered by a rule.
         // Rule-covered sites (twitter, youtube, wikipedia, mastodon, instagram,
-        // stackoverflow) have been removed; the rule engine handles them.
+        // stackoverflow, reddit) have been removed; the rule engine handles them.
+        // hackernews-item rule handles item pages; the hardcoded HackerNewsProvider
+        // still handles front-page listings.
         let hardcoded: Vec<Box<dyn SiteProvider>> = vec![
-            Box::new(reddit::RedditProvider),
             Box::new(hackernews::HackerNewsProvider),
             Box::new(github::GitHubProvider),
             Box::new(google::GoogleWorkspaceProvider),
@@ -293,8 +294,8 @@ mod tests {
         let router = SiteRouter::new();
         // Rule-based providers (9: twitter, youtube, wikipedia, mastodon, reddit,
         // stackoverflow, instagram, github-issues, hackernews-item) + hardcoded
-        // non-overridden providers (4: hackernews, github, google-workspace,
-        // linkedin) = 13 minimum; CSS plugins may add more.
+        // providers (4: hackernews, github, google-workspace, linkedin) = 13
+        // minimum; CSS plugins may add more.
         assert!(router.providers.len() >= 13);
 
         // All expected names must appear somewhere in the provider list.
