@@ -17,7 +17,6 @@ use crate::OutputFormat;
 const DEFAULT_DOMAIN_DELAY_MS: u64 = 200;
 
 /// Fetch URLs from a file in parallel and print results.
-#[allow(clippy::too_many_lines)]
 pub async fn cmd_fetch_batch(cfg: &FetchConfig) -> Result<()> {
     use std::sync::Arc;
     use tokio::sync::Semaphore;

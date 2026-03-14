@@ -42,7 +42,6 @@ pub struct FetchConfig {
     pub show_diff: bool,
 }
 
-#[allow(clippy::too_many_lines)]
 pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // Handle batch mode
     if cfg.batch_file.is_some() {

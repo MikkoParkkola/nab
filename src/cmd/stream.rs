@@ -19,7 +19,7 @@ pub struct StreamCmdConfig {
     pub player: Option<String>,
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // 323 lines — backend dispatch (ffmpeg/native/streamlink) is inherently branchy
 pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
     use nab::stream::{
         StreamBackend, StreamProvider, StreamQuality,
