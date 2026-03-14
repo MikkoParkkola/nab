@@ -48,8 +48,6 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
         eprintln!("   Diarization: enabled");
     }
 
-    #[allow(clippy::no_effect_underscore_binding)] // Used as a placeholder for future feature
-    let _skip_vision = audio_only;
     if audio_only {
         eprintln!("   Mode: audio-only (transcription)");
     } else if let Some(key) = &cfg.api_key {
