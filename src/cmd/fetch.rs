@@ -514,13 +514,8 @@ pub(super) fn build_client(no_redirect: bool, proxy: Option<&str>) -> Result<Acc
 }
 
 
-/// Return `Some(header)` if non-empty, `None` otherwise.
-///
-/// Eliminates the repeated `if s.is_empty() { None } else { Some(s) }` pattern
-/// used when passing optional cookie headers to providers.
-pub(super) fn non_empty(s: &str) -> Option<&str> {
-    if s.is_empty() { None } else { Some(s) }
-}
+// Re-export from mod.rs for internal use.
+pub(super) use super::non_empty;
 
 #[cfg(test)]
 mod tests {

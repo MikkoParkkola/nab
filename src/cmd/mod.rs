@@ -77,6 +77,13 @@ pub fn resolve_cookie_source(browser: &str) -> nab::CookieSource {
     }
 }
 
+/// Return `Some(s)` if non-empty, `None` otherwise.
+///
+/// Useful when passing optional cookie/header strings to APIs that take `Option<&str>`.
+pub fn non_empty(s: &str) -> Option<&str> {
+    if s.is_empty() { None } else { Some(s) }
+}
+
 /// Resolve the cookie header for a domain, given the `--cookies` flag value.
 ///
 /// Convenience wrapper combining [`resolve_browser_name`], [`resolve_cookie_source`],
