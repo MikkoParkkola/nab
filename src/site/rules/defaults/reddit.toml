@@ -33,6 +33,17 @@ comments = "[0].data.children[0].data.num_comments"
 selftext = "[0].data.children[0].data.selftext"
 url      = "[0].data.children[0].data.url"
 subreddit = "[0].data.children[0].data.subreddit"
+permalink = "[0].data.children[0].data.permalink"
+# Top 3 comments from the second listing: [1].data.children[N].data
+c0_author = "[1].data.children[0].data.author"
+c0_body   = "[1].data.children[0].data.body"
+c0_score  = "[1].data.children[0].data.score"
+c1_author = "[1].data.children[1].data.author"
+c1_body   = "[1].data.children[1].data.body"
+c1_score  = "[1].data.children[1].data.score"
+c2_author = "[1].data.children[2].data.author"
+c2_body   = "[1].data.children[2].data.body"
+c2_score  = "[1].data.children[2].data.score"
 
 [template]
 format = """
@@ -42,7 +53,27 @@ r/{subreddit} · by u/{author} · {score|number} points · {comments|number} com
 
 {selftext}
 
-[View on Reddit]({url})
+### Top Comments
+
+**u/{c0_author}** · {c0_score|number} points
+
+{c0_body}
+
+---
+
+**u/{c1_author}** · {c1_score|number} points
+
+{c1_body}
+
+---
+
+**u/{c2_author}** · {c2_score|number} points
+
+{c2_body}
+
+---
+
+[View on Reddit](https://www.reddit.com{permalink})
 """
 
 [metadata]
