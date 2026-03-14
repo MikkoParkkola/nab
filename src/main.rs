@@ -520,11 +520,11 @@ async fn main() -> Result<()> {
             data,
             capture_cookies,
             no_redirect,
-            no_spa,
             batch,
             parallel,
             proxy,
             diff,
+            ..
         } => {
             let cfg = cmd::FetchConfig {
                 url,
@@ -544,7 +544,6 @@ async fn main() -> Result<()> {
                 data,
                 capture_cookies,
                 no_redirect,
-                no_spa,
                 batch_file: batch,
                 parallel,
                 proxy,

@@ -67,7 +67,7 @@ pub async fn cmd_login(
     };
     let conversion = router.convert(result.body.as_bytes(), content_type)?;
 
-    output_body(&conversion.markdown, None, true, false, 0, false)?;
+    output_body(&conversion.markdown, None, false, 0)?;
 
     Ok(())
 }

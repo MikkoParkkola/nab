@@ -9,10 +9,8 @@ use scraper::{Html, Selector};
 pub fn output_body(
     body: &str,
     output_file: Option<&Path>,
-    _markdown: bool,
     links: bool,
     max_body: usize,
-    _auto_spa: bool,
 ) -> Result<()> {
     // Save to file if requested (always full, no truncation)
     if let Some(path) = output_file {
@@ -105,7 +103,7 @@ pub async fn output_response(response: reqwest::Response, show_headers: bool) ->
     let body_text = response.text().await?;
     let router = nab::content::ContentRouter::new();
     let markdown = router.convert(body_text.as_bytes(), "text/html")?.markdown;
-    output_body(&markdown, None, true, false, 0, false)?;
+    output_body(&markdown, None, false, 0)?;
 
     Ok(())
 }

@@ -36,7 +36,6 @@ pub struct FetchConfig {
     pub data: Option<String>,
     pub capture_cookies: bool,
     pub no_redirect: bool,
-    pub no_spa: bool,
     pub batch_file: Option<String>,
     pub parallel: usize,
     pub proxy: Option<String>,
@@ -72,14 +71,11 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     let site_router = nab::site::SiteRouter::new();
     let cookie_opt = non_empty(&cookie_header);
     if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
-        let markdown = !cfg.raw_html;
         output_body(
             &site_content.markdown,
             cfg.output_file.as_deref(),
-            markdown,
             cfg.links,
             cfg.max_body,
-            !cfg.no_spa,
         )?;
         return Ok(());
     }
@@ -374,7 +370,7 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 resp.elapsed.as_secs_f64() * 1000.0
             );
             if cfg.show_body || out_path.is_some() || markdown || cfg.links {
-                output_body(resp.body_text, out_path, markdown, cfg.links, cfg.max_body, !cfg.no_spa)?;
+                output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
             }
         }
         OutputFormat::Json => {
@@ -423,7 +419,7 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
             }
             println!("\n📄 Body: {} bytes", resp.body_len);
             if cfg.show_body || out_path.is_some() || markdown || cfg.links {
-                output_body(resp.body_text, out_path, markdown, cfg.links, cfg.max_body, !cfg.no_spa)?;
+                output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
             }
         }
     }
