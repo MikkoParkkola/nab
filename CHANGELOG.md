@@ -5,6 +5,31 @@ All notable changes to nab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-14
+
+### Added
+- `NabError` typed error hierarchy with 9 semantic variants (`InvalidUrl`, `SsrfBlocked`, `ProviderError`, `ConversionError`, `AuthError`, `LoginError`, `SessionError`, `NetworkError`, `BudgetExceeded`) — replaces bare `anyhow::Error` at public API boundaries
+
+### Changed
+- **Codebase restructuring** — 5 monolithic files decomposed into focused submodules:
+  - `site/linkedin.rs` (1915 LOC) → 7 files (mod + auth + helpers + types + url + oembed + tests)
+  - `site/rules/provider.rs` (2172 LOC) → provider (738) + helpers (289) + tests (1181)
+  - `site/rules/config.rs` (1460 LOC) → config (561) + tests (898)
+  - `auth/cookies.rs` (1074 LOC) → cookies/ directory (mod + crypto + db + tests)
+  - `bin/mcp_server/tools.rs` (1033 LOC) → tools/ directory (10 files, max 346 LOC)
+- Public API surface reduced — 13 internal re-exports removed, internal modules marked `#[doc(hidden)]`
+- SSRF validation functions now return `NabError` variants instead of opaque `anyhow::Error`
+- Config structs replace positional parameters across all `cmd/` functions (10 structs)
+- 6 shared helpers consolidated in `cmd/mod.rs` (cookie resolution, domain extraction, referer building)
+
+### Fixed
+- **Silent test bug**: `concurrent_fetch_custom_item_limit` used wrong TOML field (`item_limit` vs `max_items`) — serde silently ignored unknown field
+- **UTF-8 truncation panics** eliminated across cmd/ layer (now uses `floor_char_boundary`)
+- ~10 `unwrap()`/`expect()` calls in library code replaced with proper error propagation
+- 2 stale `clippy::too_many_lines` suppressions removed (functions were already under threshold)
+- Production `expect()` in `cmd_fetch_batch` replaced with `?` error
+- SPA command status messages moved from `stdout` to `stderr` (data-only on stdout)
+
 ## [0.5.0] - 2026-03-13
 
 ### Added
