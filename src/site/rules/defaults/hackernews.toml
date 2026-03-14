@@ -1,0 +1,68 @@
+# Hacker News item extraction via Algolia HN Search API.
+#
+# Matches individual item pages (item?id=NNN).
+# Uses the Algolia API which returns structured JSON with title, author,
+# points, text, URL, and top-level comments.
+
+[site]
+name = "hackernews-item"
+patterns = ["news\\.ycombinator\\.com/item\\?id=\\d+"]
+
+[rewrite]
+from = "(?i)https?://news\\.ycombinator\\.com/item\\?id=(\\d+).*"
+to   = "https://hn.algolia.com/api/v1/items/$1"
+
+[request]
+accept = "application/json"
+
+[json]
+title      = ".title"
+url        = ".url"
+author     = ".author"
+points     = ".points"
+text       = ".text"
+created_at = ".created_at"
+type       = ".type"
+
+[template]
+format = """
+## {title|strip_html}
+
+{points|number} points by {author} · {created_at}
+
+{text|strip_html}
+
+[{url}]({url})
+
+### Top Comment
+
+**{comment_author}** · {comment_points|number} points
+
+{comment_text|strip_html}
+
+---
+
+[View on Hacker News]({original_url})
+"""
+
+[metadata]
+platform           = "Hacker News"
+author_field       = "author"
+title_field        = "title"
+canonical_url_field = ""
+
+[engagement]
+likes = "points"
+
+[[fetch_concurrent]]
+prefix       = "comment"
+rewrite_from = "(?i)https?://news\\.ycombinator\\.com/item\\?id=(\\d+).*"
+rewrite_to   = "https://hn.algolia.com/api/v1/items/$1"
+items_path   = ".children"
+max_items    = 3
+accept       = "application/json"
+
+[fetch_concurrent.json]
+author = ".author"
+text   = ".text"
+points = ".points"

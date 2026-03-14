@@ -291,11 +291,11 @@ mod tests {
     #[test]
     fn router_registers_all_builtin_providers() {
         let router = SiteRouter::new();
-        // Rule-based providers (8: twitter, youtube, wikipedia, mastodon, reddit,
-        // stackoverflow, instagram, github-issues) + hardcoded non-overridden
-        // providers (4: hackernews, github, google-workspace, linkedin) = 12
-        // minimum; CSS plugins may add more.
-        assert!(router.providers.len() >= 12);
+        // Rule-based providers (9: twitter, youtube, wikipedia, mastodon, reddit,
+        // stackoverflow, instagram, github-issues, hackernews-item) + hardcoded
+        // non-overridden providers (4: hackernews, github, google-workspace,
+        // linkedin) = 13 minimum; CSS plugins may add more.
+        assert!(router.providers.len() >= 13);
 
         // All expected names must appear somewhere in the provider list.
         let names: Vec<&str> = router.providers.iter().map(|p| p.name()).collect();
@@ -303,6 +303,7 @@ mod tests {
             "twitter",
             "reddit",
             "hackernews",
+            "hackernews-item",
             "github",
             "github-issues",
             "google-workspace",

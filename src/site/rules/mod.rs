@@ -51,6 +51,7 @@ pub fn embedded_rules() -> Vec<(&'static str, &'static str)> {
         ("stackoverflow", include_str!("defaults/stackoverflow.toml")),
         ("instagram", include_str!("defaults/instagram.toml")),
         ("github-issues", include_str!("defaults/github-issues.toml")),
+        ("hackernews-item", include_str!("defaults/hackernews.toml")),
     ]
 }
 
@@ -179,9 +180,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_rules_returns_eight_entries() {
+    fn embedded_rules_returns_nine_entries() {
         let rules = embedded_rules();
-        assert_eq!(rules.len(), 8);
+        assert_eq!(rules.len(), 9);
         let names: Vec<&str> = rules.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"twitter"));
         assert!(names.contains(&"youtube"));
@@ -191,6 +192,7 @@ mod tests {
         assert!(names.contains(&"stackoverflow"));
         assert!(names.contains(&"instagram"));
         assert!(names.contains(&"github-issues"));
+        assert!(names.contains(&"hackernews-item"));
     }
 
     #[test]
@@ -214,7 +216,7 @@ mod tests {
         let providers = load_site_rules();
         // At minimum we get the 8 embedded defaults (user may have overrides, but
         // the test env should not have them).
-        assert!(providers.len() >= 8);
+        assert!(providers.len() >= 9);
     }
 
     #[test]
@@ -274,6 +276,17 @@ mod tests {
                 .unwrap()
                 .matches("https://github.com/rust-lang/rust/issues/12345")
         );
+
+        let hackernews_item = providers.iter().find(|p| p.name() == "hackernews-item");
+        assert!(
+            hackernews_item.is_some(),
+            "hackernews-item provider should be loaded"
+        );
+        assert!(
+            hackernews_item
+                .unwrap()
+                .matches("https://news.ycombinator.com/item?id=12345")
+        );
     }
 
     #[test]
@@ -287,6 +300,7 @@ mod tests {
         assert!(names.contains("stackoverflow"));
         assert!(names.contains("instagram"));
         assert!(names.contains("github-issues"));
+        assert!(names.contains("hackernews-item"));
     }
 
     #[test]
@@ -297,7 +311,7 @@ mod tests {
 
         let defaults = load_embedded_defaults(&overridden);
         assert!(!defaults.iter().any(|p| p.name() == "twitter"));
-        // Other seven still present.
+        // Other eight still present.
         assert!(defaults.iter().any(|p| p.name() == "youtube"));
         assert!(defaults.iter().any(|p| p.name() == "wikipedia"));
         assert!(defaults.iter().any(|p| p.name() == "mastodon"));
@@ -305,12 +319,13 @@ mod tests {
         assert!(defaults.iter().any(|p| p.name() == "stackoverflow"));
         assert!(defaults.iter().any(|p| p.name() == "instagram"));
         assert!(defaults.iter().any(|p| p.name() == "github-issues"));
+        assert!(defaults.iter().any(|p| p.name() == "hackernews-item"));
     }
 
     #[test]
     fn load_embedded_defaults_empty_overrides_loads_all() {
         let defaults = load_embedded_defaults(&HashSet::new());
-        assert_eq!(defaults.len(), 8);
+        assert_eq!(defaults.len(), 9);
     }
 
     #[test]

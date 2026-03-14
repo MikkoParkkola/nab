@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn build_rows_contains_all_eight_embedded_rules_when_no_overrides() {
+    fn build_rows_contains_all_nine_embedded_rules_when_no_overrides() {
         // GIVEN: the real embedded set, no user overrides
         let embedded: HashSet<&str> = embedded_rules().into_iter().map(|(n, _)| n).collect();
         let user: HashSet<String> = HashSet::new();
@@ -336,8 +336,8 @@ mod tests {
         // WHEN: we build rows
         let rows = build_rows(&embedded, &user);
 
-        // THEN: exactly 8 rows, all embedded, all active
-        assert_eq!(rows.len(), 8);
+        // THEN: exactly 9 rows, all embedded, all active
+        assert_eq!(rows.len(), 9);
         assert!(rows.iter().all(|r| r.source == "embedded"));
         assert!(rows.iter().all(|r| r.status == "active"));
     }
