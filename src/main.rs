@@ -634,16 +634,16 @@ async fn main() -> Result<()> {
             dgx,
             api_key,
         } => {
-            cmd::cmd_analyze(
-                &video,
+            let cfg = cmd::AnalyzeConfig {
+                video,
                 audio_only,
                 diarize,
                 format,
                 output,
                 dgx,
-                api_key.as_deref(),
-            )
-            .await?;
+                api_key,
+            };
+            cmd::cmd_analyze(&cfg).await?;
         }
         Commands::Annotate {
             video,

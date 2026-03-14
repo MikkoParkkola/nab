@@ -16,7 +16,7 @@ pub mod stream;
 pub mod submit;
 pub mod validate;
 
-pub use analyze::cmd_analyze;
+pub use analyze::{AnalyzeConfig, cmd_analyze};
 pub use annotate::{AnnotateConfig, cmd_annotate};
 pub use auth::cmd_auth;
 pub use bench::cmd_bench;

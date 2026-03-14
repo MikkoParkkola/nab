@@ -4,31 +4,32 @@ use anyhow::Result;
 
 use crate::AnalyzeOutputFormat;
 
-pub async fn cmd_analyze(
-    video: &str,
-    audio_only: bool,
-    diarize: bool,
-    format: AnalyzeOutputFormat,
-    output: Option<PathBuf>,
-    dgx: bool,
-    api_key: Option<&str>,
-) -> Result<()> {
+/// Configuration for the `nab analyze` command.
+pub struct AnalyzeConfig {
+    pub video: String,
+    pub audio_only: bool,
+    pub diarize: bool,
+    pub format: AnalyzeOutputFormat,
+    pub output: Option<PathBuf>,
+    pub dgx: bool,
+    pub api_key: Option<String>,
+}
+
+pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
     use nab::analyze::{
         AnalysisPipeline, PipelineConfig as AnalysisConfig, VisionBackend,
         report::{AnalysisReport, ReportFormat},
     };
 
-    eprintln!("🎬 Analyzing: {video}");
+    eprintln!("🎬 Analyzing: {}", cfg.video);
 
     // Auto-detect audio-only files by extension
-    let is_audio_file = video.to_lowercase().ends_with(".wav")
-        || video.to_lowercase().ends_with(".mp3")
-        || video.to_lowercase().ends_with(".flac")
-        || video.to_lowercase().ends_with(".m4a")
-        || video.to_lowercase().ends_with(".aac")
-        || video.to_lowercase().ends_with(".ogg");
+    let lower = cfg.video.to_lowercase();
+    let is_audio_file = [".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"]
+        .iter()
+        .any(|ext| lower.ends_with(ext));
 
-    let audio_only = audio_only || is_audio_file;
+    let audio_only = cfg.audio_only || is_audio_file;
 
     if is_audio_file {
         eprintln!("   Detected audio-only file, skipping video analysis");
@@ -37,13 +38,13 @@ pub async fn cmd_analyze(
     // Build configuration
     let mut config = AnalysisConfig::default();
 
-    if dgx {
+    if cfg.dgx {
         config.dgx_host = Some("spark".to_string());
         eprintln!("   GPU: DGX Spark (nvfp4 quantization)");
     }
 
-    config.enable_diarization = diarize;
-    if diarize {
+    config.enable_diarization = cfg.diarize;
+    if cfg.diarize {
         eprintln!("   Diarization: enabled");
     }
 
@@ -51,9 +52,9 @@ pub async fn cmd_analyze(
     let _skip_vision = audio_only;
     if audio_only {
         eprintln!("   Mode: audio-only (transcription)");
-    } else if let Some(key) = api_key {
+    } else if let Some(key) = &cfg.api_key {
         config.vision_backend = VisionBackend::ClaudeApi {
-            api_key: key.to_string(),
+            api_key: key.clone(),
         };
         eprintln!("   Vision: Claude API");
     } else if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
@@ -68,9 +69,9 @@ pub async fn cmd_analyze(
 
     let start = std::time::Instant::now();
     let analysis = if audio_only {
-        pipeline.analyze_audio_only(video).await?
+        pipeline.analyze_audio_only(&cfg.video).await?
     } else {
-        pipeline.analyze(video).await?
+        pipeline.analyze(&cfg.video).await?
     };
     let elapsed = start.elapsed();
 
@@ -80,7 +81,7 @@ pub async fn cmd_analyze(
         elapsed.as_secs_f64()
     );
 
-    let report_format = match format {
+    let report_format = match cfg.format {
         AnalyzeOutputFormat::Json => ReportFormat::Json,
         AnalyzeOutputFormat::Markdown => ReportFormat::Markdown,
         AnalyzeOutputFormat::Srt => ReportFormat::Srt,
@@ -88,8 +89,8 @@ pub async fn cmd_analyze(
 
     let report = AnalysisReport::generate(&analysis, report_format)?;
 
-    if let Some(path) = output {
-        std::fs::write(&path, &report)?;
+    if let Some(path) = &cfg.output {
+        std::fs::write(path, &report)?;
         eprintln!("📄 Saved to: {}", path.display());
     } else {
         println!("{report}");
