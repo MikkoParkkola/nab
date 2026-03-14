@@ -21,7 +21,11 @@
 //! }
 //! ```
 
+/// Internal implementation modules — not stable public API.
+#[doc(hidden)]
 pub mod analyze;
+/// Internal implementation modules — not stable public API.
+#[doc(hidden)]
 pub mod annotate;
 pub mod api_discovery;
 pub mod arena;
@@ -30,6 +34,8 @@ pub mod auth;
 pub mod browser;
 pub mod browser_detect;
 pub mod content;
+/// Internal implementation modules — not stable public API.
+#[doc(hidden)]
 pub mod fetch_bridge;
 pub mod fingerprint;
 pub mod form;
@@ -37,6 +43,8 @@ pub mod http3_client;
 pub mod http_client;
 #[cfg(feature = "impersonate")]
 pub mod impersonate_client;
+/// Internal implementation modules — not stable public API.
+#[doc(hidden)]
 pub mod js_engine;
 pub mod login;
 pub mod mfa;
@@ -49,17 +57,7 @@ pub mod ssrf;
 pub mod stream;
 pub mod websocket;
 
-pub use analyze::{
-    AnalysisOutput, AnalysisPipeline, AnalysisSegment, PipelineConfig as AnalysisPipelineConfig,
-};
-pub use annotate::{
-    AnalysisConfig as AnnotateAnalysisConfig, AnalysisOverlay, AnnotationPipeline, AssGenerator,
-    Compositor, CompositorConfig, OverlayPosition, OverlayTrack,
-    PipelineConfig as AnnotationPipelineConfig, PipelineResult, SpeakerLabelOverlay, SrtGenerator,
-    SubtitleEntry, SubtitleFormat, TranscriptionConfig,
-};
 pub use api_discovery::{ApiDiscovery, ApiEndpoint};
-pub use arena::{ArenaResponse, ResponseArena, ResponseBuffer, StringInterner};
 pub use auth::{
     CookieSource, Credential, CredentialRetriever, CredentialSource, OnePasswordAuth, OtpCode,
     OtpRetriever, OtpSource,
@@ -67,7 +65,6 @@ pub use auth::{
 #[cfg(feature = "browser")]
 pub use browser::{BrowserLogin, Cookie};
 pub use browser_detect::{BrowserType, detect_default_browser};
-pub use fetch_bridge::{FetchClient, inject_fetch_sync};
 pub use fingerprint::{
     BrowserProfile, chrome_profile, firefox_profile, random_profile, safari_profile,
 };
@@ -76,7 +73,6 @@ pub use http_client::{AcceleratedClient, SafeFetchConfig, SafeFetchResponse};
 pub use http3_client::Http3Client;
 #[cfg(feature = "http3")]
 pub use http3_client::Http3Response;
-pub use js_engine::JsEngine;
 pub use login::{LoginFlow, LoginResult, get_session_dir};
 pub use mfa::{MfaHandler, MfaResult, MfaType, NotificationConfig, detect_mfa_type};
 pub use prefetch::{EarlyHintLink, EarlyHints, PrefetchManager, extract_link_hints};

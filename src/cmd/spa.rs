@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use scraper::{Html, Selector};
 
-use nab::{AcceleratedClient, ApiDiscovery, FetchClient, JsEngine, inject_fetch_sync};
+use nab::fetch_bridge::{FetchClient, inject_fetch_sync};
+use nab::js_engine::JsEngine;
+use nab::{AcceleratedClient, ApiDiscovery};
 
 /// Configuration for the `nab spa` command.
 ///
