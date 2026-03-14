@@ -127,6 +127,23 @@ fn substitute_filtered_placeholders<S: BuildHasher>(
             continue;
         }
 
+        // {field|uppercase} / {field|lowercase} — case conversion.
+        if let Some(field_name) = placeholder_inner.strip_suffix("|uppercase")
+            && let Some(value) = fields.get(field_name)
+        {
+            let placeholder = format!("{{{placeholder_inner}}}");
+            result = result.replacen(&placeholder, &value.to_uppercase(), 1);
+            continue;
+        }
+
+        if let Some(field_name) = placeholder_inner.strip_suffix("|lowercase")
+            && let Some(value) = fields.get(field_name)
+        {
+            let placeholder = format!("{{{placeholder_inner}}}");
+            result = result.replacen(&placeholder, &value.to_lowercase(), 1);
+            continue;
+        }
+
         search_from = close + 1;
     }
 
@@ -453,5 +470,21 @@ mod tests {
     #[test]
     fn truncate_at_word_no_truncation_when_short() {
         assert_eq!(truncate_at_word("short", 100), "short");
+    }
+
+    // ── case filters ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn render_uppercase_filter() {
+        let f = fields(&[("state", "open")]);
+        let output = render("[{state|uppercase}]", &f, "https://example.com");
+        assert_eq!(output, "[OPEN]");
+    }
+
+    #[test]
+    fn render_lowercase_filter() {
+        let f = fields(&[("tag", "RUST")]);
+        let output = render("#{tag|lowercase}", &f, "https://example.com");
+        assert_eq!(output, "#rust");
     }
 }
