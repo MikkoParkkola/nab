@@ -59,9 +59,10 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
-use anyhow::{Result, bail};
 use tracing::warn;
 use url::Url;
+
+use crate::error::NabError;
 
 /// Default maximum number of redirect hops allowed.
 pub const DEFAULT_MAX_REDIRECTS: u32 = 5;
@@ -262,18 +263,22 @@ pub fn extract_mapped_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
 
 /// Validates an IP address against the SSRF deny list.
 ///
-/// Returns `Ok(())` if the address is allowed, or an error describing
-/// why it was denied.
-pub fn validate_ip(ip: IpAddr) -> Result<()> {
+/// Returns `Ok(())` if the address is allowed, or [`NabError::SsrfBlocked`]
+/// describing why it was denied.
+pub fn validate_ip(ip: IpAddr) -> Result<(), NabError> {
     match ip {
         IpAddr::V4(v4) => {
             if is_denied_ipv4(v4) {
-                bail!("SSRF blocked: IPv4 address {v4} is in a denied range");
+                return Err(NabError::SsrfBlocked(format!(
+                    "IPv4 address {v4} is in a denied range"
+                )));
             }
         }
         IpAddr::V6(v6) => {
             if is_denied_ipv6(v6) {
-                bail!("SSRF blocked: IPv6 address {v6} is in a denied range");
+                return Err(NabError::SsrfBlocked(format!(
+                    "IPv6 address {v6} is in a denied range"
+                )));
             }
         }
     }
@@ -283,17 +288,19 @@ pub fn validate_ip(ip: IpAddr) -> Result<()> {
 /// Resolves a hostname to IP addresses and validates each against the SSRF
 /// deny list.
 ///
-/// Returns the first allowed [`SocketAddr`], or an error if all resolved
-/// addresses are denied or resolution fails.
-pub fn resolve_and_validate(host: &str, port: u16) -> Result<SocketAddr> {
+/// Returns the first allowed [`SocketAddr`], or [`NabError::SsrfBlocked`] if
+/// all resolved addresses are denied or DNS resolution fails.
+pub fn resolve_and_validate(host: &str, port: u16) -> Result<SocketAddr, NabError> {
     let addr_str = format!("{host}:{port}");
     let addrs: Vec<SocketAddr> = addr_str
         .to_socket_addrs()
-        .map_err(|e| anyhow::anyhow!("DNS resolution failed for {host}: {e}"))?
+        .map_err(|e| NabError::SsrfBlocked(format!("DNS resolution failed for {host}: {e}")))?
         .collect();
 
     if addrs.is_empty() {
-        bail!("DNS resolution returned no addresses for {host}");
+        return Err(NabError::SsrfBlocked(format!(
+            "DNS resolution returned no addresses for {host}"
+        )));
     }
 
     for addr in &addrs {
@@ -305,7 +312,9 @@ pub fn resolve_and_validate(host: &str, port: u16) -> Result<SocketAddr> {
         }
     }
 
-    bail!("SSRF blocked: all resolved addresses for {host} are in denied ranges: {addrs:?}")
+    Err(NabError::SsrfBlocked(format!(
+        "all resolved addresses for {host} are in denied ranges: {addrs:?}"
+    )))
 }
 
 /// Validates a URL's host against the SSRF deny list by resolving DNS.
@@ -315,10 +324,10 @@ pub fn resolve_and_validate(host: &str, port: u16) -> Result<SocketAddr> {
 /// 2. Resolves the hostname via DNS
 /// 3. Validates all resolved IPs against the deny list
 /// 4. Returns the first allowed `SocketAddr` for DNS pinning
-pub fn validate_url(url: &Url) -> Result<SocketAddr> {
+pub fn validate_url(url: &Url) -> Result<SocketAddr, NabError> {
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host: {url}"))?;
+        .ok_or_else(|| NabError::InvalidUrl(format!("URL has no host: {url}")))?;
 
     let port = url.port_or_known_default().unwrap_or(443);
 
@@ -341,11 +350,15 @@ pub fn validate_url(url: &Url) -> Result<SocketAddr> {
 /// Validates a redirect target URL against the SSRF deny list.
 ///
 /// Called before following each redirect hop to prevent redirect-based SSRF.
-pub fn validate_redirect_target(url: &Url) -> Result<()> {
+pub fn validate_redirect_target(url: &Url) -> Result<(), NabError> {
     // Only validate http/https schemes
     match url.scheme() {
         "http" | "https" => {}
-        scheme => bail!("SSRF blocked: disallowed redirect scheme '{scheme}'"),
+        scheme => {
+            return Err(NabError::SsrfBlocked(format!(
+                "disallowed redirect scheme '{scheme}'"
+            )));
+        }
     }
 
     validate_url(url).map(|_| ())

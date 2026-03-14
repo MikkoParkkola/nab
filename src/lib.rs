@@ -21,6 +21,8 @@
 //! }
 //! ```
 
+pub mod error;
+
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]
 pub mod analyze;
@@ -56,6 +58,8 @@ pub mod site;
 pub mod ssrf;
 pub mod stream;
 pub mod websocket;
+
+pub use error::NabError;
 
 pub use api_discovery::{ApiDiscovery, ApiEndpoint};
 pub use auth::{
