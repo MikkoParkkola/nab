@@ -2433,6 +2433,7 @@ dependencies = [
  "coset",
  "criterion",
  "dirs",
+ "ego-tree",
  "futures",
  "h3",
  "h3-quinn",

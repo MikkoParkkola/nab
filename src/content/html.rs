@@ -6,8 +6,11 @@
 //! # Pipeline
 //!
 //! 1. **SPA data extraction** (Next.js/Nuxt): Extract from `__NEXT_DATA__` / `__NUXT__` JSON
-//! 2. **Readability extraction** (default): Extract main article content, strip boilerplate
-//! 3. **Fallback to raw html2md**: If extraction fails, use raw HTML with basic filtering
+//! 2. **Pre-strip hidden sections**: Remove `<details>`, `<noscript>`, `<dialog>` (browser-hidden)
+//! 3. **Pre-strip noise sections**: Remove advisories, cookie banners, vulnerability text
+//! 4. **Pre-strip comments**: Remove comment threads, Disqus, discussion sections
+//! 5. **Readability extraction** (default): Extract main article content, strip boilerplate
+//! 6. **Fallback to raw html2md**: If extraction fails, use raw HTML with basic filtering
 //!
 //! The readability step significantly improves output quality by removing navigation,
 //! footers, ads, and other noise before markdown conversion.
@@ -65,9 +68,10 @@ impl HtmlHandler {
 /// # Pipeline
 ///
 /// 1. **SPA extraction**: Try `__NEXT_DATA__` / `__NUXT_DATA__` for React/Vue SPAs
-/// 2. **Readability extraction**: Strip comment sections, then extract article content
-/// 3. **Fallback**: If extraction fails, use raw HTML with basic filtering
-/// 4. **Thin-content warning**: Emit a tracing warning when output is disproportionately
+/// 2. **Pre-strip**: Hidden elements → noise sections → comment sections
+/// 3. **Readability extraction**: Extract article content from cleaned HTML
+/// 4. **Fallback**: If extraction fails, use raw HTML with basic filtering
+/// 5. **Thin-content warning**: Emit a tracing warning when output is disproportionately
 ///    small vs. the HTML body size, indicating JS-rendered content may be missing.
 ///
 /// Passing the real `url` significantly improves readability quality for sites with
@@ -79,24 +83,39 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
         return spa_content;
     }
 
-    // Pre-strip comment sections before readability to prevent comment bleed-through
-    let cleaned_html = strip_comment_sections(html);
+    // Pre-strip noise before readability to prevent non-article content
+    // from dominating the scoring. Order: hidden elements → noise sections → comments.
+    let cleaned_html = strip_hidden_sections(html);
+    let cleaned_html = strip_noise_sections(&cleaned_html);
+    let cleaned_html = strip_comment_sections(&cleaned_html);
 
     // Try readability extraction with real URL (or fallback placeholder)
     let effective_url = url.unwrap_or("https://example.com");
-    let markdown = if let Some(article) = readability::extract_article(&cleaned_html, effective_url)
-    {
-        let md = html2md::parse_html(&article.content_html);
-        let lines: Vec<&str> = md
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-        lines.join("\n")
-    } else {
-        // Fallback to raw html2md with filtering if readability fails
-        html_to_markdown(html)
+    let readability_md =
+        readability::extract_article(&cleaned_html, effective_url).map(|article| {
+            let md = html2md::parse_html(&article.content_html);
+            let lines: Vec<&str> = md
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            lines.join("\n")
+        });
+
+    // Direct html2md on cleaned HTML (preserves tables, lists, etc.)
+    let direct_md = html_to_markdown(&cleaned_html);
+
+    // Pick the richer result: readability is great for articles but drops tables
+    // and non-article content. If readability output is significantly shorter than
+    // the direct conversion, prefer the direct version.
+    let markdown = match readability_md {
+        Some(ref r_md) if r_md.len() >= direct_md.len() / 2 => r_md.clone(),
+        Some(ref r_md) if r_md.len() > direct_md.len() => r_md.clone(),
+        _ => direct_md,
     };
+
+    // Post-process: strip markdown noise from html2md output
+    let markdown = clean_markdown_noise(&markdown);
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
@@ -179,6 +198,222 @@ pub fn html_to_markdown_with_readability(html: &str) -> String {
     html_to_markdown_with_url(html, None)
 }
 
+/// Remove hidden/collapsed sections from HTML before readability processing.
+///
+/// Browsers collapse `<details>` elements by default and hide `<noscript>` content
+/// when JavaScript is enabled. However, readability and html2md see the full DOM
+/// text, so these elements can dominate scoring and crowd out the actual page content.
+///
+/// This is critical for pages like `deps.rs` where dozens of `<details>` elements
+/// containing security advisory text overwhelm the dependency status table.
+///
+/// # Targeted elements
+///
+/// - `<details>` — collapsed by default unless `open` attribute is present
+/// - `<noscript>` — hidden when JS is available (which static fetch implies)
+/// - `<dialog>` — hidden unless `open` attribute is present
+///
+/// Elements with the `open` attribute are preserved since the page author
+/// explicitly intended them to be visible.
+#[must_use]
+pub fn strip_hidden_sections(html: &str) -> String {
+    let document = scraper::Html::parse_document(html);
+
+    // Select all details, noscript, and dialog elements
+    #[allow(clippy::unwrap_used)]
+    let hidden_sel = scraper::Selector::parse("details, noscript, dialog")
+        .unwrap_or_else(|_| scraper::Selector::parse("details").unwrap());
+
+    // Collect node IDs of hidden elements to remove
+    // Keep <details open>, <dialog open> — those are intentionally visible
+    let hidden_ids: std::collections::HashSet<ego_tree::NodeId> = document
+        .select(&hidden_sel)
+        .filter(|el| {
+            let name = el.value().name();
+            // noscript is always hidden in a JS-capable context
+            if name == "noscript" {
+                return true;
+            }
+            // details/dialog: remove only if NOT open
+            el.value().attr("open").is_none()
+        })
+        .map(|el| el.id())
+        .collect();
+
+    if hidden_ids.is_empty() {
+        return html.to_string();
+    }
+
+    // Rebuild: collect body children, skipping hidden elements
+    let body_selector = scraper::Selector::parse("body").ok();
+    let body_html = body_selector
+        .as_ref()
+        .and_then(|sel| document.select(sel).next())
+        .map_or_else(
+            || html.to_string(),
+            |body| {
+                serialize_children_excluding(&document, body.id(), &hidden_ids)
+            },
+        );
+
+    let head_html = scraper::Selector::parse("head")
+        .ok()
+        .and_then(|sel| document.select(&sel).next())
+        .map(|h| h.html())
+        .unwrap_or_default();
+
+    format!("<html>{head_html}<body>{body_html}</body></html>")
+}
+
+/// Recursively serialize a subtree, skipping nodes whose IDs are in `exclude`.
+///
+/// This handles nested hidden elements at any depth (not just direct children
+/// of `<body>`), which is essential for pages where `<details>` elements appear
+/// inside `<div>` wrappers or table cells.
+fn serialize_children_excluding(
+    document: &scraper::Html,
+    parent_id: ego_tree::NodeId,
+    exclude: &std::collections::HashSet<ego_tree::NodeId>,
+) -> String {
+    let node = document.tree.get(parent_id).unwrap();
+    let mut out = String::new();
+
+    for child in node.children() {
+        if exclude.contains(&child.id()) {
+            continue;
+        }
+        match child.value() {
+            scraper::Node::Element(el) => {
+                // Open tag
+                out.push('<');
+                out.push_str(el.name());
+                for (k, v) in el.attrs() {
+                    out.push(' ');
+                    out.push_str(k);
+                    out.push_str("=\"");
+                    out.push_str(&v.replace('"', "&quot;"));
+                    out.push('"');
+                }
+                out.push('>');
+                // Recurse into children (may also contain excluded nodes)
+                out.push_str(&serialize_children_excluding(document, child.id(), exclude));
+                // Close tag (skip void elements)
+                if !is_void_element(el.name()) {
+                    out.push_str("</");
+                    out.push_str(el.name());
+                    out.push('>');
+                }
+            }
+            scraper::Node::Text(text) => {
+                out.push_str(text);
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
+/// Returns `true` for HTML void elements that must not have a closing tag.
+fn is_void_element(name: &str) -> bool {
+    matches!(
+        name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+/// Remove noise sections (advisories, cookie banners, etc.) from HTML.
+///
+/// Identifies elements whose class or id attributes match known noise patterns
+/// and strips them using deep recursive exclusion. Unlike `strip_comment_sections`
+/// (which only filters direct children of `<body>`), this handles noise elements
+/// nested at any depth — critical for pages like `deps.rs` where advisory `<div>`
+/// elements sit inside wrapper containers.
+///
+/// # Targeted patterns
+///
+/// - `#vulnerabilities`, `.advisories`, `.security-advisories` — security advisory sections
+/// - `.cookie-banner`, `.consent-banner`, `.gdpr-banner` — cookie/consent UI
+/// - `.newsletter-signup`, `.subscribe-form` — signup noise
+/// - Headings (`<h1>`–`<h6>`) with noise IDs and all sibling elements that follow
+#[must_use]
+pub fn strip_noise_sections(html: &str) -> String {
+    let document = scraper::Html::parse_document(html);
+
+    // Match any element with class or id attributes
+    #[allow(clippy::unwrap_used)]
+    let attr_sel = scraper::Selector::parse("[class], [id]")
+        .unwrap_or_else(|_| scraper::Selector::parse("div").unwrap());
+
+    // Collect node IDs of noise elements
+    let mut noise_ids: std::collections::HashSet<ego_tree::NodeId> = document
+        .select(&attr_sel)
+        .filter(|el| {
+            let class = el.value().attr("class").unwrap_or("");
+            let id = el.value().attr("id").unwrap_or("");
+            let combined = format!("{class} {id}").to_lowercase();
+            is_noise_section(&combined)
+        })
+        .map(|el| el.id())
+        .collect();
+
+    // Special case: headings with noise IDs (e.g., <h3 id="vulnerabilities">)
+    // Strip all subsequent siblings of such headings, since the advisory content
+    // follows the heading as sibling <div> elements (deps.rs pattern).
+    #[allow(clippy::unwrap_used)]
+    let heading_sel = scraper::Selector::parse("h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]")
+        .unwrap_or_else(|_| scraper::Selector::parse("h3").unwrap());
+
+    for heading in document.select(&heading_sel) {
+        let id = heading.value().attr("id").unwrap_or("");
+        if is_noise_section(&id.to_lowercase()) {
+            // Mark the heading itself
+            noise_ids.insert(heading.id());
+            // Mark all subsequent siblings
+            let mut sibling = document.tree.get(heading.id()).and_then(|n| n.next_sibling());
+            while let Some(sib) = sibling {
+                noise_ids.insert(sib.id());
+                sibling = sib.next_sibling();
+            }
+        }
+    }
+
+    if noise_ids.is_empty() {
+        return html.to_string();
+    }
+
+    // Rebuild HTML excluding noise nodes (deep recursive)
+    let body_selector = scraper::Selector::parse("body").ok();
+    let body_html = body_selector
+        .as_ref()
+        .and_then(|sel| document.select(sel).next())
+        .map_or_else(
+            || html.to_string(),
+            |body| serialize_children_excluding(&document, body.id(), &noise_ids),
+        );
+
+    let head_html = scraper::Selector::parse("head")
+        .ok()
+        .and_then(|sel| document.select(&sel).next())
+        .map(|h| h.html())
+        .unwrap_or_default();
+
+    format!("<html>{head_html}<body>{body_html}</body></html>")
+}
+
 /// Remove comment section DOM nodes from HTML before readability processing.
 ///
 /// Sites like `LessWrong` have dense comment sections that confuse the readability
@@ -254,7 +489,22 @@ pub fn strip_comment_sections(html: &str) -> String {
 
 /// Returns `true` if this element looks like a comment section container.
 fn is_comment_container(element: &scraper::ElementRef<'_>) -> bool {
-    const COMMENT_MARKERS: &[&str] = &[
+    let class = element.value().attr("class").unwrap_or("");
+    let id = element.value().attr("id").unwrap_or("");
+    let combined = format!("{class} {id}").to_lowercase();
+
+    is_noise_section(&combined)
+}
+
+/// Returns `true` if a class/id string indicates a noise section that should
+/// be stripped before readability processing.
+///
+/// Covers: comment sections, vulnerability advisories, cookie banners,
+/// newsletter signup forms, and similar non-article content that tends to
+/// dominate readability scoring due to high text density.
+fn is_noise_section(combined: &str) -> bool {
+    const NOISE_MARKERS: &[&str] = &[
+        // Comment sections
         "comment-section",
         "comments-section",
         "comments-container",
@@ -263,13 +513,25 @@ fn is_comment_container(element: &scraper::ElementRef<'_>) -> bool {
         "disqus",
         "discussion-section",
         "replies-section",
+        // Security advisories / vulnerability sections (deps.rs, GitHub, etc.)
+        "vulnerabilities",
+        "advisories",
+        "security-advisories",
+        "advisory-list",
+        // Cookie/consent banners
+        "cookie-banner",
+        "cookie-consent",
+        "consent-banner",
+        "gdpr-banner",
+        // Newsletter/signup noise
+        "newsletter-signup",
+        "subscribe-form",
+        // Footer noise
+        "site-footer",
+        "global-footer",
     ];
 
-    let class = element.value().attr("class").unwrap_or("");
-    let id = element.value().attr("id").unwrap_or("");
-    let combined = format!("{class} {id}").to_lowercase();
-
-    COMMENT_MARKERS
+    NOISE_MARKERS
         .iter()
         .any(|marker| combined.contains(marker))
 }
@@ -287,6 +549,62 @@ fn element_hash(element: scraper::ElementRef<'_>) -> u64 {
         v.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Strip common markdown noise produced by html2md.
+///
+/// Removes artefacts that are technically valid markdown but carry no useful
+/// information for an LLM or human reader:
+///
+/// - **Base64 data URIs**: Inline `![](data:image/...)` badges/icons (often huge)
+/// - **Empty links**: `[](url)` from `<a><img/></a>` patterns (icon-only links)
+/// - **Bare image noise in tables**: `[](url)` cells that are just crate icons
+///
+/// Applied as a final post-processing pass on the markdown string.
+#[must_use]
+fn clean_markdown_noise(md: &str) -> String {
+    md.lines()
+        .map(|line| {
+            let mut cleaned = line.to_string();
+
+            // Remove inline base64 data URIs: ![alt](data:...) or ![](data:...)
+            while let Some(start) = cleaned.find("![") {
+                // Find the matching ](data:
+                let after_bang = &cleaned[start + 2..];
+                if let Some(paren) = after_bang.find("](data:") {
+                    // Find the closing )
+                    let data_start = start + 2 + paren + 2; // past ](
+                    if let Some(close) = cleaned[data_start..].find(')') {
+                        let end = data_start + close + 1;
+                        cleaned = format!("{}{}", &cleaned[..start], &cleaned[end..]);
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            // Remove empty link artefacts: [](url) — no link text, just icon wrappers
+            while let Some(start) = cleaned.find("[](") {
+                if let Some(close) = cleaned[start + 3..].find(')') {
+                    let end = start + 3 + close + 1;
+                    let replacement = &cleaned[end..];
+                    cleaned = format!("{}{}", cleaned[..start].trim_end(), replacement);
+                    continue;
+                }
+                break;
+            }
+
+            cleaned
+        })
+        .filter(|l| {
+            let trimmed = l.trim();
+            // Drop lines that are entirely base64 data or became empty after cleaning
+            !trimmed.is_empty()
+                && !trimmed.starts_with("![](data:")
+                && !trimmed.starts_with("```\n[![")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Convert HTML to markdown with boilerplate filtering (fallback).
@@ -326,7 +644,7 @@ pub fn is_boilerplate(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_thin_content;
+    use super::{is_thin_content, strip_hidden_sections, strip_noise_sections};
 
     #[test]
     fn is_thin_content_returns_false_for_small_html_below_threshold() {
@@ -371,5 +689,121 @@ mod tests {
         let result = is_thin_content(20_000, 200);
         // THEN: NOT flagged as thin (200 >= 200 minimum satisfies the condition)
         assert!(!result);
+    }
+
+    #[test]
+    fn strip_hidden_sections_removes_closed_details() {
+        let html = r#"<html><body>
+            <h1>Status</h1>
+            <p>All good</p>
+            <details><summary>Advisory</summary><p>CVE-2024-1234</p></details>
+        </body></html>"#;
+        let result = strip_hidden_sections(html);
+        assert!(!result.contains("CVE-2024-1234"));
+        assert!(result.contains("All good"));
+        assert!(result.contains("Status"));
+    }
+
+    #[test]
+    fn strip_hidden_sections_preserves_open_details() {
+        let html = r#"<html><body>
+            <details open><summary>Visible</summary><p>Important info</p></details>
+            <details><summary>Hidden</summary><p>Secret</p></details>
+        </body></html>"#;
+        let result = strip_hidden_sections(html);
+        assert!(result.contains("Important info"));
+        assert!(!result.contains("Secret"));
+    }
+
+    #[test]
+    fn strip_hidden_sections_removes_noscript() {
+        let html = r#"<html><body>
+            <p>Main content</p>
+            <noscript><p>Enable JavaScript</p></noscript>
+        </body></html>"#;
+        let result = strip_hidden_sections(html);
+        assert!(result.contains("Main content"));
+        assert!(!result.contains("Enable JavaScript"));
+    }
+
+    #[test]
+    fn strip_hidden_sections_removes_closed_dialog() {
+        let html = r#"<html><body>
+            <p>Page</p>
+            <dialog><p>Modal content</p></dialog>
+            <dialog open><p>Visible modal</p></dialog>
+        </body></html>"#;
+        let result = strip_hidden_sections(html);
+        assert!(result.contains("Page"));
+        assert!(!result.contains("Modal content"));
+        assert!(result.contains("Visible modal"));
+    }
+
+    #[test]
+    fn strip_hidden_sections_handles_nested_details_in_divs() {
+        let html = r#"<html><body>
+            <div class="content"><p>Real content</p></div>
+            <div class="advisories">
+                <details><summary>CVE-1</summary><p>Bad thing 1</p></details>
+                <details><summary>CVE-2</summary><p>Bad thing 2</p></details>
+            </div>
+        </body></html>"#;
+        let result = strip_hidden_sections(html);
+        assert!(result.contains("Real content"));
+        assert!(!result.contains("Bad thing 1"));
+        assert!(!result.contains("Bad thing 2"));
+    }
+
+    #[test]
+    fn strip_hidden_sections_noop_when_no_hidden_elements() {
+        let html = r#"<html><body><p>Just text</p></body></html>"#;
+        let result = strip_hidden_sections(html);
+        assert!(result.contains("Just text"));
+    }
+
+    #[test]
+    fn strip_noise_sections_removes_vulnerabilities_heading_and_siblings() {
+        // Simulates deps.rs structure: h3#vulnerabilities followed by advisory boxes
+        let html = r#"<html><body>
+            <table><tr><td>reqwest</td><td>up to date</td></tr></table>
+            <h3 id="vulnerabilities">Security Vulnerabilities</h3>
+            <div class="box"><p>CVE-2022-24713 regex advisory</p></div>
+            <div class="box"><p>chrono segfault advisory</p></div>
+        </body></html>"#;
+        let result = strip_noise_sections(html);
+        assert!(result.contains("reqwest"));
+        assert!(result.contains("up to date"));
+        assert!(!result.contains("CVE-2022-24713"));
+        assert!(!result.contains("chrono segfault"));
+        assert!(!result.contains("Security Vulnerabilities"));
+    }
+
+    #[test]
+    fn strip_noise_sections_removes_advisory_by_class() {
+        let html = r#"<html><body>
+            <p>Main content</p>
+            <div class="advisories"><p>RUSTSEC-2020-0159</p></div>
+        </body></html>"#;
+        let result = strip_noise_sections(html);
+        assert!(result.contains("Main content"));
+        assert!(!result.contains("RUSTSEC-2020-0159"));
+    }
+
+    #[test]
+    fn strip_noise_sections_removes_cookie_banner() {
+        let html = r#"<html><body>
+            <article><p>Article text</p></article>
+            <div class="cookie-banner"><p>Accept cookies</p></div>
+        </body></html>"#;
+        let result = strip_noise_sections(html);
+        assert!(result.contains("Article text"));
+        assert!(!result.contains("Accept cookies"));
+    }
+
+    #[test]
+    fn strip_noise_sections_preserves_all_when_no_noise() {
+        let html = r#"<html><body><p>Clean page</p></body></html>"#;
+        let result = strip_noise_sections(html);
+        assert!(result.contains("Clean page"));
     }
 }

@@ -167,6 +167,7 @@ sha1 = "0.10"                       # SHA-1 for PBKDF2 (Chrome/Brave use SHA1)
 sha2 = "0.10"                       # SHA-256 for v24+ domain-integrity strip
 hmac = "0.12"                       # HMAC (pulled in by pbkdf2 feature, explicit for clarity)
 hex = "0.4"                         # Hex encode/decode for sqlite3 blob round-trip
+ego-tree = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.5"         # macOS Keychain API (transitive via rustls, make direct)
