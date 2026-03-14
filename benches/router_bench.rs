@@ -31,9 +31,9 @@ const HN_URLS: &[&str] = &[
 ];
 
 const GITHUB_URLS: &[&str] = &[
-    "https://github.com/rust-lang/rust/issues/12345",
-    "https://github.com/tokio-rs/tokio/pull/67890",
-    "https://GITHUB.COM/owner/repo/ISSUES/999",
+    "https://github.com/rust-lang/rust",
+    "https://github.com/tokio-rs/tokio/tree/main",
+    "https://GITHUB.COM/owner/repo",
 ];
 
 /// URLs that should NOT match any provider.
