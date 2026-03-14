@@ -126,11 +126,13 @@ print(json.dumps(segments))
         // Copy audio to DGX
         let remote_path = format!("/tmp/nab_audio_{}.wav", std::process::id());
 
+        let audio_str = audio_path
+            .to_str()
+            .ok_or_else(|| AnalysisError::Whisper("audio path contains non-UTF8 bytes".to_string()))?;
+
         let scp_status = Command::new("scp")
-            .args([
-                audio_path.to_str().unwrap(),
-                &format!("{host}:{remote_path}"),
-            ])
+            .args([audio_str, &format!("{host}:{remote_path}")])
+
             .status()
             .await?;
 

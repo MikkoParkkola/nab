@@ -363,7 +363,10 @@ impl AnnotationPipeline {
         }
 
         // Find the output JSON file
-        let stem = audio_path.file_stem().unwrap().to_string_lossy();
+        let stem = audio_path
+            .file_stem()
+            .ok_or_else(|| anyhow!("audio path has no file stem: {}", audio_path.display()))?
+            .to_string_lossy();
         let json_path = output_dir.join(format!("{stem}.json"));
 
         if !json_path.exists() {

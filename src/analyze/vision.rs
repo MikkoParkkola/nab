@@ -199,11 +199,13 @@ print(json.dumps(result))
         let remote_path = format!("/tmp/nab_frame_{}.jpg", std::process::id());
 
         // Copy frame to DGX
+        let frame_str = frame
+            .path
+            .to_str()
+            .ok_or_else(|| AnalysisError::Vision("frame path contains non-UTF8 bytes".to_string()))?;
         let scp_status = Command::new("scp")
-            .args([
-                frame.path.to_str().unwrap(),
-                &format!("{host}:{remote_path}"),
-            ])
+            .args([frame_str, &format!("{host}:{remote_path}")])
+
             .status()
             .await?;
 
@@ -437,7 +439,8 @@ fn base64_encode(data: &[u8]) -> String {
         }
     }
 
-    String::from_utf8(result).unwrap()
+    // SAFETY: base64 alphabet is ASCII-only; every byte in `result` is < 128.
+    String::from_utf8(result).expect("base64 alphabet is ASCII; conversion is infallible")
 }
 
 #[cfg(test)]

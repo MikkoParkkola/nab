@@ -172,11 +172,12 @@ impl BrowserVersions {
             return Err("No Chrome versions found".into());
         }
 
+        // SAFETY: versions.is_empty() was checked above; last() is always Some.
         eprintln!(
             "✅ Chrome: {} versions ({} to {})",
             versions.len(),
             versions[0].0,
-            versions.last().unwrap().0
+            versions.last().expect("non-empty versions list has a last element").0
         );
         Ok(versions)
     }
@@ -228,11 +229,12 @@ impl BrowserVersions {
             .map(|i| format!("{}.0", latest.saturating_sub(i)))
             .collect();
 
+        // SAFETY: versions always has exactly 6 elements (range 0..6 is never empty).
         eprintln!(
             "✅ Firefox: {} versions ({} to {})",
             versions.len(),
             versions[0],
-            versions.last().unwrap()
+            versions.last().expect("6-element versions list has a last element")
         );
         Ok(versions)
     }

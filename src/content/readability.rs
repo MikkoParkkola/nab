@@ -193,7 +193,7 @@ fn find_main_content_by_density(document: &Html) -> Option<Article> {
     }
 
     // Sort by density (highest first)
-    scored_elements.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    scored_elements.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
     // Take the highest-scoring element
     if let Some((_, element, text)) = scored_elements.first() {

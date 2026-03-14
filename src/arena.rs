@@ -218,14 +218,12 @@ impl<'arena> ResponseBuffer<'arena> {
         }
     }
 
-    /// Push bytes into the buffer (must be valid UTF-8)
+    /// Push bytes into the buffer if they are valid UTF-8.
     ///
-    /// # Panics
-    ///
-    /// Panics if bytes are not valid UTF-8.
+    /// Silently skips invalid UTF-8 sequences — callers that need strict
+    /// validation should check with [`std::str::from_utf8`] before calling.
     pub fn push_bytes(&mut self, bytes: &[u8]) {
-        if !bytes.is_empty() {
-            let s = std::str::from_utf8(bytes).expect("Invalid UTF-8");
+        if let Ok(s) = std::str::from_utf8(bytes) {
             self.push_str(s);
         }
     }

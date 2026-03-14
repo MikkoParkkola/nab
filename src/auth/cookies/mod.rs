@@ -141,7 +141,9 @@ impl CookieSource {
         let temp_db = copy_db_to_temp(&cookie_path)?;
         let domain_tag = has_domain_tag(&temp_db);
         let rows = query_cookie_db(&temp_db, domain)?;
-        let _ = std::fs::remove_dir_all(temp_db.parent().expect("temp_db always has a parent"));
+        if let Some(parent) = temp_db.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
 
         let key = self.get_keychain_key().ok();
         let cookies = decrypt_rows(rows, key.as_deref(), domain_tag);
