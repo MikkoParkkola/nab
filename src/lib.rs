@@ -42,6 +42,7 @@ pub mod login;
 pub mod mfa;
 pub mod plugin;
 pub mod prefetch;
+pub mod rate_limit;
 pub mod session;
 pub mod site;
 pub mod ssrf;

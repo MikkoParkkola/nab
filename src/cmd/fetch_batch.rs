@@ -1,13 +1,20 @@
 //! Batch URL fetching for the `nab fetch --batch` flag.
+//!
+//! Supports per-domain rate limiting to avoid triggering anti-bot protections
+//! while maximising throughput across different domains.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
 use nab::content::ContentRouter;
+use nab::rate_limit::DomainRateLimiter;
 
 use super::fetch::{build_client, resolve_browser_name, resolve_cookie_source};
 use crate::OutputFormat;
+
+/// Default minimum delay between requests to the same domain (milliseconds).
+const DEFAULT_DOMAIN_DELAY_MS: u64 = 200;
 
 /// Fetch URLs from a file in parallel and print results.
 #[allow(
@@ -59,6 +66,9 @@ pub async fn cmd_fetch_batch(
     );
 
     let semaphore = Arc::new(Semaphore::new(parallel));
+    let limiter = Arc::new(DomainRateLimiter::new(Duration::from_millis(
+        DEFAULT_DOMAIN_DELAY_MS,
+    )));
     let mut handles = Vec::new();
 
     let custom_headers = custom_headers.to_vec();
@@ -69,6 +79,7 @@ pub async fn cmd_fetch_batch(
 
     for url in urls {
         let sem = semaphore.clone();
+        let lim = limiter.clone();
         let custom_headers = custom_headers.clone();
         let cookies = cookies.clone();
         let method = method.clone();
@@ -77,6 +88,14 @@ pub async fn cmd_fetch_batch(
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
+
+            // Per-domain rate limiting: avoid hammering the same host.
+            let domain = url::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            lim.wait(&domain).await;
+
             fetch_one_batch_url(
                 url,
                 no_redirect,
