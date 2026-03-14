@@ -23,7 +23,7 @@ pub use bench::cmd_bench;
 pub use context::cmd_context;
 pub use cookies::cmd_cookies;
 pub use export_rules::{cmd_export_rules, cmd_list_rules};
-pub use fetch::cmd_fetch;
+pub use fetch::{FetchConfig, cmd_fetch};
 pub use fingerprint::cmd_fingerprint;
 pub use login::cmd_login;
 pub use otp::cmd_otp;

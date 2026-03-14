@@ -13,7 +13,7 @@ pub async fn cmd_submit(
     cookies: &str,
     use_1password: bool,
     show_headers: bool,
-    format: OutputFormat,
+    _format: OutputFormat,
 ) -> Result<()> {
     use nab::{Form, parse_field_args};
 
@@ -66,7 +66,7 @@ pub async fn cmd_submit(
         .send()
         .await?;
 
-    output_response(response, show_headers, true, format, None, false, false, 0).await?;
+    output_response(response, show_headers).await?;
 
     Ok(())
 }

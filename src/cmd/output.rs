@@ -1,16 +1,14 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::Result;
 use scraper::{Html, Selector};
 
-use crate::OutputFormat;
-
 pub fn output_body(
     body: &str,
-    output_file: Option<PathBuf>,
+    output_file: Option<&Path>,
     _markdown: bool,
     links: bool,
     max_body: usize,
@@ -18,7 +16,7 @@ pub fn output_body(
 ) -> Result<()> {
     // Save to file if requested (always full, no truncation)
     if let Some(path) = output_file {
-        let mut file = File::create(&path)?;
+        let mut file = File::create(path)?;
         // Body is already converted (via ContentRouter) when markdown mode is active
         file.write_all(body.as_bytes())?;
         println!("💾 Saved {} bytes to {}", body.len(), path.display());
@@ -95,19 +93,8 @@ pub fn truncate_text(text: &str, max: usize) -> String {
     }
 }
 
-/// Output response helper
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
-pub async fn output_response(
-    response: reqwest::Response,
-    show_headers: bool,
-    show_body: bool,
-    _format: OutputFormat,
-    output_file: Option<PathBuf>,
-    raw_html: bool,
-    links: bool,
-    max_body: usize,
-) -> Result<()> {
-    // Show headers if requested
+/// Print response headers and markdown body for form-submission results.
+pub async fn output_response(response: reqwest::Response, show_headers: bool) -> Result<()> {
     if show_headers {
         println!("\nResponse Headers:");
         for (key, value) in response.headers() {
@@ -115,20 +102,10 @@ pub async fn output_response(
         }
     }
 
-    // Get response body
     let body_text = response.text().await?;
-
-    // Show body if requested
-    if show_body {
-        let markdown = if raw_html {
-            body_text.clone()
-        } else {
-            let router = nab::content::ContentRouter::new();
-            router.convert(body_text.as_bytes(), "text/html")?.markdown
-        };
-
-        output_body(&markdown, output_file, !raw_html, links, max_body, false)?;
-    }
+    let router = nab::content::ContentRouter::new();
+    let markdown = router.convert(body_text.as_bytes(), "text/html")?.markdown;
+    output_body(&markdown, None, true, false, 0, false)?;
 
     Ok(())
 }

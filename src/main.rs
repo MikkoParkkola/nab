@@ -526,31 +526,31 @@ async fn main() -> Result<()> {
             proxy,
             diff,
         } => {
-            cmd::cmd_fetch(
-                &url,
-                headers,
-                body,
+            let cfg = cmd::FetchConfig {
+                url,
+                show_headers: headers,
+                show_body: body,
                 format,
-                output,
-                &cookies,
+                output_file: output,
+                cookies,
                 use_1password,
                 raw_html,
                 links,
                 max_body,
-                &add_headers,
+                custom_headers: add_headers,
                 auto_referer,
-                warmup_url.as_deref(),
-                &method,
-                data.as_deref(),
+                warmup_url,
+                method,
+                data,
                 capture_cookies,
                 no_redirect,
                 no_spa,
-                batch.as_deref(),
+                batch_file: batch,
                 parallel,
-                proxy.as_deref(),
-                diff,
-            )
-            .await?;
+                proxy,
+                show_diff: diff,
+            };
+            cmd::cmd_fetch(&cfg).await?;
         }
         Commands::Spa {
             url,

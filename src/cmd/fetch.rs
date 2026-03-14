@@ -13,110 +13,93 @@ use nab::{AcceleratedClient, CookieSource, OnePasswordAuth, SafeFetchConfig};
 use super::output::output_body;
 use crate::OutputFormat;
 
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::fn_params_excessive_bools
-)]
-pub async fn cmd_fetch(
-    url: &str,
-    show_headers: bool,
-    show_body: bool,
-    format: OutputFormat,
-    output_file: Option<PathBuf>,
-    cookies: &str,
-    use_1password: bool,
-    raw_html: bool,
-    links: bool,
-    max_body: usize,
-    custom_headers: &[String],
-    auto_referer: bool,
-    warmup_url: Option<&str>,
-    method: &str,
-    data: Option<&str>,
-    capture_cookies: bool,
-    no_redirect: bool,
-    no_spa: bool,
-    batch_file: Option<&str>,
-    parallel: usize,
-    proxy: Option<&str>,
-    show_diff: bool,
-) -> Result<()> {
+/// All parameters for a `nab fetch` invocation.
+///
+/// Constructed from CLI arguments in `main.rs` and threaded through the
+/// fetch pipeline, replacing the 22-positional-parameter function signature.
+#[allow(clippy::struct_excessive_bools)] // 1:1 map of CLI boolean flags
+pub struct FetchConfig {
+    pub url: String,
+    pub show_headers: bool,
+    pub show_body: bool,
+    pub format: OutputFormat,
+    pub output_file: Option<PathBuf>,
+    pub cookies: String,
+    pub use_1password: bool,
+    pub raw_html: bool,
+    pub links: bool,
+    pub max_body: usize,
+    pub custom_headers: Vec<String>,
+    pub auto_referer: bool,
+    pub warmup_url: Option<String>,
+    pub method: String,
+    pub data: Option<String>,
+    pub capture_cookies: bool,
+    pub no_redirect: bool,
+    pub no_spa: bool,
+    pub batch_file: Option<String>,
+    pub parallel: usize,
+    pub proxy: Option<String>,
+    pub show_diff: bool,
+}
+
+#[allow(clippy::too_many_lines)]
+pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // Handle batch mode
-    if let Some(file_path) = batch_file {
-        return super::fetch_batch::cmd_fetch_batch(
-            file_path,
-            parallel,
-            show_headers,
-            show_body,
-            format,
-            cookies,
-            use_1password,
-            raw_html,
-            links,
-            max_body,
-            custom_headers,
-            auto_referer,
-            method,
-            data,
-            capture_cookies,
-            no_redirect,
-            no_spa,
-            proxy,
-        )
-        .await;
+    if cfg.batch_file.is_some() {
+        return super::fetch_batch::cmd_fetch_batch(cfg).await;
     }
 
-    let client = build_client(no_redirect, proxy)?;
+    let client = build_client(cfg.no_redirect, cfg.proxy.as_deref())?;
     let profile = client.profile().await;
 
-    let domain = url::Url::parse(url)
+    let domain = url::Url::parse(&cfg.url)
         .ok()
         .and_then(|u| u.host_str().map(std::string::ToString::to_string))
         .unwrap_or_default();
 
     let mut cookie_header = String::new();
-    let browser_name = resolve_browser_name(cookies);
+    let browser_name = resolve_browser_name(&cfg.cookies);
 
     if let Some(browser) = &browser_name {
         let source = resolve_cookie_source(browser);
         cookie_header = source.get_cookie_header(&domain).unwrap_or_default();
-        if !cookie_header.is_empty() && matches!(format, OutputFormat::Full) {
+        if !cookie_header.is_empty() && matches!(cfg.format, OutputFormat::Full) {
             println!("🍪 Loading {} cookies for {domain}", browser.to_lowercase());
         }
     }
 
     let site_router = nab::site::SiteRouter::new();
     let cookie_opt = non_empty(&cookie_header);
-    if let Some(site_content) = site_router.try_extract(url, &client, cookie_opt).await {
-        let markdown = !raw_html;
+    if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
+        let markdown = !cfg.raw_html;
         output_body(
             &site_content.markdown,
-            output_file,
+            cfg.output_file.as_deref(),
             markdown,
-            links,
-            max_body,
-            !no_spa,
+            cfg.links,
+            cfg.max_body,
+            !cfg.no_spa,
         )?;
         return Ok(());
     }
 
-    let markdown = !raw_html;
+    let markdown = !cfg.raw_html;
 
-    if use_1password && OnePasswordAuth::is_available() {
+    if cfg.use_1password && OnePasswordAuth::is_available() {
         let auth = OnePasswordAuth::new(None);
-        if let Ok(Some(cred)) = auth.get_credential_for_url(url)
-            && matches!(format, OutputFormat::Full)
+        if let Ok(Some(cred)) = auth.get_credential_for_url(&cfg.url)
+            && matches!(cfg.format, OutputFormat::Full)
         {
             println!("🔐 Found 1Password: {}", cred.title);
         }
     }
 
-    if let Some(warmup) = warmup_url {
-        if matches!(format, OutputFormat::Full) {
+    if let Some(warmup) = &cfg.warmup_url {
+        if matches!(cfg.format, OutputFormat::Full) {
             println!("🔥 Warming up session: {warmup}");
         }
-        let mut warmup_req = client.inner().get(warmup);
+        let mut warmup_req = client.inner().get(warmup.as_str());
         warmup_req = warmup_req.headers(profile.to_headers());
         if !cookie_header.is_empty() {
             warmup_req = warmup_req.header("Cookie", &cookie_header);
@@ -126,29 +109,18 @@ pub async fn cmd_fetch(
 
     let start = Instant::now();
 
-    let is_simple_get = method.eq_ignore_ascii_case("GET")
+    let is_simple_get = cfg.method.eq_ignore_ascii_case("GET")
         && cookie_header.is_empty()
-        && custom_headers.is_empty()
-        && data.is_none()
-        && !auto_referer
-        && !no_redirect;
+        && cfg.custom_headers.is_empty()
+        && cfg.data.is_none()
+        && !cfg.auto_referer
+        && !cfg.no_redirect;
 
     let (status, version, set_cookies, content_type, response_headers, body_bytes) =
         if is_simple_get {
-            execute_safe_get(&client, url, show_headers).await?
+            execute_safe_get(&client, &cfg.url, cfg.show_headers).await?
         } else {
-            execute_manual_request(
-                &client,
-                url,
-                method,
-                data,
-                &profile,
-                &cookie_header,
-                auto_referer,
-                custom_headers,
-                show_headers,
-            )
-            .await?
+            execute_manual_request(&client, cfg, &profile, &cookie_header).await?
         };
 
     let elapsed = start.elapsed();
@@ -158,7 +130,7 @@ pub async fn cmd_fetch(
         eprintln!("⚠️  {warning}");
     }
 
-    if capture_cookies && !set_cookies.is_empty() {
+    if cfg.capture_cookies && !set_cookies.is_empty() {
         println!("🍪 Set-Cookie:");
         for cookie in &set_cookies {
             if let Some(name_value) = cookie.split(';').next() {
@@ -169,37 +141,31 @@ pub async fn cmd_fetch(
 
     let body_len = body_bytes.len();
 
-    let body_text = if markdown && !links {
-        convert_body_to_markdown(&body_bytes, &content_type, url, format, body_len).await?
+    let body_text = if markdown && !cfg.links {
+        convert_body_to_markdown(&body_bytes, &content_type, &cfg.url, cfg.format, body_len)
+            .await?
     } else {
         raw_text.clone()
     };
 
-    if show_diff {
-        emit_diff(url, &body_text, format);
+    if cfg.show_diff {
+        emit_diff(&cfg.url, &body_text, cfg.format);
     }
 
     print_output(
-        format,
-        url,
-        &profile,
-        cookies,
-        &cookie_header,
-        status,
-        &version,
-        elapsed,
-        show_headers,
-        &response_headers,
-        body_len,
-        show_body,
-        output_file,
-        markdown,
-        links,
-        max_body,
-        no_spa,
-        &body_text,
-        &raw_text,
-        &content_type,
+        cfg,
+        &FetchResponse {
+            profile: &profile,
+            cookie_header: &cookie_header,
+            status,
+            version: &version,
+            elapsed,
+            response_headers: &response_headers,
+            body_len,
+            body_text: &body_text,
+            raw_text: &raw_text,
+            content_type: &content_type,
+        },
     )?;
 
     Ok(())
@@ -245,17 +211,11 @@ async fn execute_safe_get(
 }
 
 /// Execute a manually-built request (non-GET, cookies, custom headers, etc.).
-#[allow(clippy::too_many_arguments)]
 async fn execute_manual_request(
     client: &AcceleratedClient,
-    url: &str,
-    method: &str,
-    data: Option<&str>,
+    cfg: &FetchConfig,
     profile: &nab::fingerprint::BrowserProfile,
     cookie_header: &str,
-    auto_referer: bool,
-    custom_headers: &[String],
-    show_headers: bool,
 ) -> Result<(
     reqwest::StatusCode,
     String,
@@ -264,7 +224,8 @@ async fn execute_manual_request(
     Vec<(String, String)>,
     bytes::Bytes,
 )> {
-    let mut request = match method.to_uppercase().as_str() {
+    let url = &cfg.url;
+    let mut request = match cfg.method.to_uppercase().as_str() {
         "POST" => client.inner().post(url),
         "PUT" => client.inner().put(url),
         "PATCH" => client.inner().patch(url),
@@ -273,9 +234,10 @@ async fn execute_manual_request(
         _ => client.inner().get(url),
     };
 
-    if let Some(body_data) = data {
-        request = request.body(body_data.to_owned());
-        if !custom_headers
+    if let Some(body_data) = &cfg.data {
+        request = request.body(body_data.clone());
+        if !cfg
+            .custom_headers
             .iter()
             .any(|h| h.to_lowercase().starts_with("content-type"))
         {
@@ -289,12 +251,12 @@ async fn execute_manual_request(
         request = request.header("Cookie", cookie_header);
     }
 
-    if auto_referer && let Ok(parsed) = url::Url::parse(url) {
+    if cfg.auto_referer && let Ok(parsed) = url::Url::parse(url) {
         let referer = format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
         request = request.header("Referer", referer);
     }
 
-    for header_str in custom_headers {
+    for header_str in &cfg.custom_headers {
         let parts: Vec<&str> = header_str.splitn(2, ':').collect();
         if parts.len() == 2 {
             request = request.header(parts[0].trim(), parts[1].trim());
@@ -319,7 +281,7 @@ async fn execute_manual_request(
         .unwrap_or("text/html")
         .to_string();
 
-    let resp_headers: Vec<(String, String)> = if show_headers {
+    let resp_headers: Vec<(String, String)> = if cfg.show_headers {
         response
             .headers()
             .iter()
@@ -384,89 +346,84 @@ async fn convert_body_to_markdown(
     Ok(result.markdown)
 }
 
-/// Print the response according to the requested output format.
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
-fn print_output(
-    format: OutputFormat,
-    url: &str,
-    profile: &nab::fingerprint::BrowserProfile,
-    cookies: &str,
-    cookie_header: &str,
+/// Response data collected after the HTTP request completes.
+struct FetchResponse<'a> {
+    profile: &'a nab::fingerprint::BrowserProfile,
+    cookie_header: &'a str,
     status: reqwest::StatusCode,
-    version: &str,
+    version: &'a str,
     elapsed: std::time::Duration,
-    show_headers: bool,
-    response_headers: &[(String, String)],
+    response_headers: &'a [(String, String)],
     body_len: usize,
-    show_body: bool,
-    output_file: Option<PathBuf>,
-    markdown: bool,
-    links: bool,
-    max_body: usize,
-    no_spa: bool,
-    body_text: &str,
-    raw_text: &str,
-    content_type: &str,
-) -> Result<()> {
-    match format {
+    body_text: &'a str,
+    raw_text: &'a str,
+    content_type: &'a str,
+}
+
+/// Print the response according to the requested output format.
+fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
+    let markdown = !cfg.raw_html;
+    let out_path = cfg.output_file.as_deref();
+
+    match cfg.format {
         OutputFormat::Compact => {
             println!(
                 "{} {}B {:.0}ms",
-                status.as_u16(),
-                body_len,
-                elapsed.as_secs_f64() * 1000.0
+                resp.status.as_u16(),
+                resp.body_len,
+                resp.elapsed.as_secs_f64() * 1000.0
             );
-            if show_body || output_file.is_some() || markdown || links {
-                output_body(body_text, output_file, markdown, links, max_body, !no_spa)?;
+            if cfg.show_body || out_path.is_some() || markdown || cfg.links {
+                output_body(resp.body_text, out_path, markdown, cfg.links, cfg.max_body, !cfg.no_spa)?;
             }
         }
         OutputFormat::Json => {
             let metadata = serde_json::json!({
-                "title": extract_title(raw_text),
-                "content_length": body_len,
-                "content_type": content_type,
+                "title": extract_title(resp.raw_text),
+                "content_length": resp.body_len,
+                "content_type": resp.content_type,
             });
             let output = serde_json::json!({
-                "url": url,
-                "status": status.as_u16(),
-                "content_type": content_type,
-                "markdown": body_text,
+                "url": cfg.url,
+                "status": resp.status.as_u16(),
+                "content_type": resp.content_type,
+                "markdown": resp.body_text,
                 "metadata": metadata,
-                "elapsed_ms": (elapsed.as_secs_f64() * 1000.0 * 10.0).round() / 10.0,
+                "elapsed_ms": (resp.elapsed.as_secs_f64() * 1000.0 * 10.0).round() / 10.0,
             });
             println!("{}", serde_json::to_string(&output)?);
-            if let Some(path) = output_file {
-                let mut file = File::create(&path)?;
-                file.write_all(body_text.as_bytes())?;
+            if let Some(path) = out_path {
+                let mut file = File::create(path)?;
+                file.write_all(resp.body_text.as_bytes())?;
             }
         }
         OutputFormat::Full => {
-            println!("🌐 Fetching: {url}");
-            println!("🎭 User-Agent: {}", profile.user_agent);
-            if !cookie_header.is_empty() {
+            println!("🌐 Fetching: {}", cfg.url);
+            println!("🎭 User-Agent: {}", resp.profile.user_agent);
+            if !resp.cookie_header.is_empty() {
                 println!(
                     "🍪 Loaded {} cookies from {}",
-                    cookie_header.matches('=').count(),
-                    if cookies == "auto" {
+                    resp.cookie_header.matches('=').count(),
+                    if cfg.cookies == "auto" {
                         "browser (auto-detected)"
                     } else {
-                        cookies
+                        &cfg.cookies
                     }
                 );
             }
             println!("\n📊 Response:");
-            println!("   Status: {status}");
-            println!("   Version: {version}");
-            println!("   Time: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
-            if show_headers {
+            println!("   Status: {}", resp.status);
+            println!("   Version: {}", resp.version);
+            println!("   Time: {:.2}ms", resp.elapsed.as_secs_f64() * 1000.0);
+            if cfg.show_headers {
                 println!("\n📋 Headers:");
-                for (name, value) in response_headers {
+                for (name, value) in resp.response_headers {
                     println!("   {name}: {value}");
                 }
             }
-            println!("\n📄 Body: {body_len} bytes");
-            if show_body || output_file.is_some() || markdown || links {
-                output_body(body_text, output_file, markdown, links, max_body, !no_spa)?;
+            println!("\n📄 Body: {} bytes", resp.body_len);
+            if cfg.show_body || out_path.is_some() || markdown || cfg.links {
+                output_body(resp.body_text, out_path, markdown, cfg.links, cfg.max_body, !cfg.no_spa)?;
             }
         }
     }
