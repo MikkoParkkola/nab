@@ -3,7 +3,7 @@
 //! Tests for `elicitation` and `structured` module functions,
 //! co-located here so they can reference any `crate::` module freely.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use rust_mcp_sdk::schema::{ElicitResultContent, ElicitResultContentPrimitive};
 
@@ -58,7 +58,7 @@ fn oauth_redirect_case_insensitive() {
 #[test]
 fn multiselect_parses_json_array() {
     // GIVEN a JSON-encoded array string in the content map
-    let mut content = HashMap::new();
+    let mut content = BTreeMap::new();
     content.insert(
         "sources".to_string(),
         ElicitResultContent::Primitive(ElicitResultContentPrimitive::String(
@@ -74,7 +74,7 @@ fn multiselect_parses_json_array() {
 #[test]
 fn multiselect_parses_comma_separated() {
     // GIVEN a comma-separated string (fallback encoding)
-    let mut content = HashMap::new();
+    let mut content = BTreeMap::new();
     content.insert(
         "sources".to_string(),
         ElicitResultContent::Primitive(ElicitResultContentPrimitive::String(
@@ -90,7 +90,7 @@ fn multiselect_parses_comma_separated() {
 #[test]
 fn multiselect_returns_empty_on_missing_field() {
     // GIVEN content without the requested field
-    let content: HashMap<String, ElicitResultContent> = HashMap::new();
+    let content: BTreeMap<String, ElicitResultContent> = BTreeMap::new();
     // WHEN extracted
     let result = extract_multiselect_field(&content, "sources");
     // THEN empty vec is returned

@@ -132,7 +132,7 @@ pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
     headers.insert("Origin".to_string(), "https://areena.yle.fi".to_string());
 
     if provider.name() == "yle" {
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         let ip = format!(
             "91.{}.{}.{}",

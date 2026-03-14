@@ -5,7 +5,7 @@
 
 pub mod autoupdate;
 
-use rand::Rng;
+use rand::RngExt;
 use rand::seq::IndexedRandom;
 use reqwest::header::{
     ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, USER_AGENT,
@@ -46,7 +46,7 @@ impl Platform {
     fn random() -> Self {
         let mut rng = rand::rng();
         // Realistic distribution: Windows 65%, macOS 20%, Linux 15%
-        let roll: f32 = rng.random();
+        let roll: f32 = rng.random_range(0.0..1.0);
         if roll < 0.65 {
             Platform::Windows
         } else if roll < 0.85 {
@@ -181,7 +181,7 @@ pub fn safari_profile() -> BrowserProfile {
 pub fn random_profile() -> BrowserProfile {
     let mut rng = rand::rng();
     // Realistic distribution: Chrome 65%, Safari 20%, Firefox 10%, Edge 5%
-    let roll: f32 = rng.random();
+    let roll: f32 = rng.random_range(0.0..1.0);
     if roll < 0.65 {
         chrome_profile()
     } else if roll < 0.85 {

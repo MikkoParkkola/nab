@@ -7,7 +7,7 @@
 //! - Browser cookie-source multi-select
 //! - Cookie resolution logic that stitches the above together
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 
@@ -33,7 +33,7 @@ pub(crate) async fn elicit_credentials(
     runtime: &Arc<dyn McpServer>,
     url: &str,
 ) -> Result<(String, String), CallToolError> {
-    let mut properties = HashMap::new();
+    let mut properties = BTreeMap::new();
     properties.insert(
         "username".into(),
         PrimitiveSchemaDefinition::StringSchema(StringSchema::new(
@@ -105,7 +105,7 @@ pub(crate) async fn elicit_credential_choice(
         })
         .collect();
 
-    let mut properties = HashMap::new();
+    let mut properties = BTreeMap::new();
     properties.insert(
         "credential".into(),
         PrimitiveSchemaDefinition::LegacyTitledEnumSchema(LegacyTitledEnumSchema::new(
@@ -215,7 +215,7 @@ pub(crate) async fn run_login_with_credentials(
 
 /// Extract a string value from the elicitation response content map.
 pub(crate) fn extract_string_field(
-    content: &HashMap<String, ElicitResultContent>,
+    content: &BTreeMap<String, ElicitResultContent>,
     field: &str,
 ) -> Result<String, CallToolError> {
     match content.get(field) {
@@ -417,7 +417,7 @@ pub(crate) async fn elicit_cookie_sources(
         Some("Cookie Sources".into()),
     );
 
-    let mut properties = HashMap::new();
+    let mut properties = BTreeMap::new();
     properties.insert(
         "sources".into(),
         PrimitiveSchemaDefinition::TitledMultiSelectEnumSchema(multi_select),
@@ -462,7 +462,7 @@ pub(crate) async fn elicit_cookie_sources(
 /// comma-separated string `"a,b"`.  Both forms are handled here.  Returns an
 /// empty `Vec` when the field is absent or has an unexpected type.
 pub(crate) fn extract_multiselect_field(
-    content: &HashMap<String, ElicitResultContent>,
+    content: &BTreeMap<String, ElicitResultContent>,
     field: &str,
 ) -> Vec<String> {
     match content.get(field) {

@@ -19,7 +19,7 @@ pub mod structured;
 mod tests;
 pub mod tools;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -65,7 +65,7 @@ tool_box!(
 ///
 /// Returns: `{ url, status, content_type, content, timing_ms }`
 fn fetch_output_schema() -> ToolOutputSchema {
-    let mut props = HashMap::new();
+    let mut props = BTreeMap::new();
     props.insert("url".into(), string_prop("The fetched URL"));
     props.insert("status".into(), integer_prop("HTTP status code"));
     props.insert(
@@ -101,7 +101,7 @@ fn fetch_output_schema() -> ToolOutputSchema {
 ///
 /// Returns: `{ results: [{ url, status, content, timing_ms }] }`
 fn fetch_batch_output_schema() -> ToolOutputSchema {
-    let mut item_props = HashMap::new();
+    let mut item_props = BTreeMap::new();
     item_props.insert("url".into(), string_prop("The fetched URL"));
     item_props.insert(
         "status".into(),
@@ -132,7 +132,7 @@ fn fetch_batch_output_schema() -> ToolOutputSchema {
         serde_json::json!(["url", "content", "timing_ms"]),
     );
 
-    let mut props = HashMap::new();
+    let mut props = BTreeMap::new();
     let mut results_schema = serde_json::Map::new();
     results_schema.insert("type".into(), "array".into());
     results_schema.insert("items".into(), serde_json::Value::Object(results_items));
@@ -145,7 +145,7 @@ fn fetch_batch_output_schema() -> ToolOutputSchema {
 ///
 /// Returns: `{ domain, username, has_totp }`
 fn auth_lookup_output_schema() -> ToolOutputSchema {
-    let mut props = HashMap::new();
+    let mut props = BTreeMap::new();
     props.insert("domain".into(), string_prop("The queried domain"));
     props.insert("username".into(), string_prop("Account username if found"));
     props.insert(
@@ -159,7 +159,7 @@ fn auth_lookup_output_schema() -> ToolOutputSchema {
 ///
 /// Returns: `{ profiles: [{ user_agent, accept_language, sec_ch_ua }] }`
 fn fingerprint_output_schema() -> ToolOutputSchema {
-    let mut item_props = HashMap::new();
+    let mut item_props = BTreeMap::new();
     item_props.insert(
         "user_agent".into(),
         string_prop("Browser User-Agent string"),
@@ -189,7 +189,7 @@ fn fingerprint_output_schema() -> ToolOutputSchema {
         serde_json::json!(["user_agent", "accept_language", "sec_ch_ua"]),
     );
 
-    let mut props = HashMap::new();
+    let mut props = BTreeMap::new();
     let mut profiles_schema = serde_json::Map::new();
     profiles_schema.insert("type".into(), "array".into());
     profiles_schema.insert("items".into(), serde_json::Value::Object(profiles_items));
@@ -202,7 +202,7 @@ fn fingerprint_output_schema() -> ToolOutputSchema {
 ///
 /// Returns: `{ results: [{ url, min_ms, avg_ms, max_ms, iterations }] }`
 fn benchmark_output_schema() -> ToolOutputSchema {
-    let mut item_props = HashMap::new();
+    let mut item_props = BTreeMap::new();
     item_props.insert("url".into(), string_prop("Benchmarked URL"));
     item_props.insert(
         "min_ms".into(),
@@ -237,7 +237,7 @@ fn benchmark_output_schema() -> ToolOutputSchema {
         serde_json::json!(["url", "min_ms", "avg_ms", "max_ms", "iterations"]),
     );
 
-    let mut props = HashMap::new();
+    let mut props = BTreeMap::new();
     let mut results_schema = serde_json::Map::new();
     results_schema.insert("type".into(), "array".into());
     results_schema.insert("items".into(), serde_json::Value::Object(results_items));
@@ -480,6 +480,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handler: handler.to_mcp_server_handler(),
         task_store: Some(task_store),
         client_task_store: None,
+        message_observer: None,
     });
 
     Ok(server.start().await?)
