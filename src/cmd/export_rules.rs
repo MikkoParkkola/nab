@@ -80,9 +80,7 @@ fn collect_user_rule_names(dir: &Path) -> HashSet<String> {
         .filter_map(|e| {
             let path = e.path();
             if path.extension().is_some_and(|ext| ext == "toml") {
-                path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_owned)
+                path.file_stem().and_then(|s| s.to_str()).map(str::to_owned)
             } else {
                 None
             }
@@ -102,7 +100,11 @@ fn build_rows(embedded_names: &HashSet<&str>, user_names: &HashSet<String>) -> V
             let overridden = user_names.contains(name);
             RuleRow {
                 name: name.to_owned(),
-                source: if overridden { "user override" } else { "embedded" },
+                source: if overridden {
+                    "user override"
+                } else {
+                    "embedded"
+                },
                 status: if overridden {
                     "active (overrides embedded)"
                 } else {
@@ -150,9 +152,7 @@ fn print_table(rows: &[RuleRow]) {
         .unwrap_or(0)
         .max(COL_SRC.len());
 
-    println!(
-        "{COL_NAME:<w_name$}  {COL_SRC:<w_src$}  {COL_STATUS}"
-    );
+    println!("{COL_NAME:<w_name$}  {COL_SRC:<w_src$}  {COL_STATUS}");
     let separator = format!(
         "{}  {}  {}",
         "─".repeat(w_name),
@@ -339,14 +339,19 @@ mod tests {
     fn build_rows_appends_user_only_rules_alphabetically() {
         // GIVEN: no embedded names and two user-only rules
         let embedded: HashSet<&str> = HashSet::new();
-        let user: HashSet<String> = ["zebra".to_owned(), "apple".to_owned()].into_iter().collect();
+        let user: HashSet<String> = ["zebra".to_owned(), "apple".to_owned()]
+            .into_iter()
+            .collect();
 
         // WHEN: we build rows
         let rows = build_rows(&embedded, &user);
 
         // THEN: user-only rows appear after the embedded rows, in alphabetical order.
         // build_rows always includes all embedded_rules() entries first.
-        let user_rows: Vec<_> = rows.iter().filter(|r| r.source == "user (~/.config/…)").collect();
+        let user_rows: Vec<_> = rows
+            .iter()
+            .filter(|r| r.source == "user (~/.config/…)")
+            .collect();
         assert_eq!(user_rows.len(), 2);
         assert_eq!(user_rows[0].name, "apple");
         assert_eq!(user_rows[1].name, "zebra");

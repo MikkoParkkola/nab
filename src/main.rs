@@ -482,10 +482,7 @@ async fn main() -> Result<()> {
 
     // Initialize logging. `nab context` defaults to ERROR-only for clean
     // stdout piping; other commands use INFO (or DEBUG with --verbose).
-    let is_quiet_context = matches!(
-        &cli.command,
-        Commands::Context { verbose: false, .. }
-    );
+    let is_quiet_context = matches!(&cli.command, Commands::Context { verbose: false, .. });
     let log_level = if cli.verbose {
         Level::DEBUG
     } else if is_quiet_context {
@@ -701,7 +698,12 @@ async fn main() -> Result<()> {
             })
             .await?;
         }
-        Commands::Context { urls, cookies, max_tokens, .. } => {
+        Commands::Context {
+            urls,
+            cookies,
+            max_tokens,
+            ..
+        } => {
             cmd::cmd_context(&urls, &cookies, max_tokens).await?;
         }
         Commands::Cookies { action } => match action {

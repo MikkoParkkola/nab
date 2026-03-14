@@ -75,10 +75,7 @@ pub async fn cmd_login(cfg: &LoginConfig) -> Result<()> {
 }
 
 /// Create HTTP client with cookie support and return cookie header.
-fn create_login_client(
-    cookies: &str,
-    url: &str,
-) -> Result<(AcceleratedClient, Option<String>)> {
+fn create_login_client(cookies: &str, url: &str) -> Result<(AcceleratedClient, Option<String>)> {
     let client = AcceleratedClient::new()?;
 
     let domain = super::extract_domain(url);

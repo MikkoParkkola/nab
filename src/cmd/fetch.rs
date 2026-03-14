@@ -129,8 +129,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     let body_len = body_bytes.len();
 
     let body_text = if markdown && !cfg.links {
-        convert_body_to_markdown(&body_bytes, &content_type, &cfg.url, cfg.format, body_len)
-            .await?
+        convert_body_to_markdown(&body_bytes, &content_type, &cfg.url, cfg.format, body_len).await?
     } else {
         raw_text.clone()
     };
@@ -238,7 +237,9 @@ async fn execute_manual_request(
         request = request.header("Cookie", cookie_header);
     }
 
-    if cfg.auto_referer && let Some(referer) = super::build_referer(url) {
+    if cfg.auto_referer
+        && let Some(referer) = super::build_referer(url)
+    {
         request = request.header("Referer", referer);
     }
 
@@ -512,7 +513,6 @@ pub(super) fn build_client(no_redirect: bool, proxy: Option<&str>) -> Result<Acc
         AcceleratedClient::new()
     }
 }
-
 
 // Re-export from mod.rs for internal use.
 pub(super) use super::non_empty;

@@ -348,7 +348,10 @@ mod tests {
         // Both twitter (embedded index 0) and reddit (embedded index 4) are
         // rule-based; twitter should appear before hackernews (hardcoded).
         let twitter_pos = router.providers.iter().position(|p| p.name() == "twitter");
-        let hn_pos = router.providers.iter().position(|p| p.name() == "hackernews");
+        let hn_pos = router
+            .providers
+            .iter()
+            .position(|p| p.name() == "hackernews");
         assert!(
             twitter_pos < hn_pos,
             "rule-based twitter should precede hardcoded hackernews"

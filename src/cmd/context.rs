@@ -46,7 +46,9 @@ pub async fn cmd_context(urls: &[String], cookies: &str, max_tokens: usize) -> R
     eprintln!("Fetching {n} URL(s) …");
 
     let semaphore = Arc::new(Semaphore::new(DEFAULT_CONCURRENCY));
-    let limiter = Arc::new(DomainRateLimiter::new(Duration::from_millis(DOMAIN_DELAY_MS)));
+    let limiter = Arc::new(DomainRateLimiter::new(Duration::from_millis(
+        DOMAIN_DELAY_MS,
+    )));
     let cookies_owned = cookies.to_owned();
     let char_budget = budget_per_source(max_tokens, n);
 
@@ -109,7 +111,12 @@ async fn fetch_one(url: &str, cookies: &str, char_budget: usize) -> FetchedSourc
     match fetch_one_inner(url, cookies).await {
         Ok((title, body)) => {
             let truncated = truncate_to_budget(body, char_budget);
-            FetchedSource { url: url.to_owned(), title, body: truncated, ok: true }
+            FetchedSource {
+                url: url.to_owned(),
+                title,
+                body: truncated,
+                ok: true,
+            }
         }
         Err(e) => FetchedSource {
             url: url.to_owned(),
@@ -145,7 +152,10 @@ async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
     }
 
     // No rule matched — fall back to generic HTTP fetch + content conversion.
-    let mut request = client.inner().get(url).headers(client.profile().await.to_headers());
+    let mut request = client
+        .inner()
+        .get(url)
+        .headers(client.profile().await.to_headers());
     if let Some(cv) = cookie_opt {
         request = request.header("Cookie", cv);
     }
@@ -169,8 +179,7 @@ async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
     })
     .await??;
 
-    let title = extract_title_from_markdown(&result.markdown)
-        .unwrap_or_else(|| url.to_owned());
+    let title = extract_title_from_markdown(&result.markdown).unwrap_or_else(|| url.to_owned());
 
     Ok((title, result.markdown))
 }
@@ -261,7 +270,10 @@ mod tests {
     #[test]
     fn budget_per_source_zero_sources_avoids_division_by_zero() {
         let result = budget_per_source(8_000, 0);
-        assert_eq!(result, 32_000, "zero sources treated as 1 to avoid div-by-zero");
+        assert_eq!(
+            result, 32_000,
+            "zero sources treated as 1 to avoid div-by-zero"
+        );
     }
 
     #[test]

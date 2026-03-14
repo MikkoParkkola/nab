@@ -150,7 +150,9 @@ async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_
         request = request.header("Cookie", &cookie_header);
     }
 
-    if params.auto_referer && let Some(referer) = super::build_referer(&url) {
+    if params.auto_referer
+        && let Some(referer) = super::build_referer(&url)
+    {
         request = request.header("Referer", referer);
     }
 
