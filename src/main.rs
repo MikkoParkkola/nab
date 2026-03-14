@@ -414,6 +414,10 @@ enum Commands {
         #[arg(short, long, default_value = "auto")]
         cookies: String,
 
+        /// Enable verbose debug logging
+        #[arg(short, long)]
+        verbose: bool,
+
         /// Approximate token budget for the combined output (default: 8000)
         #[arg(long, default_value = "8000")]
         max_tokens: usize,
@@ -468,9 +472,16 @@ enum RulesAction {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging based on --verbose flag
+    // Initialize logging. `nab context` defaults to ERROR-only for clean
+    // stdout piping; other commands use INFO (or DEBUG with --verbose).
+    let is_quiet_context = matches!(
+        &cli.command,
+        Commands::Context { verbose: false, .. }
+    );
     let log_level = if cli.verbose {
         Level::DEBUG
+    } else if is_quiet_context {
+        Level::ERROR
     } else {
         Level::INFO
     };
@@ -692,7 +703,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Context { urls, cookies, max_tokens } => {
+        Commands::Context { urls, cookies, max_tokens, .. } => {
             cmd::cmd_context(&urls, &cookies, max_tokens).await?;
         }
         Commands::Cookies { action } => match action {
