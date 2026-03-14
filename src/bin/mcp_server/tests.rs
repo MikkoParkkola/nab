@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use rust_mcp_sdk::schema::{ElicitResultContent, ElicitResultContentPrimitive};
 
 use crate::elicitation::{extract_multiselect_field, is_oauth_redirect};
-use crate::structured::{build_fetch_structured_v2, build_structured, server_icons};
+use crate::structured::{
+    FetchStructuredParams, build_fetch_structured_v2, build_structured, server_icons,
+};
 
 // ── is_oauth_redirect ────────────────────────────────────────────────────────
 
@@ -121,18 +123,18 @@ fn build_structured_produces_correct_keys() {
 #[test]
 fn fetch_structured_has_all_required_fields() {
     // GIVEN a complete fetch result
-    let map = build_fetch_structured_v2(
-        "https://example.com",
-        200,
-        "text/html",
-        "# Hello\n\nworld",
-        42.5,
-        false,
-        0,
-        0,
-        false,
-        0,
-    );
+    let map = build_fetch_structured_v2(&FetchStructuredParams {
+        url: "https://example.com",
+        status: 200,
+        content_type: "text/html",
+        markdown: "# Hello\n\nworld",
+        timing_ms: 42.5,
+        has_diff: false,
+        omitted_sections: 0,
+        total_sections: 0,
+        truncated: false,
+        full_tokens: 0,
+    });
     // WHEN inspected
     // THEN all outputSchema fields are present
     assert!(map.contains_key("url"));
@@ -149,18 +151,18 @@ fn fetch_structured_preserves_content_verbatim() {
     // GIVEN content passed to the structured builder
     // (truncation is now handled upstream by budget::truncate_to_budget)
     let content_str = "x".repeat(5000);
-    let map = build_fetch_structured_v2(
-        "https://example.com",
-        200,
-        "text/plain",
-        &content_str,
-        10.0,
-        false,
-        0,
-        0,
-        false,
-        0,
-    );
+    let map = build_fetch_structured_v2(&FetchStructuredParams {
+        url: "https://example.com",
+        status: 200,
+        content_type: "text/plain",
+        markdown: &content_str,
+        timing_ms: 10.0,
+        has_diff: false,
+        omitted_sections: 0,
+        total_sections: 0,
+        truncated: false,
+        full_tokens: 0,
+    });
     // WHEN inspected
     // THEN content is stored verbatim (no internal truncation)
     let content = map["content"].as_str().unwrap();
@@ -170,18 +172,18 @@ fn fetch_structured_preserves_content_verbatim() {
 #[test]
 fn fetch_structured_includes_truncation_metadata_when_flagged() {
     // GIVEN a response marked as truncated with known full_tokens
-    let map = build_fetch_structured_v2(
-        "https://example.com",
-        200,
-        "text/html",
-        "truncated content",
-        10.0,
-        false,
-        0,
-        0,
-        true,
-        8000,
-    );
+    let map = build_fetch_structured_v2(&FetchStructuredParams {
+        url: "https://example.com",
+        status: 200,
+        content_type: "text/html",
+        markdown: "truncated content",
+        timing_ms: 10.0,
+        has_diff: false,
+        omitted_sections: 0,
+        total_sections: 0,
+        truncated: true,
+        full_tokens: 8000,
+    });
     // THEN truncation metadata fields are present
     assert_eq!(map["truncated"], serde_json::Value::Bool(true));
     assert_eq!(map["full_tokens"], serde_json::Value::Number(8000.into()));

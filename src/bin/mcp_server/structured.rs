@@ -8,7 +8,8 @@
 /// Truncate markdown to `max_chars`, appending `\n\n... [truncated]` if needed.
 pub(crate) fn truncate_markdown(text: &str, max_chars: usize) -> String {
     if text.len() > max_chars {
-        format!("{}\n\n... [truncated]", &text[..max_chars])
+        let at = text.floor_char_boundary(max_chars);
+        format!("{}\n\n... [truncated]", &text[..at])
     } else {
         text.to_string()
     }
@@ -29,57 +30,61 @@ pub(crate) fn build_structured<const N: usize>(
         .collect()
 }
 
+/// Parameters for building a `fetch` tool structured response.
+pub(crate) struct FetchStructuredParams<'a> {
+    pub url: &'a str,
+    pub status: u16,
+    pub content_type: &'a str,
+    pub markdown: &'a str,
+    pub timing_ms: f64,
+    pub has_diff: bool,
+    pub omitted_sections: usize,
+    pub total_sections: usize,
+    pub truncated: bool,
+    pub full_tokens: usize,
+}
+
 /// Build the `structuredContent` map for the `fetch` tool response.
 ///
 /// Includes focus and budget metadata fields when applicable.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_fetch_structured_v2(
-    url: &str,
-    status: u16,
-    content_type: &str,
-    markdown: &str,
-    timing_ms: f64,
-    has_diff: bool,
-    omitted_sections: usize,
-    total_sections: usize,
-    truncated: bool,
-    full_tokens: usize,
+    p: &FetchStructuredParams<'_>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut map = build_structured([
-        ("url", serde_json::Value::String(url.to_string())),
-        ("status", serde_json::Value::Number(status.into())),
+        ("url", serde_json::Value::String(p.url.to_string())),
+        ("status", serde_json::Value::Number(p.status.into())),
         (
             "content_type",
-            serde_json::Value::String(content_type.to_string()),
+            serde_json::Value::String(p.content_type.to_string()),
         ),
-        ("content", serde_json::Value::String(markdown.to_string())),
+        ("content", serde_json::Value::String(p.markdown.to_string())),
         (
             "timing_ms",
             serde_json::Value::Number(
-                serde_json::Number::from_f64(timing_ms).unwrap_or(serde_json::Number::from(0)),
+                serde_json::Number::from_f64(p.timing_ms).unwrap_or(serde_json::Number::from(0)),
             ),
         ),
-        ("has_diff", serde_json::Value::Bool(has_diff)),
+        ("has_diff", serde_json::Value::Bool(p.has_diff)),
     ]);
 
     // Focus metadata (only present when focus was used)
-    if total_sections > 0 {
+    if p.total_sections > 0 {
         map.insert(
             "omitted_sections".to_string(),
-            serde_json::Value::Number(omitted_sections.into()),
+            serde_json::Value::Number(p.omitted_sections.into()),
         );
         map.insert(
             "total_sections".to_string(),
-            serde_json::Value::Number(total_sections.into()),
+            serde_json::Value::Number(p.total_sections.into()),
         );
     }
 
     // Budget metadata (only present when truncation occurred)
-    if truncated {
+    if p.truncated {
         map.insert("truncated".to_string(), serde_json::Value::Bool(true));
         map.insert(
             "full_tokens".to_string(),
-            serde_json::Value::Number(full_tokens.into()),
+            serde_json::Value::Number(p.full_tokens.into()),
         );
     }
 

@@ -159,7 +159,7 @@ pub fn detect_thin_content(html_len: usize, markdown_len: usize) -> Option<Strin
     if is_thin_content(html_len, markdown_len) {
         let ratio_percent = (markdown_len * 100) / html_len.max(1);
         Some(format!(
-            "Warning: output is suspiciously thin ({markdown_len} chars from {html_len} bytes of HTML, \
+            "Output is suspiciously thin ({markdown_len} chars from {html_len} bytes of HTML, \
              {ratio_percent}% ratio). The page likely uses JavaScript rendering — \
              the article body may be missing. Try:\n  \
              1. nab spa <url>              (extract embedded SPA data)\n  \

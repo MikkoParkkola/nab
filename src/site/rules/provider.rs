@@ -22,6 +22,15 @@ use super::json_path;
 use super::template;
 use crate::http_client::AcceleratedClient;
 
+/// Shared context for HTML/JSON fallback extraction.
+struct FallbackContext<'a> {
+    fetch_url: &'a str,
+    original_url: &'a str,
+    accept: Option<&'a str>,
+    cookies: Option<&'a str>,
+    prefetched_html: Option<&'a [u8]>,
+}
+
 /// A compiled, ready-to-use provider built from a [`SiteRuleConfig`].
 pub struct ApiRuleProvider {
     /// Config driving this provider.
@@ -320,16 +329,14 @@ impl ApiRuleProvider {
                     .await
                 }
                 FallbackType::Html => {
-                    self.apply_html_fallback(
-                        client,
-                        &fetch_url,
+                    let ctx = FallbackContext {
+                        fetch_url: &fetch_url,
                         original_url,
-                        fb.accept.as_deref(),
-                        &fb.css,
+                        accept: fb.accept.as_deref(),
                         cookies,
                         prefetched_html,
-                    )
-                    .await
+                    };
+                    self.apply_html_fallback(client, &ctx, &fb.css).await
                 }
             };
 
@@ -364,42 +371,43 @@ impl ApiRuleProvider {
 
     /// Fallback path: fetch URL (or reuse `prefetched_html`), parse HTML,
     /// extract fields via CSS selectors.
-    #[allow(clippy::too_many_arguments)]
     async fn apply_html_fallback(
         &self,
         client: &AcceleratedClient,
-        fetch_url: &str,
-        original_url: &str,
-        accept: Option<&str>,
+        ctx: &FallbackContext<'_>,
         css_map: &HashMap<String, String>,
-        cookies: Option<&str>,
-        prefetched_html: Option<&[u8]>,
     ) -> HashMap<String, String> {
         // Reuse pre-fetched bytes when the resolved URL is the original URL.
-        let html: String = if fetch_url == original_url {
-            if let Some(bytes) = prefetched_html {
+        let html: String = if ctx.fetch_url == ctx.original_url {
+            if let Some(bytes) = ctx.prefetched_html {
                 String::from_utf8_lossy(bytes).into_owned()
             } else {
-                match self.fetch_html(client, fetch_url, accept, cookies).await {
+                match self
+                    .fetch_html(client, ctx.fetch_url, ctx.accept, ctx.cookies)
+                    .await
+                {
                     Ok(h) => h,
                     Err(e) => {
                         tracing::warn!(
                             "HTML fallback fetch failed for rule '{}' at '{}': {e}",
                             self.config.site.name,
-                            fetch_url
+                            ctx.fetch_url
                         );
                         return HashMap::new();
                     }
                 }
             }
         } else {
-            match self.fetch_html(client, fetch_url, accept, cookies).await {
+            match self
+                .fetch_html(client, ctx.fetch_url, ctx.accept, ctx.cookies)
+                .await
+            {
                 Ok(h) => h,
                 Err(e) => {
                     tracing::warn!(
                         "HTML fallback fetch failed for rule '{}' at '{}': {e}",
                         self.config.site.name,
-                        fetch_url
+                        ctx.fetch_url
                     );
                     return HashMap::new();
                 }

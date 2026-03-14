@@ -180,10 +180,9 @@ fn truncate_at_word(value: &str, max_chars: usize) -> String {
         return value.to_string();
     }
 
-    // Find the last space before the limit for a clean word-boundary cut.
-    let cut = value[..max_chars]
-        .rfind(' ')
-        .unwrap_or(max_chars);
+    // UTF-8–safe boundary, then find last space before it for a clean word cut.
+    let safe = value.floor_char_boundary(max_chars);
+    let cut = value[..safe].rfind(' ').unwrap_or(safe);
 
     let mut out = value[..cut].to_string();
     out.push('…');

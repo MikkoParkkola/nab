@@ -36,7 +36,9 @@ use crate::helpers::{
     resolve_cookie_header, run_tls_test, run_validation_test, write_body_info,
     write_response_summary,
 };
-use crate::structured::{build_fetch_structured_v2, build_structured, truncate_markdown};
+use crate::structured::{
+    FetchStructuredParams, build_fetch_structured_v2, build_structured, truncate_markdown,
+};
 
 // Global shared client (initialized once, shared with mcp_server main)
 static CLIENT: OnceCell<AcceleratedClient> = OnceCell::const_new();
@@ -332,18 +334,18 @@ impl FetchTool {
             .map(|t| usize::try_from(t).unwrap_or(usize::MAX));
         let budget_result = truncate_to_budget(&processed_markdown, max_tok);
 
-        let structured = build_fetch_structured_v2(
-            &self.url,
-            status_u16,
+        let structured = build_fetch_structured_v2(&FetchStructuredParams {
+            url: &self.url,
+            status: status_u16,
             content_type,
-            &budget_result.markdown,
-            elapsed_ms,
+            markdown: &budget_result.markdown,
+            timing_ms: elapsed_ms,
             has_diff,
             omitted_sections,
             total_sections,
-            budget_result.truncated,
-            budget_result.total_tokens,
-        );
+            truncated: budget_result.truncated,
+            full_tokens: budget_result.total_tokens,
+        });
 
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
         result.structured_content = Some(structured);

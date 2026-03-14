@@ -190,6 +190,15 @@ pub fn extract_structured(html: &str, schema: &ExtractionSchema) -> ExtractionRe
     let twitter_tags = extract_twitter_tags(&document);
     let microdata = extract_microdata(&document);
 
+    let page_sources = PageDataSources {
+        jsonld: &jsonld_data,
+        og: &og_tags,
+        twitter: &twitter_tags,
+        meta: &meta_tags,
+        microdata: &microdata,
+        document: &document,
+    };
+
     let mut fields = HashMap::with_capacity(schema.fields.len());
     let mut sources = HashMap::with_capacity(schema.fields.len());
     let mut missing = Vec::new();
@@ -207,16 +216,7 @@ pub fn extract_structured(html: &str, schema: &ExtractionSchema) -> ExtractionRe
         }
 
         // Try data sources in priority order
-        if let Some((value, source)) = try_extract_field(
-            field_name,
-            field_spec,
-            &jsonld_data,
-            &og_tags,
-            &twitter_tags,
-            &meta_tags,
-            &microdata,
-            &document,
-        ) {
+        if let Some((value, source)) = try_extract_field(field_name, field_spec, &page_sources) {
             fields.insert(field_name.clone(), value);
             sources.insert(field_name.clone(), source);
         } else {
@@ -438,17 +438,21 @@ const FIELD_ALIASES: &[(&str, &[&str])] = &[
     ("availability", &["offers.availability", "availability"]),
 ];
 
+/// Pre-extracted data sources from an HTML document.
+struct PageDataSources<'a> {
+    jsonld: &'a [HashMap<String, Value>],
+    og: &'a HashMap<String, String>,
+    twitter: &'a HashMap<String, String>,
+    meta: &'a HashMap<String, String>,
+    microdata: &'a HashMap<String, String>,
+    document: &'a scraper::Html,
+}
+
 /// Try extracting a field from all data sources in priority order.
-#[allow(clippy::too_many_arguments)]
 fn try_extract_field(
     field_name: &str,
     field_spec: &SchemaField,
-    jsonld_data: &[HashMap<String, Value>],
-    og_tags: &HashMap<String, String>,
-    twitter_tags: &HashMap<String, String>,
-    meta_tags: &HashMap<String, String>,
-    microdata: &HashMap<String, String>,
-    document: &scraper::Html,
+    sources: &PageDataSources<'_>,
 ) -> Option<(Value, DataSource)> {
     let field_lower = field_name.to_lowercase();
 
@@ -463,7 +467,7 @@ fn try_extract_field(
     }
 
     // 1. Try JSON-LD (highest priority)
-    for jsonld in jsonld_data {
+    for jsonld in sources.jsonld {
         for candidate in &candidates {
             // Try exact match
             if let Some(val) = jsonld.get(candidate.as_str()) {
@@ -484,7 +488,7 @@ fn try_extract_field(
 
     // 2. Try Open Graph tags
     for candidate in &candidates {
-        if let Some(val) = og_tags.get(candidate.as_str()) {
+        if let Some(val) = sources.og.get(candidate.as_str()) {
             let coerced = coerce_value(&Value::String(val.clone()), &field_spec.field_type);
             return Some((coerced, DataSource::OpenGraph));
         }
@@ -492,7 +496,7 @@ fn try_extract_field(
 
     // 3. Try Twitter Card tags
     for candidate in &candidates {
-        if let Some(val) = twitter_tags.get(candidate.as_str()) {
+        if let Some(val) = sources.twitter.get(candidate.as_str()) {
             let coerced = coerce_value(&Value::String(val.clone()), &field_spec.field_type);
             return Some((coerced, DataSource::TwitterCard));
         }
@@ -500,7 +504,7 @@ fn try_extract_field(
 
     // 4. Try standard meta tags
     for candidate in &candidates {
-        if let Some(val) = meta_tags.get(candidate.as_str()) {
+        if let Some(val) = sources.meta.get(candidate.as_str()) {
             let coerced = coerce_value(&Value::String(val.clone()), &field_spec.field_type);
             return Some((coerced, DataSource::MetaTag));
         }
@@ -508,14 +512,14 @@ fn try_extract_field(
 
     // 5. Try microdata
     for candidate in &candidates {
-        if let Some(val) = microdata.get(candidate.as_str()) {
+        if let Some(val) = sources.microdata.get(candidate.as_str()) {
             let coerced = coerce_value(&Value::String(val.clone()), &field_spec.field_type);
             return Some((coerced, DataSource::Microdata));
         }
     }
 
     // 6. CSS selector heuristic fallback
-    if let Some(value) = heuristic_css_extract(document, &field_lower) {
+    if let Some(value) = heuristic_css_extract(sources.document, &field_lower) {
         let coerced = coerce_value(&value, &field_spec.field_type);
         return Some((coerced, DataSource::CssSelector));
     }
