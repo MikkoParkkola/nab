@@ -26,6 +26,9 @@ use crate::http_client::AcceleratedClient;
 pub struct ApiRuleProvider {
     /// Config driving this provider.
     config: SiteRuleConfig,
+    /// Interned static name for `SiteProvider::name()` — leaked once at
+    /// construction so `name()` never allocates.
+    static_name: &'static str,
     /// Compiled URL-match regexes (one per pattern).
     patterns: Vec<Regex>,
     /// Compiled rewrite `from` regex.
@@ -99,8 +102,13 @@ impl ApiRuleProvider {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        // Intern the name once — leaked intentionally because providers live
+        // for the entire program.  The set of names is small (embedded + user).
+        let static_name = intern_name(&config.site.name);
+
         Ok(Self {
             config,
+            static_name,
             patterns,
             rewrite_from,
             additional_rewrite_froms,
@@ -807,28 +815,32 @@ fn parse_css_attr_suffix(selector: &str) -> (&str, Option<&str>) {
 
 /// Extract name string from a static `LazyLock<String>`.
 ///
-/// Each `ApiRuleProvider` stores its name in a heap string from `config`.
-/// The `SiteProvider` trait requires `&'static str`, so we use a per-name
-/// interning approach via a global registry.
+/// Intern a provider name so it has `'static` lifetime.
 ///
-/// Instead, we return a leaked `&'static str` (acceptable because providers
-/// are created once at startup and never dropped).
-fn leak_name(s: &str) -> &'static str {
-    // SAFETY: We intentionally leak this allocation.  Providers live for the
-    // entire program duration (stored in `SiteRouter`), so the memory is
-    // effectively static.  The number of unique names is small (bounded by
-    // embedded defaults + user configs).
-    Box::leak(s.to_string().into_boxed_str())
+/// Uses a global set to avoid leaking the same name twice.  The set is
+/// small (bounded by embedded defaults + user configs) and lives for the
+/// entire program, so the memory is effectively static.
+fn intern_name(s: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    use std::sync::LazyLock;
+
+    static INTERNED: LazyLock<Mutex<HashSet<&'static str>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
+
+    let mut set = INTERNED.lock().expect("intern_name lock");
+    if let Some(&existing) = set.get(s) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    set.insert(leaked);
+    leaked
 }
 
 #[async_trait]
 impl SiteProvider for ApiRuleProvider {
     fn name(&self) -> &'static str {
-        // Cache the leaked &'static str in a thread-local to avoid leaking on
-        // every call.  In practice `name()` is called rarely.
-        static EMPTY: &str = "";
-        let _ = EMPTY; // suppress unused warning
-        leak_name(&self.config.site.name)
+        self.static_name
     }
 
     fn matches(&self, url: &str) -> bool {

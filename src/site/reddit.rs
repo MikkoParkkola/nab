@@ -198,19 +198,38 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
     md
 }
 
-/// Format Unix timestamp as human-readable string.
+/// Format Unix timestamp as a relative time string (e.g., "3 hours ago").
+///
+/// More useful than ISO dates for Reddit posts where recency matters.
+/// Falls back to "Unknown" for invalid timestamps.
 fn format_timestamp(timestamp: f64) -> String {
-    use std::time::UNIX_EPOCH;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let secs = timestamp as u64;
-    let duration = std::time::Duration::from_secs(secs);
-    let datetime = UNIX_EPOCH + duration;
+    let post_time = UNIX_EPOCH + std::time::Duration::from_secs(secs);
 
-    datetime.duration_since(UNIX_EPOCH).map_or_else(
-        |_| "Unknown".to_string(),
-        |d| format!("{} seconds since epoch", d.as_secs()),
-    )
+    let Ok(elapsed) = SystemTime::now().duration_since(post_time) else {
+        return "Unknown".to_string();
+    };
+
+    let mins = elapsed.as_secs() / 60;
+    let hours = mins / 60;
+    let days = hours / 24;
+
+    if days > 365 {
+        format!("{} years ago", days / 365)
+    } else if days > 30 {
+        format!("{} months ago", days / 30)
+    } else if days > 0 {
+        format!("{days} days ago")
+    } else if hours > 0 {
+        format!("{hours} hours ago")
+    } else if mins > 0 {
+        format!("{mins} minutes ago")
+    } else {
+        "just now".to_string()
+    }
 }
 
 /// Format signed score values with K/M suffixes.
