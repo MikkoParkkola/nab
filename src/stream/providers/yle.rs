@@ -284,9 +284,9 @@ impl StreamProvider for YleProvider {
         let html = resp.text().await?;
 
         // Extract __NEXT_DATA__ JSON
-        let next_data_start = html.find("__NEXT_DATA__").and_then(|base| {
-            html[base..].find('{').map(|offset| base + offset)
-        });
+        let next_data_start = html
+            .find("__NEXT_DATA__")
+            .and_then(|base| html[base..].find('{').map(|offset| base + offset));
 
         let next_data_end = next_data_start.and_then(|start| {
             let mut depth = 0;

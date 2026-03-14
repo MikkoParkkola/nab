@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
-use rust_mcp_sdk::schema::{CallToolResult, ElicitResultAction, TextContent, schema_utils::CallToolError};
+use rust_mcp_sdk::schema::{
+    CallToolResult, ElicitResultAction, TextContent, schema_utils::CallToolError,
+};
 use serde::{Deserialize, Serialize};
 
 use nab::content::ContentRouter;

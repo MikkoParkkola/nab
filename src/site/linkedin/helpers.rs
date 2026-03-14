@@ -3,9 +3,9 @@
 use super::url::LinkedInUrlKind;
 
 #[cfg(feature = "impersonate")]
-use super::types::VoyagerProfileResponse;
-#[cfg(feature = "impersonate")]
 use super::types::VoyagerActivityResponse;
+#[cfg(feature = "impersonate")]
+use super::types::VoyagerProfileResponse;
 
 use std::fmt::Write as _;
 

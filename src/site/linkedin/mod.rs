@@ -35,7 +35,9 @@ pub use helpers::{extract_csrf_token, extract_username_from_url};
 pub use helpers::{parse_voyager_activity, parse_voyager_profile};
 pub use types::VoyagerProfileResponse;
 #[cfg(feature = "impersonate")]
-pub use types::{VoyagerActivityResponse, VoyagerCommentary, VoyagerFeedElement, VoyagerText, VoyagerUpdateValue};
+pub use types::{
+    VoyagerActivityResponse, VoyagerCommentary, VoyagerFeedElement, VoyagerText, VoyagerUpdateValue,
+};
 pub use url::{LinkedInUrlKind, classify_linkedin_url};
 
 use anyhow::{Result, bail};
@@ -64,10 +66,8 @@ impl SiteProvider for LinkedInProvider {
         cookies: Option<&str>,
         _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
-        let kind =
-            classify_linkedin_url(url).ok_or_else(|| {
-                anyhow::anyhow!("URL does not match any LinkedIn pattern")
-            })?;
+        let kind = classify_linkedin_url(url)
+            .ok_or_else(|| anyhow::anyhow!("URL does not match any LinkedIn pattern"))?;
 
         // Try authenticated extraction first (requires impersonate feature + cookies)
         #[cfg(feature = "impersonate")]

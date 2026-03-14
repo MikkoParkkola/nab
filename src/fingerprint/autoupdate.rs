@@ -177,7 +177,10 @@ impl BrowserVersions {
             "✅ Chrome: {} versions ({} to {})",
             versions.len(),
             versions[0].0,
-            versions.last().expect("non-empty versions list has a last element").0
+            versions
+                .last()
+                .expect("non-empty versions list has a last element")
+                .0
         );
         Ok(versions)
     }
@@ -234,7 +237,9 @@ impl BrowserVersions {
             "✅ Firefox: {} versions ({} to {})",
             versions.len(),
             versions[0],
-            versions.last().expect("6-element versions list has a last element")
+            versions
+                .last()
+                .expect("6-element versions list has a last element")
         );
         Ok(versions)
     }

@@ -106,7 +106,6 @@ print(json.dumps(segments))
         })?;
         let scp_status = Command::new("scp")
             .args([audio_str, &format!("{host}:{remote_path}")])
-
             .status()
             .await?;
 

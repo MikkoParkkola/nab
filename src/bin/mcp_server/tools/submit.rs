@@ -6,8 +6,8 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
 use serde::{Deserialize, Serialize};
 
-use nab::content::ContentRouter;
 use nab::AcceleratedClient;
+use nab::content::ContentRouter;
 
 use crate::helpers::resolve_cookie_header;
 use crate::structured::truncate_markdown;
@@ -146,4 +146,3 @@ impl SubmitTool {
         }
     }
 }
-

@@ -1,12 +1,12 @@
 //! Tests for `LinkedIn` extraction — URL classification, helpers, and parsing.
 
+use super::LinkedInProvider;
 use super::helpers::{
     extract_csrf_token, extract_username_from_url, strip_html, strip_html_comment,
 };
 use super::oembed::format_oembed_markdown;
 use super::types::LinkedInOEmbed;
 use super::url::{LinkedInUrlKind, classify_linkedin_url};
-use super::LinkedInProvider;
 use crate::site::SiteProvider;
 
 // ── URL Classification ──────────────────────────────────────────────────────
@@ -34,9 +34,7 @@ fn classifies_company_urls() {
 #[test]
 fn classifies_post_urls() {
     assert_eq!(
-        classify_linkedin_url(
-            "https://www.linkedin.com/posts/someuser_topic-activity-123456789"
-        ),
+        classify_linkedin_url("https://www.linkedin.com/posts/someuser_topic-activity-123456789"),
         Some(LinkedInUrlKind::Post)
     );
 }
@@ -62,9 +60,7 @@ fn classifies_feed_update_urls() {
 #[test]
 fn classifies_activity_urls() {
     assert_eq!(
-        classify_linkedin_url(
-            "https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/"
-        ),
+        classify_linkedin_url("https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/"),
         Some(LinkedInUrlKind::Activity)
     );
 }

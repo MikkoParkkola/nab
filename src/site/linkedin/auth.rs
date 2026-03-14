@@ -13,9 +13,7 @@ use std::fmt::Write as _;
 use anyhow::{Result, bail};
 use scraper::{Html, Selector};
 
-use super::helpers::{
-    build_full_name, decode_html_entities, kind_label, strip_html_comment,
-};
+use super::helpers::{build_full_name, decode_html_entities, kind_label, strip_html_comment};
 use super::types::VoyagerProfileResponse;
 use super::url::LinkedInUrlKind;
 use crate::site::{SiteContent, SiteMetadata};

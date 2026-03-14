@@ -91,7 +91,7 @@ impl WebSocket {
     /// Send a text message
     pub async fn send_text(&mut self, text: &str) -> Result<()> {
         self.stream
-            .send(Message::Text(text.to_string()))
+            .send(Message::Text(text.into()))
             .await
             .context("Failed to send text message")?;
         debug!("Sent text: {} bytes", text.len());
@@ -102,7 +102,7 @@ impl WebSocket {
     pub async fn send_binary(&mut self, data: Vec<u8>) -> Result<()> {
         let len = data.len();
         self.stream
-            .send(Message::Binary(data))
+            .send(Message::Binary(data.into()))
             .await
             .context("Failed to send binary message")?;
         debug!("Sent binary: {} bytes", len);
@@ -112,7 +112,7 @@ impl WebSocket {
     /// Send a ping
     pub async fn ping(&mut self) -> Result<()> {
         self.stream
-            .send(Message::Ping(vec![]))
+            .send(Message::Ping(vec![].into()))
             .await
             .context("Failed to send ping")?;
         Ok(())
@@ -127,8 +127,12 @@ impl WebSocket {
         loop {
             match self.stream.next().await {
                 Some(Ok(msg)) => match msg {
-                    Message::Text(text) => return Ok(Some(WebSocketMessage::Text(text))),
-                    Message::Binary(data) => return Ok(Some(WebSocketMessage::Binary(data))),
+                    Message::Text(text) => {
+                        return Ok(Some(WebSocketMessage::Text(text.to_string())));
+                    }
+                    Message::Binary(data) => {
+                        return Ok(Some(WebSocketMessage::Binary(data.to_vec())));
+                    }
                     Message::Ping(data) => {
                         // Auto-respond with pong
                         let _ = self.stream.send(Message::Pong(data)).await;

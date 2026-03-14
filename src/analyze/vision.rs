@@ -199,13 +199,11 @@ print(json.dumps(result))
         let remote_path = format!("/tmp/nab_frame_{}.jpg", std::process::id());
 
         // Copy frame to DGX
-        let frame_str = frame
-            .path
-            .to_str()
-            .ok_or_else(|| AnalysisError::Vision("frame path contains non-UTF8 bytes".to_string()))?;
+        let frame_str = frame.path.to_str().ok_or_else(|| {
+            AnalysisError::Vision("frame path contains non-UTF8 bytes".to_string())
+        })?;
         let scp_status = Command::new("scp")
             .args([frame_str, &format!("{host}:{remote_path}")])
-
             .status()
             .await?;
 

@@ -1,6 +1,6 @@
 [package]
 name = "nab"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 authors = ["Mikko Parkkola"]
 description = "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown"
@@ -58,8 +58,8 @@ rquest = { version = "5.1", optional = true, default-features = false, features 
 rquest-util = { version = "2.2", optional = true }
 
 # WebSocket support
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
-tungstenite = "0.24"
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tungstenite = "0.28"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-native-certs = "0.8"
 
@@ -72,7 +72,7 @@ scraper = "0.25"                    # CSS selectors + DOM manipulation
 # ═══════════════════════════════════════════════════════════════════════════════
 # JAVASCRIPT ENGINE (QuickJS - 1MB, ES2020)
 # ═══════════════════════════════════════════════════════════════════════════════
-rquickjs = { version = "0.9", features = [
+rquickjs = { version = "0.11", features = [
     "bindgen",           # Auto-generate bindings
     "classes",           # ES6 class support
     "futures",           # Async/Promise integration with Rust futures
@@ -122,7 +122,7 @@ readability = { version = "0.3", default-features = false }  # Mozilla-style art
 
 # OOXML parsing (Google Docs/Sheets/Slides export)
 zip = { version = "8", default-features = false, features = ["deflate"] }
-roxmltree = "0.20"
+roxmltree = "0.21"
 
 # PDF extraction (optional - requires pdfium dynamic library)
 pdfium-render = { version = "0.8", default-features = true, optional = true }
@@ -191,7 +191,7 @@ browser = ["chromiumoxide"]
 impersonate = ["rquest", "rquest-util"]
 
 [dev-dependencies]
-criterion = "0.6"
+criterion = "0.8"
 tokio-test = "0.4"
 assert_cmd = "2"
 predicates = "3"

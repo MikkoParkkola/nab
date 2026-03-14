@@ -58,8 +58,16 @@ pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
     let mut found_data = false;
 
     // STEP 0: Try static API discovery first (fastest path ~50ms)
-    try_api_discovery(&client, &html, &cookie_header, &profile, elapsed, &mut found_data, cfg)
-        .await?;
+    try_api_discovery(
+        &client,
+        &html,
+        &cookie_header,
+        &profile,
+        elapsed,
+        &mut found_data,
+        cfg,
+    )
+    .await?;
 
     // STEP 1: Try embedded JSON extraction (fast path ~100ms)
     if !found_data {
@@ -183,9 +191,9 @@ fn resolve_endpoint_url(endpoint: &str, page_url: &str) -> Option<String> {
     if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
         Some(endpoint.to_string())
     } else if endpoint.starts_with('/') {
-        url::Url::parse(page_url).ok().map(|u| {
-            format!("{}{}", u.origin().unicode_serialization(), endpoint)
-        })
+        url::Url::parse(page_url)
+            .ok()
+            .map(|u| format!("{}{}", u.origin().unicode_serialization(), endpoint))
     } else {
         None
     }
@@ -330,7 +338,15 @@ fn probe_window_object(
         return Ok(());
     };
 
-    let excluded = ["document", "window", "console", "navigator", "location", "localStorage", "sessionStorage"];
+    let excluded = [
+        "document",
+        "window",
+        "console",
+        "navigator",
+        "location",
+        "localStorage",
+        "sessionStorage",
+    ];
     let clean_data: serde_json::Map<String, serde_json::Value> = obj
         .iter()
         .filter(|(k, _)| !k.starts_with('_') && !excluded.contains(&k.as_str()))
@@ -543,7 +559,12 @@ fn transform_json(
         serde_json::Value::Object(obj) => {
             let transformed: serde_json::Map<String, serde_json::Value> = obj
                 .iter()
-                .map(|(k, v)| (k.clone(), transform_json(v, max_array, max_depth, depth + 1)))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        transform_json(v, max_array, max_depth, depth + 1),
+                    )
+                })
                 .collect();
             serde_json::Value::Object(transformed)
         }

@@ -426,9 +426,7 @@ rewrite_from = "[invalid"
 rewrite_to = "https://api.example.com/extra"
 "#;
     let err = SiteRuleConfig::from_toml(toml_str).unwrap_err();
-    assert!(
-        err.to_string().contains("fetch_additional") || err.to_string().contains("invalid")
-    );
+    assert!(err.to_string().contains("fetch_additional") || err.to_string().contains("invalid"));
 }
 
 #[test]

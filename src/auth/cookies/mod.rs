@@ -112,7 +112,10 @@ impl CookieSource {
 
         match self.get_cookies_native(domain) {
             Ok(cookies) if !cookies.is_empty() => {
-                info!("Native cookie extraction succeeded: {} cookies", cookies.len());
+                info!(
+                    "Native cookie extraction succeeded: {} cookies",
+                    cookies.len()
+                );
                 return Ok(cookies);
             }
             Ok(_) => debug!("Native extraction returned empty, trying Python fallback"),
@@ -151,7 +154,11 @@ impl CookieSource {
         if cookies.is_empty() {
             debug!("Native extraction: 0 cookies for {}", domain);
         } else {
-            info!("Native extraction: {} cookies for {}", cookies.len(), domain);
+            info!(
+                "Native extraction: {} cookies for {}",
+                cookies.len(),
+                domain
+            );
         }
         Ok(cookies)
     }

@@ -80,8 +80,11 @@ impl FusionEngine {
         }
 
         // Sort by timestamp
-        timeline_events
-            .sort_by(|a, b| a.timestamp.partial_cmp(&b.timestamp).unwrap_or(std::cmp::Ordering::Equal));
+        timeline_events.sort_by(|a, b| {
+            a.timestamp
+                .partial_cmp(&b.timestamp)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Build segments based on transcript boundaries (primary)
         let mut segments = Vec::new();
@@ -188,7 +191,9 @@ impl FusionEngine {
             .min_by(|a, b| {
                 let dist_a = (a.timestamp - midpoint).abs();
                 let dist_b = (b.timestamp - midpoint).abs();
-                dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+                dist_a
+                    .partial_cmp(&dist_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
     }
 

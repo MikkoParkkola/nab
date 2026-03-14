@@ -9,9 +9,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use tracing::{debug, warn};
 
-use super::crypto::{
-    SCHEMA_VERSION_WITH_DOMAIN_TAG, decrypt_cookie_value,
-};
+use super::crypto::{SCHEMA_VERSION_WITH_DOMAIN_TAG, decrypt_cookie_value};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,10 +64,7 @@ pub(super) fn query_db_schema_version(temp_db: &std::path::Path) -> u32 {
 ///
 /// Uses `hex(encrypted_value)` to avoid binary corruption when reading blobs
 /// through the `sqlite3` CLI and `String::from_utf8_lossy`.
-pub(super) fn query_cookie_db(
-    temp_db: &std::path::Path,
-    domain: &str,
-) -> Result<Vec<CookieRow>> {
+pub(super) fn query_cookie_db(temp_db: &std::path::Path, domain: &str) -> Result<Vec<CookieRow>> {
     let conditions = build_domain_conditions(domain);
     let where_clause = conditions.join(" OR ");
     let query =
