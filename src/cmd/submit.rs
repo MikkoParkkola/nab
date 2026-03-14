@@ -32,7 +32,8 @@ pub async fn cmd_submit(cfg: &SubmitConfig) -> Result<()> {
 
     if let Some(selector) = &cfg.csrf_from {
         if let Some(token) = Form::extract_csrf_token(&page_html, selector)? {
-            println!("  CSRF token extracted: {}", &token[..token.len().min(20)]);
+            let preview: String = token.chars().take(20).collect();
+            println!("  CSRF token extracted: {preview}");
             let field_name = if selector.contains("name=") {
                 selector
                     .split("name=")

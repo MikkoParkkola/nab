@@ -187,9 +187,10 @@ fn truncate_to_budget(body: String, budget: usize) -> String {
     }
 
     // Walk backwards from `budget` to the previous newline for a clean cut.
-    let cut = body[..budget]
+    let safe_budget = body.floor_char_boundary(budget);
+    let cut = body[..safe_budget]
         .rfind('\n')
-        .map_or(budget, |pos| pos + 1);
+        .map_or(safe_budget, |pos| pos + 1);
 
     let mut out = body[..cut].to_owned();
     out.push_str("\n\n*[content truncated for context budget]*");

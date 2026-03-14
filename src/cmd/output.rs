@@ -35,20 +35,13 @@ pub fn output_body(
         return Ok(());
     }
 
-    // Body is already converted (via ContentRouter) when markdown mode is active
-    let output = body;
-
-    // Display with optional limit
-    let limit = if max_body == 0 {
-        output.len()
+    // Display with optional truncation (UTF-8 safe via floor_char_boundary)
+    if max_body > 0 && body.len() > max_body {
+        let at = body.floor_char_boundary(max_body);
+        println!("\n{}", &body[..at]);
+        println!("\n... [{} more bytes]", body.len() - at);
     } else {
-        max_body
-    };
-    if output.len() > limit {
-        println!("\n{}", &output[..limit]);
-        println!("\n... [{} more bytes]", output.len() - limit);
-    } else {
-        println!("\n{output}");
+        println!("\n{body}");
     }
 
     Ok(())
@@ -84,10 +77,11 @@ pub fn extract_links(html: &str) -> Vec<(String, String)> {
 }
 
 pub fn truncate_text(text: &str, max: usize) -> String {
-    if text.len() <= max {
+    if text.chars().count() <= max {
         text.to_string()
     } else {
-        format!("{}...", &text[..max - 3])
+        let truncated: String = text.chars().take(max.saturating_sub(3)).collect();
+        format!("{truncated}...")
     }
 }
 

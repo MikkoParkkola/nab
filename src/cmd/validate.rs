@@ -56,7 +56,8 @@ pub async fn cmd_validate() -> Result<()> {
     let response = client.fetch("https://httpbin.org/user-agent").await?;
     let body = response.text().await?;
     let profile = client.profile().await;
-    if body.contains(&profile.user_agent[..20]) {
+    let ua_prefix: String = profile.user_agent.chars().take(20).collect();
+    if body.contains(&ua_prefix) {
         println!("✅ UA matches");
     } else {
         println!("⚠️  UA mismatch");

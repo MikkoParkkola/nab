@@ -283,12 +283,13 @@ fn print_batch_full(results: &[serde_json::Value], show_body: bool, max_body: us
                     .unwrap_or(0.0),
             );
             if show_body && let Some(md) = r.get("markdown").and_then(|m| m.as_str()) {
-                let display = if max_body > 0 && md.len() > max_body {
-                    &md[..max_body]
+                if max_body > 0 && md.len() > max_body {
+                    // Find char boundary at or before limit (UTF-8 safe)
+                    let at = md.floor_char_boundary(max_body);
+                    println!("{}", &md[..at]);
                 } else {
-                    md
-                };
-                println!("{display}");
+                    println!("{md}");
+                }
             }
         }
     }
