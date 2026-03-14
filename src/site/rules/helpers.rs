@@ -253,10 +253,7 @@ pub(super) fn build_engagement(
     eng: &super::config::EngagementConfig,
     fields: &HashMap<String, String>,
 ) -> Option<Engagement> {
-    let likes = eng
-        .likes
-        .as_deref()
-        .and_then(|f| parse_u64(fields.get(f)?));
+    let likes = eng.likes.as_deref().and_then(|f| parse_u64(fields.get(f)?));
     let reposts = eng
         .reposts
         .as_deref()
@@ -265,10 +262,7 @@ pub(super) fn build_engagement(
         .replies
         .as_deref()
         .and_then(|f| parse_u64(fields.get(f)?));
-    let views = eng
-        .views
-        .as_deref()
-        .and_then(|f| parse_u64(fields.get(f)?));
+    let views = eng.views.as_deref().and_then(|f| parse_u64(fields.get(f)?));
 
     if likes.is_none() && reposts.is_none() && replies.is_none() && views.is_none() {
         None
