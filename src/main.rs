@@ -13,8 +13,13 @@ mod cmd;
 
 #[derive(Parser)]
 #[command(name = "nab")]
-#[command(about = "Token-optimized HTTP client with SPA extraction")]
+#[command(about = "Fetch any URL as clean markdown — optimized for LLM context windows")]
 #[command(version)]
+#[command(after_help = "Examples:\n  \
+    nab fetch https://example.com          Fetch as markdown\n  \
+    nab fetch URL --cookies brave          Use browser cookies\n  \
+    nab context URL1 URL2 URL3             Combine multiple URLs\n  \
+    nab rules list                         Show active site rules")]
 struct Cli {
     /// Enable verbose debug logging
     #[arg(short, long, global = true)]
@@ -27,11 +32,11 @@ struct Cli {
 #[derive(Clone, Copy, Default, ValueEnum)]
 enum OutputFormat {
     #[default]
-    /// Verbose with emojis (human-friendly)
+    /// Human-friendly with emoji status indicators
     Full,
-    /// Minimal: STATUS SIZE TIME (LLM-optimized)
+    /// Minimal one-line: STATUS SIZE TIME (pipe-friendly)
     Compact,
-    /// JSON output
+    /// Structured JSON with metadata and markdown body
     Json,
 }
 
@@ -405,6 +410,9 @@ enum Commands {
     },
 
     /// Fetch multiple URLs in parallel and combine into LLM-ready markdown
+    ///
+    /// Output goes to stdout; progress goes to stderr.  Pipe to a file or
+    /// clipboard for use as LLM context.
     Context {
         /// One or more URLs to fetch
         #[arg(required = true)]

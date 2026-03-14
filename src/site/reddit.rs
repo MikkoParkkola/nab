@@ -30,7 +30,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::fmt::Write as _;
 
-use super::{Engagement, SiteContent, SiteMetadata, SiteProvider};
+use super::{Engagement, SiteContent, SiteMetadata, SiteProvider, format_number_compact};
 use crate::http_client::AcceleratedClient;
 
 /// Reddit content provider using Reddit JSON API.
@@ -154,7 +154,7 @@ fn format_reddit_markdown(post: &RedditPost, comments: &[RedditChild]) -> String
         "by u/{} · {} points · {} comments\n",
         post.author,
         format_score(post.score),
-        format_number(post.num_comments)
+        format_number_compact(post.num_comments)
     );
 
     // Post body (selftext for text posts, url for link posts)
@@ -217,19 +217,7 @@ fn format_timestamp(timestamp: f64) -> String {
 fn format_score(n: i64) -> String {
     let sign = if n < 0 { "-" } else { "" };
     let abs = n.unsigned_abs();
-    format!("{sign}{}", format_number(abs))
-}
-
-/// Format large numbers with K/M suffixes.
-fn format_number(n: u64) -> String {
-    #[allow(clippy::cast_precision_loss)]
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
+    format!("{sign}{}", format_number_compact(abs))
 }
 
 // ============================================================================
@@ -313,18 +301,8 @@ mod tests {
         assert_eq!(result, "https://reddit.com/r/rust/comments/abc123.json");
     }
 
-    #[test]
-    fn format_number_uses_k_suffix() {
-        assert_eq!(format_number(1_500), "1.5K");
-        assert_eq!(format_number(8_800), "8.8K");
-        assert_eq!(format_number(999), "999");
-    }
-
-    #[test]
-    fn format_number_uses_m_suffix() {
-        assert_eq!(format_number(1_000_000), "1.0M");
-        assert_eq!(format_number(3_800_000), "3.8M");
-    }
+    // format_number_compact tests live in site/hackernews.rs + doc tests on
+    // site::format_number_compact.
 
     #[test]
     fn format_reddit_markdown_self_post() {

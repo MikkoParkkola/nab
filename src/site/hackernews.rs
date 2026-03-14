@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use super::{SiteContent, SiteMetadata, SiteProvider};
+use super::{SiteContent, SiteMetadata, SiteProvider, format_number_compact};
 use crate::http_client::AcceleratedClient;
 
 /// Number of stories to fetch for front-page listing views.
@@ -107,7 +107,6 @@ fn front_page_list_type(path: &str) -> Option<&'static str> {
 // Extraction helpers
 // ============================================================================
 
-/// Extract a single HN item (story/ask/show + comments) via Algolia API.
 /// Fetch a front-page listing from Firebase and format as a numbered markdown list.
 ///
 /// `list_name` is one of `topstories`, `newstories`, `beststories`, `askstories`,
@@ -152,14 +151,7 @@ async fn fetch_front_page(
     }
 
     let markdown = format_front_page_markdown(list_name, &stories);
-
-    let title = match list_name {
-        "newstories" => "Hacker News: Newest",
-        "beststories" => "Hacker News: Best",
-        "askstories" => "Hacker News: Ask HN",
-        "showstories" => "Hacker News: Show HN",
-        _ => "Hacker News: Top Stories",
-    };
+    let title = list_heading(list_name);
 
     let metadata = SiteMetadata {
         author: None,
@@ -174,15 +166,20 @@ async fn fetch_front_page(
     Ok(SiteContent { markdown, metadata })
 }
 
-/// Format a front-page listing as a numbered markdown list.
-fn format_front_page_markdown(list_name: &str, stories: &[HNFirebaseItem]) -> String {
-    let heading = match list_name {
+/// Map a Firebase list name to its human-readable heading.
+fn list_heading(list_name: &str) -> &'static str {
+    match list_name {
         "newstories" => "Hacker News: Newest",
         "beststories" => "Hacker News: Best",
         "askstories" => "Hacker News: Ask HN",
         "showstories" => "Hacker News: Show HN",
         _ => "Hacker News: Top Stories",
-    };
+    }
+}
+
+/// Format a front-page listing as a numbered markdown list.
+fn format_front_page_markdown(list_name: &str, stories: &[HNFirebaseItem]) -> String {
+    let heading = list_heading(list_name);
 
     let mut md = format!("## {heading}\n\n");
 
@@ -208,25 +205,13 @@ fn format_front_page_markdown(list_name: &str, stories: &[HNFirebaseItem]) -> St
             "{}. **{}** ({} points, {} comments){}",
             i + 1,
             title,
-            format_number(points),
-            format_number(comments),
+            format_number_compact(points),
+            format_number_compact(comments),
             domain_suffix,
         );
     }
 
     md
-}
-
-/// Format large numbers with K/M suffixes.
-fn format_number(n: u64) -> String {
-    #[allow(clippy::cast_precision_loss)]
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
 }
 
 // ============================================================================
@@ -376,15 +361,15 @@ mod tests {
     }
 
     #[test]
-    fn format_number_uses_k_suffix() {
-        assert_eq!(format_number(1_500), "1.5K");
-        assert_eq!(format_number(8_800), "8.8K");
-        assert_eq!(format_number(999), "999");
+    fn format_number_compact_uses_k_suffix() {
+        assert_eq!(format_number_compact(1_500), "1.5K");
+        assert_eq!(format_number_compact(8_800), "8.8K");
+        assert_eq!(format_number_compact(999), "999");
     }
 
     #[test]
-    fn format_number_uses_m_suffix() {
-        assert_eq!(format_number(1_000_000), "1.0M");
-        assert_eq!(format_number(3_800_000), "3.8M");
+    fn format_number_compact_uses_m_suffix() {
+        assert_eq!(format_number_compact(1_000_000), "1.0M");
+        assert_eq!(format_number_compact(3_800_000), "3.8M");
     }
 }

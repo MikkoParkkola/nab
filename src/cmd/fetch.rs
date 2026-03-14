@@ -87,11 +87,7 @@ pub async fn cmd_fetch(
     }
 
     let site_router = nab::site::SiteRouter::new();
-    let cookie_opt = if cookie_header.is_empty() {
-        None
-    } else {
-        Some(cookie_header.as_str())
-    };
+    let cookie_opt = non_empty(&cookie_header);
     if let Some(site_content) = site_router.try_extract(url, &client, cookie_opt).await {
         let markdown = !raw_html;
         output_body(
@@ -534,11 +530,12 @@ pub(super) fn detect_bot_challenge(status: u16, body: &str) -> Option<String> {
     }
 
     if matches!(status, 403 | 503) && body.contains("cf-browser-verification") {
-        return Some(
-            "Cloudflare browser verification detected. \
-             Visit the URL in your browser first, then retry with --cookies."
-                .to_string(),
-        );
+        return Some(format!(
+            "Cloudflare browser verification detected (HTTP {status}).\n\
+             Workarounds:\n\
+             1. Visit the URL in your browser first, then: nab fetch <url> --cookies brave\n\
+             2. Use a different browser profile: --cookies chrome|firefox|safari"
+        ));
     }
 
     None
@@ -574,17 +571,17 @@ pub(super) fn build_client(no_redirect: bool, proxy: Option<&str>) -> Result<Acc
 }
 
 /// Resolve browser name from cookie flag value.
+///
+/// Returns `None` for `"none"`, auto-detects for `"auto"`, or passes
+/// through the explicit browser name.
 pub(super) fn resolve_browser_name(cookies: &str) -> Option<String> {
-    if cookies.to_lowercase() == "none" {
-        None
-    } else if cookies.to_lowercase() == "auto" {
-        if let Ok(detected) = nab::detect_default_browser() {
-            Some(detected.as_str().to_string())
-        } else {
-            Some("chrome".to_string())
-        }
-    } else {
-        Some(cookies.to_string())
+    match cookies.to_lowercase().as_str() {
+        "none" => None,
+        "auto" => Some(
+            nab::detect_default_browser()
+                .map_or_else(|_| "chrome".to_string(), |b| b.as_str().to_string()),
+        ),
+        _ => Some(cookies.to_string()),
     }
 }
 
@@ -596,6 +593,14 @@ pub(super) fn resolve_cookie_source(browser: &str) -> CookieSource {
         "safari" => CookieSource::Safari,
         _ => CookieSource::Chrome,
     }
+}
+
+/// Return `Some(header)` if non-empty, `None` otherwise.
+///
+/// Eliminates the repeated `if s.is_empty() { None } else { Some(s) }` pattern
+/// used when passing optional cookie headers to providers.
+pub(super) fn non_empty(s: &str) -> Option<&str> {
+    if s.is_empty() { None } else { Some(s) }
 }
 
 #[cfg(test)]

@@ -66,6 +66,29 @@ pub struct SiteMetadata {
     pub engagement: Option<Engagement>,
 }
 
+/// Format large numbers with K/M suffixes for compact display.
+///
+/// Shared by hardcoded providers (hackernews, reddit) and the TOML template
+/// engine via its string-based `format_number` wrapper.
+///
+/// ```
+/// # use nab::site::format_number_compact;
+/// assert_eq!(format_number_compact(1_500), "1.5K");
+/// assert_eq!(format_number_compact(3_800_000), "3.8M");
+/// assert_eq!(format_number_compact(42), "42");
+/// ```
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn format_number_compact(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 /// Extracted and formatted site content.
 #[derive(Debug, Clone)]
 pub struct SiteContent {

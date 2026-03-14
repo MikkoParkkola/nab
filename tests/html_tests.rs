@@ -406,17 +406,19 @@ fn js_rendered_page_with_next_data_extracts_article_body() {
 #[test]
 fn detect_thin_content_fires_for_js_rendered_page_shell() {
     let html_len = 34_936;
-    let markdown_len = 200;
+    // 200 is the NOT-thin boundary (>= 200 chars = adequate).
+    // Use 199 to test the thin-content detection path.
+    let markdown_len = 199;
 
     let warning = detect_thin_content(html_len, markdown_len);
 
     assert!(
         warning.is_some(),
-        "34 KB HTML -> 200 char markdown must trigger thin-content warning"
+        "34 KB HTML -> 199 char markdown must trigger thin-content warning"
     );
     let msg = warning.unwrap();
     assert!(
-        msg.contains("200"),
+        msg.contains("199"),
         "warning should include actual markdown length"
     );
     assert!(

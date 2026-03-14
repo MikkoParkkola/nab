@@ -131,7 +131,7 @@ fn build_rows(embedded_names: &HashSet<&str>, user_names: &HashSet<String>) -> V
     rows
 }
 
-/// Print `rows` as a plain-text table with aligned columns.
+/// Print `rows` as a plain-text table with aligned columns, plus a summary.
 fn print_table(rows: &[RuleRow]) {
     const COL_NAME: &str = "Rule";
     const COL_SRC: &str = "Source";
@@ -167,6 +167,31 @@ fn print_table(rows: &[RuleRow]) {
             row.name, row.source, row.status
         );
     }
+
+    let n = rows.len();
+    let overridden = rows.iter().filter(|r| r.source == "user override").count();
+    let user_only = rows
+        .iter()
+        .filter(|r| r.source == "user (~/.config/…)")
+        .count();
+
+    println!("{separator}");
+    print!("{n} rule{}", if n == 1 { "" } else { "s" });
+    if overridden > 0 || user_only > 0 {
+        print!(" (");
+        let mut parts = Vec::new();
+        if overridden > 0 {
+            parts.push(format!("{overridden} overridden"));
+        }
+        if user_only > 0 {
+            parts.push(format!("{user_only} custom"));
+        }
+        print!("{}", parts.join(", "));
+        print!(")");
+    }
+    println!();
+    println!();
+    println!("Customize: nab rules export  (writes defaults to ~/.config/nab/sites/)");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ use nab::content::ContentRouter;
 use nab::rate_limit::DomainRateLimiter;
 use nab::site::SiteRouter;
 
-use super::fetch::{build_client, resolve_browser_name, resolve_cookie_source};
+use super::fetch::{build_client, non_empty, resolve_browser_name, resolve_cookie_source};
 
 /// Maximum concurrent in-flight requests.
 const DEFAULT_CONCURRENCY: usize = 10;
@@ -76,10 +76,16 @@ pub async fn cmd_context(urls: &[String], cookies: &str, max_tokens: usize) -> R
 
     // Collect into a fixed-size vec so we can re-sort by index.
     let mut ordered: Vec<Option<FetchedSource>> = (0..n).map(|_| None).collect();
+    let mut completed = 0usize;
     while let Some(res) = set.join_next().await {
+        completed += 1;
         match res {
-            Ok((idx, source)) => ordered[idx] = Some(source),
-            Err(e) => eprintln!("task panicked: {e}"),
+            Ok((idx, source)) => {
+                let status = if source.ok { "ok" } else { "err" };
+                eprintln!("  [{completed}/{n}] {status}: {}", source.url);
+                ordered[idx] = Some(source);
+            }
+            Err(e) => eprintln!("  [{completed}/{n}] panic: {e}"),
         }
     }
 
@@ -135,11 +141,7 @@ async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
         })
         .unwrap_or_default();
 
-    let cookie_opt = if cookie_header.is_empty() {
-        None
-    } else {
-        Some(cookie_header.as_str())
-    };
+    let cookie_opt = non_empty(&cookie_header);
 
     // Try site rule providers first (Wikipedia, YouTube, Twitter, etc.).
     let site_router = SiteRouter::new();
