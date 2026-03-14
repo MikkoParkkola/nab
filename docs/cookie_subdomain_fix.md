@@ -88,9 +88,9 @@ Run with:
 
 ## Files Changed
 
-- `src/auth.rs`:
-  - Fixed `get_cookies_native()` SQL query generation (lines 558-574)
-  - Fixed `get_cookies_via_python()` cookie filtering (lines 650-676)
+- `src/auth/cookies/` (originally `src/auth.rs`, restructured in v0.6.0):
+  - Fixed `get_cookies_native()` SQL query generation
+  - Fixed `get_cookies_via_python()` cookie filtering
   - Added debug logging for cookie queries
 
 ## Verification

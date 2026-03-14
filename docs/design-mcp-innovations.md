@@ -1,9 +1,9 @@
 # Design: nab MCP Feature Innovations
 
-**Status**: Proposed
+**Status**: Implemented (v0.5.0)
 **Author**: Mikko Parkkola
 **Date**: 2026-03-13
-**nab version**: 0.4.0
+**nab version**: 0.4.0 (design baseline), implemented in 0.5.0
 
 ## Executive Summary
 

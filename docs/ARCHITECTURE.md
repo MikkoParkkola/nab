@@ -18,38 +18,38 @@ This document describes the internal architecture of nab, a ultra-minimal browse
 ## High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         CLI (main.rs)                           │
-│  Commands: fetch, spa, stream, analyze, annotate, auth, otp... │
-└────────────┬────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                          CLI (main.rs)                           │
+│  Commands: fetch, spa, stream, analyze, annotate, auth, otp...   │
+└────────────┬─────────────────────────────────────────────────────┘
              │
              ├──────────────────────────────────────────────────┐
              │                                                  │
 ┌────────────▼──────────┐  ┌──────────────┐  ┌────────────────▼────┐
-│   HTTP Clients        │  │  Auth Stack  │  │  JS Engine         │
+│  HTTP Clients         │  │ Auth Stack   │  │ JS Engine           │
 │                       │  │              │  │                     │
-│  • AcceleratedClient  │  │ • 1Password  │  │  • QuickJS (ES2020)│
-│    (HTTP/2, pooling)  │  │ • Cookies    │  │  • DOM injection   │
-│  • Http3Client        │  │ • OTP codes  │  │  • Console capture │
-│    (QUIC, 0-RTT)      │  │ • Passkeys   │  │  • Fetch polyfill  │
-└───────────┬───────────┘  └──────┬───────┘  └─────────┬──────────┘
+│ • AcceleratedClient   │  │ • 1Password  │  │ • QuickJS (ES2020)  │
+│   (HTTP/2, pooling)   │  │ • Cookies    │  │ • DOM injection     │
+│ • Http3Client         │  │ • OTP codes  │  │ • Console capture   │
+│   (QUIC, 0-RTT)       │  │ • Passkeys   │  │ • Fetch polyfill    │
+└───────────┬───────────┘  └──────┬───────┘  └──────────┬──────────┘
             │                     │                    │
             │         ┌───────────▼────────────────────▼───────┐
-            │         │   Browser Fingerprinting              │
-            │         │  • Chrome/Firefox/Safari profiles     │
-            │         │  • Auto-update from real versions     │
-            │         │  • Realistic headers, TLS configs     │
-            └─────────┴───────────────────────────────────────┘
+            │         │   Browser Fingerprinting               │
+            │         │  • Chrome/Firefox/Safari profiles      │
+            │         │  • Auto-update from real versions      │
+            │         │  • Realistic headers, TLS configs      │
+            └─────────┴────────────────────────────────────────┘
                                   │
        ┌──────────────────────────┼──────────────────────────┐
        │                          │                          │
 ┌──────▼──────────┐  ┌───────────▼──────────┐  ┌───────────▼─────────┐
-│  Streaming      │  │  Video Analysis      │  │  SPA Extraction    │
+│ Streaming       │  │ Video Analysis       │  │ SPA Extraction      │
 │                 │  │                      │  │                     │
-│ • HLS/DASH      │  │ • Transcription      │  │ • __NEXT_DATA__    │
-│ • Native parser │  │ • Speaker diarization│  │ • __NUXT__         │
-│ • ffmpeg backend│  │ • Vision (Claude)    │  │ • Custom patterns  │
-│ • VLC/mpv pipe  │  │ • Emotion detection  │  │ • 80% success rate │
+│ • HLS/DASH      │  │ • Transcription      │  │ • __NEXT_DATA__     │
+│ • Native parser │  │ • Speaker diarization│  │ • __NUXT__          │
+│ • ffmpeg backend│  │ • Vision (Claude)    │  │ • Custom patterns   │
+│ • VLC/mpv pipe  │  │ • Emotion detection  │  │ • 80% success rate  │
 └─────────────────┘  └──────────────────────┘  └─────────────────────┘
                                   │
                      ┌────────────▼──────────────┐
@@ -107,12 +107,12 @@ HTML → JsEngine::new()
 
 **Used By**: `spa` command, API discovery
 
-### 3. Authentication (`auth.rs`, `browser_detect.rs`)
+### 3. Authentication (`auth/`, `browser_detect.rs`)
 
 **Purpose**: Zero-config authentication via browser cookies, 1Password, and OTP retrieval.
 
 **Key Components**:
-- **Cookie Extraction**: Auto-detect default browser (Brave, Chrome, Firefox, Safari, Edge) and extract cookies from SQLite/binary storage
+- **Cookie Extraction** (`auth/cookies/`): Auto-detect default browser (Brave, Chrome, Firefox, Safari, Edge, Dia) and extract cookies from SQLite/binary storage. Submodules: `mod.rs` (lookup), `crypto.rs` (AES-128-CBC decryption), `db.rs` (SQLite helpers)
 - **1Password Integration**: Retrieve credentials, TOTP codes, and passkeys via `op` CLI
 - **OTP Retrieval**: SMS (Beeper MCP), Email (Gmail API), TOTP (1Password)
 
@@ -232,7 +232,25 @@ Analysis JSON → subtitle generation (SRT/ASS)
 
 **Used By**: `annotate` command
 
-### 8. Supporting Modules
+### 8. Error Handling (`error.rs`)
+
+**Purpose**: Typed error hierarchy for stable public API.
+
+**`NabError`** enum with 9 semantic variants: `InvalidUrl`, `SsrfBlocked`, `ProviderError`, `ConversionError`, `AuthError`, `LoginError`, `SessionError`, `NetworkError`, `BudgetExceeded`. Public functions return `Result<T, NabError>` at library boundaries; internal code uses `anyhow`.
+
+### 9. Content Intelligence (`content/focus.rs`, `content/budget.rs`, `content/link_extract.rs`)
+
+**Purpose**: Token-optimized content processing for LLM consumption.
+
+- **Query-focused extraction** (`focus.rs`): BM25-lite scoring extracts sections relevant to a `focus` query; top-20% filter with diff-marker exemption
+- **Token budget** (`budget.rs`): Structure-aware truncation via `max_tokens`; priority-based P0-P4 scoring, never splits mid-block
+- **Link graph** (`link_extract.rs`): Same-site link extraction with eTLD+1 filtering (Mozilla PSL via `addr` crate) and relevance scoring
+
+### 10. Sessions (`session.rs`)
+
+**Purpose**: Persistent named sessions with LRU eviction (32 slots), cookie seeding from browser jars, pinned browser profiles.
+
+### 11. Supporting Modules
 
 **`api_discovery.rs`**: Discover API endpoints in SPA JavaScript code via pattern matching.
 
@@ -343,6 +361,5 @@ See `Cargo.toml` for complete list with feature flags.
 ## Future Architecture Considerations
 
 - **Async JavaScript execution**: Currently synchronous, could add async support
-- **Persistent cookie store**: Save extracted cookies for reuse
 - **Custom TLS fingerprints**: More browsers beyond Chrome/Firefox/Safari
 - **Distributed tracing**: Add OpenTelemetry for observability
