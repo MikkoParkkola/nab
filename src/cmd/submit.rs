@@ -8,13 +8,13 @@ pub async fn cmd_submit(
     url: &str,
     field_args: &[String],
     csrf_from: Option<&str>,
-    cookies: &str,
-    use_1password: bool,
+    _cookies: &str,
+    _use_1password: bool,
     show_headers: bool,
 ) -> Result<()> {
     use nab::{Form, parse_field_args};
 
-    let client = create_client_with_cookies(cookies, use_1password, url)?;
+    let client = AcceleratedClient::new()?;
 
     println!("Fetching form page: {url}");
     let page_html = client.fetch_text(url).await?;
@@ -66,13 +66,4 @@ pub async fn cmd_submit(
     output_response(response, show_headers).await?;
 
     Ok(())
-}
-
-/// Create HTTP client with cookie support
-fn create_client_with_cookies(
-    _cookies: &str,
-    _use_1password: bool,
-    _url: &str,
-) -> Result<AcceleratedClient> {
-    AcceleratedClient::new()
 }
