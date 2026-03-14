@@ -7,7 +7,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.93+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance)
-[![dependency status](https://deps.rs/repo/github/MikkoParkkola/nab/status.svg)](https://deps.rs/repo/github/MikkoParkkola/nab)
+[![dependency status](https://deps.rs/crate/nab/status.svg)](https://deps.rs/crate/nab)
 [![Tests](https://img.shields.io/badge/tests-897+-brightgreen.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
 [![MCP Servers](https://img.shields.io/badge/MCP_Tools-8-blue.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
