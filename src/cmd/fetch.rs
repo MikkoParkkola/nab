@@ -326,7 +326,7 @@ async fn convert_body_to_markdown(
         && let Some(warning) =
             nab::content::html::detect_thin_content(body_len, result.markdown.len())
     {
-        eprintln!("Warning: {warning}");
+        eprintln!("⚠️  {warning}");
     }
 
     Ok(result.markdown)

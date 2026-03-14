@@ -161,20 +161,11 @@ pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
         js_engine.inject_minimal_dom()?;
 
         let fetch_client = FetchClient::new(
-            if cookie_header.is_empty() {
-                None
-            } else {
-                Some(cookie_header.clone())
-            },
-            if base_url.is_empty() {
-                None
-            } else {
-                Some(base_url.clone())
-            },
+            (!cookie_header.is_empty()).then(|| cookie_header.clone()),
+            (!base_url.is_empty()).then(|| base_url.clone()),
         );
 
-        let fetch_client_clone = fetch_client.clone();
-        inject_fetch_sync(js_engine.context(), fetch_client_clone)?;
+        inject_fetch_sync(js_engine.context(), fetch_client.clone())?;
 
         js_engine.set_global("__PAGE_URL__", &cfg.url)?;
         js_engine.eval(&format!(
@@ -216,7 +207,7 @@ pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
             std::thread::sleep(std::time::Duration::from_millis(cfg.wait_ms));
         }
 
-        let patterns_to_check = vec![
+        let patterns_to_check = [
             ("window.__NEXT_DATA__", "__NEXT_DATA__"),
             ("window.__INITIAL_STATE__", "__INITIAL_STATE__"),
             ("window.__NUXT__", "__NUXT__"),
