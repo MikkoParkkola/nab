@@ -115,6 +115,18 @@ fn substitute_filtered_placeholders<S: BuildHasher>(
             continue;
         }
 
+        // {field|truncate:N} — truncate to N characters at a word boundary.
+        if let Some((rest, len_str)) = placeholder_inner
+            .rsplit_once("|truncate:")
+            .and_then(|(r, l)| l.parse::<usize>().ok().map(|n| (r, n)))
+            && let Some(value) = fields.get(rest)
+        {
+            let truncated = truncate_at_word(value, len_str);
+            let placeholder = format!("{{{placeholder_inner}}}");
+            result = result.replacen(&placeholder, &truncated, 1);
+            continue;
+        }
+
         search_from = close + 1;
     }
 
@@ -142,6 +154,23 @@ fn strip_html(html: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&nbsp;", " ")
+}
+
+/// Truncate a string to at most `max_chars` characters, cutting at a word
+/// boundary.  Appends `…` if truncated.
+fn truncate_at_word(value: &str, max_chars: usize) -> String {
+    if value.len() <= max_chars {
+        return value.to_string();
+    }
+
+    // Find the last space before the limit for a clean word-boundary cut.
+    let cut = value[..max_chars]
+        .rfind(' ')
+        .unwrap_or(max_chars);
+
+    let mut out = value[..cut].to_string();
+    out.push('…');
+    out
 }
 
 /// Format a numeric string with K/M suffixes.
@@ -391,5 +420,38 @@ mod tests {
         let f = fields(&[]);
         let output = render("", &f, "https://example.com");
         assert!(output.is_empty());
+    }
+
+    // ── truncate filter ───────────────────────────────────────────────────────
+
+    #[test]
+    fn render_truncate_filter_shortens_long_text() {
+        let f = fields(&[("body", "The quick brown fox jumps over the lazy dog")]);
+        let output = render("{body|truncate:20}", &f, "https://example.com");
+        assert_eq!(output, "The quick brown fox…");
+    }
+
+    #[test]
+    fn render_truncate_filter_preserves_short_text() {
+        let f = fields(&[("body", "Short")]);
+        let output = render("{body|truncate:100}", &f, "https://example.com");
+        assert_eq!(output, "Short");
+    }
+
+    #[test]
+    fn render_truncate_filter_omits_line_when_field_missing() {
+        let f = fields(&[]);
+        let output = render("{body|truncate:50}", &f, "https://example.com");
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn truncate_at_word_cuts_at_space_boundary() {
+        assert_eq!(truncate_at_word("hello world foo", 12), "hello world…");
+    }
+
+    #[test]
+    fn truncate_at_word_no_truncation_when_short() {
+        assert_eq!(truncate_at_word("short", 100), "short");
     }
 }
