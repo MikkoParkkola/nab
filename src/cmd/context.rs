@@ -2,19 +2,23 @@
 //! a combined markdown document optimised for LLM context windows.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use nab::content::ContentRouter;
+use nab::rate_limit::DomainRateLimiter;
 use nab::site::SiteRouter;
 
 use super::fetch::{build_client, resolve_browser_name, resolve_cookie_source};
 
 /// Maximum concurrent in-flight requests.
 const DEFAULT_CONCURRENCY: usize = 10;
+
+/// Minimum delay between requests to the same domain (milliseconds).
+const DOMAIN_DELAY_MS: u64 = 200;
 
 /// Result of fetching a single source URL.
 struct FetchedSource {
@@ -42,6 +46,7 @@ pub async fn cmd_context(urls: &[String], cookies: &str, max_tokens: usize) -> R
     eprintln!("Fetching {n} URL(s) …");
 
     let semaphore = Arc::new(Semaphore::new(DEFAULT_CONCURRENCY));
+    let limiter = Arc::new(DomainRateLimiter::new(Duration::from_millis(DOMAIN_DELAY_MS)));
     let cookies_owned = cookies.to_owned();
     let char_budget = budget_per_source(max_tokens, n);
 
@@ -51,10 +56,19 @@ pub async fn cmd_context(urls: &[String], cookies: &str, max_tokens: usize) -> R
     for (idx, url) in urls.iter().enumerate() {
         let url = url.clone();
         let sem = semaphore.clone();
+        let lim = limiter.clone();
         let cookies = cookies_owned.clone();
 
         set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
+
+            // Per-domain rate limiting.
+            let domain = url::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            lim.wait(&domain).await;
+
             let source = fetch_one(&url, &cookies, char_budget).await;
             (idx, source)
         });
