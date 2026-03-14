@@ -9,6 +9,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use nab::content::ContentRouter;
+use nab::site::SiteRouter;
 
 use super::fetch::{build_client, resolve_browser_name, resolve_cookie_source};
 
@@ -102,7 +103,7 @@ async fn fetch_one(url: &str, cookies: &str, char_budget: usize) -> FetchedSourc
     }
 }
 
-/// Inner fetch: build client, send request, convert to markdown.
+/// Inner fetch: try site rule providers first, then fall back to generic HTML.
 ///
 /// Returns `(title, markdown_body)`.
 async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
@@ -120,9 +121,28 @@ async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
         })
         .unwrap_or_default();
 
+    let cookie_opt = if cookie_header.is_empty() {
+        None
+    } else {
+        Some(cookie_header.as_str())
+    };
+
+    // Try site rule providers first (Wikipedia, YouTube, Twitter, etc.).
+    let site_router = SiteRouter::new();
+    if let Some(content) = site_router.try_extract(url, &client, cookie_opt).await {
+        let title = content
+            .metadata
+            .title
+            .clone()
+            .or_else(|| extract_title_from_markdown(&content.markdown))
+            .unwrap_or_else(|| url.to_owned());
+        return Ok((title, content.markdown));
+    }
+
+    // No rule matched — fall back to generic HTTP fetch + content conversion.
     let mut request = client.inner().get(url).headers(client.profile().await.to_headers());
-    if !cookie_header.is_empty() {
-        request = request.header("Cookie", &cookie_header);
+    if let Some(cv) = cookie_opt {
+        request = request.header("Cookie", cv);
     }
 
     let response = request.send().await?;
@@ -135,12 +155,12 @@ async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
 
     let bytes = response.bytes().await?;
 
-    let router = ContentRouter::new();
+    let content_router = ContentRouter::new();
     let fetch_url = url.to_owned();
     let ct = content_type.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        router.convert_with_url(&bytes, &ct, Some(&fetch_url))
+        content_router.convert_with_url(&bytes, &ct, Some(&fetch_url))
     })
     .await??;
 
