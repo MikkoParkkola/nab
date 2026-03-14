@@ -6,19 +6,22 @@ use super::fetch::{resolve_browser_name, resolve_cookie_source};
 use super::output::output_body;
 use crate::OutputFormat;
 
-#[allow(clippy::fn_params_excessive_bools)] // CLI commands require multiple independent bool flags
-pub async fn cmd_login(
-    url: &str,
-    use_1password: bool,
-    save_session: bool,
-    cookies: &str,
-    _show_headers: bool,
-    format: OutputFormat,
-    #[cfg(feature = "browser")] use_browser: bool,
-) -> Result<()> {
+/// All parameters for a `nab login` invocation.
+#[allow(clippy::struct_excessive_bools)] // 1:1 map of CLI boolean flags
+pub struct LoginConfig {
+    pub url: String,
+    pub use_1password: bool,
+    pub save_session: bool,
+    pub cookies: String,
+    pub format: OutputFormat,
+    #[cfg(feature = "browser")]
+    pub use_browser: bool,
+}
+
+pub async fn cmd_login(cfg: &LoginConfig) -> Result<()> {
     use nab::LoginFlow;
 
-    if !use_1password {
+    if !cfg.use_1password {
         anyhow::bail!("Login requires 1Password integration. Use --1password flag.");
     }
 
@@ -29,33 +32,33 @@ pub async fn cmd_login(
         );
     }
 
-    println!("🔐 Starting auto-login for: {url}");
+    println!("🔐 Starting auto-login for: {}", cfg.url);
 
-    let (client, cookie_header) = create_login_client(cookies, url)?;
+    let (client, cookie_header) = create_login_client(&cfg.cookies, &cfg.url)?;
 
     #[cfg(feature = "browser")]
     let login_flow = {
-        let mut flow = LoginFlow::new(client, use_1password, cookie_header);
-        if use_browser {
+        let mut flow = LoginFlow::new(client, cfg.use_1password, cookie_header);
+        if cfg.use_browser {
             flow = flow.with_browser(true);
         }
         flow
     };
 
     #[cfg(not(feature = "browser"))]
-    let login_flow = LoginFlow::new(client, use_1password, cookie_header);
+    let login_flow = LoginFlow::new(client, cfg.use_1password, cookie_header);
 
-    let result = login_flow.login(url).await?;
+    let result = login_flow.login(&cfg.url).await?;
 
-    if save_session {
-        login_flow.save_session(url, save_session)?;
+    if cfg.save_session {
+        login_flow.save_session(&cfg.url, cfg.save_session)?;
         println!("✅ Session saved");
     }
 
     println!("\n✅ Login successful!");
     println!("   Final URL: {}", result.final_url);
 
-    if matches!(format, OutputFormat::Full) {
+    if matches!(cfg.format, OutputFormat::Full) {
         println!("\n📄 Final page content:");
     }
 
@@ -79,10 +82,7 @@ fn create_login_client(
 ) -> Result<(AcceleratedClient, Option<String>)> {
     let client = AcceleratedClient::new()?;
 
-    let domain = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
-        .unwrap_or_default();
+    let domain = super::extract_domain(url);
 
     let mut cookie_header = None;
     if let Some(browser) = resolve_browser_name(cookies) {

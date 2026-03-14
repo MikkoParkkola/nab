@@ -654,34 +654,30 @@ async fn main() -> Result<()> {
             style,
             hwaccel,
         } => {
-            cmd::cmd_annotate(
-                &video,
-                &output,
+            cmd::cmd_annotate(&cmd::AnnotateConfig {
+                video,
+                output,
                 subtitles,
                 speaker_labels,
                 analysis,
                 style,
                 hwaccel,
-            )
+            })
             .await?;
         }
         Commands::Submit {
             url,
             fields,
             csrf_from,
-            cookies,
-            use_1password,
             headers,
             ..
         } => {
-            cmd::cmd_submit(
-                &url,
-                &fields,
-                csrf_from.as_deref(),
-                &cookies,
-                use_1password,
-                headers,
-            )
+            cmd::cmd_submit(&cmd::SubmitConfig {
+                url,
+                field_args: fields,
+                csrf_from,
+                show_headers: headers,
+            })
             .await?;
         }
         Commands::Login {
@@ -689,21 +685,20 @@ async fn main() -> Result<()> {
             use_1password,
             save_session,
             cookies,
-            headers,
             format,
             #[cfg(feature = "browser")]
             browser,
+            ..
         } => {
-            cmd::cmd_login(
-                &url,
+            cmd::cmd_login(&cmd::LoginConfig {
+                url,
                 use_1password,
                 save_session,
-                &cookies,
-                headers,
+                cookies,
                 format,
                 #[cfg(feature = "browser")]
-                browser,
-            )
+                use_browser: browser,
+            })
             .await?;
         }
         Commands::Context { urls, cookies, max_tokens, .. } => {

@@ -63,10 +63,7 @@ pub async fn cmd_context(urls: &[String], cookies: &str, max_tokens: usize) -> R
             let _permit = sem.acquire().await.expect("semaphore closed");
 
             // Per-domain rate limiting.
-            let domain = url::Url::parse(&url)
-                .ok()
-                .and_then(|u| u.host_str().map(str::to_owned))
-                .unwrap_or_default();
+            let domain = super::extract_domain(&url);
             lim.wait(&domain).await;
 
             let source = fetch_one(&url, &cookies, char_budget).await;
@@ -129,10 +126,7 @@ async fn fetch_one(url: &str, cookies: &str, char_budget: usize) -> FetchedSourc
 async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
     let client = build_client(false, None)?;
 
-    let domain = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned))
-        .unwrap_or_default();
+    let domain = super::extract_domain(url);
 
     let cookie_header = resolve_browser_name(cookies)
         .map(|browser| {

@@ -69,10 +69,7 @@ pub async fn cmd_fetch_batch(cfg: &FetchConfig) -> Result<()> {
             let _permit = sem.acquire().await.unwrap();
 
             // Per-domain rate limiting: avoid hammering the same host.
-            let domain = url::Url::parse(&url)
-                .ok()
-                .and_then(|u| u.host_str().map(str::to_owned))
-                .unwrap_or_default();
+            let domain = super::extract_domain(&url);
             lim.wait(&domain).await;
 
             fetch_one_batch_url(url, &params).await
@@ -124,10 +121,7 @@ async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_
     };
     let profile = client.profile().await;
 
-    let domain = url::Url::parse(&url)
-        .ok()
-        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
-        .unwrap_or_default();
+    let domain = super::extract_domain(&url);
 
     let mut cookie_header = String::new();
     if let Some(browser) = resolve_browser_name(&params.cookies) {
@@ -160,8 +154,7 @@ async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_
         request = request.header("Cookie", &cookie_header);
     }
 
-    if params.auto_referer && let Ok(parsed) = url::Url::parse(&url) {
-        let referer = format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
+    if params.auto_referer && let Some(referer) = super::build_referer(&url) {
         request = request.header("Referer", referer);
     }
 

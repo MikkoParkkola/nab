@@ -52,10 +52,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     let client = build_client(cfg.no_redirect, cfg.proxy.as_deref())?;
     let profile = client.profile().await;
 
-    let domain = url::Url::parse(&cfg.url)
-        .ok()
-        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
-        .unwrap_or_default();
+    let domain = super::extract_domain(&cfg.url);
 
     let mut cookie_header = String::new();
     let browser_name = resolve_browser_name(&cfg.cookies);
@@ -247,8 +244,7 @@ async fn execute_manual_request(
         request = request.header("Cookie", cookie_header);
     }
 
-    if cfg.auto_referer && let Ok(parsed) = url::Url::parse(url) {
-        let referer = format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or(""));
+    if cfg.auto_referer && let Some(referer) = super::build_referer(url) {
         request = request.header("Referer", referer);
     }
 

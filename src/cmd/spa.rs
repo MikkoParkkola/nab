@@ -27,10 +27,7 @@ pub struct SpaConfig {
 pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
     let client = AcceleratedClient::new()?;
 
-    let domain = url::Url::parse(&cfg.url)
-        .ok()
-        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
-        .unwrap_or_default();
+    let domain = super::extract_domain(&cfg.url);
 
     let mut cookie_header = String::new();
     let browser_name = resolve_browser_name(&cfg.cookies);

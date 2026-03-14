@@ -5,11 +5,13 @@ use nab::OtpRetriever;
 pub fn cmd_otp(domain: &str) -> Result<()> {
     println!("🔐 Searching for OTP codes for: {domain}\n");
 
-    // Extract domain from URL if needed
-    let clean_domain = url::Url::parse(domain)
-        .ok()
-        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
-        .unwrap_or_else(|| domain.to_string());
+    // Extract domain from URL if needed (falls back to raw input)
+    let extracted = super::extract_domain(domain);
+    let clean_domain = if extracted.is_empty() {
+        domain.to_string()
+    } else {
+        extracted
+    };
 
     if let Some(otp) = OtpRetriever::get_otp_for_domain(&clean_domain)? {
         println!("✅ Found OTP code!");
