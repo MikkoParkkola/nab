@@ -62,7 +62,9 @@ pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
                 Box::new(GenericHlsProvider::new())
             } else {
                 anyhow::bail!(
-                    "Unknown source: {}. Use 'yle', 'generic', or a direct URL.",
+                    "Unknown source: '{}'.\n\
+                     Available sources: yle, svt, nrk, dr, generic\n\
+                     Or pass a direct stream URL (http/https with .m3u8/.mpd extension)",
                     cfg.source
                 );
             }

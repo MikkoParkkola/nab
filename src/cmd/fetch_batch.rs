@@ -21,7 +21,10 @@ pub async fn cmd_fetch_batch(cfg: &FetchConfig) -> Result<()> {
     use std::sync::Arc;
     use tokio::sync::Semaphore;
 
-    let file_path = cfg.batch_file.as_deref().expect("batch_file is Some");
+    let file_path = cfg
+        .batch_file
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--batch requires a file path"))?;
     let contents = std::fs::read_to_string(file_path)
         .map_err(|e| anyhow::anyhow!("Failed to read batch file '{file_path}': {e}"))?;
 
