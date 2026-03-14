@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use super::{Engagement, SiteContent, SiteMetadata, SiteProvider};
+use super::{SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
 
 /// Number of stories to fetch for front-page listing views.
@@ -57,12 +57,12 @@ impl SiteProvider for HackerNewsProvider {
             return false;
         }
 
-        // Individual item page.
+        // Individual item pages are handled by the `hackernews-item` TOML rule.
+        // This hardcoded provider only handles front-page listing paths.
         if normalized.contains("/item") {
-            return true;
+            return false;
         }
 
-        // Front-page listing paths.
         front_page_list_type(normalized).is_some()
     }
 
@@ -75,13 +75,8 @@ impl SiteProvider for HackerNewsProvider {
     ) -> Result<SiteContent> {
         let normalized = url.to_lowercase();
         let path_part = normalized.split('?').next().unwrap_or(&normalized);
-
-        if path_part.contains("/item") {
-            extract_item(url, client).await
-        } else {
-            let list = front_page_list_type(path_part).unwrap_or("topstories");
-            fetch_front_page(list, url, client).await
-        }
+        let list = front_page_list_type(path_part).unwrap_or("topstories");
+        fetch_front_page(list, url, client).await
     }
 }
 
@@ -113,44 +108,6 @@ fn front_page_list_type(path: &str) -> Option<&'static str> {
 // ============================================================================
 
 /// Extract a single HN item (story/ask/show + comments) via Algolia API.
-async fn extract_item(url: &str, client: &AcceleratedClient) -> Result<SiteContent> {
-    let item_id = parse_hn_item_id(url)?;
-
-    let api_url = format!("https://hn.algolia.com/api/v1/items/{item_id}");
-    tracing::debug!("Fetching from Hacker News: {}", api_url);
-
-    let response = client
-        .fetch_text(&api_url)
-        .await
-        .context("Failed to fetch from Hacker News API")?;
-
-    let item: HNItem =
-        serde_json::from_str(&response).context("Failed to parse Hacker News response")?;
-
-    let markdown = format_hn_markdown(&item);
-
-    let engagement = Engagement {
-        likes: item.points,
-        reposts: None,
-        replies: Some(item.children.len() as u64),
-        views: None,
-    };
-
-    let canonical_url = format!("https://news.ycombinator.com/item?id={}", item.id);
-
-    let metadata = SiteMetadata {
-        author: item.author.clone(),
-        title: item.title.clone(),
-        published: item.created_at.clone(),
-        platform: "Hacker News".to_string(),
-        canonical_url,
-        media_urls: vec![],
-        engagement: Some(engagement),
-    };
-
-    Ok(SiteContent { markdown, metadata })
-}
-
 /// Fetch a front-page listing from Firebase and format as a numbered markdown list.
 ///
 /// `list_name` is one of `topstories`, `newstories`, `beststories`, `askstories`,
@@ -217,20 +174,6 @@ async fn fetch_front_page(
     Ok(SiteContent { markdown, metadata })
 }
 
-/// Parse Hacker News URL to extract item ID.
-fn parse_hn_item_id(url: &str) -> Result<String> {
-    let url = url.split('#').next().unwrap_or(url);
-
-    // Extract id parameter from query string
-    for part in url.split('?').skip(1).flat_map(|q| q.split('&')) {
-        if let Some(id) = part.strip_prefix("id=") {
-            return Ok(id.to_string());
-        }
-    }
-
-    anyhow::bail!("Could not extract item ID from URL: {url}")
-}
-
 /// Format a front-page listing as a numbered markdown list.
 fn format_front_page_markdown(list_name: &str, stories: &[HNFirebaseItem]) -> String {
     let heading = match list_name {
@@ -274,70 +217,6 @@ fn format_front_page_markdown(list_name: &str, stories: &[HNFirebaseItem]) -> St
     md
 }
 
-/// Format Hacker News item and comments as markdown.
-fn format_hn_markdown(item: &HNItem) -> String {
-    let mut md = String::new();
-
-    // Title
-    if let Some(title) = &item.title {
-        md.push_str("## ");
-        md.push_str(title);
-        md.push_str("\n\n");
-    }
-
-    // Metadata line
-    let points_str = item.points.map_or_else(
-        || "0 points".to_string(),
-        |p| format!("{} points", format_number(p)),
-    );
-
-    let author_str = item
-        .author
-        .as_ref()
-        .map(|a| format!("by {a} · "))
-        .unwrap_or_default();
-
-    let _ = write!(
-        md,
-        "{author_str}{points_str} · {} comments\n\n",
-        item.children.len()
-    );
-
-    // Link URL (if it's a link post)
-    if let Some(url) = &item.url {
-        md.push_str("🔗 ");
-        md.push_str(url);
-        md.push_str("\n\n");
-    }
-
-    // Post text (if present)
-    if let Some(text) = &item.text {
-        md.push_str(text);
-        md.push_str("\n\n");
-    }
-
-    // Top comments (up to 10 first-level children)
-    if !item.children.is_empty() {
-        md.push_str("### Top Comments\n\n");
-
-        let mut count = 0;
-        for comment in &item.children {
-            if count >= 10 {
-                break;
-            }
-
-            if let Some(text) = &comment.text {
-                let author = comment.author.as_deref().unwrap_or("unknown");
-
-                let _ = write!(md, "**{author}**:\n\n{text}\n\n---\n\n");
-                count += 1;
-            }
-        }
-    }
-
-    md
-}
-
 /// Format large numbers with K/M suffixes.
 fn format_number(n: u64) -> String {
     #[allow(clippy::cast_precision_loss)]
@@ -353,25 +232,6 @@ fn format_number(n: u64) -> String {
 // ============================================================================
 // Hacker News API Response Types
 // ============================================================================
-
-#[derive(Debug, Deserialize)]
-struct HNItem {
-    id: u64,
-    title: Option<String>,
-    author: Option<String>,
-    points: Option<u64>,
-    url: Option<String>,
-    text: Option<String>,
-    created_at: Option<String>,
-    #[serde(default)]
-    children: Vec<HNComment>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HNComment {
-    author: Option<String>,
-    text: Option<String>,
-}
 
 /// Minimal Firebase item shape used for front-page listings.
 #[derive(Debug, Deserialize)]
@@ -389,10 +249,11 @@ mod tests {
     // ---- matches() tests -------------------------------------------------------
 
     #[test]
-    fn matches_hn_item_urls() {
+    fn does_not_match_hn_item_urls() {
+        // Item pages are handled by the hackernews-item TOML rule.
         let provider = HackerNewsProvider;
-        assert!(provider.matches("https://news.ycombinator.com/item?id=38471822"));
-        assert!(provider.matches("https://NEWS.YCOMBINATOR.COM/ITEM?ID=999"));
+        assert!(!provider.matches("https://news.ycombinator.com/item?id=38471822"));
+        assert!(!provider.matches("https://NEWS.YCOMBINATOR.COM/ITEM?ID=999"));
     }
 
     #[test]
@@ -468,23 +329,6 @@ mod tests {
             front_page_list_type("https://news.ycombinator.com/item"),
             None
         );
-    }
-
-    // ---- parse helpers ---------------------------------------------------------
-
-    #[test]
-    fn parse_hn_item_id_extracts_id() {
-        let id = parse_hn_item_id("https://news.ycombinator.com/item?id=38471822").unwrap();
-        assert_eq!(id, "38471822");
-
-        let id2 = parse_hn_item_id("https://news.ycombinator.com/item?id=999&foo=bar").unwrap();
-        assert_eq!(id2, "999");
-    }
-
-    #[test]
-    fn parse_hn_item_id_strips_fragment() {
-        let id = parse_hn_item_id("https://news.ycombinator.com/item?id=123#comment").unwrap();
-        assert_eq!(id, "123");
     }
 
     // ---- format helpers --------------------------------------------------------
