@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use nab::CookieSource;
-
-use super::resolve_browser_name;
+use super::{resolve_browser_name, resolve_cookie_source};
 
 pub async fn cmd_cookies(subcommand: &str, domain: &str, browser: &str) -> Result<()> {
     match subcommand {
@@ -16,12 +14,7 @@ fn cmd_cookies_export(domain: &str, browser: &str) -> Result<()> {
     let browser_name = resolve_browser_name(browser)
         .ok_or_else(|| anyhow::anyhow!("No browser specified. Use --cookies to select one."))?;
 
-    let source = match browser_name.to_lowercase().as_str() {
-        "brave" => CookieSource::Brave,
-        "firefox" => CookieSource::Firefox,
-        "safari" => CookieSource::Safari,
-        _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
-    };
+    let source = resolve_cookie_source(&browser_name);
 
     eprintln!("🍪 Exporting cookies for '{domain}' from {browser_name}");
 

@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use nab::CookieSource;
-
-use super::resolve_browser_name;
+use super::{resolve_browser_name, resolve_cookie_source};
 
 /// Configuration for the `nab stream` command.
 #[allow(clippy::struct_excessive_bools)] // 1:1 map of CLI boolean flags
@@ -156,12 +154,7 @@ pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
 
     if let Some(browser) = browser_name {
         eprintln!("🍪 Extracting cookies from {browser}...");
-        let cookie_source = match browser.to_lowercase().as_str() {
-            "brave" => CookieSource::Brave,
-            "firefox" => CookieSource::Firefox,
-            "safari" => CookieSource::Safari,
-            _ => CookieSource::Chrome, // chrome, edge, or unknown -> Chrome format
-        };
+        let cookie_source = resolve_cookie_source(&browser);
 
         match cookie_source.get_cookies("yle.fi") {
             Ok(cookie_map) if !cookie_map.is_empty() => {
