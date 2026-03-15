@@ -10,6 +10,7 @@
 [![dependency status](https://deps.rs/repo/github/MikkoParkkola/nab/status.svg)](https://deps.rs/repo/github/MikkoParkkola/nab)
 [![Tests](https://img.shields.io/badge/tests-897+-brightgreen.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
+[![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
 [![MCP Servers](https://img.shields.io/badge/MCP_Tools-8-blue.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
 [![Capabilities](https://img.shields.io/badge/Capabilities-tools%20%7C%20elicitation%20%7C%20structured_output-informational.svg)](https://modelcontextprotocol.io)
 
