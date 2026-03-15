@@ -251,9 +251,7 @@ pub fn strip_hidden_sections(html: &str) -> String {
         .and_then(|sel| document.select(sel).next())
         .map_or_else(
             || html.to_string(),
-            |body| {
-                serialize_children_excluding(&document, body.id(), &hidden_ids)
-            },
+            |body| serialize_children_excluding(&document, body.id(), &hidden_ids),
         );
 
     let head_html = scraper::Selector::parse("head")
@@ -383,7 +381,10 @@ pub fn strip_noise_sections(html: &str) -> String {
             // Mark the heading itself
             noise_ids.insert(heading.id());
             // Mark all subsequent siblings
-            let mut sibling = document.tree.get(heading.id()).and_then(|n| n.next_sibling());
+            let mut sibling = document
+                .tree
+                .get(heading.id())
+                .and_then(|n| n.next_sibling());
             while let Some(sib) = sibling {
                 noise_ids.insert(sib.id());
                 sibling = sib.next_sibling();
@@ -531,9 +532,7 @@ fn is_noise_section(combined: &str) -> bool {
         "global-footer",
     ];
 
-    NOISE_MARKERS
-        .iter()
-        .any(|marker| combined.contains(marker))
+    NOISE_MARKERS.iter().any(|marker| combined.contains(marker))
 }
 
 /// Stable hash for a DOM element based on its outer HTML.
