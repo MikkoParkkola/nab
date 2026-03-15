@@ -53,6 +53,7 @@ pub struct LoginTool {
 }
 
 impl LoginTool {
+    #[allow(clippy::too_many_lines)]
     pub async fn run(&self, runtime: Arc<dyn McpServer>) -> Result<CallToolResult, CallToolError> {
         use nab::LoginFlow;
 
@@ -167,8 +168,20 @@ impl LoginTool {
 
         output.push_str(&truncate_markdown(&conversion.markdown, 4000));
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = crate::structured::build_structured([
+            ("url", serde_json::Value::String(self.url.clone())),
+            (
+                "final_url",
+                serde_json::Value::String(result.final_url.clone()),
+            ),
+            ("status", serde_json::Value::String("success".to_string())),
+            (
+                "content",
+                serde_json::Value::String(truncate_markdown(&conversion.markdown, 4000)),
+            ),
+        ]);
+        let mut call_result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        call_result.structured_content = Some(structured);
+        Ok(call_result)
     }
 }

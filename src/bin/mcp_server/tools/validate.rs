@@ -65,8 +65,12 @@ impl ValidateTool {
             start.elapsed().as_secs_f64()
         );
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = crate::structured::build_structured([(
+            "duration_s",
+            serde_json::json!(start.elapsed().as_secs_f64()),
+        )]);
+        let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 }

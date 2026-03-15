@@ -108,9 +108,17 @@ impl SubmitTool {
 
         output.push_str(&truncate_markdown(&conversion.markdown, 4000));
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(
-            output,
-        )]))
+        let structured = crate::structured::build_structured([
+            ("url", serde_json::Value::String(self.url.clone())),
+            ("status", serde_json::json!(status.as_u16())),
+            (
+                "content",
+                serde_json::Value::String(truncate_markdown(&conversion.markdown, 4000)),
+            ),
+        ]);
+        let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 
     /// Fetch the form page and return `(html, reqwest::Client)`.

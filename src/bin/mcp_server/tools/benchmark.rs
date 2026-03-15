@@ -48,11 +48,17 @@ impl BenchmarkTool {
 
         for url in url_list {
             let mut times = Vec::with_capacity(iterations);
+            let mut errors = 0u32;
             for _ in 0..iterations {
                 let start = Instant::now();
-                if let Ok(response) = client.fetch(url).await {
-                    let _ = response.text().await;
-                    times.push(start.elapsed().as_secs_f64() * 1000.0);
+                match client.fetch(url).await {
+                    Ok(response) => {
+                        let _ = response.text().await;
+                        times.push(start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    Err(_) => {
+                        errors += 1;
+                    }
                 }
             }
             if !times.is_empty() {
@@ -61,16 +67,24 @@ impl BenchmarkTool {
                 let min = times.iter().copied().fold(f64::INFINITY, f64::min);
                 let max = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                 let _ = writeln!(output, "📊 {url}");
-                let _ = writeln!(
-                    output,
-                    "   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms\n"
-                );
+                if errors > 0 {
+                    let _ = writeln!(
+                        output,
+                        "   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms | Errors: {errors}\n"
+                    );
+                } else {
+                    let _ = writeln!(
+                        output,
+                        "   Avg: {avg:.2}ms | Min: {min:.2}ms | Max: {max:.2}ms\n"
+                    );
+                }
                 structured_items.push(serde_json::json!({
                     "url": url,
                     "min_ms": min,
                     "avg_ms": avg,
                     "max_ms": max,
                     "iterations": times.len(),
+                    "errors": errors,
                 }));
             }
         }

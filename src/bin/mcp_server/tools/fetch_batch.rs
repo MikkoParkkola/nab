@@ -57,7 +57,7 @@ impl FetchBatchTool {
             match result {
                 Ok(response) => {
                     let status = response.status().as_u16();
-                    let body = response.text().await.unwrap_or_default();
+                    let body = response.text().await.unwrap_or_default(); // Body read errors → empty string (non-fatal)
                     let preview = truncate_markdown(&body, 500);
                     let _ = writeln!(
                         output,

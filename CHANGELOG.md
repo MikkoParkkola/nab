@@ -5,6 +5,36 @@ All notable changes to nab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-03-16
+
+### Fixed
+- Dockerfile: use Rust 1.93 (was 1.87), add build-essential/cmake/clang for crypto deps
+- Dockerfile: use `--no-default-features` to skip BoringSSL/QUIC for faster Docker builds
+
+### Changed
+- MCP tools `submit`, `login`, `validate` now return `structured_content` alongside text (consistency with `fetch`, `fetch_batch`, `auth_lookup`, `fingerprint`, `benchmark`)
+- MCP `benchmark` tool reports error count per URL instead of silently dropping failed iterations
+
+## [0.6.3] - 2026-03-15
+
+### Added
+- HTML extraction: `strip_hidden_sections()` removes `<details>`, `<noscript>`, `<dialog>` elements
+- HTML extraction: `strip_noise_sections()` removes vulnerability advisories, cookie banners, newsletter signups
+- HTML extraction: `clean_markdown_noise()` strips base64 data URIs and empty link artefacts
+- Readability/direct fallback: picks whichever produces richer output
+- Glama MCP server directory listing (`glama.json`, Dockerfile, badge)
+- 10 new HTML extraction tests
+
+## [0.6.2] - 2026-03-14
+
+### Changed
+- All dependencies updated to latest versions
+
+## [0.6.1] - 2026-03-14
+
+### Fixed
+- CI formatting fix for Rust 2024 edition
+
 ## [0.6.0] - 2026-03-14
 
 ### Added
