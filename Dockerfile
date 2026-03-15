@@ -1,10 +1,10 @@
-FROM rust:1.87-slim AS builder
+FROM rust:1.93-slim AS builder
 
 WORKDIR /build
 COPY . .
 
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-RUN cargo build --release --bin nab-mcp
+RUN apt-get update && apt-get install -y pkg-config libssl-dev build-essential cmake clang && rm -rf /var/lib/apt/lists/*
+RUN cargo build --release --bin nab-mcp --no-default-features
 
 FROM debian:bookworm-slim
 
