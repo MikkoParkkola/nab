@@ -695,11 +695,11 @@ mod tests {
 
     #[test]
     fn strip_hidden_sections_removes_closed_details() {
-        let html = r#"<html><body>
+        let html = r"<html><body>
             <h1>Status</h1>
             <p>All good</p>
             <details><summary>Advisory</summary><p>CVE-2024-1234</p></details>
-        </body></html>"#;
+        </body></html>";
         let result = strip_hidden_sections(html);
         assert!(!result.contains("CVE-2024-1234"));
         assert!(result.contains("All good"));
@@ -708,10 +708,10 @@ mod tests {
 
     #[test]
     fn strip_hidden_sections_preserves_open_details() {
-        let html = r#"<html><body>
+        let html = r"<html><body>
             <details open><summary>Visible</summary><p>Important info</p></details>
             <details><summary>Hidden</summary><p>Secret</p></details>
-        </body></html>"#;
+        </body></html>";
         let result = strip_hidden_sections(html);
         assert!(result.contains("Important info"));
         assert!(!result.contains("Secret"));
@@ -719,10 +719,10 @@ mod tests {
 
     #[test]
     fn strip_hidden_sections_removes_noscript() {
-        let html = r#"<html><body>
+        let html = r"<html><body>
             <p>Main content</p>
             <noscript><p>Enable JavaScript</p></noscript>
-        </body></html>"#;
+        </body></html>";
         let result = strip_hidden_sections(html);
         assert!(result.contains("Main content"));
         assert!(!result.contains("Enable JavaScript"));
@@ -730,11 +730,11 @@ mod tests {
 
     #[test]
     fn strip_hidden_sections_removes_closed_dialog() {
-        let html = r#"<html><body>
+        let html = r"<html><body>
             <p>Page</p>
             <dialog><p>Modal content</p></dialog>
             <dialog open><p>Visible modal</p></dialog>
-        </body></html>"#;
+        </body></html>";
         let result = strip_hidden_sections(html);
         assert!(result.contains("Page"));
         assert!(!result.contains("Modal content"));
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn strip_hidden_sections_noop_when_no_hidden_elements() {
-        let html = r#"<html><body><p>Just text</p></body></html>"#;
+        let html = r"<html><body><p>Just text</p></body></html>";
         let result = strip_hidden_sections(html);
         assert!(result.contains("Just text"));
     }
@@ -804,7 +804,7 @@ mod tests {
 
     #[test]
     fn strip_noise_sections_preserves_all_when_no_noise() {
-        let html = r#"<html><body><p>Clean page</p></body></html>"#;
+        let html = r"<html><body><p>Clean page</p></body></html>";
         let result = strip_noise_sections(html);
         assert!(result.contains("Clean page"));
     }

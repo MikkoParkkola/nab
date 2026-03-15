@@ -59,7 +59,7 @@ const ENCODING_BAD_PER_CHARS: f64 = 200.0;
 
 /// Per-signal and composite extraction quality scores, all in [0.0, 1.0].
 ///
-/// Serialises to / deserialises from JSON with snake_case field names so it
+/// Serialises to / deserialises from JSON with `snake_case` field names so it
 /// slots cleanly into nab's JSON output envelope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QualityScore {
@@ -135,7 +135,7 @@ fn weighted_average(density: f64, structure: f64, completeness: f64, encoding: f
 
 /// Signal 1: content density — how much of the HTML became useful text.
 ///
-/// Score = min(markdown_chars / (html_bytes * SATURATION), 1.0).
+/// Score = min(`markdown_chars` / (`html_bytes` * `SATURATION`), 1.0).
 /// HTML-only pages (no markdown) that are very large → score 0.
 /// Tiny HTML → perfect (see caller guard above).
 fn score_content_density(html_bytes: &[u8], markdown: &str) -> f64 {
@@ -237,13 +237,19 @@ fn count_paragraphs(markdown: &str) -> usize {
         .count()
 }
 
-/// Return `true` if `text` starts with an ordered list item like `1. `.
+/// Return `true` if `text` starts with an ordered list item like `1. ` or `42. `.
 fn starts_with_ordered_list(text: &str) -> bool {
-    let mut chars = text.chars();
-    let first = chars.next();
-    first.map_or(false, |c| c.is_ascii_digit())
-        && chars.next() == Some('.')
-        && chars.next() == Some(' ')
+    let mut chars = text.chars().peekable();
+    // Must start with at least one digit
+    if !chars.next().is_some_and(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // Consume any additional digits
+    while chars.peek().is_some_and(char::is_ascii_digit) {
+        chars.next();
+    }
+    // Must be followed by ". "
+    chars.next() == Some('.') && chars.next() == Some(' ')
 }
 
 /// Count occurrences of well-known Latin-1 mojibake sequences in UTF-8 text.

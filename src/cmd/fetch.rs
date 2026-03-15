@@ -127,10 +127,13 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let body_len = body_bytes.len();
 
-    let body_text = if markdown && !cfg.links {
-        convert_body_to_markdown(&body_bytes, &content_type, &cfg.url, cfg.format, body_len).await?
+    let (body_text, quality) = if markdown && !cfg.links {
+        let converted =
+            convert_body_to_markdown(&body_bytes, &content_type, &cfg.url, cfg.format, body_len)
+                .await?;
+        (converted.markdown, converted.quality)
     } else {
-        raw_text.clone()
+        (raw_text.clone(), None)
     };
 
     if cfg.show_diff {
@@ -150,6 +153,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
             body_text: &body_text,
             raw_text: &raw_text,
             content_type: &content_type,
+            quality: quality.as_ref(),
         },
     )?;
 
@@ -353,6 +357,8 @@ struct FetchResponse<'a> {
     body_text: &'a str,
     raw_text: &'a str,
     content_type: &'a str,
+    /// Extraction quality score — present for HTML, absent for raw/binary content.
+    quality: Option<&'a nab::content::quality::QualityScore>,
 }
 
 /// Print the response according to the requested output format.
@@ -378,7 +384,7 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 "content_length": resp.body_len,
                 "content_type": resp.content_type,
             });
-            let output = serde_json::json!({
+            let mut output = serde_json::json!({
                 "url": cfg.url,
                 "status": resp.status.as_u16(),
                 "content_type": resp.content_type,
@@ -386,6 +392,10 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 "metadata": metadata,
                 "elapsed_ms": (resp.elapsed.as_secs_f64() * 1000.0 * 10.0).round() / 10.0,
             });
+            if let Some(q) = resp.quality {
+                output["confidence"] = serde_json::json!(q.confidence);
+                output["quality"] = serde_json::to_value(q)?;
+            }
             println!("{}", serde_json::to_string(&output)?);
             if let Some(path) = out_path {
                 let mut file = File::create(path)?;
