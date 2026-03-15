@@ -34,6 +34,7 @@ impl ContentHandler for PlainHandler {
             page_count: None,
             content_type: content_type.to_string(),
             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            quality: None,
         })
     }
 }

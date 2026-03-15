@@ -17,6 +17,7 @@
 
 use anyhow::Result;
 
+use super::quality;
 use super::readability;
 use super::spa_extract;
 use super::{ContentHandler, ConversionResult};
@@ -53,12 +54,14 @@ impl HtmlHandler {
         let start = std::time::Instant::now();
         let html = String::from_utf8_lossy(bytes);
         let markdown = html_to_markdown_with_url(&html, url);
+        let quality = quality::score_extraction(bytes, &markdown);
 
         Ok(ConversionResult {
             markdown,
             page_count: None,
             content_type: content_type.to_string(),
             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            quality: Some(quality),
         })
     }
 }

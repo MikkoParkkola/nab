@@ -294,6 +294,12 @@ async fn execute_manual_request(
     ))
 }
 
+/// Conversion result bundled with quality metadata for the output layer.
+struct ConvertedBody {
+    markdown: String,
+    quality: Option<nab::content::quality::QualityScore>,
+}
+
 /// Convert body bytes to markdown via `ContentRouter`.
 async fn convert_body_to_markdown(
     body_bytes: &bytes::Bytes,
@@ -301,7 +307,7 @@ async fn convert_body_to_markdown(
     url: &str,
     format: OutputFormat,
     body_len: usize,
-) -> Result<String> {
+) -> Result<ConvertedBody> {
     let router = nab::content::ContentRouter::new();
     let bytes = body_bytes.to_vec();
     let ct = content_type.to_string();
@@ -329,7 +335,10 @@ async fn convert_body_to_markdown(
         eprintln!("⚠️  {warning}");
     }
 
-    Ok(result.markdown)
+    Ok(ConvertedBody {
+        quality: result.quality,
+        markdown: result.markdown,
+    })
 }
 
 /// Response data collected after the HTTP request completes.

@@ -32,6 +32,9 @@ jobs:
             target: aarch64-unknown-linux-gnu
             suffix: ''
             cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: '.exe'
 
     steps:
       - uses: actions/checkout@v4

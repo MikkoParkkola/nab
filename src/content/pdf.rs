@@ -305,6 +305,7 @@ impl ContentHandler for PdfHandler {
                 page_count: Some(page_count),
                 content_type: content_type.to_string(),
                 elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+                quality: None,
             });
         }
 
@@ -319,6 +320,7 @@ impl ContentHandler for PdfHandler {
             page_count: Some(page_count),
             content_type: content_type.to_string(),
             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            quality: None,
         })
     }
 }

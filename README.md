@@ -360,6 +360,7 @@ Or download directly from [GitHub Releases](https://github.com/MikkoParkkola/nab
 | macOS Intel | `nab-x86_64-apple-darwin` |
 | Linux x86_64 | `nab-x86_64-unknown-linux-gnu` |
 | Linux ARM64 | `nab-aarch64-unknown-linux-gnu` |
+| Windows x64 | `nab-x86_64-pc-windows-msvc.exe` |
 
 ### From source
 

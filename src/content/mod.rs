@@ -32,6 +32,7 @@ pub mod link_extract;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 pub mod plain;
+pub mod quality;
 pub mod readability;
 pub mod snapshot_store;
 pub mod spa_extract;
@@ -54,6 +55,11 @@ pub struct ConversionResult {
     pub content_type: String,
     /// Conversion time in milliseconds.
     pub elapsed_ms: f64,
+    /// Extraction quality score.
+    ///
+    /// Present for HTML content; `None` for plain-text passthrough and PDF,
+    /// where a "quality" signal is not meaningful.
+    pub quality: Option<quality::QualityScore>,
 }
 
 /// Converts response bytes into markdown.
