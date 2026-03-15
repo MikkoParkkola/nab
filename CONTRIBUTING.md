@@ -82,8 +82,11 @@ nab uses Cargo features for optional functionality:
 
 - **`cli`** (default): Enables CLI binary with clap argument parsing
 - **`http3`** (default): Enables HTTP/3 and QUIC support via quinn
+- **`impersonate`** (default): TLS fingerprint impersonation via BoringSSL (Chrome/Safari/Firefox profiles)
+- **`pdf`**: PDF-to-markdown conversion via pdfium (requires pdfium library)
+- **`browser`**: Browser automation via Chrome DevTools Protocol (requires running Chrome)
 
-To build without HTTP/3:
+To build without heavy defaults (faster compile):
 ```bash
 cargo build --no-default-features --features cli
 ```

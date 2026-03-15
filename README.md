@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance)
 [![dependency status](https://deps.rs/repo/github/MikkoParkkola/nab/status.svg)](https://deps.rs/repo/github/MikkoParkkola/nab)
-[![Tests](https://img.shields.io/badge/tests-897+-brightgreen.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-907+-brightgreen.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
 [![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
 [![MCP Servers](https://img.shields.io/badge/MCP_Tools-8-blue.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
@@ -304,7 +304,7 @@ The MCP server uses MCP protocol **2025-11-25** (latest) over stdio and shares a
 **Protocol features:**
 
 - **Tool annotations** — read-only, destructive, and open-world hints on all 8 tools
-- **Structured output** — `outputSchema` + `structured_content` on fetch, fetch_batch, auth_lookup, fingerprint, benchmark (machine-parseable JSON alongside human-readable text)
+- **Structured output** — `outputSchema` + `structured_content` on all 8 tools (machine-parseable JSON alongside human-readable text)
 - **URL elicitation** — OAuth/SSO login sends the user to the auth URL in-browser (Google, GitHub, Microsoft, Apple, and 9 more)
 - **Form elicitation** — interactive credential input and multi-select cookie source picker
 - **Task-augmented execution** — `fetch_batch` can run asynchronously with progress notifications
