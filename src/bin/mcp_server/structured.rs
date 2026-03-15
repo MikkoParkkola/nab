@@ -3,6 +3,14 @@
 //! Provides zero-allocation helpers for building `structuredContent` JSON maps
 //! and the embedded SVG icons used in the MCP `InitializeResult`.
 
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+/// Default character limit for single-URL tool responses (fetch, submit, login).
+pub(crate) const TOOL_TRUNCATION_LIMIT: usize = 4000;
+
+/// Character limit for batch preview snippets (`fetch_batch` per-URL).
+pub(crate) const BATCH_PREVIEW_LIMIT: usize = 500;
+
 // ─── Truncation helper ────────────────────────────────────────────────────────
 
 /// Truncate markdown to `max_chars`, appending `\n\n... [truncated]` if needed.

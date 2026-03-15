@@ -297,32 +297,28 @@ fn benchmark_output_schema() -> ToolOutputSchema {
 
 // ─── Schema property helpers ──────────────────────────────────────────────────
 
-fn string_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
+/// Build a JSON Schema property with a type and description.
+fn schema_prop(type_str: &str, description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
-    m.insert("type".into(), "string".into());
+    m.insert("type".into(), type_str.into());
     m.insert("description".into(), description.into());
     m
+}
+
+fn string_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
+    schema_prop("string", description)
 }
 
 fn number_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), "number".into());
-    m.insert("description".into(), description.into());
-    m
+    schema_prop("number", description)
 }
 
 fn integer_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), "integer".into());
-    m.insert("description".into(), description.into());
-    m
+    schema_prop("integer", description)
 }
 
 fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), "boolean".into());
-    m.insert("description".into(), description.into());
-    m
+    schema_prop("boolean", description)
 }
 
 // ─── Server Handler ───────────────────────────────────────────────────────────

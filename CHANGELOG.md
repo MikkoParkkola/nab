@@ -5,6 +5,14 @@ All notable changes to nab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-03-16
+
+### Changed
+- MCP server: extract truncation constants (`TOOL_TRUNCATION_LIMIT`, `BATCH_PREVIEW_LIMIT`)
+- MCP server: consolidate schema property helpers via `schema_prop()`
+- README: remove Windows binary from install table (not built in CI)
+- CONTRIBUTING: add all 5 feature flags (was missing `impersonate`, `pdf`, `browser`)
+
 ## [0.6.4] - 2026-03-16
 
 ### Fixed
@@ -68,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prefetch link graph** — same-site link extraction from fetched markdown with eTLD+1 filtering (Mozilla PSL via `addr` crate) and relevance scoring
 - **Persistent named sessions** — `SessionStore` with LRU eviction (32 slots), cookie seeding from browser jars, pinned browser profiles; `session` parameter on fetch/submit/login tools
 - **CSS extractor plugins** — define custom site extractors in `plugins.toml` using CSS selectors (`type = "css"`), no Rust code required; content goes through full `ContentRouter` pipeline
-- **MCP protocol 2025-11-25** — upgraded from 2025-06-18 via rust-mcp-sdk 0.8.3
+- **MCP protocol 2025-11-25** — upgraded from 2025-06-18 via rust-mcp-sdk 0.9
 - **URL elicitation** for OAuth/SSO login flows (Google, GitHub, Microsoft, Apple, Facebook, and 8 more providers)
 - **Task-augmented execution** for `fetch_batch` — returns immediately with task ID, fetches in background with push notifications
 - **Multi-select cookie elicitation** — pick multiple browser cookie stores (Brave, Chrome, Firefox, Safari) at once

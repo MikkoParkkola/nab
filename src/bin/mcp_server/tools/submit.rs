@@ -10,7 +10,7 @@ use nab::AcceleratedClient;
 use nab::content::ContentRouter;
 
 use crate::helpers::resolve_cookie_header;
-use crate::structured::truncate_markdown;
+use crate::structured::{TOOL_TRUNCATION_LIMIT, truncate_markdown};
 use crate::tools::client::{get_client, resolve_session_client};
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
@@ -106,14 +106,20 @@ impl SubmitTool {
             .convert(body.as_bytes(), "text/html")
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
-        output.push_str(&truncate_markdown(&conversion.markdown, 4000));
+        output.push_str(&truncate_markdown(
+            &conversion.markdown,
+            TOOL_TRUNCATION_LIMIT,
+        ));
 
         let structured = crate::structured::build_structured([
             ("url", serde_json::Value::String(self.url.clone())),
             ("status", serde_json::json!(status.as_u16())),
             (
                 "content",
-                serde_json::Value::String(truncate_markdown(&conversion.markdown, 4000)),
+                serde_json::Value::String(truncate_markdown(
+                    &conversion.markdown,
+                    TOOL_TRUNCATION_LIMIT,
+                )),
             ),
         ]);
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);

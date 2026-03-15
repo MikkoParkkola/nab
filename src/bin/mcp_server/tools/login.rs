@@ -17,7 +17,7 @@ use crate::elicitation::{
     elicit_credential_choice, elicit_credentials, elicit_oauth_url, is_oauth_redirect,
     oauth_service_name, resolve_login_cookies, run_login_with_credentials,
 };
-use crate::structured::truncate_markdown;
+use crate::structured::{TOOL_TRUNCATION_LIMIT, truncate_markdown};
 use crate::tools::client::resolve_session_client;
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
@@ -166,7 +166,10 @@ impl LoginTool {
             .convert(result.body.as_bytes(), content_type)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
-        output.push_str(&truncate_markdown(&conversion.markdown, 4000));
+        output.push_str(&truncate_markdown(
+            &conversion.markdown,
+            TOOL_TRUNCATION_LIMIT,
+        ));
 
         let structured = crate::structured::build_structured([
             ("url", serde_json::Value::String(self.url.clone())),
@@ -177,7 +180,10 @@ impl LoginTool {
             ("status", serde_json::Value::String("success".to_string())),
             (
                 "content",
-                serde_json::Value::String(truncate_markdown(&conversion.markdown, 4000)),
+                serde_json::Value::String(truncate_markdown(
+                    &conversion.markdown,
+                    TOOL_TRUNCATION_LIMIT,
+                )),
             ),
         ]);
         let mut call_result = CallToolResult::text_content(vec![TextContent::from(output)]);

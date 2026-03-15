@@ -7,7 +7,7 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
 use serde::{Deserialize, Serialize};
 
-use crate::structured::{build_structured, truncate_markdown};
+use crate::structured::{BATCH_PREVIEW_LIMIT, build_structured, truncate_markdown};
 use crate::tools::client::get_client;
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ impl FetchBatchTool {
                 Ok(response) => {
                     let status = response.status().as_u16();
                     let body = response.text().await.unwrap_or_default(); // Body read errors → empty string (non-fatal)
-                    let preview = truncate_markdown(&body, 500);
+                    let preview = truncate_markdown(&body, BATCH_PREVIEW_LIMIT);
                     let _ = writeln!(
                         output,
                         "Status: {status} | {elapsed_ms:.0}ms | {} bytes\n{preview}\n",
