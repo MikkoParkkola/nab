@@ -198,9 +198,57 @@ fn fingerprint_output_schema() -> ToolOutputSchema {
     ToolOutputSchema::new(vec!["profiles".into()], Some(props), None)
 }
 
+/// Build the `outputSchema` for the `submit` tool.
+///
+/// Returns: `{ url, status, content }`
+fn submit_output_schema() -> ToolOutputSchema {
+    let mut props = BTreeMap::new();
+    props.insert("url".into(), string_prop("The submitted URL"));
+    props.insert("status".into(), integer_prop("HTTP status code"));
+    props.insert(
+        "content".into(),
+        string_prop("Markdown-converted response body"),
+    );
+    ToolOutputSchema::new(
+        vec!["url".into(), "status".into(), "content".into()],
+        Some(props),
+        None,
+    )
+}
+
+/// Build the `outputSchema` for the `login` tool.
+///
+/// Returns: `{ url, final_url, status, content }`
+fn login_output_schema() -> ToolOutputSchema {
+    let mut props = BTreeMap::new();
+    props.insert("url".into(), string_prop("The login URL"));
+    props.insert("final_url".into(), string_prop("URL after login redirects"));
+    props.insert(
+        "status".into(),
+        string_prop("Login result status (success/cancelled)"),
+    );
+    props.insert(
+        "content".into(),
+        string_prop("Markdown-converted page content after login"),
+    );
+    ToolOutputSchema::new(vec!["url".into(), "status".into()], Some(props), None)
+}
+
+/// Build the `outputSchema` for the `validate` tool.
+///
+/// Returns: `{ duration_s }`
+fn validate_output_schema() -> ToolOutputSchema {
+    let mut props = BTreeMap::new();
+    props.insert(
+        "duration_s".into(),
+        number_prop("Total validation duration in seconds"),
+    );
+    ToolOutputSchema::new(vec!["duration_s".into()], Some(props), None)
+}
+
 /// Build the `outputSchema` for the `benchmark` tool.
 ///
-/// Returns: `{ results: [{ url, min_ms, avg_ms, max_ms, iterations }] }`
+/// Returns: `{ results: [{ url, min_ms, avg_ms, max_ms, iterations, errors }] }`
 fn benchmark_output_schema() -> ToolOutputSchema {
     let mut item_props = BTreeMap::new();
     item_props.insert("url".into(), string_prop("Benchmarked URL"));
@@ -220,6 +268,7 @@ fn benchmark_output_schema() -> ToolOutputSchema {
         "iterations".into(),
         integer_prop("Number of successful iterations measured"),
     );
+    item_props.insert("errors".into(), integer_prop("Number of failed iterations"));
 
     let mut results_items = serde_json::Map::new();
     results_items.insert("type".into(), "object".into());
@@ -234,7 +283,7 @@ fn benchmark_output_schema() -> ToolOutputSchema {
     );
     results_items.insert(
         "required".into(),
-        serde_json::json!(["url", "min_ms", "avg_ms", "max_ms", "iterations"]),
+        serde_json::json!(["url", "min_ms", "avg_ms", "max_ms", "iterations", "errors"]),
     );
 
     let mut props = BTreeMap::new();
@@ -301,8 +350,11 @@ impl ServerHandler for MicroFetchHandler {
             tool.output_schema = match tool.name.as_str() {
                 "fetch" => Some(fetch_output_schema()),
                 "fetch_batch" => Some(fetch_batch_output_schema()),
+                "submit" => Some(submit_output_schema()),
+                "login" => Some(login_output_schema()),
                 "auth_lookup" => Some(auth_lookup_output_schema()),
                 "fingerprint" => Some(fingerprint_output_schema()),
+                "validate" => Some(validate_output_schema()),
                 "benchmark" => Some(benchmark_output_schema()),
                 _ => None,
             };
