@@ -28,9 +28,11 @@ pub mod diff;
 pub mod diff_format;
 pub mod focus;
 pub mod html;
+pub mod image;
 pub mod link_extract;
 #[cfg(feature = "pdf")]
 pub mod pdf;
+pub mod pdf_light;
 pub mod plain;
 pub mod quality;
 pub mod readability;
@@ -101,12 +103,17 @@ impl ContentRouter {
         let handlers: Vec<Box<dyn ContentHandler>> = vec![
             Box::new(pdf::PdfHandler::new()),
             Box::new(html::HtmlHandler),
+            Box::new(image::ImageHandler),
             Box::new(plain::PlainHandler),
         ];
 
         #[cfg(not(feature = "pdf"))]
-        let handlers: Vec<Box<dyn ContentHandler>> =
-            vec![Box::new(html::HtmlHandler), Box::new(plain::PlainHandler)];
+        let handlers: Vec<Box<dyn ContentHandler>> = vec![
+            Box::new(pdf_light::PdfLightHandler),
+            Box::new(html::HtmlHandler),
+            Box::new(image::ImageHandler),
+            Box::new(plain::PlainHandler),
+        ];
 
         Self { handlers }
     }

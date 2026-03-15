@@ -76,11 +76,11 @@ fn spa_starts_extraction_pipeline() {
         .output()
         .expect("command should execute");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // The SPA command should at least print the extraction header
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Status messages go to stderr (data-only on stdout since v0.6.0)
     assert!(
-        stdout.contains("Extracting SPA data from") || stdout.contains("example.com"),
-        "SPA command should start extraction pipeline, got: {stdout}"
+        stderr.contains("Extracting SPA data from") || stderr.contains("example.com"),
+        "SPA command should start extraction pipeline, got stderr: {stderr}"
     );
 }
 

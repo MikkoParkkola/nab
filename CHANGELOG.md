@@ -5,6 +5,23 @@ All notable changes to nab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Extraction quality scoring**: `QualityScore` with 4 weighted signals — content density (0.35), structure (0.25), completeness (0.25), encoding quality (0.15)
+- CLI `fetch --json`: include top-level `confidence` field + detailed `quality` breakdown
+- Content pipeline: `ImageHandler` for image URLs, `PdfLightHandler` (no-pdfium fallback)
+- Release CI: Windows x86_64 build target (`x86_64-pc-windows-msvc`)
+
+### Fixed
+- `starts_with_ordered_list` now handles multi-digit numbers (e.g., `42. `, `100. `)
+- SPA integration test: check stderr (not stdout) for status messages (broken since v0.6.0)
+
+### Changed
+- Clippy: remove unnecessary raw string literal hashes
+- docs/ARCHITECTURE.md: comprehensive rewrite — MCP server, content pipeline, plugins, all site modules
+- CONTRIBUTING.md: expand module list from 8 to 25+ entries
+
 ## [0.6.5] - 2026-03-16
 
 ### Changed

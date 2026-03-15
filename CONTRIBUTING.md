@@ -94,14 +94,30 @@ cargo build --no-default-features --features cli
 ## Module Organization
 
 Key modules:
-- `http_client`: HTTP/2 client with connection pooling
-- `http3_client`: HTTP/3 (QUIC) implementation
-- `js_engine`: QuickJS-based JavaScript execution
-- `auth`: 1Password, cookie extraction, OTP retrieval
-- `fingerprint`: Browser fingerprint generation and auto-updates
-- `stream`: HLS/DASH streaming with multiple backends
-- `analyze`: Video/audio transcription and vision analysis
-- `annotate`: Subtitle generation and video overlay composition
+- `http_client`: HTTP/2 client with connection pooling, compression, fingerprint headers
+- `http3_client`: HTTP/3 (QUIC) with 0-RTT connection resumption
+- `impersonate_client`: TLS fingerprint impersonation via BoringSSL (feature: `impersonate`)
+- `js_engine`: QuickJS-based JavaScript execution (ES2020)
+- `auth/`: 1Password, browser cookie extraction (AES-128-CBC decryption), OTP retrieval
+- `fingerprint/`: Browser fingerprint generation, auto-update from real versions
+- `content/`: HTML/plain/PDF conversion, readability extraction, quality scoring, query-focused extraction (`focus`), token budget (`budget`), diff tracking, link extraction
+- `site/`: Site-specific extractors — `linkedin/` (7 files), `google/` (Workspace OOXML), `github`, `hackernews`, `reddit`, `css_extractor`, `rules/` (JSON rule configs)
+- `plugin/`: CSS selector plugin system — custom extractors in `plugins.toml`
+- `stream/`: HLS/DASH streaming — backends (native_hls, ffmpeg, streamlink), providers (NRK, SVT, DR, generic)
+- `analyze/`: Video/audio transcription, speaker diarization, vision analysis, fusion
+- `annotate/`: Subtitle generation, visual overlays, ffmpeg composition
+- `cmd/`: CLI command implementations (18 commands)
+- `bin/mcp_server/`: stdio MCP server — 8 tools, structured content, output schemas, elicitation
+- `session`: Persistent named sessions with LRU eviction (32 slots)
+- `login`: Automated form-based login with MFA detection
+- `form`: HTML form detection and auto-fill
+- `mfa`: MFA challenge detection (TOTP, SMS, Email, Push)
+- `ssrf`: SSRF protection — blocks private IPs
+- `rate_limit`: Per-domain rate limiting
+- `prefetch`: Same-site link extraction with eTLD+1 filtering
+- `error`: Typed error hierarchy (`NabError` with 9 variants)
+- `arena`: Arena allocator for HTTP response buffering
+- `browser`: Chrome DevTools Protocol automation (feature: `browser`)
 
 ## Pull Request Guidelines
 
