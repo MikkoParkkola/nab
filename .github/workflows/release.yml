@@ -32,9 +32,11 @@ jobs:
             target: aarch64-unknown-linux-gnu
             suffix: ''
             cross: true
+            features: '--no-default-features --features cli,http3'
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: '.exe'
+            features: '--no-default-features --features cli,http3'
 
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +58,7 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.features }}
 
       - name: Rename binaries
         shell: bash
