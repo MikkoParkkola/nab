@@ -33,6 +33,7 @@ pub mod url;
 pub use helpers::{extract_csrf_token, extract_username_from_url};
 #[cfg(feature = "impersonate")]
 pub use helpers::{parse_voyager_activity, parse_voyager_profile};
+#[cfg(feature = "impersonate")]
 pub use types::VoyagerProfileResponse;
 #[cfg(feature = "impersonate")]
 pub use types::{
