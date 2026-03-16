@@ -22,7 +22,7 @@ pub use diarize::{Diarizer, SpeakerSegment};
 pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor};
 pub use fusion::{FusedSegment, FusionEngine};
 pub use report::{AnalysisReport, ReportFormat};
-pub use transcribe::{Transcriber, TranscriptSegment, WordTiming};
+pub use transcribe::{Transcriber, TranscriptSegment, VllmTranscriber, WordTiming};
 pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
 
 /// Analysis pipeline errors
@@ -54,6 +54,12 @@ pub enum AnalysisError {
 
     #[error("Format error: {0}")]
     Format(#[from] std::fmt::Error),
+
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+
+    #[error("Transcription API error: {0}")]
+    TranscriptionApi(String),
 }
 
 pub type Result<T> = std::result::Result<T, AnalysisError>;
