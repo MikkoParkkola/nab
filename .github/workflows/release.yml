@@ -33,11 +33,10 @@ jobs:
             suffix: ''
             cross: true
             features: '--no-default-features --features cli,http3'
-          # Windows disabled: stream/annotate modules use `which` crate (Unix-only)
-          # TODO: add #[cfg(unix)] guards on stream + annotate before re-enabling
-          # - os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   suffix: '.exe'
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: '.exe'
+            features: '--no-default-features --features cli,http3'
 
     steps:
       - uses: actions/checkout@v4

@@ -172,8 +172,8 @@ ego-tree = "0.10"
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.5"         # macOS Keychain API (transitive via rustls, make direct)
 
-[target.'cfg(unix)'.dependencies]
-which = "8"                         # Find ffmpeg/streamlink binary in PATH
+# which is cross-platform (Windows/macOS/Linux) — finds ffmpeg/streamlink in PATH
+which = "8"
 
 [features]
 default = ["cli", "http3", "impersonate"]
