@@ -81,6 +81,9 @@ impl HtmlHandler {
 /// complex DOM structures (`LessWrong`, `Ghost CMS`, etc.).
 #[must_use]
 pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
+    // Minimum readability output length to prefer over the noisier direct conversion.
+    const MIN_READABILITY_LEN: usize = 200;
+
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     if let Some(spa_content) = spa_extract::extract_spa_data(html) {
         return spa_content;
@@ -102,17 +105,29 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
                 .map(str::trim)
                 .filter(|l| !l.is_empty())
                 .collect();
-            lines.join("\n")
+            let md_result = lines.join("\n");
+
+            // html2md sometimes truncates list-heavy content (<ol>/<li>).
+            // If the article's plain text is significantly longer than the
+            // markdown output, fall back to the plain text which preserves
+            // all content from the DOM.
+            if article.text_content.len() > md_result.len() + 100 {
+                article.text_content
+            } else {
+                md_result
+            }
         });
 
     // Direct html2md on cleaned HTML (preserves tables, lists, etc.)
     let direct_md = html_to_markdown(&cleaned_html);
 
-    // Pick the richer result: readability is great for articles but drops tables
-    // and non-article content. If readability output is significantly shorter than
-    // the direct conversion, prefer the direct version.
+    // Pick the better result.  Readability produces clean article content but
+    // is much shorter than direct conversion (which includes navigation, CSS,
+    // JSON-LD, footers, etc.).  Prefer readability when it extracted meaningful
+    // content (>= MIN_READABILITY_LEN chars); fall back to direct only when
+    // readability is nearly empty or returned None.
     let markdown = match readability_md {
-        Some(ref r_md) if r_md.len() >= direct_md.len() / 2 => r_md.clone(),
+        Some(ref r_md) if r_md.len() >= MIN_READABILITY_LEN => r_md.clone(),
         Some(ref r_md) if r_md.len() > direct_md.len() => r_md.clone(),
         _ => direct_md,
     };
@@ -807,5 +822,104 @@ mod tests {
         let html = r"<html><body><p>Clean page</p></body></html>";
         let result = strip_noise_sections(html);
         assert!(result.contains("Clean page"));
+    }
+
+    #[test]
+    fn ghost_blog_ordered_list_not_truncated() {
+        // Ghost CMS article with <ol><li> content.
+        // html2md truncates ordered lists; the pipeline must detect this
+        // and fall back to plain text to preserve the full article.
+        use super::html_to_markdown_with_url;
+
+        let html = r#"
+            <html>
+            <head><title>Porting Software</title></head>
+            <body>
+                <header><nav>Site Nav</nav></header>
+                <main class="site-main">
+                    <article class="gh-article post tag-ai">
+                        <header class="gh-article-header">
+                            <h1 class="gh-article-title">porting software has been trivial</h1>
+                        </header>
+                        <div class="gh-content gh-canvas">
+                            <p>This one is short and sweet. if you want to port a codebase from one language to another here's the approach:</p>
+                            <ol>
+                                <li>Run a ralph loop which compresses all tests into specs which looks similar to study every file in tests using separate subagents and document in specs and link the implementation as citations in the specification</li>
+                                <li>Then do a separate Ralph loop for all product functionality ensuring there are citations to the specification. Study every file in src using separate subagents per file and link the implementation as citations in the specification</li>
+                                <li>Once you have that within the same repo run a Ralph loop to create a TODO file and then execute a classic ralph doing just one thing and the most important thing per loop. Remind the agent that it can study the specifications and follow the citations to reference source code.</li>
+                                <li>For best outcomes you wanna configure your target language to have strict compilation</li>
+                            </ol>
+                            <p>The key theory here is usage of citations in the specifications which tease the file_read tool to study the original implementation during stage 3. Reducing stage 1 and stage 2 to specs is the precursor which transforms a code base into high level PRDs without coupling the implementation from the source language.</p>
+                        </div>
+                    </article>
+                </main>
+                <section class="newsletter-signup"><p>Subscribe</p></section>
+                <footer>Copyright</footer>
+            </body>
+            </html>
+        "#;
+
+        let md = html_to_markdown_with_url(html, Some("https://ghuntley.com/porting/"));
+
+        // Must contain the conclusion paragraph (the part html2md truncates)
+        assert!(
+            md.contains("high level PRDs without coupling"),
+            "Missing conclusion paragraph in markdown output ({} chars): {}",
+            md.len(),
+            md
+        );
+        // Must contain list items
+        assert!(
+            md.contains("Ralph loop"),
+            "Missing list content in markdown output: {}",
+            md
+        );
+    }
+
+    #[test]
+    fn ghost_blog_real_html_not_truncated() {
+        // Test with actual Ghost CMS HTML structure that triggers html2md truncation.
+        // The key difference from the simplified test above: the <em> tags inside
+        // the <li> elements and the inline <ol> (no whitespace between tags).
+        use super::html_to_markdown_with_url;
+
+        let html = r#"<html>
+<head><title>porting software has been trivial for a while now. here's how you do it.</title></head>
+<body>
+<header><nav>Site Nav</nav></header>
+<main class="site-main">
+<article class="gh-article post tag-ai">
+<header class="gh-article-header"><h1 class="gh-article-title">porting software has been trivial</h1></header>
+<div class="gh-content gh-canvas">
+            <p>This one is short and sweet. if you want to port a codebase from one language to another here's the approach:</p><ol><li>Run a ralph loop which compresses all tests into /specs/<em>.md which looks similar to "study every file in tests/</em>* using separate subagents and document in /specs/*.md and link the implementation as citations in the specification"</li><li>Then do a separate Ralph loop for all product functionality - ensuring there's citations to the specification. "study every file in src/* using seperate subagents per file and link the implementation as citations in the specification"</li><li>Once you have that - within the same repo run a Ralph loop to create a TODO file and then execute a classic ralph - doing just one thing and the most important thing per loop. Remind the agent that it can study the specifications and follow the citations to reference source code.</li><li>For best outcomes you wanna configure your target language to have strict compilation </li></ol><p>The key theory here is usage of citations in the specifications which tease the file_read tool to study the original implementation during stage 3. Reducing stage 1 and stage 2 to specs is the precursor which transforms a code base into high level PRDs without coupling the implementation from the source language.</p>
+        </div>
+</article>
+</main>
+<section class="newsletter-signup"><h3>Subscribe</h3><p>Join subscribers</p></section>
+<footer><p>Copyright 2026</p></footer>
+</body></html>"#;
+
+        let md = html_to_markdown_with_url(html, Some("https://ghuntley.com/porting/"));
+
+        // Must contain the conclusion paragraph
+        assert!(
+            md.contains("high level PRDs without coupling"),
+            "Missing conclusion paragraph in markdown output ({} chars): {}",
+            md.len(),
+            md
+        );
+        // Must contain list item content
+        assert!(
+            md.contains("Ralph loop") || md.contains("ralph loop"),
+            "Missing list content in markdown output: {}",
+            md
+        );
+        // Should be substantial
+        assert!(
+            md.len() > 500,
+            "Markdown too short: {} chars. Content: {}",
+            md.len(),
+            md
+        );
     }
 }

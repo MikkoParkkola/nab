@@ -69,8 +69,13 @@ pub fn extract_jsonld_content(document: &scraper::Html) -> Option<String> {
 
     let sel = scraper::Selector::parse(r#"script[type="application/ld+json"]"#).ok()?;
 
-    // Ordered by preference: articleBody > description
-    let content_keys = ["articleBody", "text", "description"];
+    // Ordered by preference: articleBody > text.
+    // `description` is deliberately excluded — Schema.org defines it as a
+    // short summary/excerpt, not the full article body.  Ghost CMS (and many
+    // other blogs) populate only `description` in their JSON-LD, and the
+    // value is truncated to ~500 chars.  Falling through to the readability
+    // path yields the complete article from the actual HTML DOM.
+    let content_keys = ["articleBody", "text"];
 
     let mut best: Option<String> = None;
 

@@ -35,13 +35,30 @@ pub struct Article {
 /// Returns `Some(Article)` if extraction succeeds, `None` if the page
 /// doesn't look like an article (e.g., homepage, search results).
 pub fn extract_article(html: &str, url: &str) -> Option<Article> {
-    // Try the readability crate first
-    if let Some(article) = extract_with_readability_crate(html, url) {
-        return Some(article);
-    }
+    let readability_result = extract_with_readability_crate(html, url);
+    let scraper_result = extract_with_scraper(html);
 
-    // Fallback to our own basic implementation using scraper
-    extract_with_scraper(html)
+    // Pick the result with more content.  The readability crate sometimes
+    // truncates list-heavy articles (e.g. Ghost blogs with <ol>/<li>), so
+    // compare its output with our semantic <article>/<main> extraction and
+    // use whichever captured more text.
+    match (readability_result, scraper_result) {
+        (Some(r), Some(s)) => {
+            tracing::debug!(
+                "readability: {} chars, scraper: {} chars",
+                r.text_content.len(),
+                s.text_content.len()
+            );
+            if s.text_content.len() > r.text_content.len() {
+                Some(s)
+            } else {
+                Some(r)
+            }
+        }
+        (Some(r), None) => Some(r),
+        (None, Some(s)) => Some(s),
+        (None, None) => None,
+    }
 }
 
 /// Extract using the readability crate.
@@ -457,6 +474,61 @@ mod tests {
         assert_eq!(text, "Hello world with links");
         assert!(!text.contains('<'));
         assert!(!text.contains('>'));
+    }
+
+    #[test]
+    fn extracts_full_ghost_blog_with_ordered_list() {
+        // Ghost CMS produces <article> with <ol><li> content.
+        // html2md truncates ordered list items, so the scraper path
+        // (which uses element.text()) must capture the full text.
+        let html = r#"
+            <html>
+            <head><title>Porting Software</title></head>
+            <body>
+                <header><nav>Site Nav</nav></header>
+                <main class="site-main">
+                    <article class="gh-article post tag-ai">
+                        <header class="gh-article-header">
+                            <h1 class="gh-article-title">porting software has been trivial</h1>
+                        </header>
+                        <div class="gh-content gh-canvas">
+                            <p>This one is short and sweet. if you want to port a codebase from one language to another here's the approach:</p>
+                            <ol>
+                                <li>Run a ralph loop which compresses all tests into specs which looks similar to study every file in tests using separate subagents and document in specs and link the implementation as citations in the specification</li>
+                                <li>Then do a separate Ralph loop for all product functionality ensuring there are citations to the specification. Study every file in src using separate subagents per file and link the implementation as citations in the specification</li>
+                                <li>Once you have that within the same repo run a Ralph loop to create a TODO file and then execute a classic ralph doing just one thing and the most important thing per loop. Remind the agent that it can study the specifications and follow the citations to reference source code.</li>
+                                <li>For best outcomes you wanna configure your target language to have strict compilation</li>
+                            </ol>
+                            <p>The key theory here is usage of citations in the specifications which tease the file_read tool to study the original implementation during stage 3. Reducing stage 1 and stage 2 to specs is the precursor which transforms a code base into high level PRDs without coupling the implementation from the source language.</p>
+                        </div>
+                    </article>
+                </main>
+                <section class="newsletter-signup"><p>Subscribe</p></section>
+                <footer>Copyright</footer>
+            </body>
+            </html>
+        "#;
+
+        let article = extract_article(html, "https://ghuntley.com/porting/").unwrap();
+
+        // Must contain the conclusion paragraph (currently truncated by html2md)
+        assert!(
+            article.text_content.contains("high level PRDs without coupling"),
+            "Missing conclusion paragraph. text_content ({} chars): {}",
+            article.text_content.len(),
+            &article.text_content[..article.text_content.len().min(500)]
+        );
+        // Must contain list items
+        assert!(
+            article.text_content.contains("Ralph loop"),
+            "Missing list content"
+        );
+        // Should be substantial (the full article is ~1200+ chars)
+        assert!(
+            article.text_content.len() > 800,
+            "Text too short: {} chars",
+            article.text_content.len()
+        );
     }
 
     #[test]

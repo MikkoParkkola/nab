@@ -24,10 +24,18 @@ likes = ".tweet.likes"
 retweets = ".tweet.retweets"
 replies = ".tweet.replies"
 views = ".tweet.views"
+# X Articles / Notes (long-form posts) — fxtwitter puts full content in .tweet.article
+article_title = ".tweet.article.title"
+article_preview = ".tweet.article.preview_text"
+article_content = ".tweet.article.content.blocks[].text"
 
 [template]
 format = """
 ## @{author_handle} ({author_name})
+
+# {article_title}
+
+{article_content}
 
 {text}
 
