@@ -5,7 +5,7 @@ All notable changes to nab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.6] - 2026-03-16
 
 ### Added
 - **Extraction quality scoring**: `QualityScore` with 4 weighted signals — content density (0.35), structure (0.25), completeness (0.25), encoding quality (0.15)

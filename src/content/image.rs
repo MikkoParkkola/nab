@@ -196,14 +196,22 @@ fn png_meta(b: &[u8]) -> ImageMeta {
         let h = read_u32_be(b, 20);
         (w, h)
     });
-    ImageMeta { format: "PNG", dimensions: dims, label: None }
+    ImageMeta {
+        format: "PNG",
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// JPEG: Scan for SOF0 (0xFFC0) or SOF2 (0xFFC2) markers which contain
 /// image dimensions at a fixed offset within the marker payload.
 fn jpeg_meta(b: &[u8]) -> ImageMeta {
     let dims = scan_jpeg_dimensions(b);
-    ImageMeta { format: "JPEG", dimensions: dims, label: None }
+    ImageMeta {
+        format: "JPEG",
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// Scan JPEG markers for SOF0/SOF2 to extract dimensions.
@@ -221,9 +229,21 @@ fn scan_jpeg_dimensions(b: &[u8]) -> Option<(u32, u32)> {
             break; // EOI
         }
         // SOF markers that carry dimensions
-        if matches!(marker, 0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7
-                           | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE | 0xCF)
-        {
+        if matches!(
+            marker,
+            0xC0 | 0xC1
+                | 0xC2
+                | 0xC3
+                | 0xC5
+                | 0xC6
+                | 0xC7
+                | 0xC9
+                | 0xCA
+                | 0xCB
+                | 0xCD
+                | 0xCE
+                | 0xCF
+        ) {
             // Payload: [precision(1)] [height(2)] [width(2)] …
             if i + 9 <= b.len() {
                 let h = u32::from(read_u16_be(b, i + 5));
@@ -250,13 +270,21 @@ fn gif_meta(b: &[u8]) -> ImageMeta {
         let h = u32::from(read_u16_le(b, 8));
         (w, h)
     });
-    ImageMeta { format: "GIF", dimensions: dims, label: None }
+    ImageMeta {
+        format: "GIF",
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// WebP: Dimensions depend on the sub-format (VP8, VP8L, or VP8X chunk).
 fn webp_meta(b: &[u8]) -> ImageMeta {
     let dims = parse_webp_dimensions(b);
-    ImageMeta { format: "WebP", dimensions: dims, label: None }
+    ImageMeta {
+        format: "WebP",
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// Parse WebP dimensions from the first chunk after the RIFF header.
@@ -314,7 +342,11 @@ fn bmp_meta(b: &[u8]) -> ImageMeta {
         let h = read_u32_le(b, 22).cast_signed().unsigned_abs(); // height can be negative (top-down)
         (w, h)
     });
-    ImageMeta { format: "BMP", dimensions: dims, label: None }
+    ImageMeta {
+        format: "BMP",
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// ICO: First image entry's width/height are at offsets 6 and 7 (single byte each).
@@ -326,13 +358,21 @@ fn ico_meta(b: &[u8]) -> ImageMeta {
         let h = if b[7] == 0 { 256u32 } else { u32::from(b[7]) };
         (w, h)
     });
-    ImageMeta { format: "ICO", dimensions: dims, label: None }
+    ImageMeta {
+        format: "ICO",
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// TIFF: Scan IFD for tag 256 (`ImageWidth`) and 257 (`ImageLength`).
 fn tiff_meta(b: &[u8]) -> ImageMeta {
     let dims = parse_tiff_dimensions(b);
-    ImageMeta { format: "TIFF", dimensions: dims, label: None }
+    ImageMeta {
+        format: "TIFF",
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// Parse TIFF IFD entries for `ImageWidth` (256) and `ImageLength` (257).
@@ -342,7 +382,9 @@ fn parse_tiff_dimensions(b: &[u8]) -> Option<(u32, u32)> {
     }
     let little_endian = &b[..2] == b"II";
     let u16 = |off: usize| -> Option<u32> {
-        if off + 2 > b.len() { return None; }
+        if off + 2 > b.len() {
+            return None;
+        }
         Some(if little_endian {
             u32::from(read_u16_le(b, off))
         } else {
@@ -350,7 +392,9 @@ fn parse_tiff_dimensions(b: &[u8]) -> Option<(u32, u32)> {
         })
     };
     let u32 = |off: usize| -> Option<u32> {
-        if off + 4 > b.len() { return None; }
+        if off + 4 > b.len() {
+            return None;
+        }
         Some(if little_endian {
             read_u32_le(b, off)
         } else {
@@ -395,7 +439,11 @@ fn svg_meta(b: &[u8]) -> ImageMeta {
     let text = std::str::from_utf8(&b[..b.len().min(4096)]).unwrap_or("");
     let dims = parse_svg_dimensions(text);
     let label = extract_svg_label(text);
-    ImageMeta { format: "SVG", dimensions: dims, label }
+    ImageMeta {
+        format: "SVG",
+        dimensions: dims,
+        label,
+    }
 }
 
 /// Parse SVG dimensions from viewBox or explicit width/height attributes.
@@ -425,7 +473,6 @@ fn parse_svg_dimensions(svg: &str) -> Option<(u32, u32)> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let (w, h) = (parse_svg_unit(w_str)? as u32, parse_svg_unit(h_str)? as u32);
     (w > 0 && h > 0).then_some((w, h))
-
 }
 
 /// Extract the numeric prefix from an SVG unit value like `"100px"`, `"24.5"`, `"1em"`.
@@ -464,7 +511,11 @@ fn isobmff_meta(b: &[u8]) -> ImageMeta {
     let brand = std::str::from_utf8(b.get(8..12).unwrap_or(&[])).unwrap_or("");
     let format = isobmff_format_name(brand);
     let dims = scan_ispe_box(b);
-    ImageMeta { format, dimensions: dims, label: None }
+    ImageMeta {
+        format,
+        dimensions: dims,
+        label: None,
+    }
 }
 
 /// Determine AVIF/HEIF format name from the major brand string.
@@ -601,9 +652,8 @@ mod tests {
     fn describe_image_returns_correct_format_for_png_bytes() {
         // GIVEN: valid PNG header bytes (1x1 PNG)
         let mut bytes = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D,
-            0x49, 0x48, 0x44, 0x52,
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52,
         ];
         bytes.extend_from_slice(&1u32.to_be_bytes()); // width=1
         bytes.extend_from_slice(&1u32.to_be_bytes()); // height=1
@@ -630,7 +680,9 @@ mod tests {
         let mut bytes = vec![0xFF, 0xD8]; // SOI
         // APP0 marker (FF E0) with length 16 (minimal)
         bytes.extend_from_slice(&[0xFF, 0xE0, 0x00, 0x10]);
-        bytes.extend_from_slice(&[0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+        bytes.extend_from_slice(&[
+            0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+        ]);
         // SOF0 marker: FF C0 + length(17) + precision(1) + height(2) + width(2)
         bytes.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11]);
         bytes.push(8); // precision
@@ -651,7 +703,7 @@ mod tests {
         // GIVEN: GIF89a header with 100×50 logical screen descriptor
         let mut bytes = b"GIF89a".to_vec();
         bytes.extend_from_slice(&100u16.to_le_bytes()); // width
-        bytes.extend_from_slice(&50u16.to_le_bytes());  // height
+        bytes.extend_from_slice(&50u16.to_le_bytes()); // height
         // WHEN: extracting metadata
         let meta = gif_meta(&bytes);
         // THEN: dimensions are correct
@@ -775,7 +827,11 @@ mod tests {
     #[test]
     fn format_image_description_includes_format_and_dimensions() {
         // GIVEN: metadata with format and dimensions
-        let meta = ImageMeta { format: "PNG", dimensions: Some((1920, 1080)), label: None };
+        let meta = ImageMeta {
+            format: "PNG",
+            dimensions: Some((1920, 1080)),
+            label: None,
+        };
         // WHEN: formatting
         let desc = format_image_description(&meta, 12345);
         // THEN: output is [Image: PNG 1920×1080]
@@ -785,7 +841,11 @@ mod tests {
     #[test]
     fn format_image_description_uses_byte_count_when_no_dimensions() {
         // GIVEN: metadata without dimensions
-        let meta = ImageMeta { format: "JPEG", dimensions: None, label: None };
+        let meta = ImageMeta {
+            format: "JPEG",
+            dimensions: None,
+            label: None,
+        };
         // WHEN: formatting with byte count
         let desc = format_image_description(&meta, 8192);
         // THEN: byte count is shown
@@ -822,8 +882,8 @@ mod tests {
     fn image_handler_to_markdown_produces_image_marker_for_png() {
         // GIVEN: minimal valid PNG bytes
         let mut bytes = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52,
         ];
         bytes.extend_from_slice(&10u32.to_be_bytes()); // width=10
         bytes.extend_from_slice(&10u32.to_be_bytes()); // height=10
@@ -832,7 +892,11 @@ mod tests {
         let handler = ImageHandler;
         let result = handler.to_markdown(&bytes, "image/png").unwrap();
         // THEN: output contains image marker
-        assert!(result.markdown.starts_with("[Image:"), "got: {}", result.markdown);
+        assert!(
+            result.markdown.starts_with("[Image:"),
+            "got: {}",
+            result.markdown
+        );
         assert!(result.markdown.contains("PNG"));
     }
 
@@ -862,8 +926,8 @@ mod tests {
         // GIVEN: PNG bytes sent through the content router
         let router = crate::content::ContentRouter::new();
         let mut bytes = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52,
         ];
         bytes.extend_from_slice(&32u32.to_be_bytes());
         bytes.extend_from_slice(&32u32.to_be_bytes());
@@ -871,7 +935,11 @@ mod tests {
         // WHEN: converting via router
         let result = router.convert(&bytes, "image/png").unwrap();
         // THEN: output is an image description, not binary garbage
-        assert!(result.markdown.starts_with("[Image:"), "got: {}", result.markdown);
+        assert!(
+            result.markdown.starts_with("[Image:"),
+            "got: {}",
+            result.markdown
+        );
     }
 
     #[test]

@@ -179,10 +179,7 @@ fn extract_pdf_text(bytes: &[u8]) -> Option<String> {
         }
 
         // Td / TD / T* — new line operators: add a newline
-        if bytes[i] == b'T'
-            && i + 1 < bytes.len()
-            && matches!(bytes[i + 1], b'd' | b'D' | b'*')
-        {
+        if bytes[i] == b'T' && i + 1 < bytes.len() && matches!(bytes[i + 1], b'd' | b'D' | b'*') {
             if !output.is_empty() && !output.ends_with('\n') {
                 output.push('\n');
             }
@@ -193,7 +190,11 @@ fn extract_pdf_text(bytes: &[u8]) -> Option<String> {
         i += 1;
     }
 
-    if output.trim().is_empty() { None } else { Some(output) }
+    if output.trim().is_empty() {
+        None
+    } else {
+        Some(output)
+    }
 }
 
 /// Flush pending string segments as a single line.
@@ -221,7 +222,10 @@ fn is_pdf_token_boundary(bytes: &[u8], i: usize, len: usize) -> bool {
 }
 
 fn is_pdf_delimiter_or_ws(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'/' | b'<' | b'>')
+    matches!(
+        b,
+        b' ' | b'\t' | b'\n' | b'\r' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'/' | b'<' | b'>'
+    )
 }
 
 /// Parse a PDF literal string `(text)`, handling escaped characters and nested parens.
@@ -285,12 +289,20 @@ fn parse_hex_string(bytes: &[u8]) -> Option<(String, usize)> {
 
 /// Decode a PDF hex string (ASCII hex pairs, spaces ignored).
 fn decode_hex_string(hex: &[u8]) -> String {
-    let digits: Vec<u8> = hex.iter().filter(|&&b| !b.is_ascii_whitespace()).copied().collect();
+    let digits: Vec<u8> = hex
+        .iter()
+        .filter(|&&b| !b.is_ascii_whitespace())
+        .copied()
+        .collect();
     let mut result = String::new();
     let mut j = 0;
     while j < digits.len() {
         let hi = hex_digit(digits[j]);
-        let lo = if j + 1 < digits.len() { hex_digit(digits[j + 1]) } else { Some(0) };
+        let lo = if j + 1 < digits.len() {
+            hex_digit(digits[j + 1])
+        } else {
+            Some(0)
+        };
         match (hi, lo) {
             (Some(h), Some(l)) => {
                 let byte: u8 = (h << 4) | l;
@@ -299,7 +311,9 @@ fn decode_hex_string(hex: &[u8]) -> String {
                 }
                 j += 2;
             }
-            _ => { j += 1; }
+            _ => {
+                j += 1;
+            }
         }
     }
     result
@@ -343,7 +357,9 @@ fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
                     i += 1;
                 }
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
     None // unclosed array
@@ -369,14 +385,22 @@ fn sanitize_pdf_string(s: &str) -> String {
 fn build_markdown(text: Option<String>, page_count: usize) -> String {
     match text {
         Some(extracted) if !extracted.trim().is_empty() => {
-            let pages_label = if page_count == 1 { "1 page".to_string() } else { format!("{page_count} pages") };
+            let pages_label = if page_count == 1 {
+                "1 page".to_string()
+            } else {
+                format!("{page_count} pages")
+            };
             format!(
                 "[PDF: {pages_label}, text extracted — for full fidelity rebuild with `--features pdf`]\n\n{}",
                 extracted.trim()
             )
         }
         _ => {
-            let pages_label = if page_count == 1 { "1 page".to_string() } else { format!("{page_count} pages") };
+            let pages_label = if page_count == 1 {
+                "1 page".to_string()
+            } else {
+                format!("{page_count} pages")
+            };
             format!(
                 "[PDF: {pages_label}, scanned — no text layer detected. \
                  Use OCR or rebuild with `--features pdf` for pdfium extraction.]"
@@ -586,7 +610,11 @@ mod tests {
         // WHEN: converting to markdown
         let result = handler.to_markdown(pdf, "application/pdf").unwrap();
         // THEN: contains extracted text
-        assert!(result.markdown.contains("Test document"), "got: {}", result.markdown);
+        assert!(
+            result.markdown.contains("Test document"),
+            "got: {}",
+            result.markdown
+        );
         assert_eq!(result.page_count, Some(1));
     }
 
@@ -598,7 +626,11 @@ mod tests {
         // WHEN: converting to markdown
         let result = handler.to_markdown(pdf, "application/pdf").unwrap();
         // THEN: reports scanned PDF
-        assert!(result.markdown.contains("scanned"), "got: {}", result.markdown);
+        assert!(
+            result.markdown.contains("scanned"),
+            "got: {}",
+            result.markdown
+        );
     }
 
     #[test]

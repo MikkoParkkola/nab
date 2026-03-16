@@ -167,7 +167,10 @@ fn score_structure(markdown: &str) -> f64 {
     let has_heading = markdown.lines().any(|l| l.starts_with('#'));
     let has_list = markdown.lines().any(|l| {
         let t = l.trim_start();
-        t.starts_with("- ") || t.starts_with("* ") || t.starts_with("+ ") || starts_with_ordered_list(t)
+        t.starts_with("- ")
+            || t.starts_with("* ")
+            || t.starts_with("+ ")
+            || starts_with_ordered_list(t)
     });
     let has_code = markdown.contains("```") || markdown.contains("    "); // fenced or indented
     let paragraph_count = count_paragraphs(markdown);
@@ -303,7 +306,8 @@ mod tests {
         // GIVEN: large HTML with no extracted markdown
         // WHEN: scoring content density
         // THEN: score is 0.0 (nothing extracted)
-        let html = b"<!DOCTYPE html><html><body>".iter()
+        let html = b"<!DOCTYPE html><html><body>"
+            .iter()
             .chain(b"x".repeat(2000).iter())
             .chain(b"</body></html>".iter())
             .copied()
@@ -370,7 +374,10 @@ mod tests {
         // THEN: list point is awarded
         let md = "1. First item\n2. Second item";
         let score = score_structure(md);
-        assert!(score > 0.0, "ordered list should contribute to structure score");
+        assert!(
+            score > 0.0,
+            "ordered list should contribute to structure score"
+        );
     }
 
     #[test]
@@ -380,7 +387,10 @@ mod tests {
         // THEN: code point is awarded
         let md = "Some intro:\n\n    let x = 1;\n    let y = 2;";
         let score = score_structure(md);
-        assert!(score > 0.0, "indented code should contribute to structure score");
+        assert!(
+            score > 0.0,
+            "indented code should contribute to structure score"
+        );
     }
 
     // ── score_completeness ────────────────────────────────────────────────────
@@ -409,10 +419,7 @@ mod tests {
         // THEN: ~0.5
         let md = "a".repeat(COMPLETENESS_SATURATION_CHARS / 2);
         let score = score_completeness(&md);
-        assert!(
-            (score - 0.5).abs() < 0.01,
-            "expected 0.5, got {score:.4}"
-        );
+        assert!((score - 0.5).abs() < 0.01, "expected 0.5, got {score:.4}");
     }
 
     // ── score_encoding ────────────────────────────────────────────────────────
@@ -469,7 +476,11 @@ mod tests {
                      <p>Paragraph two continues the discussion.</p>\
                      <ul><li>Point one</li><li>Point two</li></ul>\
                      </article></body></html>";
-        let html_padded = html.iter().chain(b" ".repeat(200).iter()).copied().collect::<Vec<u8>>();
+        let html_padded = html
+            .iter()
+            .chain(b" ".repeat(200).iter())
+            .copied()
+            .collect::<Vec<u8>>();
         let md = "# Title\n\nParagraph one of the article with useful content.\n\n\
                   Paragraph two continues the discussion.\n\n- Point one\n- Point two";
         let score = score_extraction(&html_padded, md);

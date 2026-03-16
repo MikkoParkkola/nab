@@ -1,11 +1,11 @@
-//! `MicroFetch` - Ultra-minimal browser engine
+//! `nab` - Ultra-minimal browser engine
 //!
 //! # Features
 //!
 //! - **HTTP Acceleration**: HTTP/2 multiplexing, TLS 1.3, Brotli/Zstd compression
 //! - **Browser Fingerprinting**: Realistic Chrome/Firefox/Safari profiles
 //! - **Authentication**: 1Password CLI integration, cookie extraction
-//! - **JavaScript**: `QuickJS` engine with minimal DOM (planned)
+//! - **JavaScript**: `QuickJS` engine with minimal DOM
 //!
 //! # Example
 //!
