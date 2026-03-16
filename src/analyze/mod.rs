@@ -22,7 +22,10 @@ pub use diarize::{Diarizer, SpeakerSegment};
 pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor};
 pub use fusion::{FusedSegment, FusionEngine};
 pub use report::{AnalysisReport, ReportFormat};
-pub use transcribe::{Transcriber, TranscriptSegment, VllmTranscriber, WordTiming};
+pub use transcribe::{
+    ParakeetTranscriber, Transcriber, TranscriptSegment, TranscriptionBackend, VllmTranscriber,
+    WordTiming,
+};
 pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
 
 /// Analysis pipeline errors
