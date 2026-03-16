@@ -226,8 +226,38 @@ impl FetchTool {
                 );
             }
 
+            // Attempt Next.js content chunk recovery when extraction is thin.
+            // The readability extractor often captures 300-600 chars of
+            // nav/header/footer even when the article body is empty, so we
+            // use a generous threshold (800) combined with a low quality
+            // confidence score to trigger recovery.
+            let quality_is_low = conversion
+                .quality
+                .as_ref()
+                .is_some_and(|q| q.confidence < 0.5);
+            let final_markdown = if content_type.contains("html")
+                && (conversion.markdown.len() < 800 || quality_is_low)
+                && body_bytes.len() > 5_000
+            {
+                let raw_html = String::from_utf8_lossy(&body_bytes);
+                if let Some(recovered) =
+                    crate::helpers::recover_nextjs_chunks(client, &raw_html, &self.url).await
+                {
+                    let _ = writeln!(
+                        output,
+                        "   Recovered {} chars from Next.js content chunk",
+                        recovered.len()
+                    );
+                    recovered
+                } else {
+                    conversion.markdown
+                }
+            } else {
+                conversion.markdown
+            };
+
             (
-                conversion.markdown,
+                final_markdown,
                 status.as_u16(),
                 content_type,
                 elapsed.as_secs_f64() * 1000.0,

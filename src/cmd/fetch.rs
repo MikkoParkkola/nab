@@ -131,7 +131,30 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         let converted =
             convert_body_to_markdown(&body_bytes, &content_type, &cfg.url, cfg.format, body_len)
                 .await?;
-        (converted.markdown, converted.quality)
+
+        // Attempt Next.js content chunk recovery when extraction yields thin content.
+        // The readability extractor may capture 300-600 chars of nav/header/footer
+        // even when the article body is empty, so we use a higher threshold (800)
+        // combined with a low quality confidence score (<0.5) to detect this case.
+        let quality_is_low = converted
+            .quality
+            .as_ref()
+            .is_some_and(|q| q.confidence < 0.5);
+        let is_nextjs_meta = content_type.contains("html")
+            && body_len > 5_000
+            && nab::content::spa_extract::is_nextjs_metadata_only(&raw_text);
+        let (final_markdown, final_quality) = if is_nextjs_meta
+            && (converted.markdown.len() < 800 || quality_is_low)
+        {
+            match recover_nextjs_content_chunks(&client, &raw_text, &cfg.url, cfg.format).await {
+                Some(recovered) => (recovered, converted.quality),
+                None => (converted.markdown, converted.quality),
+            }
+        } else {
+            (converted.markdown, converted.quality)
+        };
+
+        (final_markdown, final_quality)
     } else {
         (raw_text.clone(), None)
     };
@@ -296,6 +319,96 @@ async fn execute_manual_request(
         resp_headers,
         bytes,
     ))
+}
+
+/// Attempt to recover article content from Next.js webpack content chunks.
+///
+/// When a Next.js page has `__NEXT_DATA__` with only metadata (no article body),
+/// the content is often compiled into a lazy-loaded webpack chunk (common for MDX
+/// blogs).  This function:
+///
+/// 1. Discovers the webpack runtime and page component script URLs from the HTML
+/// 2. Fetches them to find the content chunk filename
+/// 3. Fetches the content chunk
+/// 4. Extracts readable text from the compiled JSX
+///
+/// Returns `Some(markdown)` on success, `None` if recovery fails at any step.
+async fn recover_nextjs_content_chunks(
+    client: &nab::AcceleratedClient,
+    html: &str,
+    page_url: &str,
+    format: crate::OutputFormat,
+) -> Option<String> {
+    use nab::content::spa_extract;
+
+    let script_urls = spa_extract::discover_nextjs_content_chunks(html, page_url);
+    if script_urls.len() < 2 {
+        return None;
+    }
+
+    let webpack_url = &script_urls[0];
+    let page_url_script = &script_urls[1];
+
+    if matches!(format, crate::OutputFormat::Full) {
+        eprintln!("   Attempting Next.js content chunk recovery...");
+    }
+
+    // Fetch webpack runtime + page component in parallel
+    let (webpack_resp, page_resp) = tokio::join!(
+        client.fetch(webpack_url),
+        client.fetch(page_url_script),
+    );
+
+    let webpack_js = webpack_resp.ok()?.text().await.ok()?;
+    let page_js = page_resp.ok()?.text().await.ok()?;
+
+    // Extract the origin from the page URL
+    let origin = url::Url::parse(page_url)
+        .ok()
+        .map(|u| u.origin().unicode_serialization())?;
+
+    // Extract the slug from the page URL for targeted chunk resolution
+    let slug = url::Url::parse(page_url)
+        .ok()
+        .and_then(|u| {
+            u.path_segments()
+                .and_then(|segs| segs.last().map(String::from))
+        });
+    let slug_ref = slug.as_deref();
+
+    // Resolve content chunk URLs, filtering to the current page's slug
+    let chunk_urls = spa_extract::resolve_content_chunk_urls_for_slug(
+        &webpack_js, &page_js, &origin, slug_ref,
+    );
+    if chunk_urls.is_empty() {
+        tracing::debug!("No content chunk URLs resolved from webpack runtime");
+        return None;
+    }
+
+    // Fetch content chunks and try to extract content from each
+    for chunk_url in &chunk_urls {
+        tracing::debug!("Fetching content chunk: {chunk_url}");
+        let fetch_result = client.fetch(chunk_url).await;
+        match fetch_result {
+            Ok(resp) => match resp.text().await {
+                Ok(chunk_js) => {
+                    if let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js) {
+                        if matches!(format, crate::OutputFormat::Full) {
+                            eprintln!(
+                                "   Recovered {} chars from content chunk",
+                                content.len()
+                            );
+                        }
+                        return Some(content);
+                    }
+                }
+                Err(e) => tracing::debug!("Chunk text() error: {e}"),
+            },
+            Err(e) => tracing::debug!("Chunk fetch error: {e}"),
+        }
+    }
+
+    None
 }
 
 /// Conversion result bundled with quality metadata for the output layer.

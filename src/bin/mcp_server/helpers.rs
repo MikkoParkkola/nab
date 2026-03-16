@@ -173,6 +173,69 @@ pub(crate) async fn convert_body_async(
     .map_err(|e| CallToolError::from_message(e.to_string()))
 }
 
+/// Attempt to recover article content from Next.js content chunks.
+///
+/// Called when the initial extraction yields thin content on a Next.js page
+/// with `__NEXT_DATA__` containing only metadata.  Makes up to 3 secondary
+/// HTTP requests: webpack runtime, page component, and content chunk.
+///
+/// Returns `Some(markdown)` on success, `None` if recovery fails.
+pub(crate) async fn recover_nextjs_chunks(
+    client: &AcceleratedClient,
+    html: &str,
+    page_url: &str,
+) -> Option<String> {
+    use nab::content::spa_extract;
+
+    if !spa_extract::is_nextjs_metadata_only(html) {
+        return None;
+    }
+
+    let script_urls = spa_extract::discover_nextjs_content_chunks(html, page_url);
+    if script_urls.len() < 2 {
+        return None;
+    }
+
+    tracing::debug!("Attempting Next.js content chunk recovery");
+
+    let (webpack_resp, page_resp) = tokio::join!(
+        client.fetch(&script_urls[0]),
+        client.fetch(&script_urls[1]),
+    );
+
+    let webpack_js = webpack_resp.ok()?.text().await.ok()?;
+    let page_js = page_resp.ok()?.text().await.ok()?;
+
+    let origin = url::Url::parse(page_url)
+        .ok()
+        .map(|u| u.origin().unicode_serialization())?;
+
+    // Extract slug from URL for targeted chunk resolution
+    let slug = url::Url::parse(page_url)
+        .ok()
+        .and_then(|u| u.path_segments().and_then(|segs| segs.last().map(String::from)));
+    let chunk_urls = spa_extract::resolve_content_chunk_urls_for_slug(
+        &webpack_js, &page_js, &origin, slug.as_deref(),
+    );
+
+    for chunk_url in &chunk_urls {
+        tracing::debug!("Fetching content chunk: {chunk_url}");
+        if let Ok(resp) = client.fetch(chunk_url).await {
+            if let Ok(chunk_js) = resp.text().await {
+                if let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js) {
+                    tracing::info!(
+                        "Recovered {} chars from Next.js content chunk",
+                        content.len()
+                    );
+                    return Some(content);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 // ─── Output formatting helpers ────────────────────────────────────────────────
 
 /// Write the response status/timing/header summary to `output`.

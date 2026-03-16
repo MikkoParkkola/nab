@@ -81,8 +81,7 @@ impl HtmlHandler {
 /// complex DOM structures (`LessWrong`, `Ghost CMS`, etc.).
 #[must_use]
 pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
-    // Minimum readability output length to prefer over the noisier direct conversion.
-    const MIN_READABILITY_LEN: usize = 200;
+    // (MIN_READABILITY_LEN defined inline near the comparison logic below)
 
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     if let Some(spa_content) = spa_extract::extract_spa_data(html) {
@@ -123,9 +122,12 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 
     // Pick the better result.  Readability produces clean article content but
     // is much shorter than direct conversion (which includes navigation, CSS,
-    // JSON-LD, footers, etc.).  Prefer readability when it extracted meaningful
-    // content (>= MIN_READABILITY_LEN chars); fall back to direct only when
-    // readability is nearly empty or returned None.
+    // JSON-LD, footers, etc.).  Prefer readability whenever it extracted
+    // non-trivial content (>= 50 chars), since readability strips boilerplate
+    // that direct_md preserves.  Only fall back to direct when readability
+    // produced nearly nothing.
+    const MIN_READABILITY_LEN: usize = 50;
+
     let markdown = match readability_md {
         Some(ref r_md) if r_md.len() >= MIN_READABILITY_LEN => r_md.clone(),
         Some(ref r_md) if r_md.len() > direct_md.len() => r_md.clone(),
@@ -142,13 +144,25 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
     // deeply nested script tags or variable assignments.
     if is_thin_content(html.len(), markdown.len()) {
         tracing::debug!(
-            "Thin content detected ({} chars from {} bytes HTML) — attempting SPA auto-recovery",
+            "Thin content detected ({} chars from {} bytes HTML) — attempting recovery",
             markdown.len(),
             html.len()
         );
-        // SPA extraction was already tried above on the raw HTML, but
-        // detect_thin_content fires only when readability also fails.
-        // Emit the actionable guidance as a warning.
+
+        // Last-resort fallback: Jina reader can render JS-heavy pages.
+        // Only attempt when we have a URL and local extraction failed.
+        if let Some(page_url) = url {
+            if let Some(jina_md) = fetch_jina_reader(page_url) {
+                tracing::info!(
+                    "Thin content recovered via Jina reader ({} chars)",
+                    jina_md.len()
+                );
+                return jina_md;
+            }
+        }
+
+        // Jina fallback either wasn't attempted (no URL) or failed.
+        // Emit actionable guidance as a warning.
         tracing::warn!(
             "Output is suspiciously thin ({} chars from {} bytes of HTML). \
              The page likely uses JavaScript rendering. Try:\n  \
@@ -180,6 +194,55 @@ fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
 
     let ratio_percent = (markdown_len * 100) / html_len.max(1);
     ratio_percent < THIN_RATIO_PERCENT
+}
+
+/// Fetch content from Jina reader as a last-resort fallback for JS-rendered pages.
+///
+/// Jina reader (`r.jina.ai`) renders JavaScript and returns clean markdown.
+/// This is used when local extraction produces suspiciously thin content,
+/// indicating the page relies on client-side rendering.
+///
+/// Returns `Some(markdown)` if Jina returns substantial content (> 200 chars),
+/// `None` on any failure (network error, empty response, timeout).
+fn fetch_jina_reader(url: &str) -> Option<String> {
+    const MIN_JINA_CONTENT_LEN: usize = 200;
+    const JINA_TIMEOUT_SECS: u64 = 15;
+
+    let jina_url = format!("https://r.jina.ai/{url}");
+
+    tracing::debug!("Fetching Jina reader fallback: {}", jina_url);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(JINA_TIMEOUT_SECS))
+        .build()
+        .ok()?;
+
+    let response = client
+        .get(&jina_url)
+        .header("Accept", "text/markdown")
+        .send()
+        .ok()?;
+
+    if !response.status().is_success() {
+        tracing::debug!(
+            "Jina reader returned HTTP {}",
+            response.status().as_u16()
+        );
+        return None;
+    }
+
+    let body = response.text().ok()?;
+    let trimmed = body.trim();
+
+    if trimmed.len() >= MIN_JINA_CONTENT_LEN {
+        Some(trimmed.to_string())
+    } else {
+        tracing::debug!(
+            "Jina reader returned thin content ({} chars), discarding",
+            trimmed.len()
+        );
+        None
+    }
 }
 
 /// Detect suspiciously thin markdown output relative to HTML input size.
