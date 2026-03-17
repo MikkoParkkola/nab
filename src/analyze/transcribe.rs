@@ -134,8 +134,11 @@ impl ParakeetTranscriber {
     ///
     /// Produces:
     /// ```text
-    /// parakeet -m <model> -f <audio> [--output-txt] [-l <lang>]
+    /// parakeet -m <model> -f <audio> --output-txt --gpu --fp16 [-l <lang>]
     /// ```
+    ///
+    /// Always enables `--gpu` (Metal on macOS, no-op if unavailable) and
+    /// `--fp16` (half-precision, ~2× memory reduction, no quality loss for ASR).
     #[must_use]
     pub fn build_args(&self, audio_path: &Path) -> Vec<String> {
         let mut args = vec![
@@ -144,6 +147,8 @@ impl ParakeetTranscriber {
             "-f".to_string(),
             audio_path.to_string_lossy().into_owned(),
             "--output-txt".to_string(),
+            "--gpu".to_string(),
+            "--fp16".to_string(),
         ];
         if let Some(lang) = &self.language {
             args.push("-l".to_string());
@@ -154,8 +159,8 @@ impl ParakeetTranscriber {
 
     /// Transcribe `audio_path` using the local parakeet.cpp binary.
     ///
-    /// Spawns `{binary} -m {model} -f {audio} --output-txt [-l {lang}]` and
-    /// returns the trimmed stdout as the transcript.
+    /// Spawns `{binary} -m {model} -f {audio} --output-txt --gpu --fp16 [-l {lang}]`
+    /// and returns the trimmed stdout as the transcript.
     pub async fn transcribe(&self, audio_path: &Path) -> Result<String> {
         let args = self.build_args(audio_path);
         let output = Command::new(&self.binary_path)
