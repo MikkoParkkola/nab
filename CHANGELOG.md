@@ -5,6 +5,30 @@ All notable changes to nab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.7.0 (WASM Marketplace)
+
+### Added
+- **WASM provider marketplace** — sandboxed third-party site extractors via wasmtime runtime (#19)
+  - Zero-trust sandbox: no filesystem, no network, bounded CPU (fuel metering), bounded memory
+  - Guest ABI: `alloc` + `extract` exports over linear memory, JSON-encoded response
+  - Manifest format: `manifest.toml` with name, version, description, URL regex patterns
+  - Provider directory: `~/.config/nab/wasm_providers/<name>/` with hot-reload
+  - 1,047 lines of implementation (`wasm_provider.rs` + `wasm_manifest.rs`)
+- **CLI commands**: `nab provider list`, `nab provider install`, `nab provider remove`, `nab provider test`
+- **Feature-gated**: `--features wasm-providers` (wasmtime 42, cranelift JIT backend)
+- **Provider SDK documentation** with example Rust guest targeting `wasm32-unknown-unknown`
+- **WebMCP discovery mode** — `/.well-known/mcp.json` and HTML `<link>` tag detection (#17)
+- **Qwen3-ASR transcription backend** via vLLM — 4x faster, 30 language support (#11)
+- **Parakeet.cpp transcription backend** — default backend with `--gpu --fp16` enabled by default
+
+### Fixed
+- Content extraction from JS-rendered Next.js SPA pages with jina fallback
+- Full content extraction from X Articles and Ghost CMS blogs
+- Windows release build: `which` crate moved to general deps
+- CI: gate `VoyagerProfileResponse` re-export behind feature flag
+- CI: disable `impersonate` feature for cross/Windows release builds
+- CLI auth tests rewritten to tolerate 1Password CLI blocking
+
 ## [0.6.6] - 2026-03-16
 
 ### Added

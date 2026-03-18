@@ -49,11 +49,8 @@ const PARAKEET_MODEL_SEARCH_PATHS: &[&str] = &[
 ];
 
 /// Default binary search paths (checked in order, after `$PATH`).
-const PARAKEET_BINARY_SEARCH_PATHS: &[&str] = &[
-    "~/.local/bin",
-    "/usr/local/bin",
-    "/opt/parakeet/bin",
-];
+const PARAKEET_BINARY_SEARCH_PATHS: &[&str] =
+    &["~/.local/bin", "/usr/local/bin", "/opt/parakeet/bin"];
 
 /// Parakeet.cpp local transcription backend.
 ///
@@ -259,12 +256,13 @@ impl ParakeetTranscriber {
     pub fn detect_binary() -> Option<PathBuf> {
         // 1. Check $PATH via `which`
         for name in ["parakeet", "parakeet-cli"] {
-            if let Ok(output) = std::process::Command::new("which").arg(name).output() {
-                if output.status.success() {
+            if let Ok(output) = std::process::Command::new("which").arg(name).output()
+                && output.status.success() {
                     let p = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-                    if p.exists() { return Some(p); }
+                    if p.exists() {
+                        return Some(p);
+                    }
                 }
-            }
         }
 
         // 2. Check well-known directories
@@ -772,7 +770,9 @@ impl VllmTranscriber {
         language: &str,
     ) -> Result<Vec<TranscriptSegment>> {
         let client = reqwest::Client::new();
-        let text = self.post_audio_with_language(&client, audio_path, language).await?;
+        let text = self
+            .post_audio_with_language(&client, audio_path, language)
+            .await?;
         Ok(vec![TranscriptSegment {
             start: 0.0,
             end: 0.0,
@@ -785,11 +785,7 @@ impl VllmTranscriber {
 
     /// Build the multipart form for `audio_path`, then POST and return the
     /// transcription text.
-    async fn post_audio(
-        &self,
-        client: &reqwest::Client,
-        audio_path: &Path,
-    ) -> Result<String> {
+    async fn post_audio(&self, client: &reqwest::Client, audio_path: &Path) -> Result<String> {
         let form = self.build_multipart(audio_path, None).await?;
         let resp = client
             .post(self.transcription_url())
@@ -1005,7 +1001,8 @@ mod tests {
         // WHEN parsed
         // THEN the text field is extracted and extras are ignored
         let t = VllmTranscriber::default_local();
-        let json = r#"{"text": "Bonjour.", "language": "fr", "duration": 1.2, "task": "transcribe"}"#;
+        let json =
+            r#"{"text": "Bonjour.", "language": "fr", "duration": 1.2, "task": "transcribe"}"#;
         let result = t.parse_response(json).unwrap();
         assert_eq!(result, "Bonjour.");
     }
@@ -1149,7 +1146,18 @@ mod tests {
             Path::new("/models/parakeet.gguf"),
         );
         let args = t.build_args(Path::new("/tmp/test.wav"));
-        assert_eq!(args, ["-m", "/models/parakeet.gguf", "-f", "/tmp/test.wav", "--output-txt"]);
+        assert_eq!(
+            args,
+            [
+                "-m",
+                "/models/parakeet.gguf",
+                "-f",
+                "/tmp/test.wav",
+                "--output-txt",
+                "--gpu",
+                "--fp16"
+            ]
+        );
         assert!(!args.contains(&"-l".to_string()), "no -l flag expected");
     }
 
@@ -1164,7 +1172,10 @@ mod tests {
         )
         .with_language("ja");
         let args = t.build_args(Path::new("/tmp/audio.wav"));
-        let lang_pos = args.iter().position(|a| a == "-l").expect("-l flag missing");
+        let lang_pos = args
+            .iter()
+            .position(|a| a == "-l")
+            .expect("-l flag missing");
         assert_eq!(args[lang_pos + 1], "ja");
     }
 
@@ -1173,13 +1184,13 @@ mod tests {
         // GIVEN any audio path
         // WHEN build_args is called
         // THEN the audio path follows immediately after the -f flag
-        let t = ParakeetTranscriber::new(
-            Path::new("/bin/parakeet"),
-            Path::new("/m.gguf"),
-        );
+        let t = ParakeetTranscriber::new(Path::new("/bin/parakeet"), Path::new("/m.gguf"));
         let audio = Path::new("/recordings/speech.wav");
         let args = t.build_args(audio);
-        let f_pos = args.iter().position(|a| a == "-f").expect("-f flag missing");
+        let f_pos = args
+            .iter()
+            .position(|a| a == "-f")
+            .expect("-f flag missing");
         assert_eq!(args[f_pos + 1], "/recordings/speech.wav");
     }
 

@@ -39,6 +39,9 @@ pub mod hackernews;
 pub mod linkedin;
 pub mod reddit;
 pub mod rules;
+pub mod wasm_manifest;
+#[cfg(feature = "wasm-providers")]
+pub mod wasm_provider;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -170,6 +173,9 @@ impl SiteRouter {
 
         append_css_providers(&mut providers);
 
+        #[cfg(feature = "wasm-providers")]
+        append_wasm_providers(&mut providers);
+
         Self { providers }
     }
 
@@ -280,6 +286,36 @@ fn append_css_providers(providers: &mut Vec<Box<dyn SiteProvider>>) {
             }
             Err(e) => {
                 tracing::warn!("CSS extractor '{}' failed to load: {e}", css_cfg.name);
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WASM provider loading (feature-gated)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Load WASM providers from `~/.config/nab/wasm_providers/` and append them.
+///
+/// Invalid or incompatible entries (bad manifest, missing exports) are skipped
+/// with a warning.
+#[cfg(feature = "wasm-providers")]
+fn append_wasm_providers(providers: &mut Vec<Box<dyn SiteProvider>>) {
+    use wasm_manifest::{load_installed_providers, wasm_providers_dir};
+    use wasm_provider::WasmProvider;
+
+    let base = wasm_providers_dir();
+    let installed = load_installed_providers(&base);
+
+    for p in installed {
+        let url_pattern = build_pattern_regex(&p.manifest.url_patterns);
+        match WasmProvider::from_file(&p.manifest.name, &p.wasm_path, &url_pattern) {
+            Ok(provider) => {
+                tracing::debug!("Loaded WASM provider: {}", p.manifest.name);
+                providers.push(Box::new(provider));
+            }
+            Err(e) => {
+                tracing::warn!("WASM provider '{}' failed to load: {e}", p.manifest.name);
             }
         }
     }

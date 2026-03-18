@@ -42,6 +42,7 @@ pub struct FetchConfig {
     pub show_diff: bool,
 }
 
+#[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
 pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // Handle batch mode
     if cfg.batch_file.is_some() {
@@ -354,10 +355,8 @@ async fn recover_nextjs_content_chunks(
     }
 
     // Fetch webpack runtime + page component in parallel
-    let (webpack_resp, page_resp) = tokio::join!(
-        client.fetch(webpack_url),
-        client.fetch(page_url_script),
-    );
+    let (webpack_resp, page_resp) =
+        tokio::join!(client.fetch(webpack_url), client.fetch(page_url_script),);
 
     let webpack_js = webpack_resp.ok()?.text().await.ok()?;
     let page_js = page_resp.ok()?.text().await.ok()?;
@@ -368,18 +367,15 @@ async fn recover_nextjs_content_chunks(
         .map(|u| u.origin().unicode_serialization())?;
 
     // Extract the slug from the page URL for targeted chunk resolution
-    let slug = url::Url::parse(page_url)
-        .ok()
-        .and_then(|u| {
-            u.path_segments()
-                .and_then(|segs| segs.last().map(String::from))
-        });
+    let slug = url::Url::parse(page_url).ok().and_then(|u| {
+        u.path_segments()
+            .and_then(|mut segs| segs.next_back().map(String::from))
+    });
     let slug_ref = slug.as_deref();
 
     // Resolve content chunk URLs, filtering to the current page's slug
-    let chunk_urls = spa_extract::resolve_content_chunk_urls_for_slug(
-        &webpack_js, &page_js, &origin, slug_ref,
-    );
+    let chunk_urls =
+        spa_extract::resolve_content_chunk_urls_for_slug(&webpack_js, &page_js, &origin, slug_ref);
     if chunk_urls.is_empty() {
         tracing::debug!("No content chunk URLs resolved from webpack runtime");
         return None;
@@ -394,10 +390,7 @@ async fn recover_nextjs_content_chunks(
                 Ok(chunk_js) => {
                     if let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js) {
                         if matches!(format, crate::OutputFormat::Full) {
-                            eprintln!(
-                                "   Recovered {} chars from content chunk",
-                                content.len()
-                            );
+                            eprintln!("   Recovered {} chars from content chunk", content.len());
                         }
                         return Some(content);
                     }

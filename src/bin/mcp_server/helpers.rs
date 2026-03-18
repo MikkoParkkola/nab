@@ -198,10 +198,8 @@ pub(crate) async fn recover_nextjs_chunks(
 
     tracing::debug!("Attempting Next.js content chunk recovery");
 
-    let (webpack_resp, page_resp) = tokio::join!(
-        client.fetch(&script_urls[0]),
-        client.fetch(&script_urls[1]),
-    );
+    let (webpack_resp, page_resp) =
+        tokio::join!(client.fetch(&script_urls[0]), client.fetch(&script_urls[1]),);
 
     let webpack_js = webpack_resp.ok()?.text().await.ok()?;
     let page_js = page_resp.ok()?.text().await.ok()?;
@@ -211,26 +209,28 @@ pub(crate) async fn recover_nextjs_chunks(
         .map(|u| u.origin().unicode_serialization())?;
 
     // Extract slug from URL for targeted chunk resolution
-    let slug = url::Url::parse(page_url)
-        .ok()
-        .and_then(|u| u.path_segments().and_then(|segs| segs.last().map(String::from)));
+    let slug = url::Url::parse(page_url).ok().and_then(|u| {
+        u.path_segments()
+            .and_then(|mut segs| segs.next_back().map(String::from))
+    });
     let chunk_urls = spa_extract::resolve_content_chunk_urls_for_slug(
-        &webpack_js, &page_js, &origin, slug.as_deref(),
+        &webpack_js,
+        &page_js,
+        &origin,
+        slug.as_deref(),
     );
 
     for chunk_url in &chunk_urls {
         tracing::debug!("Fetching content chunk: {chunk_url}");
-        if let Ok(resp) = client.fetch(chunk_url).await {
-            if let Ok(chunk_js) = resp.text().await {
-                if let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js) {
+        if let Ok(resp) = client.fetch(chunk_url).await
+            && let Ok(chunk_js) = resp.text().await
+                && let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js) {
                     tracing::info!(
                         "Recovered {} chars from Next.js content chunk",
                         content.len()
                     );
                     return Some(content);
                 }
-            }
-        }
     }
 
     None

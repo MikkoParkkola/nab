@@ -445,6 +445,18 @@ enum Commands {
         #[command(subcommand)]
         action: RulesAction,
     },
+
+    /// Manage WASM provider marketplace (install, list, remove)
+    ///
+    /// WASM providers extend nab with custom site extractors compiled from any
+    /// language (Rust, Go, `AssemblyScript`, etc.) and run in a sandboxed
+    /// environment with no filesystem or network access.
+    ///
+    /// Requires the `wasm-providers` feature flag.
+    Provider {
+        #[command(subcommand)]
+        action: ProviderAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -473,6 +485,29 @@ enum RulesAction {
     /// Embedded rules appear first (in definition order); user-only rules
     /// follow alphabetically.
     List,
+}
+
+#[derive(Subcommand)]
+enum ProviderAction {
+    /// List all installed WASM providers
+    List,
+
+    /// Install a WASM provider from a local path or URL
+    ///
+    /// `src` may be:
+    ///   - A local directory containing manifest.toml + provider.wasm
+    ///   - A local .wasm file with a sidecar <name>.manifest.toml
+    ///   - An HTTP/HTTPS URL pointing to a .wasm file
+    Install {
+        /// Local path (directory or .wasm file) or HTTP/HTTPS URL
+        src: String,
+    },
+
+    /// Remove an installed WASM provider by name
+    Remove {
+        /// Provider name (as shown in `nab provider list`)
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -717,6 +752,17 @@ async fn main() -> Result<()> {
             }
             RulesAction::List => {
                 cmd::cmd_list_rules()?;
+            }
+        },
+        Commands::Provider { action } => match action {
+            ProviderAction::List => {
+                cmd::cmd_provider_list()?;
+            }
+            ProviderAction::Install { src } => {
+                cmd::cmd_provider_install(&src).await?;
+            }
+            ProviderAction::Remove { name } => {
+                cmd::cmd_provider_remove(&name)?;
             }
         },
     }

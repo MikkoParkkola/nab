@@ -1,0 +1,11 @@
+name        = "generic-article"
+version     = "0.1.0"
+description = "Extracts article content from generic blog/news pages using <article> and <main> selectors"
+author      = "nab example"
+
+# Matches any URL — useful as a last-resort extractor.
+# In a real deployment, narrow this to your target site(s).
+url_patterns = [
+    "example\\.com/blog/.*",
+    "myblog\\.com/.*",
+]

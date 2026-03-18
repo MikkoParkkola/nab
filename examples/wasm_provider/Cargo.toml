@@ -1,0 +1,23 @@
+[package]
+name = "nab-wasm-example"
+version = "0.1.0"
+edition = "2024"
+description = "Example WASM provider for nab — extracts article content from generic blog pages"
+publish = false
+
+# Build as a cdylib so Rust produces a .wasm module with C-ABI exports.
+[lib]
+crate-type = ["cdylib"]
+name = "nab_wasm_example"
+path = "src/lib.rs"
+
+[dependencies]
+# Minimal JSON serialisation — no_std compatible, no allocation required.
+serde_json_core = "0.6"
+
+[profile.release]
+# Minimize .wasm size: strip debug info, optimise for size, LTO.
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"

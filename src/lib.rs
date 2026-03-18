@@ -57,8 +57,8 @@ pub mod session;
 pub mod site;
 pub mod ssrf;
 pub mod stream;
-pub mod websocket;
 pub mod webmcp;
+pub mod websocket;
 
 pub use error::NabError;
 
@@ -87,11 +87,11 @@ pub use ssrf::{
     is_denied_ipv6, validate_ip, validate_redirect_target, validate_url,
 };
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};
-pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 pub use webmcp::{
     DiscoveryResult, McpManifest, McpTool, extract_link_href, parse_manifest_bytes,
     resolve_manifest_url, well_known_url,
 };
+pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 
 /// Version of nab
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

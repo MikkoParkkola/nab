@@ -81,7 +81,7 @@ impl HtmlHandler {
 /// complex DOM structures (`LessWrong`, `Ghost CMS`, etc.).
 #[must_use]
 pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
-    // (MIN_READABILITY_LEN defined inline near the comparison logic below)
+    const MIN_READABILITY_LEN: usize = 50;
 
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     if let Some(spa_content) = spa_extract::extract_spa_data(html) {
@@ -126,8 +126,6 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
     // non-trivial content (>= 50 chars), since readability strips boilerplate
     // that direct_md preserves.  Only fall back to direct when readability
     // produced nearly nothing.
-    const MIN_READABILITY_LEN: usize = 50;
-
     let markdown = match readability_md {
         Some(ref r_md) if r_md.len() >= MIN_READABILITY_LEN => r_md.clone(),
         Some(ref r_md) if r_md.len() > direct_md.len() => r_md.clone(),
@@ -151,14 +149,14 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 
         // Last-resort fallback: Jina reader can render JS-heavy pages.
         // Only attempt when we have a URL and local extraction failed.
-        if let Some(page_url) = url {
-            if let Some(jina_md) = fetch_jina_reader(page_url) {
-                tracing::info!(
-                    "Thin content recovered via Jina reader ({} chars)",
-                    jina_md.len()
-                );
-                return jina_md;
-            }
+        if let Some(page_url) = url
+            && let Some(jina_md) = fetch_jina_reader(page_url)
+        {
+            tracing::info!(
+                "Thin content recovered via Jina reader ({} chars)",
+                jina_md.len()
+            );
+            return jina_md;
         }
 
         // Jina fallback either wasn't attempted (no URL) or failed.
@@ -224,10 +222,7 @@ fn fetch_jina_reader(url: &str) -> Option<String> {
         .ok()?;
 
     if !response.status().is_success() {
-        tracing::debug!(
-            "Jina reader returned HTTP {}",
-            response.status().as_u16()
-        );
+        tracing::debug!("Jina reader returned HTTP {}", response.status().as_u16());
         return None;
     }
 
