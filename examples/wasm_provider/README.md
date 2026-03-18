@@ -1,40 +1,106 @@
 # nab WASM Provider Example
 
-An example site-extractor written in Rust, compiled to `wasm32-unknown-unknown`.
-Demonstrates the nab WASM provider ABI.
+A site-extractor written in Rust, compiled to a **WIT Component Model** `.wasm`
+targeting `wasm32-wasip2`.  Demonstrates the modern nab WASM provider ABI.
 
-## Building
+## ABI Options
+
+| ABI | Target | Guest code | Status |
+|-----|--------|-----------|--------|
+| **Component Model** (recommended) | `wasm32-wasip2` | `wit_bindgen::generate!` + `export!` | Preferred |
+| Legacy raw C | `wasm32-unknown-unknown` | `extern "C" fn alloc / extract` | Backward-compatible |
+
+nab automatically detects which ABI a `.wasm` file uses: Component Model is tried
+first; plain modules fall back to the raw-C ABI automatically.
+
+## Building (Component Model)
+
+### Prerequisites
 
 ```sh
-rustup target add wasm32-unknown-unknown
+# WASI P2 target
+rustup target add wasm32-wasip2
+
+# wasm-tools (optional — only needed if you want to inspect or adapt the component)
+cargo install wasm-tools
+```
+
+### Compile
+
+```sh
 cargo build \
-    --target wasm32-unknown-unknown \
+    --target wasm32-wasip2 \
     --release \
     --manifest-path examples/wasm_provider/Cargo.toml
 ```
 
-The compiled module is at:
+The compiled component is at:
 ```
-examples/wasm_provider/target/wasm32-unknown-unknown/release/nab_wasm_example.wasm
+examples/wasm_provider/target/wasm32-wasip2/release/nab_wasm_example.wasm
 ```
 
 ## Installing
 
 ```sh
-# Copy .wasm + sidecar manifest to a staging area
-cp examples/wasm_provider/target/wasm32-unknown-unknown/release/nab_wasm_example.wasm \
-   /tmp/generic-article.wasm
-cp examples/wasm_provider/manifest.toml /tmp/generic-article.manifest.toml
+cp examples/wasm_provider/target/wasm32-wasip2/release/nab_wasm_example.wasm \
+   /tmp/my-article.wasm
 
 # Install (requires --features wasm-providers build of nab)
-nab provider install /tmp/generic-article.wasm
+nab provider install /tmp/my-article.wasm
 nab provider list
 nab provider remove generic-article
 ```
 
-## Guest ABI
+## Guest Interface (WIT Component Model)
 
-Your WASM module must export:
+The interface is declared in `wit/provider.wit` (workspace root):
+
+```wit
+package nab:provider;
+
+interface extractor {
+    record article {
+        title:   option<string>,
+        content: string,
+        author:  option<string>,
+        date:    option<string>,
+    }
+    extract: func(url: string, html: string) -> result<article, string>;
+}
+
+world provider {
+    export extractor;
+}
+```
+
+Your guest implements it like this:
+
+```rust
+wit_bindgen::generate!({
+    path: "../../wit/provider.wit",
+    world: "provider",
+});
+
+struct MyExtractor;
+
+impl exports::nab::provider::extractor::Guest for MyExtractor {
+    fn extract(url: String, html: String) -> Result<Article, String> {
+        Ok(Article {
+            title: Some("My Title".to_string()),
+            content: "Extracted content...".to_string(),
+            author: None,
+            date: None,
+        })
+    }
+}
+
+export!(MyExtractor);
+```
+
+## Legacy Raw-C ABI (backward compatible)
+
+Old `.wasm` modules compiled to `wasm32-unknown-unknown` with the raw-C ABI
+continue to work unchanged.  Your module must export:
 
 | Export | Type | Description |
 |--------|------|-------------|
@@ -42,24 +108,21 @@ Your WASM module must export:
 | `alloc` | `(i32) -> i32` | Allocate `len` bytes; return pointer |
 | `extract` | `(i32, i32, i32, i32) -> i32` | Parse HTML+URL; return JSON pointer (0 = fail) |
 
-The host writes HTML bytes at `alloc(html_len)` and URL bytes at `alloc(url_len)`,
-then calls `extract(html_ptr, html_len, url_ptr, url_len)`.
-
-The return value is a pointer to a NUL-terminated JSON string conforming to:
+The `extract` return value is a pointer to a NUL-terminated JSON string:
 
 ```json
 {
   "title":        "optional string",
   "content":      "optional markdown or plain text",
   "author":       "optional string",
-  "date":         "optional ISO-8601 or human-readable date",
+  "date":         "optional ISO-8601 date",
   "canonical_url":"optional URL (defaults to request URL)"
 }
 ```
 
-## Sandbox guarantees
+## Sandbox guarantees (both ABIs)
 
-- No WASI — no filesystem or network access
+- No WASI imports — no filesystem or network access
 - Fuel limit: 100 million instructions per extraction call
 - Memory limit: 64 MiB per instantiation
 - Fresh instance per request (no shared state between calls)

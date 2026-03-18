@@ -1,0 +1,56 @@
+/// WIT interface for nab WASM content-extraction providers.
+///
+/// A Component Model provider receives raw HTML and a URL, then returns a
+/// structured article record — or an error string on failure.
+///
+/// Guest components implement this interface; the nab host calls `extract`
+/// for each URL that matches the provider's manifest `url_patterns`.
+///
+/// # Example guest (Rust)
+///
+/// ```rust,ignore
+/// wit_bindgen::generate!("provider");
+///
+/// struct MyProvider;
+///
+/// impl exports::nab::provider::extractor::Guest for MyProvider {
+///     fn extract(url: String, html: String) -> Result<Article, String> {
+///         Ok(Article {
+///             title: Some("Page Title".to_string()),
+///             content: "Extracted content".to_string(),
+///             author: None,
+///             date: None,
+///         })
+///     }
+/// }
+///
+/// export!(MyProvider);
+/// ```
+package nab:provider;
+
+interface extractor {
+    /// A structured article extracted from a web page.
+    record article {
+        /// Page title extracted from the document.
+        title: option<string>,
+        /// Main body content as plain text or Markdown.
+        content: string,
+        /// Author name(s), if present in the document.
+        author: option<string>,
+        /// Publication date in ISO 8601 or human-readable form.
+        date: option<string>,
+    }
+
+    /// Extract structured content from a web page.
+    ///
+    /// `url`  — the canonical URL of the page being processed.
+    /// `html` — the full raw HTML body as a UTF-8 string.
+    ///
+    /// Returns `Ok(article)` on success or `Err(reason)` if the provider
+    /// cannot extract useful content from this page.
+    extract: func(url: string, html: string) -> result<article, string>;
+}
+
+world provider {
+    export extractor;
+}

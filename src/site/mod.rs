@@ -297,22 +297,23 @@ fn append_css_providers(providers: &mut Vec<Box<dyn SiteProvider>>) {
 
 /// Load WASM providers from `~/.config/nab/wasm_providers/` and append them.
 ///
-/// Invalid or incompatible entries (bad manifest, missing exports) are skipped
-/// with a warning.
+/// Each provider is loaded with automatic ABI detection: Component Model is
+/// tried first; plain Wasm modules fall back to the legacy raw-C ABI.
+/// Invalid or incompatible entries are skipped with a warning.
 #[cfg(feature = "wasm-providers")]
 fn append_wasm_providers(providers: &mut Vec<Box<dyn SiteProvider>>) {
     use wasm_manifest::{load_installed_providers, wasm_providers_dir};
-    use wasm_provider::WasmProvider;
+    use wasm_provider::load_provider_from_file;
 
     let base = wasm_providers_dir();
     let installed = load_installed_providers(&base);
 
     for p in installed {
         let url_pattern = build_pattern_regex(&p.manifest.url_patterns);
-        match WasmProvider::from_file(&p.manifest.name, &p.wasm_path, &url_pattern) {
+        match load_provider_from_file(&p.manifest.name, &p.wasm_path, &url_pattern) {
             Ok(provider) => {
                 tracing::debug!("Loaded WASM provider: {}", p.manifest.name);
-                providers.push(Box::new(provider));
+                providers.push(provider);
             }
             Err(e) => {
                 tracing::warn!("WASM provider '{}' failed to load: {e}", p.manifest.name);

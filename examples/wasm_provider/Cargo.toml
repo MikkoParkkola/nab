@@ -1,19 +1,20 @@
 [package]
 name = "nab-wasm-example"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "Example WASM provider for nab — extracts article content from generic blog pages"
+description = "Example WASM provider for nab — extracts article content using the WIT Component Model"
 publish = false
 
-# Build as a cdylib so Rust produces a .wasm module with C-ABI exports.
+# Build as a cdylib so Rust produces a .wasm component (via wasm-tools adapter).
 [lib]
 crate-type = ["cdylib"]
 name = "nab_wasm_example"
 path = "src/lib.rs"
 
 [dependencies]
-# Minimal JSON serialisation — no_std compatible, no allocation required.
-serde_json_core = "0.6"
+# wit-bindgen generates Guest trait + export! macro from wit/provider.wit.
+# This is a proc-macro — it has no runtime overhead beyond what the guest needs.
+wit-bindgen = "0.36"
 
 [profile.release]
 # Minimize .wasm size: strip debug info, optimise for size, LTO.
