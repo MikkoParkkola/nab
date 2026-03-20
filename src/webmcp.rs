@@ -247,7 +247,8 @@ mod tests {
     #[test]
     fn parse_manifest_with_server_url() {
         // GIVEN: manifest with optional serverUrl
-        let json = r#"{"name":"X","description":"Y","serverUrl":"https://mcp.example.com","tools":[]}"#;
+        let json =
+            r#"{"name":"X","description":"Y","serverUrl":"https://mcp.example.com","tools":[]}"#;
         // WHEN
         let manifest = McpManifest::from_json(json).unwrap();
         // THEN
@@ -369,10 +370,7 @@ mod tests {
         // GIVEN: minimal HTML with a <link rel="mcp"> tag
         let html = r#"<html><head><link rel="mcp" href="/mcp.json"></head></html>"#;
         // WHEN / THEN
-        assert_eq!(
-            extract_link_href(html),
-            Some("/mcp.json".to_owned()),
-        );
+        assert_eq!(extract_link_href(html), Some("/mcp.json".to_owned()),);
     }
 
     #[test]
@@ -386,8 +384,7 @@ mod tests {
     #[test]
     fn extract_link_href_returns_absolute_url() {
         // GIVEN: link with absolute href
-        let html =
-            r#"<link rel="mcp" href="https://cdn.example.com/mcp-manifest.json">"#;
+        let html = r#"<link rel="mcp" href="https://cdn.example.com/mcp-manifest.json">"#;
         // WHEN / THEN
         assert_eq!(
             extract_link_href(html),

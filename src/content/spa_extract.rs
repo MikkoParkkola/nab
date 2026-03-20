@@ -553,10 +553,10 @@ pub fn discover_nextjs_content_chunks(html: &str, page_url: &str) -> Vec<String>
     };
 
     // If __NEXT_DATA__ already has substantial content, no need for chunks
-    if let Some(page_props) = next_data.get("props").and_then(|p| p.get("pageProps")) {
-        if find_longest_string(page_props, 200).is_some() {
-            return Vec::new();
-        }
+    if let Some(page_props) = next_data.get("props").and_then(|p| p.get("pageProps"))
+        && find_longest_string(page_props, 200).is_some()
+    {
+        return Vec::new();
     }
 
     // Step 2: Extract buildId for constructing chunk paths
@@ -620,8 +620,11 @@ pub fn discover_nextjs_content_chunks(html: &str, page_url: &str) -> Vec<String>
         // Fallback: any /pages/ script that isn't _app/_error
         .or_else(|| {
             script_srcs.iter().find(|s| {
-                s.contains("/pages/") && s.contains(".js")
-                    && !s.contains("/_app") && !s.contains("/_error") && !s.contains("/_document")
+                s.contains("/pages/")
+                    && s.contains(".js")
+                    && !s.contains("/_app")
+                    && !s.contains("/_error")
+                    && !s.contains("/_document")
             })
         });
 
@@ -657,11 +660,7 @@ pub fn discover_nextjs_content_chunks(html: &str, page_url: &str) -> Vec<String>
 ///
 /// Returns absolute URLs to content chunks that should be fetched.
 /// When all content chunks are desired (no slug filter), returns all of them.
-pub fn resolve_content_chunk_urls(
-    webpack_js: &str,
-    page_js: &str,
-    origin: &str,
-) -> Vec<String> {
+pub fn resolve_content_chunk_urls(webpack_js: &str, page_js: &str, origin: &str) -> Vec<String> {
     resolve_content_chunk_urls_for_slug(webpack_js, page_js, origin, None)
 }
 
@@ -693,9 +692,9 @@ pub fn resolve_content_chunk_urls_for_slug(
         .into_iter()
         .filter_map(|id| {
             let id_str = id.to_string();
-            chunk_hashes.get(&id_str).map(|hash| {
-                format!("{origin}/_next/static/chunks/{id}.{hash}.js")
-            })
+            chunk_hashes
+                .get(&id_str)
+                .map(|hash| format!("{origin}/_next/static/chunks/{id}.{hash}.js"))
         })
         .collect()
 }
@@ -737,12 +736,12 @@ fn parse_webpack_chunk_hashes(js: &str) -> std::collections::HashMap<String, Str
     //   {"11":"hash1","264":"hash2"}
     let json_fixed = quote_numeric_keys(json_str);
 
-    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&json_fixed) {
-        if let Some(obj_map) = obj.as_object() {
-            for (k, v) in obj_map {
-                if let Some(hash) = v.as_str() {
-                    map.insert(k.clone(), hash.to_string());
-                }
+    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&json_fixed)
+        && let Some(obj_map) = obj.as_object()
+    {
+        for (k, v) in obj_map {
+            if let Some(hash) = v.as_str() {
+                map.insert(k.clone(), hash.to_string());
             }
         }
     }
@@ -829,10 +828,10 @@ fn parse_lazy_chunk_ids_for_slug(js: &str, slug: &str) -> Vec<u64> {
             if let Some(bracket_end) = js[start..].find(']') {
                 let nums_str = &js[start..start + bracket_end];
                 let parts: Vec<&str> = nums_str.split(',').collect();
-                if parts.len() == 2 {
-                    if let Ok(chunk_id) = parts[1].trim().parse::<u64>() {
-                        ids.push(chunk_id);
-                    }
+                if parts.len() == 2
+                    && let Ok(chunk_id) = parts[1].trim().parse::<u64>()
+                {
+                    ids.push(chunk_id);
                 }
             }
         }
@@ -861,10 +860,10 @@ fn parse_lazy_chunk_ids(js: &str) -> Vec<u64> {
         if let Some(bracket_end) = js[abs_idx..].find(']') {
             let nums_str = &js[abs_idx..abs_idx + bracket_end];
             let parts: Vec<&str> = nums_str.split(',').collect();
-            if parts.len() == 2 {
-                if let Ok(chunk_id) = parts[1].trim().parse::<u64>() {
-                    ids.push(chunk_id);
-                }
+            if parts.len() == 2
+                && let Ok(chunk_id) = parts[1].trim().parse::<u64>()
+            {
+                ids.push(chunk_id);
             }
         }
         search_from = abs_idx;
@@ -877,10 +876,10 @@ fn parse_lazy_chunk_ids(js: &str) -> Vec<u64> {
         if let Some(bracket_end) = js[abs_idx..].find(']') {
             let nums_str = &js[abs_idx..abs_idx + bracket_end];
             let parts: Vec<&str> = nums_str.split(',').collect();
-            if parts.len() == 2 {
-                if let Ok(chunk_id) = parts[1].trim().parse::<u64>() {
-                    ids.push(chunk_id);
-                }
+            if parts.len() == 2
+                && let Ok(chunk_id) = parts[1].trim().parse::<u64>()
+            {
+                ids.push(chunk_id);
             }
         }
         search_from = abs_idx;
@@ -954,7 +953,9 @@ pub fn extract_jsx_text_content(js_source: &str) -> Option<String> {
                 && !text.starts_with("data:")
                 && !text.starts_with("text-")
                 && !text.contains("className")
-                && !text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && !text
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
             {
                 // Check context: look backwards for element type hints
                 // Floor to a valid char boundary to avoid slicing inside multi-byte chars
@@ -1023,10 +1024,10 @@ fn extract_js_string_value(s: &str) -> Option<String> {
                 'u' => {
                     // Unicode escape: \uXXXX
                     let hex: String = chars.by_ref().take(4).collect();
-                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(code) {
-                            result.push(ch);
-                        }
+                    if let Ok(code) = u32::from_str_radix(&hex, 16)
+                        && let Some(ch) = char::from_u32(code)
+                    {
+                        result.push(ch);
                     }
                 }
                 _ => {
@@ -1461,7 +1462,10 @@ mod tests {
         </head><body></body></html>"#;
         let chunks = discover_nextjs_content_chunks(html, "https://example.com/blog/test");
         // Should find webpack + page script URLs + buildId
-        assert!(chunks.len() >= 2, "Expected at least 2 URLs, got: {chunks:?}");
+        assert!(
+            chunks.len() >= 2,
+            "Expected at least 2 URLs, got: {chunks:?}"
+        );
         assert!(
             chunks[0].contains("webpack-"),
             "First should be webpack: {}",

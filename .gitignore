@@ -34,3 +34,6 @@ __pycache__/
 linkedin-posts-draft.md
 docs/linkedin-ajax-replay.md
 retros/
+
+# Stray scripts from other projects
+spectre_v1.py

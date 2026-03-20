@@ -228,3 +228,53 @@
 - Added `sha2 = "0.10"` to `Cargo.toml` (was only transitive before)
 - 26 unit tests pass, 537/537 lib tests pass
 - Verified live: 19 Brave cookies decrypted for linkedin.com, zero UTF-8 errors
+
+### WASM Provider Marketplace (2026-03-18, Issue #19)
+
+**Feature**: `--features wasm-providers` — third-party site extractors as sandboxed .wasm modules
+
+**Architecture**:
+- `src/site/wasm_manifest.rs`: On-disk format (TOML), path helpers, load/write logic (always compiled)
+- `src/site/wasm_provider.rs`: wasmtime-backed `SiteProvider` impl (feature-gated)
+- `src/cmd/provider.rs`: CLI — `nab provider list/install/remove`
+- Install dir: `~/.config/nab/wasm_providers/<name>/manifest.toml` + `provider.wasm`
+- Example guest: `examples/wasm_provider/` (Rust, `no_std`, `wasm32-unknown-unknown`)
+
+**Provider loading order (updated)**:
+1. Rule-based TOML providers (user overrides + embedded defaults)
+2. Hardcoded Rust providers (hackernews, github, google, linkedin)
+3. CSS extractor plugins from `~/.config/nab/plugins.toml`
+4. WASM providers from `~/.config/nab/wasm_providers/` (feature-gated, appended last)
+
+**Security sandbox** (each extraction call):
+- No WASI — zero filesystem/network imports exposed
+- Fuel limit: 100M instructions (enforced by wasmtime fuel metering)
+- Memory limit: 64 MiB (via `StoreLimitsBuilder::memory_size`)
+- Fresh `Store` per extraction (no shared state between calls)
+
+**Guest ABI** (what the .wasm must export):
+- `(memory (export "memory") 1)` — linear memory
+- `alloc(len: i32) -> i32` — host writes HTML/URL into memory returned here
+- `extract(html_ptr, url_ptr, html_len, url_len) -> i32` — return ptr to NUL-terminated JSON, or 0
+
+**JSON output schema** (`WasmArticle`):
+- `title`, `content`, `author`, `date`, `canonical_url` — all optional strings
+
+**wasmtime 42.x gotchas**:
+- `wasmtime::Error` does NOT implement `std::error::Error` — anyhow's `.context()` won't work on `Result<T, wasmtime::Error>`
+- Must use `.map_err(|e| anyhow::anyhow!("{e}"))` to bridge into anyhow chains
+- `ResourceLimiter::memory_growing/table_growing` take `usize`, not `u32` (changed from older versions)
+- `ResourceLimiter` returns `wasmtime::Result<T>`, not `anyhow::Result<T>`
+- Use `StoreLimitsBuilder` (built-in) rather than implementing `ResourceLimiter` manually
+- `wasmtime::wat` is NOT a module — `wat` is a separate crate; add as dev-dependency for tests
+- Store must carry limiter by value in its data struct: `store.limiter(|data| &mut data.limiter)`
+
+**Wasm ABI cast lint suppressions**:
+- `usize → i32` and `i32 → usize` casts at the ABI boundary fire clippy::cast_possible_truncation/wrap/sign_loss
+- Suppress at function level with `#[allow(clippy::cast_possible_truncation, cast_possible_wrap, cast_sign_loss)]`
+- Document reason: Wasm32 memory is bounded to 4GiB; memory limiter rejects before overflow
+
+**Test counts** (2026-03-18):
+- Default build (no wasm-providers): 1066 lib tests pass
+- With wasm-providers: 1081 lib tests pass (+15 new), 43 bin tests pass
+- Pre-existing failure: `analyze::transcribe::tests::parakeet_build_args_without_language_hint` (unrelated GPU flag test)

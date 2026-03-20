@@ -513,7 +513,9 @@ mod tests {
 
         // Must contain the conclusion paragraph (currently truncated by html2md)
         assert!(
-            article.text_content.contains("high level PRDs without coupling"),
+            article
+                .text_content
+                .contains("high level PRDs without coupling"),
             "Missing conclusion paragraph. text_content ({} chars): {}",
             article.text_content.len(),
             &article.text_content[..article.text_content.len().min(500)]
