@@ -59,8 +59,8 @@ rquest = { version = "5.1", optional = true, default-features = false, features 
 rquest-util = { version = "2.2", optional = true }
 
 # WebSocket support
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
-tungstenite = "0.28"
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+tungstenite = "0.29"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-native-certs = "0.8"
 
@@ -68,7 +68,7 @@ rustls-native-certs = "0.8"
 # HTML PARSING (Browser-grade, from Servo)
 # ═══════════════════════════════════════════════════════════════════════════════
 # markup5ever_rcdom removed - scraper provides DOM manipulation
-scraper = "0.25"                    # CSS selectors + DOM manipulation
+scraper = "0.26"                    # CSS selectors + DOM manipulation
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # JAVASCRIPT ENGINE (QuickJS - 1MB, ES2020)
@@ -110,14 +110,14 @@ futures = "0.3"
 # ═══════════════════════════════════════════════════════════════════════════════
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "1"                            # Plugin config parsing
+toml = "1.1"                            # Plugin config parsing
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WASM PROVIDER MARKETPLACE (optional — feature = "wasm-providers")
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sandboxed WASM runtime for third-party site extractors.
 # No unsafe code needed — wasmtime's safe API is used throughout.
-wasmtime = { version = "42", optional = true, default-features = false, features = [
+wasmtime = { version = "43", optional = true, default-features = false, features = [
     "cranelift",         # JIT compiler backend
     "runtime",           # Core runtime
     "component-model",   # WIT Component Model (bindgen!, Linker<T>, Component)
@@ -133,7 +133,7 @@ urlencoding = "2"                   # URL encoding for forms
 readability = { version = "0.3", default-features = false }  # Mozilla-style article extraction
 
 # OOXML parsing (Google Docs/Sheets/Slides export)
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "8.4", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
 
 # PDF extraction (optional - requires pdfium dynamic library)
@@ -179,7 +179,7 @@ sha1 = "0.10"                       # SHA-1 for PBKDF2 (Chrome/Brave use SHA1)
 sha2 = "0.10"                       # SHA-256 for v24+ domain-integrity strip
 hmac = "0.12"                       # HMAC (pulled in by pbkdf2 feature, explicit for clarity)
 hex = "0.4"                         # Hex encode/decode for sqlite3 blob round-trip
-ego-tree = "0.10"
+ego-tree = "0.11"
 # which is cross-platform (Windows/macOS/Linux) — finds ffmpeg/streamlink in PATH
 which = "8"
 
