@@ -52,8 +52,8 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use wasmtime::{Engine, Linker, Module, Store, StoreLimitsBuilder};
 use wasmtime::component::{Component, Linker as ComponentLinker};
+use wasmtime::{Engine, Linker, Module, Store, StoreLimitsBuilder};
 
 use super::{SiteContent, SiteMetadata, SiteProvider};
 use crate::http_client::AcceleratedClient;
@@ -168,9 +168,8 @@ impl WitWasmProvider {
         let mut store = build_component_store(&self.engine)?;
         let linker: ComponentLinker<StoreData> = ComponentLinker::new(&self.engine);
 
-        let bindings =
-            Provider::instantiate(&mut store, &self.component, &linker)
-                .map_err(|e| anyhow::anyhow!("failed to instantiate Component: {e}"))?;
+        let bindings = Provider::instantiate(&mut store, &self.component, &linker)
+            .map_err(|e| anyhow::anyhow!("failed to instantiate Component: {e}"))?;
 
         let result = bindings
             .nab_provider_extractor()
@@ -222,13 +221,15 @@ impl SiteProvider for WitWasmProvider {
             .map_err(|e| anyhow::anyhow!("HTML bytes are not valid UTF-8: {e}"))?;
 
         let article = self.run_component(url, html).map_err(|e| {
-            anyhow::anyhow!(
-                "WIT provider '{}' failed for {url}: {e}",
-                self.static_name
-            )
+            anyhow::anyhow!("WIT provider '{}' failed for {url}: {e}", self.static_name)
         })?;
 
-        Ok(article_to_site_content(article, url, self.static_name, "wit"))
+        Ok(article_to_site_content(
+            article,
+            url,
+            self.static_name,
+            "wit",
+        ))
     }
 }
 
@@ -313,9 +314,7 @@ impl WasmProvider {
 
         let alloc = instance
             .get_typed_func::<i32, i32>(&mut store, "alloc")
-            .map_err(|e| {
-                anyhow::anyhow!("WASM guest must export 'alloc(len: i32) -> i32': {e}")
-            })?;
+            .map_err(|e| anyhow::anyhow!("WASM guest must export 'alloc(len: i32) -> i32': {e}"))?;
 
         let extract_fn = instance
             .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "extract")
@@ -393,7 +392,12 @@ impl SiteProvider for WasmProvider {
             anyhow::anyhow!("WASM provider '{}' failed for {url}: {e}", self.static_name)
         })?;
 
-        Ok(article_to_site_content(article, url, self.static_name, "wasm"))
+        Ok(article_to_site_content(
+            article,
+            url,
+            self.static_name,
+            "wasm",
+        ))
     }
 }
 
@@ -518,12 +522,9 @@ fn read_guest_cstring(
         .get(offset..)
         .ok_or_else(|| anyhow::anyhow!("guest result pointer {offset} is out of memory bounds"))?;
 
-    let nul_pos = available
-        .iter()
-        .position(|&b| b == 0)
-        .ok_or_else(|| {
-            anyhow::anyhow!("no NUL terminator found in guest result starting at {offset}")
-        })?;
+    let nul_pos = available.iter().position(|&b| b == 0).ok_or_else(|| {
+        anyhow::anyhow!("no NUL terminator found in guest result starting at {offset}")
+    })?;
 
     Ok(available[..nul_pos].to_vec())
 }
@@ -548,9 +549,7 @@ fn article_to_site_content(
         author: article.author,
         published: article.date,
         platform: format!("{platform_prefix}:{provider_name}"),
-        canonical_url: article
-            .canonical_url
-            .unwrap_or_else(|| url.to_string()),
+        canonical_url: article.canonical_url.unwrap_or_else(|| url.to_string()),
         media_urls: Vec::new(),
         engagement: None,
     };
@@ -765,8 +764,7 @@ mod tests {
     #[test]
     fn wasm_article_deserialises_all_fields() {
         // GIVEN
-        let json =
-            r#"{"title":"T","content":"C","author":"A","date":"D","canonical_url":"U"}"#;
+        let json = r#"{"title":"T","content":"C","author":"A","date":"D","canonical_url":"U"}"#;
         // WHEN
         let a: WasmArticle = serde_json::from_str(json).unwrap();
         // THEN
@@ -830,9 +828,7 @@ mod tests {
     fn wit_provider_from_bytes_rejects_invalid_url_pattern() {
         // GIVEN: the bytes are not a component but the regex is also invalid;
         // we just need to confirm an error is returned in any case.
-        assert!(
-            WitWasmProvider::from_bytes("t", b"junk", r"[bad regex").is_err()
-        );
+        assert!(WitWasmProvider::from_bytes("t", b"junk", r"[bad regex").is_err());
     }
 
     // ── load_provider — ABI detection ─────────────────────────────────────────
@@ -888,8 +884,7 @@ mod tests {
             ..Default::default()
         };
         // WHEN
-        let content =
-            article_to_site_content(article, "https://example.com/pg", "p", "wasm");
+        let content = article_to_site_content(article, "https://example.com/pg", "p", "wasm");
         // THEN
         assert_eq!(content.metadata.canonical_url, "https://example.com/pg");
     }
@@ -903,8 +898,7 @@ mod tests {
             ..Default::default()
         };
         // WHEN
-        let content =
-            article_to_site_content(article, "https://other.com/pg", "p", "wasm");
+        let content = article_to_site_content(article, "https://other.com/pg", "p", "wasm");
         // THEN
         assert_eq!(
             content.metadata.canonical_url,

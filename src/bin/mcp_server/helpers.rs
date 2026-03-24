@@ -224,13 +224,14 @@ pub(crate) async fn recover_nextjs_chunks(
         tracing::debug!("Fetching content chunk: {chunk_url}");
         if let Ok(resp) = client.fetch(chunk_url).await
             && let Ok(chunk_js) = resp.text().await
-                && let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js) {
-                    tracing::info!(
-                        "Recovered {} chars from Next.js content chunk",
-                        content.len()
-                    );
-                    return Some(content);
-                }
+            && let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js)
+        {
+            tracing::info!(
+                "Recovered {} chars from Next.js content chunk",
+                content.len()
+            );
+            return Some(content);
+        }
     }
 
     None

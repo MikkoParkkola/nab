@@ -257,12 +257,13 @@ impl ParakeetTranscriber {
         // 1. Check $PATH via `which`
         for name in ["parakeet", "parakeet-cli"] {
             if let Ok(output) = std::process::Command::new("which").arg(name).output()
-                && output.status.success() {
-                    let p = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-                    if p.exists() {
-                        return Some(p);
-                    }
+                && output.status.success()
+            {
+                let p = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+                if p.exists() {
+                    return Some(p);
                 }
+            }
         }
 
         // 2. Check well-known directories
