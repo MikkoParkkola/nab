@@ -212,6 +212,194 @@ fn server_icons_have_svg_mime_type() {
     }
 }
 
+// ── tool_annotations ─────────────────────────────────────────────────────────
+
+#[test]
+fn fetch_annotation_is_read_only() {
+    // GIVEN the fetch tool name
+    // WHEN annotations are generated
+    let ann = crate::tool_annotations("fetch");
+    // THEN it is read-only, non-destructive, and idempotent
+    assert_eq!(ann.read_only_hint, Some(true));
+    assert_eq!(ann.destructive_hint, Some(false));
+    assert_eq!(ann.idempotent_hint, Some(true));
+}
+
+#[test]
+fn submit_annotation_is_destructive() {
+    // GIVEN the submit tool name
+    let ann = crate::tool_annotations("submit");
+    // THEN read_only=false, destructive=true, idempotent=false
+    assert_eq!(ann.read_only_hint, Some(false));
+    assert_eq!(ann.destructive_hint, Some(true));
+    assert_eq!(ann.idempotent_hint, Some(false));
+}
+
+#[test]
+fn login_annotation_is_non_destructive_write() {
+    // GIVEN the login tool
+    let ann = crate::tool_annotations("login");
+    // THEN read_only=false, destructive=false, idempotent=false
+    assert_eq!(ann.read_only_hint, Some(false));
+    assert_eq!(ann.destructive_hint, Some(false));
+    assert_eq!(ann.idempotent_hint, Some(false));
+}
+
+// ── all_prompts ───────────────────────────────────────────────────────────────
+
+#[test]
+fn all_prompts_returns_three_prompts() {
+    // GIVEN the static prompt list
+    let prompts = crate::all_prompts();
+    // THEN exactly three prompts are present
+    assert_eq!(prompts.len(), 3);
+}
+
+#[test]
+fn prompts_have_expected_names() {
+    let prompts = crate::all_prompts();
+    let names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"fetch-and-extract"));
+    assert!(names.contains(&"multi-page-research"));
+    assert!(names.contains(&"authenticated-fetch"));
+}
+
+#[test]
+fn fetch_and_extract_prompt_has_two_required_args() {
+    // GIVEN the fetch-and-extract prompt
+    let prompts = crate::all_prompts();
+    let p = prompts.iter().find(|p| p.name == "fetch-and-extract").unwrap();
+    // THEN it has exactly 2 arguments, both required
+    assert_eq!(p.arguments.len(), 2);
+    assert!(p.arguments.iter().all(|a| a.required == Some(true)));
+}
+
+#[test]
+fn authenticated_fetch_has_optional_auth_method() {
+    // GIVEN the authenticated-fetch prompt
+    let prompts = crate::all_prompts();
+    let p = prompts.iter().find(|p| p.name == "authenticated-fetch").unwrap();
+    // THEN auth_method argument is optional
+    let auth_arg = p.arguments.iter().find(|a| a.name == "auth_method").unwrap();
+    assert_eq!(auth_arg.required, Some(false));
+}
+
+// ── build_prompt_result ───────────────────────────────────────────────────────
+
+#[test]
+fn build_prompt_result_returns_none_for_unknown_name() {
+    // GIVEN an unknown prompt name
+    let args = std::collections::BTreeMap::new();
+    // WHEN rendered
+    let result = crate::build_prompt_result("no-such-prompt", &args);
+    // THEN None is returned
+    assert!(result.is_none());
+}
+
+#[test]
+fn build_prompt_result_fetch_and_extract_interpolates_url() {
+    // GIVEN url and extract_query arguments
+    let mut args = std::collections::BTreeMap::new();
+    args.insert("url".into(), "https://example.com".into());
+    args.insert("extract_query".into(), "all headings".into());
+    // WHEN rendered
+    let result = crate::build_prompt_result("fetch-and-extract", &args).unwrap();
+    // THEN the message contains the URL and query
+    let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
+        panic!("expected TextContent");
+    };
+    assert!(tc.text.contains("https://example.com"), "text: {}", tc.text);
+    assert!(tc.text.contains("all headings"), "text: {}", tc.text);
+}
+
+#[test]
+fn build_prompt_result_multi_page_research_uses_fetch_batch_hint() {
+    // GIVEN urls and question
+    let mut args = std::collections::BTreeMap::new();
+    args.insert("urls".into(), "https://a.com, https://b.com".into());
+    args.insert("question".into(), "What is the price?".into());
+    // WHEN rendered
+    let result = crate::build_prompt_result("multi-page-research", &args).unwrap();
+    let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
+        panic!("expected TextContent");
+    };
+    // THEN message references fetch_batch
+    assert!(tc.text.contains("fetch_batch"), "text: {}", tc.text);
+}
+
+#[test]
+fn build_prompt_result_authenticated_fetch_defaults_to_cookies() {
+    // GIVEN only url provided (no auth_method)
+    let mut args = std::collections::BTreeMap::new();
+    args.insert("url".into(), "https://secure.example.com".into());
+    // WHEN rendered without auth_method
+    let result = crate::build_prompt_result("authenticated-fetch", &args).unwrap();
+    let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
+        panic!("expected TextContent");
+    };
+    // THEN defaults to cookies flag
+    assert!(tc.text.contains("--cookies brave"), "text: {}", tc.text);
+}
+
+#[test]
+fn build_prompt_result_authenticated_fetch_uses_1password_flag() {
+    // GIVEN auth_method = "1password"
+    let mut args = std::collections::BTreeMap::new();
+    args.insert("url".into(), "https://secure.example.com".into());
+    args.insert("auth_method".into(), "1password".into());
+    // WHEN rendered
+    let result = crate::build_prompt_result("authenticated-fetch", &args).unwrap();
+    let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
+        panic!("expected TextContent");
+    };
+    // THEN 1password flag is used
+    assert!(tc.text.contains("--1password"), "text: {}", tc.text);
+}
+
+// ── all_resources ─────────────────────────────────────────────────────────────
+
+#[test]
+fn all_resources_returns_two_resources() {
+    // GIVEN the static resource list
+    let resources = crate::all_resources();
+    // THEN exactly two resources are present
+    assert_eq!(resources.len(), 2);
+}
+
+#[test]
+fn resources_have_expected_uris() {
+    let resources = crate::all_resources();
+    let uris: Vec<&str> = resources.iter().map(|r| r.uri.as_str()).collect();
+    assert!(uris.contains(&"nab://guide/quickstart"));
+    assert!(uris.contains(&"nab://status"));
+}
+
+// ── resource_content ──────────────────────────────────────────────────────────
+
+#[test]
+fn resource_content_returns_none_for_unknown_uri() {
+    assert!(crate::resource_content("nab://unknown").is_none());
+}
+
+#[test]
+fn quickstart_resource_contains_key_sections() {
+    // GIVEN the quickstart guide
+    let content = crate::resource_content("nab://guide/quickstart").unwrap();
+    // THEN key sections are present
+    assert!(content.contains("Basic Fetch"));
+    assert!(content.contains("Batch Fetch"));
+    assert!(content.contains("Authentication"));
+}
+
+#[test]
+fn status_resource_contains_version() {
+    // GIVEN the status resource
+    let content = crate::resource_content("nab://status").unwrap();
+    // THEN it includes the crate version
+    assert!(content.contains(env!("CARGO_PKG_VERSION")));
+    assert!(content.contains("running"));
+}
+
 // ── apply_diff ────────────────────────────────────────────────────────────────
 
 use crate::tools::apply_diff_with_store;

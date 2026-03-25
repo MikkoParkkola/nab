@@ -26,10 +26,14 @@ use async_trait::async_trait;
 use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
 use rust_mcp_sdk::mcp_server::{McpServerOptions, ServerHandler, server_runtime};
 use rust_mcp_sdk::schema::{
-    CallToolRequestParams, CallToolResult, CreateTaskResult, Implementation, InitializeResult,
-    LATEST_PROTOCOL_VERSION, ListToolsResult, PaginatedRequestParams, RpcError, ServerCapabilities,
-    ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, ToolExecution,
-    ToolExecutionTaskSupport, ToolOutputSchema, schema_utils::CallToolError,
+    CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult, GetPromptRequestParams,
+    GetPromptResult, Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ListPromptsResult,
+    ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument,
+    PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource,
+    ServerCapabilitiesPrompts, ServerCapabilitiesResources, RpcError, ServerCapabilities,
+    ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, TextContent,
+    TextResourceContents, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolOutputSchema,
+    schema_utils::CallToolError,
 };
 use rust_mcp_sdk::schema::{
     TaskStatus,
@@ -321,6 +325,246 @@ fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
     schema_prop("boolean", description)
 }
 
+// ─── Tool Annotations ─────────────────────────────────────────────────────────
+
+/// Return `ToolAnnotations` for the named tool.
+///
+/// Encoding per MCP 2025-11-25 spec:
+/// - `read_only_hint`: tool makes no state changes
+/// - `destructive_hint`: meaningful only when `read_only_hint == false`; true means
+///   the side-effects may be destructive (e.g., form submission)
+/// - `idempotent_hint`: meaningful only when `read_only_hint == false`; true means
+///   calling again with the same args has no additional effect
+fn tool_annotations(name: &str) -> ToolAnnotations {
+    let (read_only, destructive, idempotent) = match name {
+        "submit" => (false, true, false),
+        "login" => (false, false, false),
+        _ => (true, false, true), // fetch, fetch_batch, validate, fingerprint, auth_lookup, benchmark
+    };
+    ToolAnnotations {
+        read_only_hint: Some(read_only),
+        destructive_hint: Some(destructive),
+        idempotent_hint: Some(idempotent),
+        open_world_hint: None,
+        title: None,
+    }
+}
+
+// ─── Prompts ──────────────────────────────────────────────────────────────────
+
+/// Build the static list of prompts this server advertises.
+fn all_prompts() -> Vec<Prompt> {
+    vec![
+        Prompt {
+            name: "fetch-and-extract".into(),
+            title: Some("Fetch and Extract".into()),
+            description: Some(
+                "Fetch a URL and extract specific information from the page.".into(),
+            ),
+            arguments: vec![
+                prompt_arg("url", "URL to fetch", true),
+                prompt_arg("extract_query", "What to extract from the page", true),
+            ],
+            icons: vec![],
+            meta: None,
+        },
+        Prompt {
+            name: "multi-page-research".into(),
+            title: Some("Multi-Page Research".into()),
+            description: Some(
+                "Fetch multiple URLs in parallel and synthesize the results to answer a question."
+                    .into(),
+            ),
+            arguments: vec![
+                prompt_arg("urls", "Comma-separated list of URLs to fetch", true),
+                prompt_arg("question", "Question to answer from the fetched pages", true),
+            ],
+            icons: vec![],
+            meta: None,
+        },
+        Prompt {
+            name: "authenticated-fetch".into(),
+            title: Some("Authenticated Fetch".into()),
+            description: Some(
+                "Fetch a URL that requires authentication via browser cookies or 1Password.".into(),
+            ),
+            arguments: vec![
+                prompt_arg("url", "URL to fetch", true),
+                prompt_arg(
+                    "auth_method",
+                    "Authentication method: 'cookies' (use saved browser cookies) or '1password'",
+                    false,
+                ),
+            ],
+            icons: vec![],
+            meta: None,
+        },
+    ]
+}
+
+/// Convenience constructor for a `PromptArgument`.
+fn prompt_arg(name: &str, description: &str, required: bool) -> PromptArgument {
+    PromptArgument {
+        name: name.into(),
+        title: None,
+        description: Some(description.into()),
+        required: Some(required),
+    }
+}
+
+/// Render a `GetPromptResult` for the named prompt given its arguments.
+///
+/// Returns `None` if `name` is not a known prompt.
+fn build_prompt_result(
+    name: &str,
+    args: &std::collections::BTreeMap<String, String>,
+) -> Option<GetPromptResult> {
+    let text = match name {
+        "fetch-and-extract" => {
+            let url = args.get("url").map_or("<url>", String::as_str);
+            let query = args
+                .get("extract_query")
+                .map_or("<what to extract>", String::as_str);
+            format!(
+                "Use the `fetch` tool to retrieve {url}.\n\
+                 Then extract and return: {query}"
+            )
+        }
+        "multi-page-research" => {
+            let urls = args.get("urls").map_or("<urls>", String::as_str);
+            let question = args
+                .get("question")
+                .map_or("<question>", String::as_str);
+            format!(
+                "Use `fetch_batch` to fetch these URLs in parallel: {urls}\n\
+                 Then synthesize the results to answer: {question}"
+            )
+        }
+        "authenticated-fetch" => {
+            let url = args.get("url").map_or("<url>", String::as_str);
+            let method = args
+                .get("auth_method")
+                .map_or("cookies", String::as_str);
+            let flag = if method == "1password" {
+                "--1password"
+            } else {
+                "--cookies brave"
+            };
+            format!(
+                "Use the `fetch` tool with auth flag `{flag}` to retrieve {url}.\n\
+                 This will use {method} authentication to access the protected page."
+            )
+        }
+        _ => return None,
+    };
+
+    Some(GetPromptResult {
+        description: None,
+        meta: None,
+        messages: vec![PromptMessage {
+            role: rust_mcp_sdk::schema::Role::User,
+            content: ContentBlock::TextContent(TextContent::new(text, None, None)),
+        }],
+    })
+}
+
+// ─── Resources ────────────────────────────────────────────────────────────────
+
+/// Build the static list of resources this server exposes.
+fn all_resources() -> Vec<Resource> {
+    vec![
+        Resource {
+            uri: "nab://guide/quickstart".into(),
+            name: "nab Quickstart Guide".into(),
+            title: Some("nab Quickstart Guide".into()),
+            description: Some(
+                "How to use nab: fetch patterns, authentication, batch mode, and tips.".into(),
+            ),
+            mime_type: Some("text/markdown".into()),
+            annotations: None,
+            icons: vec![],
+            meta: None,
+            size: None,
+        },
+        Resource {
+            uri: "nab://status".into(),
+            name: "Server Status".into(),
+            title: Some("nab Server Status".into()),
+            description: Some("Live server health and capability summary.".into()),
+            mime_type: Some("text/markdown".into()),
+            annotations: None,
+            icons: vec![],
+            meta: None,
+            size: None,
+        },
+    ]
+}
+
+/// Return the text content for a known resource URI, or `None` if unknown.
+fn resource_content(uri: &str) -> Option<String> {
+    match uri {
+        "nab://guide/quickstart" => Some(QUICKSTART_GUIDE.to_string()),
+        "nab://status" => Some(status_content()),
+        _ => None,
+    }
+}
+
+/// Quickstart guide content.
+const QUICKSTART_GUIDE: &str = "\
+# nab Quickstart Guide
+
+nab is a token-optimized web fetcher for LLMs. It converts any URL to clean markdown.
+
+## Basic Fetch
+
+Use `fetch` for a single URL:
+- Plain fetch: `url = \"https://example.com\"`
+- With diff tracking: add `diff = true` to see what changed since last fetch
+
+## Batch Fetch
+
+Use `fetch_batch` for multiple URLs in parallel:
+- Pass `urls = [\"https://a.com\", \"https://b.com\"]`
+- Supports task-augmented execution for non-blocking long batches
+
+## Authentication
+
+### Browser cookies
+Pass `cookies = \"brave\"` (or `\"chrome\"`, `\"firefox\"`) to use saved browser cookies.
+Useful for sites where you are already logged in.
+
+### 1Password
+Pass `use_1password = true` to look up credentials from 1Password and auto-login.
+
+### Interactive login
+Use the `login` tool to open an interactive browser session and capture cookies.
+
+## Form Submission
+
+Use `submit` for POST/PUT/PATCH requests:
+- `url`, `method`, `body`, optional `content_type`
+
+## Tips
+
+- nab auto-converts HTML, PDF, DOCX, XLSX to markdown
+- SPA content is extracted from embedded JSON (no headless browser needed)
+- Use `auth_lookup` to check if 1Password has credentials for a domain
+- Use `validate` to warm up the connection and verify nab is working
+";
+
+/// Generate the live status resource content.
+fn status_content() -> String {
+    format!(
+        "# nab Server Status\n\n\
+         **Version**: {}\n\
+         **Status**: running\n\
+         **Tools**: fetch, fetch_batch, submit, login, auth_lookup, fingerprint, validate, benchmark\n\
+         **Prompts**: fetch-and-extract, multi-page-research, authenticated-fetch\n\
+         **Resources**: nab://guide/quickstart, nab://status\n",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
 // ─── Server Handler ───────────────────────────────────────────────────────────
 
 /// MCP server handler for the `MicroFetch` tool suite.
@@ -339,9 +583,9 @@ impl ServerHandler for MicroFetchHandler {
     ) -> Result<ListToolsResult, RpcError> {
         let mut tools = MicroFetchTools::tools();
 
-        // Inject outputSchema and task execution metadata after macro generation.
-        // The #[mcp_tool] macro always emits `output_schema: None` and
-        // `execution: None`, so we patch both fields here.
+        // Inject outputSchema, annotations, and task execution metadata after macro
+        // generation. The #[mcp_tool] macro always emits these fields as None,
+        // so we patch them here.
         for tool in &mut tools {
             tool.output_schema = match tool.name.as_str() {
                 "fetch" => Some(fetch_output_schema()),
@@ -354,6 +598,8 @@ impl ServerHandler for MicroFetchHandler {
                 "benchmark" => Some(benchmark_output_schema()),
                 _ => None,
             };
+
+            tool.annotations = Some(tool_annotations(tool.name.as_str()));
 
             // Advertise that fetch_batch supports optional task-augmented execution.
             // Clients that understand tasks can opt in; others get synchronous execution.
@@ -389,6 +635,66 @@ impl ServerHandler for MicroFetchHandler {
             MicroFetchTools::ValidateTool(t) => t.run().await,
             MicroFetchTools::BenchmarkTool(t) => t.run().await,
         }
+    }
+
+    async fn handle_list_prompts_request(
+        &self,
+        _params: Option<PaginatedRequestParams>,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<ListPromptsResult, RpcError> {
+        Ok(ListPromptsResult {
+            meta: None,
+            next_cursor: None,
+            prompts: all_prompts(),
+        })
+    }
+
+    async fn handle_get_prompt_request(
+        &self,
+        params: GetPromptRequestParams,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<GetPromptResult, RpcError> {
+        let name = params.name;
+        let args = params.arguments.unwrap_or_default();
+        build_prompt_result(&name, &args).ok_or_else(|| {
+            RpcError::method_not_found()
+                .with_message(format!("Unknown prompt: '{name}'"))
+        })
+    }
+
+    async fn handle_list_resources_request(
+        &self,
+        _params: Option<PaginatedRequestParams>,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<ListResourcesResult, RpcError> {
+        Ok(ListResourcesResult {
+            meta: None,
+            next_cursor: None,
+            resources: all_resources(),
+        })
+    }
+
+    async fn handle_read_resource_request(
+        &self,
+        params: ReadResourceRequestParams,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<ReadResourceResult, RpcError> {
+        use rust_mcp_sdk::schema::ReadResourceContent;
+        let text = resource_content(&params.uri).ok_or_else(|| {
+            RpcError::method_not_found()
+                .with_message(format!("Unknown resource: '{}'", params.uri))
+        })?;
+        Ok(ReadResourceResult {
+            meta: None,
+            contents: vec![ReadResourceContent::TextResourceContents(
+                TextResourceContents {
+                    meta: None,
+                    mime_type: Some("text/markdown".into()),
+                    text,
+                    uri: params.uri,
+                },
+            )],
+        })
     }
 
     /// Handles task-augmented `fetch_batch` calls.
@@ -495,6 +801,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         capabilities: ServerCapabilities {
             tools: Some(ServerCapabilitiesTools { list_changed: None }),
+            prompts: Some(ServerCapabilitiesPrompts { list_changed: None }),
+            resources: Some(ServerCapabilitiesResources {
+                list_changed: None,
+                subscribe: None,
+            }),
             // Advertise task support: clients can create tasks, cancel them,
             // list them, and use task-augmented tool calls.
             tasks: Some(ServerTasks {
@@ -514,7 +825,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              (HTML/PDF→markdown), SPA data extraction, form submission with CSRF handling, \
              auto-login via 1Password with interactive credential selection, \
              HTTP/3, and browser fingerprinting. \
-             fetch_batch supports task-augmented execution for non-blocking parallel fetches."
+             fetch_batch supports task-augmented execution for non-blocking parallel fetches. \
+             Use prompts/list to discover guided workflows (fetch-and-extract, \
+             multi-page-research, authenticated-fetch). \
+             Use resources/list for the quickstart guide (nab://guide/quickstart) \
+             and live server status (nab://status)."
                 .into(),
         ),
         protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
