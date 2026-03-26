@@ -268,7 +268,10 @@ fn prompts_have_expected_names() {
 fn fetch_and_extract_prompt_has_two_required_args() {
     // GIVEN the fetch-and-extract prompt
     let prompts = crate::all_prompts();
-    let p = prompts.iter().find(|p| p.name == "fetch-and-extract").unwrap();
+    let p = prompts
+        .iter()
+        .find(|p| p.name == "fetch-and-extract")
+        .unwrap();
     // THEN it has exactly 2 arguments, both required
     assert_eq!(p.arguments.len(), 2);
     assert!(p.arguments.iter().all(|a| a.required == Some(true)));
@@ -278,9 +281,16 @@ fn fetch_and_extract_prompt_has_two_required_args() {
 fn authenticated_fetch_has_optional_auth_method() {
     // GIVEN the authenticated-fetch prompt
     let prompts = crate::all_prompts();
-    let p = prompts.iter().find(|p| p.name == "authenticated-fetch").unwrap();
+    let p = prompts
+        .iter()
+        .find(|p| p.name == "authenticated-fetch")
+        .unwrap();
     // THEN auth_method argument is optional
-    let auth_arg = p.arguments.iter().find(|a| a.name == "auth_method").unwrap();
+    let auth_arg = p
+        .arguments
+        .iter()
+        .find(|a| a.name == "auth_method")
+        .unwrap();
     assert_eq!(auth_arg.required, Some(false));
 }
 

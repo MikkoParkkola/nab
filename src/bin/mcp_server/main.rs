@@ -29,11 +29,11 @@ use rust_mcp_sdk::schema::{
     CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult, GetPromptRequestParams,
     GetPromptResult, Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ListPromptsResult,
     ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument,
-    PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource,
-    ServerCapabilitiesPrompts, ServerCapabilitiesResources, RpcError, ServerCapabilities,
+    PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource, RpcError,
+    ServerCapabilities, ServerCapabilitiesPrompts, ServerCapabilitiesResources,
     ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, TextContent,
-    TextResourceContents, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolOutputSchema,
-    schema_utils::CallToolError,
+    TextResourceContents, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport,
+    ToolOutputSchema, schema_utils::CallToolError,
 };
 use rust_mcp_sdk::schema::{
     TaskStatus,
@@ -358,9 +358,7 @@ fn all_prompts() -> Vec<Prompt> {
         Prompt {
             name: "fetch-and-extract".into(),
             title: Some("Fetch and Extract".into()),
-            description: Some(
-                "Fetch a URL and extract specific information from the page.".into(),
-            ),
+            description: Some("Fetch a URL and extract specific information from the page.".into()),
             arguments: vec![
                 prompt_arg("url", "URL to fetch", true),
                 prompt_arg("extract_query", "What to extract from the page", true),
@@ -377,7 +375,11 @@ fn all_prompts() -> Vec<Prompt> {
             ),
             arguments: vec![
                 prompt_arg("urls", "Comma-separated list of URLs to fetch", true),
-                prompt_arg("question", "Question to answer from the fetched pages", true),
+                prompt_arg(
+                    "question",
+                    "Question to answer from the fetched pages",
+                    true,
+                ),
             ],
             icons: vec![],
             meta: None,
@@ -432,9 +434,7 @@ fn build_prompt_result(
         }
         "multi-page-research" => {
             let urls = args.get("urls").map_or("<urls>", String::as_str);
-            let question = args
-                .get("question")
-                .map_or("<question>", String::as_str);
+            let question = args.get("question").map_or("<question>", String::as_str);
             format!(
                 "Use `fetch_batch` to fetch these URLs in parallel: {urls}\n\
                  Then synthesize the results to answer: {question}"
@@ -442,9 +442,7 @@ fn build_prompt_result(
         }
         "authenticated-fetch" => {
             let url = args.get("url").map_or("<url>", String::as_str);
-            let method = args
-                .get("auth_method")
-                .map_or("cookies", String::as_str);
+            let method = args.get("auth_method").map_or("cookies", String::as_str);
             let flag = if method == "1password" {
                 "--1password"
             } else {
@@ -657,8 +655,7 @@ impl ServerHandler for MicroFetchHandler {
         let name = params.name;
         let args = params.arguments.unwrap_or_default();
         build_prompt_result(&name, &args).ok_or_else(|| {
-            RpcError::method_not_found()
-                .with_message(format!("Unknown prompt: '{name}'"))
+            RpcError::method_not_found().with_message(format!("Unknown prompt: '{name}'"))
         })
     }
 
@@ -681,8 +678,7 @@ impl ServerHandler for MicroFetchHandler {
     ) -> Result<ReadResourceResult, RpcError> {
         use rust_mcp_sdk::schema::ReadResourceContent;
         let text = resource_content(&params.uri).ok_or_else(|| {
-            RpcError::method_not_found()
-                .with_message(format!("Unknown resource: '{}'", params.uri))
+            RpcError::method_not_found().with_message(format!("Unknown resource: '{}'", params.uri))
         })?;
         Ok(ReadResourceResult {
             meta: None,

@@ -58,6 +58,42 @@ fn cookie_source_variants_are_distinct() {
 }
 
 #[test]
+fn from_browser_name_maps_known_browsers_consistently() {
+    assert!(matches!(
+        CookieSource::from_browser_name("brave"),
+        CookieSource::Brave
+    ));
+    assert!(matches!(
+        CookieSource::from_browser_name("chrome"),
+        CookieSource::Chrome
+    ));
+    assert!(matches!(
+        CookieSource::from_browser_name("firefox"),
+        CookieSource::Firefox
+    ));
+    assert!(matches!(
+        CookieSource::from_browser_name("safari"),
+        CookieSource::Safari
+    ));
+}
+
+#[test]
+fn from_browser_name_uses_chrome_family_fallback_for_edge_and_unknown() {
+    assert!(matches!(
+        CookieSource::from_browser_name("edge"),
+        CookieSource::Chrome
+    ));
+    assert!(matches!(
+        CookieSource::from_browser_name("dia"),
+        CookieSource::Chrome
+    ));
+    assert!(matches!(
+        CookieSource::from_browser_name("unknown"),
+        CookieSource::Chrome
+    ));
+}
+
+#[test]
 fn keychain_service_brave_and_chrome_are_nonempty() {
     assert!(!CookieSource::Brave.keychain_service().is_empty());
     assert!(!CookieSource::Chrome.keychain_service().is_empty());

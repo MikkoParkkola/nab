@@ -360,12 +360,7 @@ pub(crate) async fn resolve_login_cookies(
     let combined = sources
         .iter()
         .filter_map(|s| {
-            let source = match s.as_str() {
-                "chrome" => CookieSource::Chrome,
-                "firefox" => CookieSource::Firefox,
-                "safari" => CookieSource::Safari,
-                _ => CookieSource::Brave,
-            };
+            let source = CookieSource::from_browser_name(s);
             source.get_cookie_header(&domain).ok()
         })
         .collect::<Vec<_>>()

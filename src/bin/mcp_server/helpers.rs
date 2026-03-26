@@ -19,12 +19,7 @@ pub(crate) fn resolve_cookie_header(url: &str, browser: Option<&str>) -> String 
     let Some(browser) = browser else {
         return String::new();
     };
-    let source = match browser.to_lowercase().as_str() {
-        "chrome" => CookieSource::Chrome,
-        "firefox" => CookieSource::Firefox,
-        "safari" => CookieSource::Safari,
-        _ => CookieSource::Brave,
-    };
+    let source = CookieSource::from_browser_name(browser);
     let domain = url::Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(std::string::ToString::to_string))

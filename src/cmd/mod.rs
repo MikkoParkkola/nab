@@ -71,12 +71,7 @@ pub fn resolve_browser_name(cookies: &str) -> Option<String> {
 
 /// Resolve [`CookieSource`] from browser name string.
 pub fn resolve_cookie_source(browser: &str) -> nab::CookieSource {
-    match browser.to_lowercase().as_str() {
-        "brave" => nab::CookieSource::Brave,
-        "firefox" => nab::CookieSource::Firefox,
-        "safari" => nab::CookieSource::Safari,
-        _ => nab::CookieSource::Chrome,
-    }
+    nab::CookieSource::from_browser_name(browser)
 }
 
 /// Return `Some(s)` if non-empty, `None` otherwise.

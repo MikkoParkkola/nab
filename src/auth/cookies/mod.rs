@@ -37,6 +37,24 @@ pub enum CookieSource {
 }
 
 impl CookieSource {
+    /// Map a browser identifier to the closest supported cookie source.
+    ///
+    /// `nab` currently has dedicated cookie-store implementations for Brave,
+    /// Chrome-family browsers, Firefox, and Safari. Chromium-family names that
+    /// do not yet have their own dedicated store implementation (for example
+    /// `edge` and `dia`) intentionally fall back to the Chrome-family path.
+    /// Unknown names also fall back to Chrome so CLI auto-detect fallback,
+    /// browser-family matching, and MCP helper behavior stay aligned.
+    #[must_use]
+    pub fn from_browser_name(browser: &str) -> Self {
+        match browser.to_lowercase().as_str() {
+            "brave" => Self::Brave,
+            "firefox" => Self::Firefox,
+            "safari" => Self::Safari,
+            _ => Self::Chrome,
+        }
+    }
+
     /// Get the cookie database path for this browser.
     fn cookie_path(self) -> Option<std::path::PathBuf> {
         let home = dirs::home_dir()?;
