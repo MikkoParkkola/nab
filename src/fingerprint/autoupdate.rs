@@ -145,7 +145,12 @@ impl BrowserVersions {
         let url = "https://versionhistory.googleapis.com/v1/chrome/platforms/all/channels/stable/versions";
 
         let resp: serde_json::Value = Self::fetch_with_retry(url, 3)?;
+        Self::parse_chrome_versions_response(&resp)
+    }
 
+    fn parse_chrome_versions_response(
+        resp: &serde_json::Value,
+    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
         let mut versions = Vec::new();
         if let Some(versions_array) = resp["versions"].as_array() {
             for ver in versions_array {
@@ -218,7 +223,12 @@ impl BrowserVersions {
     fn fetch_firefox_versions() -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let url = "https://product-details.mozilla.org/1.0/firefox_versions.json";
         let resp = Self::fetch_with_retry(url, 3)?;
+        Self::parse_firefox_versions_response(&resp)
+    }
 
+    fn parse_firefox_versions_response(
+        resp: &serde_json::Value,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let latest = resp["LATEST_FIREFOX_VERSION"]
             .as_str()
             .ok_or("Missing LATEST_FIREFOX_VERSION")?
@@ -331,35 +341,60 @@ mod tests {
 
     #[test]
     fn test_fetch_chrome_versions() {
-        // Network test - may fail if offline
-        if let Ok(versions) = BrowserVersions::fetch_chrome_versions() {
-            assert!(!versions.is_empty());
-            // API may return varying counts - just verify we got some valid versions
-            assert!(
-                versions.len() <= 20,
-                "Unexpectedly many versions: {}",
-                versions.len()
-            );
-            // Major version should be reasonably recent
-            let major: u32 = versions[0].0.parse().unwrap();
-            assert!(major >= 100, "Chrome version too old: {major}");
-        }
+        let response = serde_json::json!({
+            "versions": [
+                {"version": "129.0.6668.59"},
+                {"version": "131.0.6778.70"},
+                {"version": "130.0.6723.58"},
+                {"version": "131.0.6778.69"},
+                {"version": "128.0.6613.84"},
+                {"version": "127.0.6533.100"},
+                {"version": "126.0.6478.126"},
+                {"version": "125.0.6422.141"},
+                {"version": "124.0.6367.207"},
+                {"version": "123.0.6312.122"}
+            ]
+        });
+
+        let versions = BrowserVersions::parse_chrome_versions_response(&response).unwrap();
+        assert_eq!(versions.len(), 8, "Should keep latest 8 distinct majors");
+        assert_eq!(versions[0], ("131".into(), "131.0.6778.70".into()));
+        assert_eq!(versions[1], ("130".into(), "130.0.6723.58".into()));
+        assert_eq!(versions[2], ("129".into(), "129.0.6668.59".into()));
+        assert_eq!(
+            versions.last().unwrap(),
+            &("124".into(), "124.0.6367.207".into())
+        );
     }
 
     #[test]
     fn test_fetch_firefox_versions() {
-        // Network test - may fail if offline
-        if let Ok(versions) = BrowserVersions::fetch_firefox_versions() {
-            // API may return varying counts - just verify we got some valid versions
-            assert!(!versions.is_empty());
-            assert!(
-                versions.len() <= 20,
-                "Unexpectedly many versions: {}",
-                versions.len()
-            );
-            // Version should be reasonably recent
-            let major: u32 = versions[0].split('.').next().unwrap().parse().unwrap();
-            assert!(major >= 100, "Firefox version too old: {major}");
-        }
+        let response = serde_json::json!({
+            "LATEST_FIREFOX_VERSION": "136.0.1"
+        });
+
+        let versions = BrowserVersions::parse_firefox_versions_response(&response).unwrap();
+        assert_eq!(
+            versions,
+            vec!["136.0", "135.0", "134.0", "133.0", "132.0", "131.0"]
+        );
+    }
+
+    #[test]
+    #[ignore = "requires external network access"]
+    fn test_fetch_chrome_versions_live() {
+        let versions = BrowserVersions::fetch_chrome_versions().unwrap();
+        assert!(!versions.is_empty());
+        let major: u32 = versions[0].0.parse().unwrap();
+        assert!(major >= 100, "Chrome version too old: {major}");
+    }
+
+    #[test]
+    #[ignore = "requires external network access"]
+    fn test_fetch_firefox_versions_live() {
+        let versions = BrowserVersions::fetch_firefox_versions().unwrap();
+        assert!(!versions.is_empty());
+        let major: u32 = versions[0].split('.').next().unwrap().parse().unwrap();
+        assert!(major >= 100, "Firefox version too old: {major}");
     }
 }
