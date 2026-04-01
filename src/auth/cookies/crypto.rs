@@ -43,8 +43,7 @@ pub(super) const SCHEMA_VERSION_WITH_DOMAIN_TAG: u32 = 24;
 /// This is the exact derivation used by all Chromium-based browsers on macOS:
 /// `PBKDF2(password, salt="saltysalt", iterations=1003, key_len=16, prf=HMAC-SHA1)`
 pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
-    use hmac::Hmac;
-    use pbkdf2::pbkdf2;
+    use pbkdf2::{hmac::Hmac, pbkdf2};
     use sha1::Sha1;
 
     let mut key = [0u8; CHROME_KEY_LEN];

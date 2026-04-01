@@ -166,8 +166,7 @@ aes = "0.8"                         # AES-128 block cipher (RustCrypto)
 cbc = { version = "0.1", features = ["block-padding"] }  # CBC mode + PKCS7 unpadding
 pbkdf2 = { version = "0.12", features = ["hmac"] }  # PBKDF2 key derivation
 sha1 = "0.10"                       # SHA-1 for PBKDF2 (Chrome/Brave use SHA1)
-sha2 = "0.10"                       # SHA-256 for v24+ domain-integrity strip
-hmac = "0.12"                       # HMAC (pulled in by pbkdf2 feature, explicit for clarity)
+sha2 = "0.11"                       # SHA-256 for v24+ domain-integrity strip
 hex = "0.4"                         # Hex encode/decode for sqlite3 blob round-trip
 ego-tree = "0.11"
 # which is cross-platform (Windows/macOS/Linux) — finds ffmpeg/streamlink in PATH
