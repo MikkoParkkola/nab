@@ -6,7 +6,7 @@ use super::url::LinkedInUrlKind;
 use super::types::VoyagerActivityResponse;
 #[cfg(feature = "impersonate")]
 use super::types::VoyagerProfileResponse;
-
+#[cfg(feature = "impersonate")]
 use std::fmt::Write as _;
 
 /// Human-readable label for a URL kind (used in platform metadata).
@@ -63,6 +63,7 @@ pub fn extract_username_from_url(url: &str) -> Option<String> {
 }
 
 /// Build a full name from optional first and last name components.
+#[cfg(feature = "impersonate")]
 pub(super) fn build_full_name(first: Option<&str>, last: Option<&str>) -> Option<String> {
     match (first, last) {
         (Some(f), Some(l)) => Some(format!("{f} {l}")),
@@ -76,6 +77,7 @@ pub(super) fn build_full_name(first: Option<&str>, last: Option<&str>) -> Option
 ///
 /// `LinkedIn`'s `<code>` element content is `<!--{...}-->` — the JSON is
 /// wrapped in an HTML comment so browsers ignore it until JS reads it.
+#[cfg(any(test, feature = "impersonate"))]
 pub(super) fn strip_html_comment(s: &str) -> &str {
     s.strip_prefix("<!--")
         .and_then(|inner| inner.strip_suffix("-->"))
@@ -87,6 +89,7 @@ pub(super) fn strip_html_comment(s: &str) -> &str {
 /// Profile fields extracted from `LinkedIn`'s embedded JSON arrive pre-HTML-escaped
 /// (e.g. `&amp;` instead of `&`). This helper decodes the five standard XML/HTML
 /// entities that appear in practice.
+#[cfg(feature = "impersonate")]
 pub(super) fn decode_html_entities(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")

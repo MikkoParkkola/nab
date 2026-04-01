@@ -67,6 +67,9 @@ impl SiteProvider for LinkedInProvider {
         cookies: Option<&str>,
         _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
+        #[cfg(not(feature = "impersonate"))]
+        let _ = cookies;
+
         let kind = classify_linkedin_url(url)
             .ok_or_else(|| anyhow::anyhow!("URL does not match any LinkedIn pattern"))?;
 

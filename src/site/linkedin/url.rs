@@ -19,6 +19,7 @@ pub enum LinkedInUrlKind {
 
 impl LinkedInUrlKind {
     /// Whether this URL kind can fall back to oEmbed when authenticated fetch fails.
+    #[cfg(any(test, feature = "impersonate"))]
     pub(super) fn has_oembed_fallback(self) -> bool {
         matches!(self, Self::Post | Self::Pulse | Self::FeedUpdate)
     }
