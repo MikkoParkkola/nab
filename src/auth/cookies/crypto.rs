@@ -65,7 +65,7 @@ pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
         mac.update(&salted_block);
 
         let mut block = mac.finalize().into_bytes();
-        let mut u = block.clone();
+        let mut u = block;
 
         for _ in 1..CHROME_PBKDF2_ITERATIONS {
             let mut mac = Hmac::<Sha1>::new_from_slice(password)

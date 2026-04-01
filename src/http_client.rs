@@ -195,12 +195,28 @@ impl AcceleratedClient {
         url: &str,
         config: &SafeFetchConfig,
     ) -> Result<SafeFetchResponse> {
+        self.fetch_safe_with_validators(
+            url,
+            config,
+            ssrf::validate_url,
+            ssrf::validate_redirect_target,
+        )
+        .await
+    }
+
+    async fn fetch_safe_with_validators(
+        &self,
+        url: &str,
+        config: &SafeFetchConfig,
+        validate_url: fn(&Url) -> std::result::Result<std::net::SocketAddr, crate::error::NabError>,
+        validate_redirect_target: fn(&Url) -> std::result::Result<(), crate::error::NabError>,
+    ) -> Result<SafeFetchResponse> {
         let mut current_url: Url = url
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid URL '{url}': {e}"))?;
 
         // Validate initial URL against SSRF deny list
-        let _pinned = ssrf::validate_url(&current_url)?;
+        let _pinned = validate_url(&current_url)?;
         debug!("SSRF validation passed for {current_url}");
 
         let mut redirect_count = 0u32;
@@ -248,7 +264,7 @@ impl AcceleratedClient {
                     .map_err(|e| anyhow::anyhow!("Invalid redirect URL '{location}': {e}"))?;
 
                 // Validate redirect target against SSRF deny list
-                ssrf::validate_redirect_target(&next_url)?;
+                validate_redirect_target(&next_url)?;
                 debug!("Redirect hop {redirect_count}: {current_url} -> {next_url}");
 
                 current_url = next_url;
@@ -388,18 +404,203 @@ impl Default for AcceleratedClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::Arc;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
+
+    use crate::error::NabError;
+
+    #[derive(Debug)]
+    struct TestResponse {
+        status_line: &'static str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    }
+
+    impl TestResponse {
+        fn ok(body: impl Into<Vec<u8>>, content_type: &str) -> Self {
+            Self {
+                status_line: "HTTP/1.1 200 OK",
+                headers: vec![("Content-Type".to_string(), content_type.to_string())],
+                body: body.into(),
+            }
+        }
+
+        fn redirect(location: &str) -> Self {
+            Self {
+                status_line: "HTTP/1.1 302 Found",
+                headers: vec![("Location".to_string(), location.to_string())],
+                body: Vec::new(),
+            }
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            let mut response = format!("{}\r\n", self.status_line);
+            let mut has_content_length = false;
+
+            for (name, value) in &self.headers {
+                if name.eq_ignore_ascii_case("content-length") {
+                    has_content_length = true;
+                }
+                response.push_str(&format!("{name}: {value}\r\n"));
+            }
+
+            if !has_content_length {
+                response.push_str(&format!("Content-Length: {}\r\n", self.body.len()));
+            }
+            response.push_str("Connection: close\r\n\r\n");
+
+            let mut bytes = response.into_bytes();
+            bytes.extend(self.body);
+            bytes
+        }
+    }
+
+    async fn spawn_test_server<F>(expected_requests: usize, handler: F) -> (String, JoinHandle<()>)
+    where
+        F: Fn(String) -> TestResponse + Send + Sync + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local test server");
+        let address = listener
+            .local_addr()
+            .expect("read local test server address");
+        let handler = Arc::new(handler);
+
+        let server = tokio::spawn(async move {
+            for _ in 0..expected_requests {
+                let (mut stream, _) = listener.accept().await.expect("accept test connection");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+
+                loop {
+                    let read = stream.read(&mut buffer).await.expect("read request");
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+
+                let response = handler(String::from_utf8_lossy(&request).into_owned());
+                stream
+                    .write_all(&response.into_bytes())
+                    .await
+                    .expect("write response");
+            }
+        });
+
+        (format!("http://{address}"), server)
+    }
+
+    fn loopback_url_allowed_for_tests(url: &Url) -> std::result::Result<SocketAddr, NabError> {
+        match url.host() {
+            Some(url::Host::Ipv4(ip)) if ip.is_loopback() => Ok(SocketAddr::new(
+                IpAddr::V4(ip),
+                url.port_or_known_default().unwrap_or(80),
+            )),
+            Some(url::Host::Domain("localhost")) => Ok(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                url.port_or_known_default().unwrap_or(80),
+            )),
+            _ => ssrf::validate_url(url),
+        }
+    }
+
+    fn loopback_redirect_allowed_for_tests(url: &Url) -> std::result::Result<(), NabError> {
+        match url.scheme() {
+            "http" | "https" => loopback_url_allowed_for_tests(url).map(|_| ()),
+            scheme => Err(NabError::SsrfBlocked(format!(
+                "disallowed redirect scheme '{scheme}'"
+            ))),
+        }
+    }
 
     // ─── Existing tests ──────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_fetch_example() {
+        let (base_url, server) = spawn_test_server(1, |request| {
+            assert!(
+                request.starts_with("GET /example HTTP/1.1\r\n"),
+                "unexpected request: {request}"
+            );
+            TestResponse::ok("stable test body", "text/plain")
+        })
+        .await;
+
+        let client = AcceleratedClient::from_client(
+            reqwest::Client::builder()
+                .http1_only()
+                .brotli(true)
+                .zstd(true)
+                .gzip(true)
+                .deflate(true)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+        let response = client.fetch(&format!("{base_url}/example")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "stable test body");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_compression_negotiation() {
+        let (base_url, server) = spawn_test_server(1, |request| {
+            let request_lower = request.to_ascii_lowercase();
+            let accept_encoding = request_lower
+                .lines()
+                .find(|line| line.starts_with("accept-encoding:"))
+                .expect("request should include accept-encoding header");
+            for encoding in ["gzip", "br", "zstd", "deflate"] {
+                assert!(
+                    accept_encoding.contains(encoding),
+                    "accept-encoding header should advertise {encoding}: {accept_encoding}"
+                );
+            }
+            TestResponse::ok("compression negotiated", "text/plain")
+        })
+        .await;
+
+        let client = AcceleratedClient::from_client(
+            reqwest::Client::builder()
+                .http1_only()
+                .brotli(true)
+                .zstd(true)
+                .gzip(true)
+                .deflate(true)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+        let response = client
+            .fetch(&format!("{base_url}/compression"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "compression negotiated");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires external network access"]
+    async fn test_fetch_example_live() {
         let client = AcceleratedClient::new().unwrap();
         let response = client.fetch("https://httpbin.org/get").await.unwrap();
         assert!(response.status().is_success());
     }
 
     #[tokio::test]
-    async fn test_compression_negotiation() {
+    #[ignore = "requires external network access"]
+    async fn test_compression_negotiation_live() {
         let client = AcceleratedClient::new().unwrap();
         let response = client.fetch("https://httpbin.org/brotli").await.unwrap();
         assert!(response.status().is_success());
@@ -552,41 +753,95 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_safe_allows_public_url() {
+    async fn fetch_safe_follows_redirects_on_test_server() {
+        let (base_url, server) = spawn_test_server(2, |request| {
+            if request.starts_with("GET /redirect HTTP/1.1\r\n") {
+                TestResponse::redirect("/final")
+            } else if request.starts_with("GET /final HTTP/1.1\r\n") {
+                TestResponse::ok("redirect complete", "text/plain")
+            } else {
+                panic!("unexpected request: {request}");
+            }
+        })
+        .await;
+
         let client = AcceleratedClient::new().unwrap();
         let config = SafeFetchConfig::default();
-        let result = client.fetch_safe("https://httpbin.org/get", &config).await;
-        assert!(result.is_ok(), "Public URL should be allowed: {result:?}");
+        let result = client
+            .fetch_safe_with_validators(
+                &format!("{base_url}/redirect"),
+                &config,
+                loopback_url_allowed_for_tests,
+                loopback_redirect_allowed_for_tests,
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "Loopback test server should be allowed by test validator: {result:?}"
+        );
         let resp = result.unwrap();
         assert!(resp.status.is_success());
+        assert_eq!(resp.redirect_count, 1);
+        assert_eq!(resp.text_lossy(), "redirect complete");
+        server.await.unwrap();
     }
 
     #[tokio::test]
     async fn fetch_safe_returns_body() {
+        let (base_url, server) = spawn_test_server(1, |request| {
+            assert!(
+                request.starts_with("GET /body HTTP/1.1\r\n"),
+                "unexpected request: {request}"
+            );
+            TestResponse::ok(r#"{"hello":"world"}"#, "application/json")
+        })
+        .await;
+
         let client = AcceleratedClient::new().unwrap();
         let config = SafeFetchConfig::default();
         let resp = client
-            .fetch_safe("https://httpbin.org/get", &config)
+            .fetch_safe_with_validators(
+                &format!("{base_url}/body"),
+                &config,
+                loopback_url_allowed_for_tests,
+                loopback_redirect_allowed_for_tests,
+            )
             .await
             .unwrap();
         let text = resp.text_lossy();
         assert!(
-            text.contains("httpbin") || text.contains("headers") || text.contains("url"),
-            "Body should contain httpbin response content"
+            text.contains("\"hello\":\"world\""),
+            "Body should contain test server response content"
         );
+        server.await.unwrap();
     }
 
     // ─── Body size cap ───────────────────────────────────────────────────
 
     #[tokio::test]
     async fn fetch_safe_caps_body_size() {
+        let body = "x".repeat(256);
+        let (base_url, server) = spawn_test_server(1, move |request| {
+            assert!(
+                request.starts_with("GET /large HTTP/1.1\r\n"),
+                "unexpected request: {request}"
+            );
+            TestResponse::ok(body.clone().into_bytes(), "text/plain")
+        })
+        .await;
+
         let client = AcceleratedClient::new().unwrap();
         let config = SafeFetchConfig {
             max_body_size: 100, // Very small cap
             ..SafeFetchConfig::default()
         };
         let resp = client
-            .fetch_safe("https://httpbin.org/get", &config)
+            .fetch_safe_with_validators(
+                &format!("{base_url}/large"),
+                &config,
+                loopback_url_allowed_for_tests,
+                loopback_redirect_allowed_for_tests,
+            )
             .await
             .unwrap();
         assert!(
@@ -594,6 +849,7 @@ mod tests {
             "Body should be capped at 100 bytes, got {}",
             resp.body.len()
         );
+        server.await.unwrap();
     }
 
     // ─── accelerated_builder ─────────────────────────────────────────────
