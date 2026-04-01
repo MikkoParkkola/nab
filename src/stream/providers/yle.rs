@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 
+use super::common::last_path_segment_without_query;
 use crate::stream::provider::{EpisodeInfo, SeriesInfo, StreamInfo, StreamProvider};
 
 const YLE_APP_ID: &str = "player_static_prod";
@@ -31,16 +32,25 @@ impl YleProvider {
         // Handle both raw IDs and full URLs
         if url_or_id.starts_with("http") {
             // Extract from URL like https://areena.yle.fi/1-50552121
-            url_or_id
-                .split('/')
-                .next_back()
-                .unwrap_or(url_or_id)
-                .split('?')
-                .next()
+            last_path_segment_without_query(url_or_id)
                 .unwrap_or(url_or_id)
                 .to_string()
         } else {
             url_or_id.to_string()
+        }
+    }
+
+    fn select_ongoing(data: YlePreviewData) -> Result<(YleOngoing, bool)> {
+        if let Some(ongoing) = data.ongoing_ondemand {
+            Ok((ongoing, false))
+        } else if let Some(ongoing) = data.ongoing_channel {
+            Ok((ongoing, true))
+        } else if let Some(ongoing) = data.ongoing_event {
+            Ok((ongoing, true))
+        } else {
+            Err(anyhow!(
+                "No active stream found (may be expired or pending)"
+            ))
         }
     }
 
@@ -230,16 +240,7 @@ impl StreamProvider for YleProvider {
         let program_id = Self::extract_program_id(id);
         let preview = self.fetch_preview(&program_id).await?;
 
-        // Check if live before consuming the data
-        let is_live =
-            preview.data.ongoing_channel.is_some() || preview.data.ongoing_event.is_some();
-
-        let ongoing = preview
-            .data
-            .ongoing_ondemand
-            .or(preview.data.ongoing_channel)
-            .or(preview.data.ongoing_event)
-            .ok_or_else(|| anyhow!("No active stream found (may be expired or pending)"))?;
+        let (ongoing, is_live) = Self::select_ongoing(preview.data)?;
 
         let manifest_url = ongoing
             .manifest_url
@@ -401,6 +402,20 @@ struct YleImage {
 mod tests {
     use super::*;
 
+    fn test_ongoing(manifest_url: &str) -> YleOngoing {
+        YleOngoing {
+            media_id: None,
+            manifest_url: Some(manifest_url.to_string()),
+            title: None,
+            description: None,
+            duration: None,
+            start_time: None,
+            image: None,
+            content_type: None,
+            region: None,
+        }
+    }
+
     #[test]
     fn test_extract_program_id() {
         assert_eq!(YleProvider::extract_program_id("1-50552121"), "1-50552121");
@@ -428,5 +443,41 @@ mod tests {
         assert!(provider.matches("https://areena.yle.fi/1-50552121"));
         assert!(provider.matches("https://arenan.yle.fi/1-50552121"));
         assert!(!provider.matches("https://example.com"));
+    }
+
+    #[test]
+    fn test_select_ongoing_prefers_ondemand_and_marks_not_live() {
+        let (ongoing, is_live) = YleProvider::select_ongoing(YlePreviewData {
+            ongoing_ondemand: Some(test_ongoing("https://vod.example/manifest.m3u8")),
+            ongoing_channel: Some(test_ongoing("https://live.example/channel.m3u8")),
+            ongoing_event: Some(test_ongoing("https://live.example/event.m3u8")),
+            pending_event: None,
+            gone: None,
+        })
+        .expect("ondemand variant should be selected");
+
+        assert_eq!(
+            ongoing.manifest_url.as_deref(),
+            Some("https://vod.example/manifest.m3u8")
+        );
+        assert!(!is_live);
+    }
+
+    #[test]
+    fn test_select_ongoing_marks_live_when_channel_selected() {
+        let (ongoing, is_live) = YleProvider::select_ongoing(YlePreviewData {
+            ongoing_ondemand: None,
+            ongoing_channel: Some(test_ongoing("https://live.example/channel.m3u8")),
+            ongoing_event: None,
+            pending_event: None,
+            gone: None,
+        })
+        .expect("channel variant should be selected");
+
+        assert_eq!(
+            ongoing.manifest_url.as_deref(),
+            Some("https://live.example/channel.m3u8")
+        );
+        assert!(is_live);
     }
 }

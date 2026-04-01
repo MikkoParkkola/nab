@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 
+use super::common::{last_path_segment_without_query, segment_after, strip_query};
 use crate::stream::provider::{EpisodeInfo, SeriesInfo, StreamInfo, StreamProvider};
 
 const NRK_PSAPI_BASE: &str = "https://psapi.nrk.no";
@@ -25,42 +26,30 @@ impl NrkProvider {
     /// URLs: <https://tv.nrk.no/serie/nytt-paa-nytt/sesong/59/episode/7>
     fn extract_program_id(url_or_id: &str) -> String {
         if url_or_id.starts_with("http") {
-            let parts: Vec<&str> = url_or_id.split('/').collect();
-
             // Check for /program/ID pattern
-            for (i, part) in parts.iter().enumerate() {
-                if *part == "program" && i + 1 < parts.len() {
-                    return parts[i + 1]
-                        .split('?')
-                        .next()
-                        .unwrap_or(parts[i + 1])
-                        .to_string();
-                }
+            if let Some(program_id) = segment_after(url_or_id, "program") {
+                return program_id.to_string();
             }
 
             // For series URLs with episode, return the full path for later handling
             if url_or_id.contains("/serie/") && url_or_id.contains("/episode/") {
                 // Return series-id/season/episode format
+                let parts: Vec<&str> = url_or_id.split('/').collect();
                 let serie_idx = parts.iter().position(|&p| p == "serie");
                 if let Some(idx) = serie_idx
-                    && idx + 4 < parts.len()
+                    && idx + 5 < parts.len()
                 {
                     return format!(
                         "{}/s{}/e{}",
                         parts[idx + 1],
-                        parts[idx + 3], // sesong number
-                        parts[idx + 5].split('?').next().unwrap_or(parts[idx + 5])  // episode number
+                        parts[idx + 3],              // sesong number
+                        strip_query(parts[idx + 5])  // episode number
                     );
                 }
             }
 
             // Fallback: last path segment
-            parts
-                .iter()
-                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
-                .unwrap_or(&url_or_id)
-                .split('?')
-                .next()
+            last_path_segment_without_query(url_or_id)
                 .unwrap_or(url_or_id)
                 .to_string()
         } else {
@@ -71,23 +60,9 @@ impl NrkProvider {
     /// Extract series ID from URL
     fn extract_series_id(url_or_id: &str) -> String {
         if url_or_id.starts_with("http") {
-            let parts: Vec<&str> = url_or_id.split('/').collect();
-
-            for (i, part) in parts.iter().enumerate() {
-                if *part == "serie" && i + 1 < parts.len() {
-                    return parts[i + 1]
-                        .split('?')
-                        .next()
-                        .unwrap_or(parts[i + 1])
-                        .to_string();
-                }
-            }
-
-            // Fallback
-            parts
-                .iter()
-                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
-                .unwrap_or(&url_or_id)
+            segment_after(url_or_id, "serie")
+                .or_else(|| last_path_segment_without_query(url_or_id))
+                .unwrap_or(url_or_id)
                 .to_string()
         } else {
             url_or_id.to_string()
@@ -391,12 +366,32 @@ mod tests {
             NrkProvider::extract_program_id("https://tv.nrk.no/program/KMTE50001219"),
             "KMTE50001219"
         );
+        assert_eq!(
+            NrkProvider::extract_program_id(
+                "https://tv.nrk.no/serie/nytt-paa-nytt/sesong/59/episode/7?autoplay=false"
+            ),
+            "nytt-paa-nytt/s59/e7"
+        );
+        assert_eq!(
+            NrkProvider::extract_program_id(
+                "https://tv.nrk.no/serie/nytt-paa-nytt/sesong/59/episode"
+            ),
+            "episode"
+        );
     }
 
     #[test]
     fn test_extract_series_id() {
         assert_eq!(
             NrkProvider::extract_series_id("https://tv.nrk.no/serie/nytt-paa-nytt"),
+            "nytt-paa-nytt"
+        );
+        assert_eq!(
+            NrkProvider::extract_series_id("https://tv.nrk.no/serie/nytt-paa-nytt?autoplay=false"),
+            "nytt-paa-nytt"
+        );
+        assert_eq!(
+            NrkProvider::extract_series_id("https://radio.nrk.no/nytt-paa-nytt?autoplay=false"),
             "nytt-paa-nytt"
         );
     }

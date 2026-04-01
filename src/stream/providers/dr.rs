@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 
+use super::common::{last_path_segment_without_query, segment_after};
 use crate::stream::provider::{EpisodeInfo, SeriesInfo, StreamInfo, StreamProvider};
 
 const DR_MU_API_BASE: &str = "https://www.dr.dk/mu-online/api/1.4";
@@ -26,19 +27,10 @@ impl DrProvider {
     fn extract_program_id(url_or_id: &str) -> String {
         if url_or_id.starts_with("http") {
             // Extract the ID with underscore (slug_id format)
-            let parts: Vec<&str> = url_or_id.split('/').collect();
-
-            // Get the last path segment which contains slug_id
-            let last_segment = parts
-                .iter()
-                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
-                .unwrap_or(&url_or_id);
-
-            // Extract just the numeric ID after underscore
-            let segment = last_segment.split('?').next().unwrap_or(last_segment);
-
             // Return the full slug_id for MU API lookup
-            segment.to_string()
+            last_path_segment_without_query(url_or_id)
+                .unwrap_or(url_or_id)
+                .to_string()
         } else {
             url_or_id.to_string()
         }
@@ -47,24 +39,10 @@ impl DrProvider {
     /// Extract series slug from URL
     fn extract_series_slug(url_or_id: &str) -> String {
         if url_or_id.starts_with("http") {
-            let parts: Vec<&str> = url_or_id.split('/').collect();
-
             // For series URLs: /drtv/serie/gintberg-til-gaes_123456
-            for (i, part) in parts.iter().enumerate() {
-                if *part == "serie" && i + 1 < parts.len() {
-                    return parts[i + 1]
-                        .split('?')
-                        .next()
-                        .unwrap_or(parts[i + 1])
-                        .to_string();
-                }
-            }
-
-            // Fallback
-            parts
-                .iter()
-                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
-                .unwrap_or(&url_or_id)
+            segment_after(url_or_id, "serie")
+                .or_else(|| last_path_segment_without_query(url_or_id))
+                .unwrap_or(url_or_id)
                 .to_string()
         } else {
             url_or_id.to_string()
@@ -354,6 +332,18 @@ mod tests {
         assert_eq!(
             DrProvider::extract_series_slug(
                 "https://www.dr.dk/drtv/serie/gintberg-til-gaes_123456"
+            ),
+            "gintberg-til-gaes_123456"
+        );
+        assert_eq!(
+            DrProvider::extract_series_slug(
+                "https://www.dr.dk/drtv/serie/gintberg-til-gaes_123456?foo=bar"
+            ),
+            "gintberg-til-gaes_123456"
+        );
+        assert_eq!(
+            DrProvider::extract_series_slug(
+                "https://www.dr.dk/drtv/gintberg-til-gaes_123456?foo=bar"
             ),
             "gintberg-til-gaes_123456"
         );

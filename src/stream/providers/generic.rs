@@ -7,6 +7,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 
+use super::common::strip_query;
 use crate::stream::provider::{SeriesInfo, StreamInfo, StreamProvider};
 
 /// Provider for direct HLS `.m3u8` and DASH `.mpd` URLs.
@@ -33,7 +34,7 @@ impl StreamProvider for GenericHlsProvider {
 
     fn matches(&self, url: &str) -> bool {
         // Strip query params for extension check
-        let path = url.split('?').next().unwrap_or(url);
+        let path = strip_query(url);
         std::path::Path::new(path)
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("mpd"))

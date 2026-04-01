@@ -1,5 +1,6 @@
 //! Streaming service providers
 
+mod common;
 pub mod dr;
 pub mod generic;
 pub mod nrk;

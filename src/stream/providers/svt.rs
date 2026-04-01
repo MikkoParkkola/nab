@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 
+use super::common::{last_path_segment_without_query, segment_after, strip_query};
 use crate::stream::provider::{EpisodeInfo, SeriesInfo, StreamInfo, StreamProvider};
 
 const SVT_API_BASE: &str = "https://api.svt.se/video";
@@ -26,27 +27,9 @@ impl SvtProvider {
     fn extract_video_id(url_or_id: &str) -> String {
         if url_or_id.starts_with("http") {
             // Parse SVT Play URLs
-            let parts: Vec<&str> = url_or_id.split('/').collect();
-
             // Find the video ID - it's after /video/ or the path segment
-            for (i, part) in parts.iter().enumerate() {
-                if *part == "video" && i + 1 < parts.len() {
-                    // Return the ID after /video/
-                    return parts[i + 1]
-                        .split('?')
-                        .next()
-                        .unwrap_or(parts[i + 1])
-                        .to_string();
-                }
-            }
-
-            // Fallback: last meaningful path segment
-            parts
-                .iter()
-                .rfind(|p| !p.is_empty() && !p.starts_with('?'))
-                .unwrap_or(&url_or_id)
-                .split('?')
-                .next()
+            segment_after(url_or_id, "video")
+                .or_else(|| last_path_segment_without_query(url_or_id))
                 .unwrap_or(url_or_id)
                 .to_string()
         } else {
@@ -61,10 +44,7 @@ impl SvtProvider {
             url_or_id
                 .split('/')
                 .rfind(|p| !p.is_empty() && !p.starts_with('?') && *p != "www.svtplay.se")
-                .unwrap_or(url_or_id)
-                .split('?')
-                .next()
-                .unwrap_or(url_or_id)
+                .map_or(url_or_id, strip_query)
                 .to_string()
         } else {
             url_or_id.to_string()
@@ -344,6 +324,10 @@ mod tests {
         assert_eq!(SvtProvider::extract_series_slug("rapport"), "rapport");
         assert_eq!(
             SvtProvider::extract_series_slug("https://www.svtplay.se/rapport"),
+            "rapport"
+        );
+        assert_eq!(
+            SvtProvider::extract_series_slug("https://www.svtplay.se/rapport?foo=bar"),
             "rapport"
         );
     }
