@@ -14,6 +14,7 @@
 
 use anyhow::{Context, Result};
 use pdfium_render::prelude::*;
+use std::sync::{Mutex, OnceLock};
 
 use super::table::Table;
 use super::types::{PdfChar, TextLine};
@@ -22,6 +23,9 @@ use super::{ContentHandler, ConversionResult};
 /// Maximum PDF input size (50 MB). Prevents excessive memory usage
 /// from accidentally huge or malicious PDFs.
 const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;
+
+static PDFIUM_INSTANCE: OnceLock<std::result::Result<Pdfium, String>> = OnceLock::new();
+static PDFIUM_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
 
 /// Converts PDF responses to markdown with table detection.
 #[derive(Default)]
@@ -37,6 +41,13 @@ impl PdfHandler {
     ///
     /// Searches: standard dlopen paths, /usr/local/lib, homebrew, pypdfium2.
     fn load_pdfium() -> Result<Pdfium> {
+        PDFIUM_INSTANCE
+            .get_or_init(|| Self::init_pdfium().map_err(|err| err.to_string()))
+            .clone()
+            .map_err(anyhow::Error::msg)
+    }
+
+    fn init_pdfium() -> Result<Pdfium> {
         // Try standard dlopen first (respects DYLD_LIBRARY_PATH)
         if let Ok(bindings) =
             Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(""))
@@ -114,7 +125,6 @@ impl PdfHandler {
     /// Extract all characters with their bounding rectangles from the document.
     ///
     /// Used for table detection which needs positional data.
-    #[allow(deprecated)] // PdfRect field access deprecated in 0.8.28, removed in 0.9.0
     fn extract_chars(bytes: &[u8]) -> Result<(Vec<PdfChar>, usize)> {
         let pdfium = Self::load_pdfium()?;
         let doc = match pdfium.load_pdf_from_byte_slice(bytes, None) {
@@ -136,10 +146,10 @@ impl PdfHandler {
                 if let (Some(unicode_ch), Ok(rect)) = (ch.unicode_char(), ch.tight_bounds()) {
                     chars.push(PdfChar {
                         ch: unicode_ch,
-                        x: rect.left.value,
-                        y: rect.bottom.value,
-                        width: (rect.right.value - rect.left.value).abs(),
-                        height: (rect.top.value - rect.bottom.value).abs(),
+                        x: rect.left().value,
+                        y: rect.bottom().value,
+                        width: (rect.right().value - rect.left().value).abs(),
+                        height: (rect.top().value - rect.bottom().value).abs(),
                         page: page_idx,
                     });
                 }
@@ -290,6 +300,13 @@ impl ContentHandler for PdfHandler {
                 MAX_PDF_SIZE as f64 / (1024.0 * 1024.0),
             );
         }
+
+        // pdfium-render 0.9 promotes bindings to a global singleton, and our
+        // dynamic-library environment is not stable under concurrent loads.
+        // Serialize PDFium use so optional PDF conversion stays reliable.
+        let _pdfium_guard = PDFIUM_RUNTIME_LOCK
+            .lock()
+            .expect("pdfium runtime lock poisoned");
 
         // Primary path: use pdfium's built-in text reconstruction.
         // This handles font encoding, ligatures, and character ordering correctly.

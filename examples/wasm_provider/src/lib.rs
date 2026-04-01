@@ -52,6 +52,8 @@ wit_bindgen::generate!({
     world: "provider",
 });
 
+use exports::nab::provider::extractor::Article;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Guest implementation
 // ─────────────────────────────────────────────────────────────────────────────

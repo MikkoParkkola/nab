@@ -43,18 +43,50 @@ pub(super) const SCHEMA_VERSION_WITH_DOMAIN_TAG: u32 = 24;
 /// This is the exact derivation used by all Chromium-based browsers on macOS:
 /// `PBKDF2(password, salt="saltysalt", iterations=1003, key_len=16, prf=HMAC-SHA1)`
 pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
-    use pbkdf2::{hmac::Hmac, pbkdf2};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha1::Sha1;
 
-    let mut key = [0u8; CHROME_KEY_LEN];
-    pbkdf2::<Hmac<Sha1>>(
-        password,
-        CHROME_PBKDF2_SALT,
-        CHROME_PBKDF2_ITERATIONS,
-        &mut key,
-    )
-    .map_err(|e| anyhow::anyhow!("PBKDF2 key derivation failed: {e}"))?;
-    Ok(key.to_vec())
+    anyhow::ensure!(
+        CHROME_PBKDF2_ITERATIONS > 0,
+        "PBKDF2 key derivation requires at least one iteration"
+    );
+
+    let mut key = vec![0u8; CHROME_KEY_LEN];
+    let mut offset = 0;
+    let mut block_index = 1u32;
+
+    while offset < key.len() {
+        let mut salted_block = Vec::with_capacity(CHROME_PBKDF2_SALT.len() + 4);
+        salted_block.extend_from_slice(CHROME_PBKDF2_SALT);
+        salted_block.extend_from_slice(&block_index.to_be_bytes());
+
+        let mut mac = Hmac::<Sha1>::new_from_slice(password)
+            .map_err(|e| anyhow::anyhow!("HMAC key setup failed: {e}"))?;
+        mac.update(&salted_block);
+
+        let mut block = mac.finalize().into_bytes();
+        let mut u = block.clone();
+
+        for _ in 1..CHROME_PBKDF2_ITERATIONS {
+            let mut mac = Hmac::<Sha1>::new_from_slice(password)
+                .map_err(|e| anyhow::anyhow!("HMAC key setup failed: {e}"))?;
+            mac.update(&u);
+            u = mac.finalize().into_bytes();
+
+            for (lhs, rhs) in block.iter_mut().zip(u.iter()) {
+                *lhs ^= *rhs;
+            }
+        }
+
+        let take = (key.len() - offset).min(block.len());
+        key[offset..offset + take].copy_from_slice(&block[..take]);
+        offset += take;
+        block_index = block_index
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("PBKDF2 block index overflow"))?;
+    }
+
+    Ok(key)
 }
 
 // ─── Decryption ───────────────────────────────────────────────────────────────

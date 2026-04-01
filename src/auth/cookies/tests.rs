@@ -115,8 +115,9 @@ fn derive_cookie_key_known_vector() {
     // WHEN: key is derived with Chrome parameters
     let key = derive_cookie_key(password).expect("key derivation must succeed");
 
-    // THEN: key is 16 bytes
+    // THEN: key matches the browser_cookie3-compatible reference bytes
     assert_eq!(key.len(), CHROME_KEY_LEN, "derived key must be 16 bytes");
+    assert_eq!(hex::encode(key), "d9a09d499b4e1b7461f28e67972c6dbd");
 }
 
 #[test]

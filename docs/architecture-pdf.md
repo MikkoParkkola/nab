@@ -595,7 +595,7 @@ pdf = ["pdfium-render"]                    # NEW: opt-in PDF support
 # ... existing deps ...
 
 # PDF extraction (optional - adds ~4MB to binary)
-pdfium-render = { version = "0.8", optional = true }
+pdfium-render = { version = "0.9", optional = true }
 ```
 
 **Usage**:
