@@ -340,68 +340,16 @@ async fn recover_nextjs_content_chunks(
     page_url: &str,
     format: crate::OutputFormat,
 ) -> Option<String> {
-    use nab::content::spa_extract;
-
-    let script_urls = spa_extract::discover_nextjs_content_chunks(html, page_url);
-    if script_urls.len() < 2 {
-        return None;
-    }
-
-    let webpack_url = &script_urls[0];
-    let page_url_script = &script_urls[1];
-
     if matches!(format, crate::OutputFormat::Full) {
         eprintln!("   Attempting Next.js content chunk recovery...");
     }
-
-    // Fetch webpack runtime + page component in parallel
-    let (webpack_resp, page_resp) =
-        tokio::join!(client.fetch(webpack_url), client.fetch(page_url_script),);
-
-    let webpack_js = webpack_resp.ok()?.text().await.ok()?;
-    let page_js = page_resp.ok()?.text().await.ok()?;
-
-    // Extract the origin from the page URL
-    let origin = url::Url::parse(page_url)
-        .ok()
-        .map(|u| u.origin().unicode_serialization())?;
-
-    // Extract the slug from the page URL for targeted chunk resolution
-    let slug = url::Url::parse(page_url).ok().and_then(|u| {
-        u.path_segments()
-            .and_then(|mut segs| segs.next_back().map(String::from))
-    });
-    let slug_ref = slug.as_deref();
-
-    // Resolve content chunk URLs, filtering to the current page's slug
-    let chunk_urls =
-        spa_extract::resolve_content_chunk_urls_for_slug(&webpack_js, &page_js, &origin, slug_ref);
-    if chunk_urls.is_empty() {
-        tracing::debug!("No content chunk URLs resolved from webpack runtime");
-        return None;
+    let recovered = nab::util::recover_nextjs_chunks(client, html, page_url).await;
+    if matches!(format, crate::OutputFormat::Full)
+        && let Some(content) = recovered.as_ref()
+    {
+        eprintln!("   Recovered {} chars from content chunk", content.len());
     }
-
-    // Fetch content chunks and try to extract content from each
-    for chunk_url in &chunk_urls {
-        tracing::debug!("Fetching content chunk: {chunk_url}");
-        let fetch_result = client.fetch(chunk_url).await;
-        match fetch_result {
-            Ok(resp) => match resp.text().await {
-                Ok(chunk_js) => {
-                    if let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js) {
-                        if matches!(format, crate::OutputFormat::Full) {
-                            eprintln!("   Recovered {} chars from content chunk", content.len());
-                        }
-                        return Some(content);
-                    }
-                }
-                Err(e) => tracing::debug!("Chunk text() error: {e}"),
-            },
-            Err(e) => tracing::debug!("Chunk fetch error: {e}"),
-        }
-    }
-
-    None
+    recovered
 }
 
 /// Conversion result bundled with quality metadata for the output layer.

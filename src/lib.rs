@@ -57,6 +57,9 @@ pub mod session;
 pub mod site;
 pub mod ssrf;
 pub mod stream;
+/// Internal implementation modules — not stable public API.
+#[doc(hidden)]
+pub mod util;
 pub mod webmcp;
 pub mod websocket;
 

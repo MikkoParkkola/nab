@@ -10,21 +10,13 @@ use std::time::Instant;
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
 
 use nab::content::ContentRouter;
-use nab::{AcceleratedClient, CookieSource, SafeFetchConfig};
+use nab::{AcceleratedClient, SafeFetchConfig};
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 
 /// Resolve cookie header for a URL from the requested browser.
 pub(crate) fn resolve_cookie_header(url: &str, browser: Option<&str>) -> String {
-    let Some(browser) = browser else {
-        return String::new();
-    };
-    let source = CookieSource::from_browser_name(browser);
-    let domain = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(std::string::ToString::to_string))
-        .unwrap_or_default();
-    source.get_cookie_header(&domain).unwrap_or_default()
+    nab::util::resolve_cookie_header_for_url(url, browser)
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -180,56 +172,7 @@ pub(crate) async fn recover_nextjs_chunks(
     html: &str,
     page_url: &str,
 ) -> Option<String> {
-    use nab::content::spa_extract;
-
-    if !spa_extract::is_nextjs_metadata_only(html) {
-        return None;
-    }
-
-    let script_urls = spa_extract::discover_nextjs_content_chunks(html, page_url);
-    if script_urls.len() < 2 {
-        return None;
-    }
-
-    tracing::debug!("Attempting Next.js content chunk recovery");
-
-    let (webpack_resp, page_resp) =
-        tokio::join!(client.fetch(&script_urls[0]), client.fetch(&script_urls[1]),);
-
-    let webpack_js = webpack_resp.ok()?.text().await.ok()?;
-    let page_js = page_resp.ok()?.text().await.ok()?;
-
-    let origin = url::Url::parse(page_url)
-        .ok()
-        .map(|u| u.origin().unicode_serialization())?;
-
-    // Extract slug from URL for targeted chunk resolution
-    let slug = url::Url::parse(page_url).ok().and_then(|u| {
-        u.path_segments()
-            .and_then(|mut segs| segs.next_back().map(String::from))
-    });
-    let chunk_urls = spa_extract::resolve_content_chunk_urls_for_slug(
-        &webpack_js,
-        &page_js,
-        &origin,
-        slug.as_deref(),
-    );
-
-    for chunk_url in &chunk_urls {
-        tracing::debug!("Fetching content chunk: {chunk_url}");
-        if let Ok(resp) = client.fetch(chunk_url).await
-            && let Ok(chunk_js) = resp.text().await
-            && let Some(content) = spa_extract::extract_jsx_text_content(&chunk_js)
-        {
-            tracing::info!(
-                "Recovered {} chars from Next.js content chunk",
-                content.len()
-            );
-            return Some(content);
-        }
-    }
-
-    None
+    nab::util::recover_nextjs_chunks(client, html, page_url).await
 }
 
 // ─── Output formatting helpers ────────────────────────────────────────────────

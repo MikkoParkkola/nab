@@ -39,19 +39,14 @@ pub use validate::cmd_validate;
 /// Replaces the 8× repeated `url::Url::parse(...).ok().and_then(|u| u.host_str().map(…))`
 /// pattern scattered across `cmd/` subcommands.
 pub fn extract_domain(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned))
-        .unwrap_or_default()
+    nab::util::extract_domain(url)
 }
 
 /// Build a `Referer` header value from a URL (scheme + host + "/").
 ///
 /// Returns `None` if the URL cannot be parsed.
 pub fn build_referer(url: &str) -> Option<String> {
-    url::Url::parse(url)
-        .ok()
-        .map(|parsed| format!("{}://{}/", parsed.scheme(), parsed.host_str().unwrap_or("")))
+    nab::util::build_referer(url)
 }
 
 /// Resolve browser name from cookie flag value.
@@ -87,10 +82,6 @@ pub fn non_empty(s: &str) -> Option<&str> {
 /// and `get_cookie_header`. Returns an empty string when cookies are disabled or
 /// unavailable.
 pub fn resolve_cookie_header(cookies: &str, domain: &str) -> String {
-    resolve_browser_name(cookies)
-        .map(|browser| {
-            let source = resolve_cookie_source(&browser);
-            source.get_cookie_header(domain).unwrap_or_default()
-        })
-        .unwrap_or_default()
+    let browser = resolve_browser_name(cookies);
+    nab::util::resolve_cookie_header_for_domain(domain, browser.as_deref())
 }
