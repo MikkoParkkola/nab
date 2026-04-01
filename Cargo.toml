@@ -83,20 +83,10 @@ rquickjs = { version = "0.11", features = [
 ] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AUTHENTICATION - Passkeys/WebAuthn (1Password's open-source library)
+# AUTHENTICATION - Passkeys/WebAuthn via 1Password CLI metadata + browser handoff
 # ═══════════════════════════════════════════════════════════════════════════════
-passkey = "0.5"                     # 1Password's WebAuthn client
-passkey-client = "0.5"              # Passkey client implementation
-passkey-types = "0.5"               # Type definitions
-coset = "0.4"                       # COSE (for WebAuthn)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# BROWSER FINGERPRINT SPOOFING
-# ═══════════════════════════════════════════════════════════════════════════════
-# fake-useragent removed - we have custom fingerprinting in fingerprint.rs
 rand = "0.10"                           # Randomization for fingerprints
 regex = "1"                             # OTP pattern extraction
-once_cell = "1.19"                      # Lazy static for version loading
 chrono = { version = "0.4", features = ["serde"] }  # Date/time for version staleness
 
 # ═══════════════════════════════════════════════════════════════════════════════

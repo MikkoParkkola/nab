@@ -614,7 +614,7 @@ Key external dependencies:
 - **readability**: Mozilla-style article extraction
 - **html2md**: HTML to Markdown conversion
 - **addr**: eTLD+1 domain extraction via Mozilla's public suffix list
-- **passkey / passkey-client**: WebAuthn/passkey support (1Password)
+- **1Password CLI (`op`)**: Credential lookup, TOTP retrieval, and passkey discovery via subprocess integration
 - **tokio**: Async runtime
 - **chromiumoxide**: Chrome DevTools Protocol for browser automation (feature-gated)
 - **pdfium-render**: PDF extraction via Chromium's pdfium library (feature-gated)

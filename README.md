@@ -80,7 +80,7 @@ nab ships with anti-fingerprinting by default: realistic TLS fingerprints, brows
 - **PDF Extraction** — PDF-to-markdown with heading and table detection (requires pdfium).
 - **Browser Cookie Auth** — Auto-detects your default browser (Brave, Chrome, Firefox, Safari, Edge, Dia) and injects session cookies. Zero config.
 - **1Password Integration** — Credential lookup, auto-login with CSRF handling, TOTP/MFA support.
-- **Passkey/WebAuthn** — Native passkey authentication via 1Password's open-source library.
+- **Passkey/WebAuthn** — Detects passkey flows, surfaces 1Password passkey metadata, and hands off final signing to the browser when needed.
 - **HTTP/3 (QUIC)** — 0-RTT connection resumption, HTTP/2 multiplexing, TLS 1.3.
 - **Anti-Fingerprinting** — Realistic Chrome/Firefox/Safari browser profiles to avoid bot detection.
 - **JS Engine (QuickJS)** — Lightweight embedded JavaScript for pages that need it, without a full browser.
