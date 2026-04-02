@@ -159,38 +159,92 @@ pub fn extract_inline_script_json(html: &str) -> Option<String> {
     ];
 
     const MIN_CONTENT_LEN: usize = 200;
+    let document = scraper::Html::parse_document(html);
+    let script_sel = scraper::Selector::parse("script").ok()?;
 
-    for pattern in PATTERNS {
-        if let Some(start_idx) = html.find(pattern) {
-            // Find the '=' after the variable name
-            let after_pattern = start_idx + pattern.len();
-            let remaining = &html[after_pattern..];
+    for script in document.select(&script_sel) {
+        if script.value().attr("src").is_some() {
+            continue;
+        }
 
-            // Skip whitespace and find '='
-            let eq_offset = remaining.find('=')?;
-            let after_eq = &remaining[eq_offset + 1..];
+        let script_text = script.text().collect::<String>();
+        if script_text.trim().is_empty() {
+            continue;
+        }
 
-            // Find the start of the JSON object or array
-            let json_offset = after_eq.chars().position(|c| c == '{' || c == '[')?;
-            let json_start = &after_eq[json_offset..];
-
-            // Extract balanced JSON
-            if let Some(json_str) = extract_balanced_json(json_start)
-                && let Ok(data) = serde_json::from_str::<serde_json::Value>(json_str)
+        for pattern in PATTERNS {
+            if let Some(content) =
+                extract_content_from_named_inline_assignment(&script_text, pattern, MIN_CONTENT_LEN)
             {
-                // Try Next.js structure (props.pageProps)
-                if let Some(content) = extract_nextjs_content(&data) {
-                    return Some(content);
-                }
-                // Try generic longest-string search on the entire payload
-                if let Some(longest) = find_longest_string(&data, MIN_CONTENT_LEN) {
-                    return Some(render_spa_content(&longest));
-                }
+                return Some(content);
             }
+        }
+
+        if let Some(content) =
+            extract_content_from_generic_inline_assignments(&script_text, MIN_CONTENT_LEN)
+        {
+            return Some(content);
         }
     }
 
     None
+}
+
+fn extract_content_from_named_inline_assignment(
+    script_text: &str,
+    pattern: &str,
+    min_content_len: usize,
+) -> Option<String> {
+    let start_idx = script_text.find(pattern)?;
+    let after_pattern = start_idx + pattern.len();
+    let remaining = &script_text[after_pattern..];
+    let eq_offset = remaining.find('=')?;
+    let after_eq = &remaining[eq_offset + 1..];
+    let json_offset = after_eq.chars().position(|c| c == '{' || c == '[')?;
+    let json_start = &after_eq[json_offset..];
+    extract_content_from_json_slice(json_start, min_content_len)
+}
+
+fn extract_content_from_generic_inline_assignments(
+    script_text: &str,
+    min_content_len: usize,
+) -> Option<String> {
+    let mut best: Option<String> = None;
+    let mut search_from = 0;
+
+    while let Some(eq_offset) = script_text[search_from..].find('=') {
+        let after_eq_idx = search_from + eq_offset + 1;
+        let after_eq = &script_text[after_eq_idx..];
+        let Some(json_offset) = after_eq.chars().position(|c| c == '{' || c == '[') else {
+            search_from = after_eq_idx;
+            continue;
+        };
+
+        let json_start_idx = after_eq_idx + json_offset;
+        if let Some(content) =
+            extract_content_from_json_slice(&script_text[json_start_idx..], min_content_len)
+        {
+            let current_best_len = best.as_deref().map_or(0, str::len);
+            if content.len() > current_best_len {
+                best = Some(content);
+            }
+        }
+
+        search_from = json_start_idx + 1;
+    }
+
+    best
+}
+
+fn extract_content_from_json_slice(json_start: &str, min_content_len: usize) -> Option<String> {
+    let json_str = extract_balanced_json(json_start)?;
+    let data = serde_json::from_str::<serde_json::Value>(json_str).ok()?;
+
+    if let Some(content) = extract_nextjs_content(&data) {
+        return Some(content);
+    }
+
+    find_longest_string(&data, min_content_len).map(|content| render_spa_content(&content))
 }
 
 /// Extract a balanced JSON object or array from the beginning of a string.

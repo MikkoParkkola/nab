@@ -330,6 +330,66 @@ fn extract_inline_script_initial_state_assignment() {
     );
 }
 
+#[test]
+fn extract_inline_script_custom_bootstrap_assignment_uses_generic_scan() {
+    let content = "A long article body embedded in a custom SPA bootstrap payload. \
+        The framework does not use one of nab's built-in global names, but the \
+        inline script still contains a valid JSON assignment with substantial \
+        article content that should be recovered by the generic scan.";
+
+    let state = serde_json::json!({
+        "bootstrap": {
+            "richContent": content,
+            "title": "Custom Bootstrap Test"
+        }
+    });
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<body>
+    <div id="app"></div>
+    <script>window.__ICE_APP_CONTEXT__ = {state};</script>
+</body>
+</html>"#
+    );
+
+    let result = extract_inline_script_json(&html);
+    assert!(
+        result.is_some(),
+        "should extract content from an unknown inline bootstrap assignment"
+    );
+    let content = result.unwrap();
+    assert!(
+        content.contains("custom SPA bootstrap payload") || content.contains("generic scan"),
+        "expected custom bootstrap content, got: {content}"
+    );
+}
+
+#[test]
+fn extract_inline_script_generic_scan_ignores_csr_shell_without_content() {
+    let html = r#"<!DOCTYPE html>
+<html>
+<body>
+    <div id="ice-container"></div>
+    <script>
+        !(function () {
+            var a = window.__ICE_APP_CONTEXT__ || {};
+            var b = {"appData":null,"loaderData":{"layout":{"pageConfig":{}},"home":{"pageConfig":{}}},"routePath":"/home","matchedIds":["layout","home"],"documentOnly":true,"renderMode":"CSR"};
+            for (var k in a) { b[k] = a[k]; }
+            window.__ICE_APP_CONTEXT__ = b;
+        })();
+    </script>
+</body>
+</html>"#;
+
+    let result = extract_inline_script_json(html);
+    assert!(
+        result.is_none(),
+        "qwen-style CSR shell should not be mistaken for article content"
+    );
+}
+
 // ── Balanced JSON extractor ─────────────────────────────────────────────────
 
 #[test]
