@@ -7,10 +7,11 @@
 //!
 //! 1. **SPA data extraction** (Next.js/Nuxt): Extract from `__NEXT_DATA__` / `__NUXT__` JSON
 //! 2. **Pre-strip hidden sections**: Remove `<details>`, `<noscript>`, `<dialog>` (browser-hidden)
-//! 3. **Pre-strip noise sections**: Remove advisories, cookie banners, vulnerability text
-//! 4. **Pre-strip comments**: Remove comment threads, Disqus, discussion sections
-//! 5. **Readability extraction** (default): Extract main article content, strip boilerplate
-//! 6. **Fallback to raw html2md**: If extraction fails, use raw HTML with basic filtering
+//! 3. **Pre-strip embedded code**: Remove `<script>`, `<style>`, `<template>` noise
+//! 4. **Pre-strip noise sections**: Remove advisories, cookie banners, vulnerability text
+//! 5. **Pre-strip comments**: Remove comment threads, Disqus, discussion sections
+//! 6. **Readability extraction** (default): Extract main article content, strip boilerplate
+//! 7. **Fallback to raw html2md**: If extraction fails, use cleaned HTML with basic filtering
 //!
 //! The readability step significantly improves output quality by removing navigation,
 //! footers, ads, and other noise before markdown conversion.
@@ -71,9 +72,9 @@ impl HtmlHandler {
 /// # Pipeline
 ///
 /// 1. **SPA extraction**: Try `__NEXT_DATA__` / `__NUXT_DATA__` for React/Vue SPAs
-/// 2. **Pre-strip**: Hidden elements → noise sections → comment sections
+/// 2. **Pre-strip**: Hidden elements → embedded code → noise sections → comment sections
 /// 3. **Readability extraction**: Extract article content from cleaned HTML
-/// 4. **Fallback**: If extraction fails, use raw HTML with basic filtering
+/// 4. **Fallback**: If extraction fails, use cleaned HTML with basic filtering
 /// 5. **Thin-content warning**: Emit a tracing warning when output is disproportionately
 ///    small vs. the HTML body size, indicating JS-rendered content may be missing.
 ///
@@ -89,8 +90,9 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
     }
 
     // Pre-strip noise before readability to prevent non-article content
-    // from dominating the scoring. Order: hidden elements → noise sections → comments.
+    // from dominating the scoring. Order: hidden elements → embedded code → noise sections → comments.
     let cleaned_html = strip_hidden_sections(html);
+    let cleaned_html = strip_embedded_data_sections(&cleaned_html);
     let cleaned_html = strip_noise_sections(&cleaned_html);
     let cleaned_html = strip_comment_sections(&cleaned_html);
 
@@ -137,8 +139,8 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
-    // Re-try SPA extraction on the *original* (uncleaned) HTML — the initial
-    // attempt at line 78 may have missed embedded JSON that only appears in
+    // Re-try SPA extraction on the *original* (uncleaned) HTML — the first
+    // extraction pass may have missed embedded JSON that only appears in
     // deeply nested script tags or variable assignments.
     if is_thin_content(html.len(), markdown.len()) {
         tracing::debug!(
@@ -179,11 +181,11 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 /// Returns `true` when the markdown is disproportionately small compared to
 /// the raw HTML. This typically indicates JS-rendered content not captured.
 ///
-/// Thresholds: HTML >= 5 KB, markdown < 200 chars, ratio < 2%.
+/// Thresholds: HTML >= 5 KB, markdown < 800 chars, ratio < 2%.
 #[must_use]
 fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
     const MIN_HTML_LEN: usize = 5_000;
-    const MIN_MARKDOWN_LEN: usize = 200;
+    const MIN_MARKDOWN_LEN: usize = 800;
     const THIN_RATIO_PERCENT: usize = 2;
 
     if html_len < MIN_HTML_LEN || markdown_len >= MIN_MARKDOWN_LEN {
@@ -199,6 +201,9 @@ fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
 /// Jina reader (`r.jina.ai`) renders JavaScript and returns clean markdown.
 /// This is used when local extraction produces suspiciously thin content,
 /// indicating the page relies on client-side rendering.
+///
+/// This helper performs blocking network I/O. Async fetch paths should call it
+/// only from blocking conversion contexts.
 ///
 /// Returns `Some(markdown)` if Jina returns substantial content (> 200 chars),
 /// `None` on any failure (network error, empty response, timeout).
@@ -316,27 +321,50 @@ pub fn strip_hidden_sections(html: &str) -> String {
         .map(|el| el.id())
         .collect();
 
-    if hidden_ids.is_empty() {
-        return html.to_string();
+    rebuild_document_excluding(&document, html, &hidden_ids)
+}
+
+/// Remove embedded code and templating payloads before fallback extraction.
+///
+/// JS-heavy pages often ship large inline bootstrap blobs in `<script>` tags or
+/// templating payloads in `<template>` blocks. When readability cannot recover the
+/// real article body, `html2md` may otherwise emit those blobs as markdown, which
+/// prevents the thin-content heuristic from reaching the existing Jina fallback.
+///
+/// Preserve Schema.org JSON-LD scripts: they are structured content rather than
+/// bootstrap noise, and some pages rely on them as the only meaningful fallback.
+#[must_use]
+pub fn strip_embedded_data_sections(html: &str) -> String {
+    let document = scraper::Html::parse_document(html);
+
+    let mut embedded_ids = std::collections::HashSet::new();
+
+    if let Ok(non_script_sel) = scraper::Selector::parse("style, template") {
+        embedded_ids.extend(document.select(&non_script_sel).map(|el| el.id()));
     }
 
-    // Rebuild: collect body children, skipping hidden elements
-    let body_selector = scraper::Selector::parse("body").ok();
-    let body_html = body_selector
-        .as_ref()
-        .and_then(|sel| document.select(sel).next())
-        .map_or_else(
-            || html.to_string(),
-            |body| serialize_children_excluding(&document, body.id(), &hidden_ids),
+    if let Ok(script_sel) = scraper::Selector::parse("script") {
+        embedded_ids.extend(
+            document
+                .select(&script_sel)
+                .filter(|script| !is_jsonld_script(script))
+                .map(|script| script.id()),
         );
+    }
 
-    let head_html = scraper::Selector::parse("head")
-        .ok()
-        .and_then(|sel| document.select(&sel).next())
-        .map(|h| h.html())
-        .unwrap_or_default();
+    rebuild_document_excluding(&document, html, &embedded_ids)
+}
 
-    format!("<html>{head_html}<body>{body_html}</body></html>")
+fn is_jsonld_script(script: &scraper::ElementRef<'_>) -> bool {
+    script
+        .value()
+        .attr("type")
+        .and_then(|script_type| script_type.split(';').next())
+        .is_some_and(|script_type| {
+            script_type
+                .trim()
+                .eq_ignore_ascii_case("application/ld+json")
+        })
 }
 
 /// Recursively serialize a subtree, skipping nodes whose IDs are in `exclude`.
@@ -386,6 +414,39 @@ fn serialize_children_excluding(
     }
 
     out
+}
+
+/// Rebuild a document while excluding a set of node IDs from both `<head>` and `<body>`.
+fn rebuild_document_excluding(
+    document: &scraper::Html,
+    original_html: &str,
+    exclude: &std::collections::HashSet<ego_tree::NodeId>,
+) -> String {
+    if exclude.is_empty() {
+        return original_html.to_string();
+    }
+
+    let head = scraper::Selector::parse("head")
+        .ok()
+        .and_then(|sel| document.select(&sel).next());
+    let body = scraper::Selector::parse("body")
+        .ok()
+        .and_then(|sel| document.select(&sel).next());
+
+    let Some(body) = body else {
+        return original_html.to_string();
+    };
+
+    let head_html = head
+        .map(|head| serialize_children_excluding(document, head.id(), exclude))
+        .unwrap_or_default();
+    let body_html = serialize_children_excluding(document, body.id(), exclude);
+
+    if head_html.is_empty() {
+        format!("<html><body>{body_html}</body></html>")
+    } else {
+        format!("<html><head>{head_html}</head><body>{body_html}</body></html>")
+    }
 }
 
 /// Returns `true` for HTML void elements that must not have a closing tag.
@@ -468,27 +529,7 @@ pub fn strip_noise_sections(html: &str) -> String {
         }
     }
 
-    if noise_ids.is_empty() {
-        return html.to_string();
-    }
-
-    // Rebuild HTML excluding noise nodes (deep recursive)
-    let body_selector = scraper::Selector::parse("body").ok();
-    let body_html = body_selector
-        .as_ref()
-        .and_then(|sel| document.select(sel).next())
-        .map_or_else(
-            || html.to_string(),
-            |body| serialize_children_excluding(&document, body.id(), &noise_ids),
-        );
-
-    let head_html = scraper::Selector::parse("head")
-        .ok()
-        .and_then(|sel| document.select(&sel).next())
-        .map(|h| h.html())
-        .unwrap_or_default();
-
-    format!("<html>{head_html}<body>{body_html}</body></html>")
+    rebuild_document_excluding(&document, html, &noise_ids)
 }
 
 /// Remove comment section DOM nodes from HTML before readability processing.
@@ -719,7 +760,10 @@ pub fn is_boilerplate(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_thin_content, strip_hidden_sections, strip_noise_sections};
+    use super::{
+        html_to_markdown_with_url, is_thin_content, strip_embedded_data_sections,
+        strip_hidden_sections, strip_noise_sections,
+    };
 
     #[test]
     fn is_thin_content_returns_false_for_small_html_below_threshold() {
@@ -732,10 +776,10 @@ mod tests {
 
     #[test]
     fn is_thin_content_returns_false_for_adequate_markdown() {
-        // GIVEN: large HTML but markdown of 500 chars (>= 200 minimum)
+        // GIVEN: large HTML but markdown of 900 chars (>= 800 minimum)
         // WHEN: checking thin content
-        let result = is_thin_content(10_000, 500);
-        // THEN: not considered thin (markdown exceeds minimum length)
+        let result = is_thin_content(10_000, 900);
+        // THEN: not considered thin (markdown exceeds the partial-content floor)
         assert!(!result);
     }
 
@@ -749,21 +793,71 @@ mod tests {
     }
 
     #[test]
-    fn is_thin_content_boundary_at_199_chars_is_thin() {
-        // GIVEN: 20 KB HTML with 199 chars of markdown (one below the 200-char boundary)
-        // WHEN: checking thin content
-        let result = is_thin_content(20_000, 199);
-        // THEN: flagged as thin (199 < 200 minimum, ratio < 2%)
+    fn is_thin_content_returns_true_for_partial_extraction_below_new_floor() {
+        // GIVEN: a JS-heavy page where only a short excerpt was extracted
+        // WHEN: checking thin content with 600 chars from 50 KB HTML
+        let result = is_thin_content(50_000, 600);
+        // THEN: still flagged as thin so fallback recovery can run
         assert!(result);
     }
 
     #[test]
-    fn is_thin_content_boundary_at_200_chars_is_not_thin() {
-        // GIVEN: 20 KB HTML with exactly 200 chars of markdown (at the boundary)
+    fn is_thin_content_boundary_at_799_chars_is_thin() {
+        // GIVEN: 50 KB HTML with 799 chars of markdown (one below the new 800-char boundary)
         // WHEN: checking thin content
-        let result = is_thin_content(20_000, 200);
-        // THEN: NOT flagged as thin (200 >= 200 minimum satisfies the condition)
+        let result = is_thin_content(50_000, 799);
+        // THEN: flagged as thin (799 < 800 minimum, ratio < 2%)
+        assert!(result);
+    }
+
+    #[test]
+    fn is_thin_content_boundary_at_800_chars_is_not_thin() {
+        // GIVEN: 50 KB HTML with exactly 800 chars of markdown (at the boundary)
+        // WHEN: checking thin content
+        let result = is_thin_content(50_000, 800);
+        // THEN: NOT flagged as thin (800 >= 800 minimum satisfies the condition)
         assert!(!result);
+    }
+
+    #[test]
+    fn strip_embedded_data_sections_removes_bootstrap_but_preserves_jsonld() {
+        let html = r#"<html>
+            <head>
+                <style>.hidden { display: none; }</style>
+                <script>window.__BOOT__ = {"title":"Hidden"};</script>
+                <script type="application/ld+json">
+                    {"@context":"https://schema.org","@type":"Article","description":"Structured fallback"}
+                </script>
+            </head>
+            <body>
+                <article><p>Visible content</p></article>
+                <template><div>Template payload</div></template>
+                <script>window.__NEXT_DATA__ = {"props":{"pageProps":{"body":"noise"}}};</script>
+            </body>
+        </html>"#;
+
+        let result = strip_embedded_data_sections(html);
+
+        assert!(result.contains("Visible content"));
+        assert!(!result.contains("window.__BOOT__"));
+        assert!(!result.contains("Template payload"));
+        assert!(!result.contains("__NEXT_DATA__"));
+        assert!(!result.contains("display: none"));
+        assert!(result.contains("application/ld+json"));
+        assert!(result.contains("Structured fallback"));
+    }
+
+    #[test]
+    fn html_to_markdown_with_url_drops_inline_script_bootstrap_noise() {
+        let bootstrap = "const boot='very noisy js bootstrap';".repeat(120);
+        let html = format!(
+            "<html><body><div id='app'>Loading…</div><script>{bootstrap}</script></body></html>"
+        );
+
+        let markdown = html_to_markdown_with_url(&html, None);
+
+        assert!(!markdown.contains("very noisy js bootstrap"));
+        assert!(!markdown.contains("const boot="));
     }
 
     #[test]
