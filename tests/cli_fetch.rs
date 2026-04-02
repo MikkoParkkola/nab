@@ -9,6 +9,8 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+#[cfg(unix)]
+use std::process::Command as StdCommand;
 
 /// Helper: get a Command for the `nab` binary.
 fn nab() -> Command {
@@ -391,4 +393,37 @@ fn fetch_post_with_data() {
         .success()
         // httpbin echoes posted data; the json field will contain parsed key/value
         .stdout(predicate::str::contains(r#""key": "value""#));
+}
+
+#[cfg(unix)]
+#[test]
+fn fetch_piped_to_head_exits_without_broken_pipe_panic() {
+    if !net_tests_enabled() {
+        return;
+    }
+
+    let nab = Command::cargo_bin("nab").expect("binary 'nab' should be built");
+    let output = StdCommand::new("sh")
+        .arg("-c")
+        .arg(r#""$1" fetch --cookies none https://example.com | head -n 5 > /dev/null"#)
+        .arg("sh")
+        .arg(nab.get_program())
+        .output()
+        .expect("shell pipeline should execute");
+
+    assert!(
+        output.status.success(),
+        "pipeline should exit successfully: {:?}",
+        output.status
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Broken pipe"),
+        "stderr should not contain broken pipe panic: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked at"),
+        "stderr should not contain panic output: {stderr}"
+    );
 }

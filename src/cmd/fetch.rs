@@ -10,7 +10,7 @@ use nab::content::diff_format::format_diff_terminal;
 use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, OnePasswordAuth, SafeFetchConfig};
 
-use super::output::output_body;
+use super::output::{output_body, write_stdout, write_stdout_line};
 use crate::OutputFormat;
 
 /// All parameters for a `nab fetch` invocation.
@@ -56,7 +56,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let cookie_header = super::resolve_cookie_header(&cfg.cookies, &domain);
     if !cookie_header.is_empty() && matches!(cfg.format, OutputFormat::Full) {
-        println!("🍪 Loading cookies for {domain}");
+        write_stdout_line(&format!("🍪 Loading cookies for {domain}"))?;
     }
 
     let site_router = nab::site::SiteRouter::new();
@@ -78,13 +78,13 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         if let Ok(Some(cred)) = auth.get_credential_for_url(&cfg.url)
             && matches!(cfg.format, OutputFormat::Full)
         {
-            println!("🔐 Found 1Password: {}", cred.title);
+            write_stdout_line(&format!("🔐 Found 1Password: {}", cred.title))?;
         }
     }
 
     if let Some(warmup) = &cfg.warmup_url {
         if matches!(cfg.format, OutputFormat::Full) {
-            println!("🔥 Warming up session: {warmup}");
+            write_stdout_line(&format!("🔥 Warming up session: {warmup}"))?;
         }
         let mut warmup_req = client.inner().get(warmup.as_str());
         warmup_req = warmup_req.headers(profile.to_headers());
@@ -118,10 +118,10 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     }
 
     if cfg.capture_cookies && !set_cookies.is_empty() {
-        println!("🍪 Set-Cookie:");
+        write_stdout_line("🍪 Set-Cookie:")?;
         for cookie in &set_cookies {
             if let Some(name_value) = cookie.split(';').next() {
-                println!("   {name_value}");
+                write_stdout_line(&format!("   {name_value}"))?;
             }
         }
     }
@@ -161,7 +161,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     };
 
     if cfg.show_diff {
-        emit_diff(&cfg.url, &body_text, cfg.format);
+        emit_diff(&cfg.url, &body_text, cfg.format)?;
     }
 
     print_output(
@@ -381,8 +381,8 @@ async fn convert_body_to_markdown(
     if matches!(format, OutputFormat::Full)
         && let Some(pages) = result.page_count
     {
-        println!("   Pages: {pages}");
-        println!("   Conversion: {:.1}ms", result.elapsed_ms);
+        write_stdout_line(&format!("   Pages: {pages}"))?;
+        write_stdout_line(&format!("   Conversion: {:.1}ms", result.elapsed_ms))?;
     }
 
     let is_html = content_type.contains("html");
@@ -422,12 +422,12 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
 
     match cfg.format {
         OutputFormat::Compact => {
-            println!(
+            write_stdout_line(&format!(
                 "{} {}B {:.0}ms",
                 resp.status.as_u16(),
                 resp.body_len,
                 resp.elapsed.as_secs_f64() * 1000.0
-            );
+            ))?;
             if cfg.show_body || out_path.is_some() || markdown || cfg.links {
                 output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
             }
@@ -450,17 +450,17 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 output["confidence"] = serde_json::json!(q.confidence);
                 output["quality"] = serde_json::to_value(q)?;
             }
-            println!("{}", serde_json::to_string(&output)?);
+            write_stdout_line(&serde_json::to_string(&output)?)?;
             if let Some(path) = out_path {
                 let mut file = File::create(path)?;
                 file.write_all(resp.body_text.as_bytes())?;
             }
         }
         OutputFormat::Full => {
-            println!("🌐 Fetching: {}", cfg.url);
-            println!("🎭 User-Agent: {}", resp.profile.user_agent);
+            write_stdout_line(&format!("🌐 Fetching: {}", cfg.url))?;
+            write_stdout_line(&format!("🎭 User-Agent: {}", resp.profile.user_agent))?;
             if !resp.cookie_header.is_empty() {
-                println!(
+                write_stdout_line(&format!(
                     "🍪 Loaded {} cookies from {}",
                     resp.cookie_header.matches('=').count(),
                     if cfg.cookies == "auto" {
@@ -468,19 +468,22 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                     } else {
                         &cfg.cookies
                     }
-                );
+                ))?;
             }
-            println!("\n📊 Response:");
-            println!("   Status: {}", resp.status);
-            println!("   Version: {}", resp.version);
-            println!("   Time: {:.2}ms", resp.elapsed.as_secs_f64() * 1000.0);
+            write_stdout_line("\n📊 Response:")?;
+            write_stdout_line(&format!("   Status: {}", resp.status))?;
+            write_stdout_line(&format!("   Version: {}", resp.version))?;
+            write_stdout_line(&format!(
+                "   Time: {:.2}ms",
+                resp.elapsed.as_secs_f64() * 1000.0
+            ))?;
             if cfg.show_headers {
-                println!("\n📋 Headers:");
+                write_stdout_line("\n📋 Headers:")?;
                 for (name, value) in resp.response_headers {
-                    println!("   {name}: {value}");
+                    write_stdout_line(&format!("   {name}: {value}"))?;
                 }
             }
-            println!("\n📄 Body: {} bytes", resp.body_len);
+            write_stdout_line(&format!("\n📄 Body: {} bytes", resp.body_len))?;
             if cfg.show_body || out_path.is_some() || markdown || cfg.links {
                 output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
             }
@@ -490,7 +493,7 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
 }
 
 /// Load the previous snapshot, compute diff, print it, then save new snapshot.
-fn emit_diff(url: &str, current_text: &str, format: OutputFormat) {
+fn emit_diff(url: &str, current_text: &str, format: OutputFormat) -> Result<()> {
     let store = SnapshotStore::default();
     let new_snap = ContentSnapshot::new(url, current_text, SystemTime::now());
 
@@ -498,14 +501,15 @@ fn emit_diff(url: &str, current_text: &str, format: OutputFormat) {
         let diff = nab::content::diff::compute_diff(&old_snap, &new_snap);
         let output = format_diff_terminal(&diff);
         match format {
-            OutputFormat::Full | OutputFormat::Compact => print!("{output}"),
+            OutputFormat::Full | OutputFormat::Compact => write_stdout(&output)?,
             OutputFormat::Json => eprint!("{output}"),
         }
     } else if matches!(format, OutputFormat::Full) {
-        println!("(no previous snapshot — storing baseline for future --diff runs)");
+        write_stdout_line("(no previous snapshot — storing baseline for future --diff runs)")?;
     }
 
     let _ = store.save_snapshot(url, &new_snap);
+    Ok(())
 }
 
 /// Extract `<title>` from HTML.

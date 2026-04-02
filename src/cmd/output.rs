@@ -1,10 +1,31 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use scraper::{Html, Selector};
+
+pub(crate) fn write_stdout(content: &str) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(content.as_bytes())
+        .context("Failed to write to stdout")?;
+    stdout.flush().context("Failed to flush stdout")?;
+    Ok(())
+}
+
+pub(crate) fn write_stdout_line(content: &str) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(content.as_bytes())
+        .context("Failed to write to stdout")?;
+    stdout
+        .write_all(b"\n")
+        .context("Failed to write newline to stdout")?;
+    stdout.flush().context("Failed to flush stdout")?;
+    Ok(())
+}
 
 pub fn output_body(
     body: &str,
@@ -17,7 +38,11 @@ pub fn output_body(
         let mut file = File::create(path)?;
         // Body is already converted (via ContentRouter) when markdown mode is active
         file.write_all(body.as_bytes())?;
-        println!("💾 Saved {} bytes to {}", body.len(), path.display());
+        write_stdout_line(&format!(
+            "💾 Saved {} bytes to {}",
+            body.len(),
+            path.display()
+        ))?;
         return Ok(());
     }
 
@@ -26,22 +51,26 @@ pub fn output_body(
         let extracted = extract_links(body);
         for (text, href) in &extracted {
             if text.is_empty() {
-                println!("{href}");
+                write_stdout_line(href)?;
             } else {
-                println!("[{}]({href})", truncate_text(text, 50));
+                write_stdout_line(&format!("[{}]({href})", truncate_text(text, 50)))?;
             }
         }
-        println!("\n({} links)", extracted.len());
+        write_stdout_line(&format!("\n({} links)", extracted.len()))?;
         return Ok(());
     }
 
     // Display with optional truncation (UTF-8 safe via floor_char_boundary)
     if max_body > 0 && body.len() > max_body {
         let at = body.floor_char_boundary(max_body);
-        println!("\n{}", &body[..at]);
-        println!("\n... [{} more bytes]", body.len() - at);
+        write_stdout("\n")?;
+        write_stdout(&body[..at])?;
+        write_stdout_line("")?;
+        write_stdout_line(&format!("\n... [{} more bytes]", body.len() - at))?;
     } else {
-        println!("\n{body}");
+        write_stdout("\n")?;
+        write_stdout(body)?;
+        write_stdout_line("")?;
     }
 
     Ok(())
@@ -88,9 +117,13 @@ pub fn truncate_text(text: &str, max: usize) -> String {
 /// Print response headers and markdown body for form-submission results.
 pub async fn output_response(response: reqwest::Response, show_headers: bool) -> Result<()> {
     if show_headers {
-        println!("\nResponse Headers:");
+        write_stdout_line("\nResponse Headers:")?;
         for (key, value) in response.headers() {
-            println!("  {}: {}", key, value.to_str().unwrap_or("<binary>"));
+            write_stdout_line(&format!(
+                "  {}: {}",
+                key,
+                value.to_str().unwrap_or("<binary>")
+            ))?;
         }
     }
 

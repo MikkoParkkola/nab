@@ -533,140 +533,132 @@ async fn main() -> Result<()> {
         .compact()
         .init();
 
-    match cli.command {
-        Commands::Fetch {
-            url,
-            headers,
-            body,
-            format,
-            output,
-            cookies,
-            use_1password,
-            raw_html,
-            links,
-            max_body,
-            add_headers,
-            auto_referer,
-            warmup_url,
-            method,
-            data,
-            capture_cookies,
-            no_redirect,
-            batch,
-            parallel,
-            proxy,
-            diff,
-            ..
-        } => {
-            let cfg = cmd::FetchConfig {
+    let result: Result<()> = async {
+        match cli.command {
+            Commands::Fetch {
                 url,
-                show_headers: headers,
-                show_body: body,
+                headers,
+                body,
                 format,
-                output_file: output,
+                output,
                 cookies,
                 use_1password,
                 raw_html,
                 links,
                 max_body,
-                custom_headers: add_headers,
+                add_headers,
                 auto_referer,
                 warmup_url,
                 method,
                 data,
                 capture_cookies,
                 no_redirect,
-                batch_file: batch,
+                batch,
                 parallel,
                 proxy,
-                show_diff: diff,
-            };
-            cmd::cmd_fetch(&cfg).await?;
-        }
-        Commands::Spa {
-            url,
-            cookies,
-            html,
-            console,
-            wait,
-            output,
-            extract,
-            summary,
-            minify,
-            max_array,
-            max_depth,
-            ..
-        } => {
-            let cfg = cmd::SpaConfig {
+                diff,
+                ..
+            } => {
+                let cfg = cmd::FetchConfig {
+                    url,
+                    show_headers: headers,
+                    show_body: body,
+                    format,
+                    output_file: output,
+                    cookies,
+                    use_1password,
+                    raw_html,
+                    links,
+                    max_body,
+                    custom_headers: add_headers,
+                    auto_referer,
+                    warmup_url,
+                    method,
+                    data,
+                    capture_cookies,
+                    no_redirect,
+                    batch_file: batch,
+                    parallel,
+                    proxy,
+                    show_diff: diff,
+                };
+                cmd::cmd_fetch(&cfg).await?;
+            }
+            Commands::Spa {
                 url,
                 cookies,
-                show_html: html,
-                show_console: console,
-                wait_ms: wait,
+                html,
+                console,
+                wait,
                 output,
-                extract_path: extract,
+                extract,
                 summary,
                 minify,
                 max_array,
                 max_depth,
-            };
-            cmd::cmd_spa(&cfg).await?;
-        }
-        Commands::Bench { urls, iterations } => {
-            cmd::cmd_bench(&urls, iterations).await?;
-        }
-        Commands::Fingerprint { count } => {
-            cmd::cmd_fingerprint(count);
-        }
-        Commands::Auth { url } => {
-            cmd::cmd_auth(&url)?;
-        }
-        Commands::Validate => {
-            cmd::cmd_validate().await?;
-        }
-        Commands::Otp { domain } => {
-            cmd::cmd_otp(&domain)?;
-        }
-        Commands::Stream {
-            source,
-            id,
-            output,
-            quality,
-            native,
-            ffmpeg,
-            info,
-            list,
-            cookies,
-            duration,
-            ffmpeg_opts,
-            player,
-        } => {
-            let cfg = cmd::StreamCmdConfig {
+                ..
+            } => {
+                let cfg = cmd::SpaConfig {
+                    url,
+                    cookies,
+                    show_html: html,
+                    show_console: console,
+                    wait_ms: wait,
+                    output,
+                    extract_path: extract,
+                    summary,
+                    minify,
+                    max_array,
+                    max_depth,
+                };
+                cmd::cmd_spa(&cfg).await?;
+            }
+            Commands::Bench { urls, iterations } => {
+                cmd::cmd_bench(&urls, iterations).await?;
+            }
+            Commands::Fingerprint { count } => {
+                cmd::cmd_fingerprint(count);
+            }
+            Commands::Auth { url } => {
+                cmd::cmd_auth(&url)?;
+            }
+            Commands::Validate => {
+                cmd::cmd_validate().await?;
+            }
+            Commands::Otp { domain } => {
+                cmd::cmd_otp(&domain)?;
+            }
+            Commands::Stream {
                 source,
                 id,
                 output,
                 quality,
-                force_native: native,
-                force_ffmpeg: ffmpeg,
-                info_only: info,
-                list_episodes: list,
+                native,
+                ffmpeg,
+                info,
+                list,
                 cookies,
                 duration,
                 ffmpeg_opts,
                 player,
-            };
-            cmd::cmd_stream(&cfg).await?;
-        }
-        Commands::Analyze {
-            video,
-            audio_only,
-            diarize,
-            format,
-            output,
-            dgx,
-            api_key,
-        } => {
-            let cfg = cmd::AnalyzeConfig {
+            } => {
+                let cfg = cmd::StreamCmdConfig {
+                    source,
+                    id,
+                    output,
+                    quality,
+                    force_native: native,
+                    force_ffmpeg: ffmpeg,
+                    info_only: info,
+                    list_episodes: list,
+                    cookies,
+                    duration,
+                    ffmpeg_opts,
+                    player,
+                };
+                cmd::cmd_stream(&cfg).await?;
+            }
+            Commands::Analyze {
                 video,
                 audio_only,
                 diarize,
@@ -674,19 +666,19 @@ async fn main() -> Result<()> {
                 output,
                 dgx,
                 api_key,
-            };
-            cmd::cmd_analyze(&cfg).await?;
-        }
-        Commands::Annotate {
-            video,
-            output,
-            subtitles,
-            speaker_labels,
-            analysis,
-            style,
-            hwaccel,
-        } => {
-            cmd::cmd_annotate(&cmd::AnnotateConfig {
+            } => {
+                let cfg = cmd::AnalyzeConfig {
+                    video,
+                    audio_only,
+                    diarize,
+                    format,
+                    output,
+                    dgx,
+                    api_key,
+                };
+                cmd::cmd_analyze(&cfg).await?;
+            }
+            Commands::Annotate {
                 video,
                 output,
                 subtitles,
@@ -694,78 +686,103 @@ async fn main() -> Result<()> {
                 analysis,
                 style,
                 hwaccel,
-            })
-            .await?;
-        }
-        Commands::Submit {
-            url,
-            fields,
-            csrf_from,
-            headers,
-            ..
-        } => {
-            cmd::cmd_submit(&cmd::SubmitConfig {
+            } => {
+                cmd::cmd_annotate(&cmd::AnnotateConfig {
+                    video,
+                    output,
+                    subtitles,
+                    speaker_labels,
+                    analysis,
+                    style,
+                    hwaccel,
+                })
+                .await?;
+            }
+            Commands::Submit {
                 url,
-                field_args: fields,
+                fields,
                 csrf_from,
-                show_headers: headers,
-            })
-            .await?;
-        }
-        Commands::Login {
-            url,
-            use_1password,
-            save_session,
-            cookies,
-            format,
-            #[cfg(feature = "browser")]
-            browser,
-            ..
-        } => {
-            cmd::cmd_login(&cmd::LoginConfig {
+                headers,
+                ..
+            } => {
+                cmd::cmd_submit(&cmd::SubmitConfig {
+                    url,
+                    field_args: fields,
+                    csrf_from,
+                    show_headers: headers,
+                })
+                .await?;
+            }
+            Commands::Login {
                 url,
                 use_1password,
                 save_session,
                 cookies,
                 format,
                 #[cfg(feature = "browser")]
-                use_browser: browser,
-            })
-            .await?;
+                browser,
+                ..
+            } => {
+                cmd::cmd_login(&cmd::LoginConfig {
+                    url,
+                    use_1password,
+                    save_session,
+                    cookies,
+                    format,
+                    #[cfg(feature = "browser")]
+                    use_browser: browser,
+                })
+                .await?;
+            }
+            Commands::Context {
+                urls,
+                cookies,
+                max_tokens,
+                ..
+            } => {
+                cmd::cmd_context(&urls, &cookies, max_tokens).await?;
+            }
+            Commands::Cookies { action } => match action {
+                CookiesAction::Export { domain, cookies } => {
+                    cmd::cmd_cookies("export", &domain, &cookies).await?;
+                }
+            },
+            Commands::Rules { action } => match action {
+                RulesAction::Export => {
+                    cmd::cmd_export_rules()?;
+                }
+                RulesAction::List => {
+                    cmd::cmd_list_rules()?;
+                }
+            },
+            Commands::Provider { action } => match action {
+                ProviderAction::List => {
+                    cmd::cmd_provider_list()?;
+                }
+                ProviderAction::Install { src } => {
+                    cmd::cmd_provider_install(&src).await?;
+                }
+                ProviderAction::Remove { name } => {
+                    cmd::cmd_provider_remove(&name)?;
+                }
+            },
         }
-        Commands::Context {
-            urls,
-            cookies,
-            max_tokens,
-            ..
-        } => {
-            cmd::cmd_context(&urls, &cookies, max_tokens).await?;
-        }
-        Commands::Cookies { action } => match action {
-            CookiesAction::Export { domain, cookies } => {
-                cmd::cmd_cookies("export", &domain, &cookies).await?;
-            }
-        },
-        Commands::Rules { action } => match action {
-            RulesAction::Export => {
-                cmd::cmd_export_rules()?;
-            }
-            RulesAction::List => {
-                cmd::cmd_list_rules()?;
-            }
-        },
-        Commands::Provider { action } => match action {
-            ProviderAction::List => {
-                cmd::cmd_provider_list()?;
-            }
-            ProviderAction::Install { src } => {
-                cmd::cmd_provider_install(&src).await?;
-            }
-            ProviderAction::Remove { name } => {
-                cmd::cmd_provider_remove(&name)?;
-            }
-        },
-    }
 
-    Ok(())
+        Ok(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) if is_broken_pipe(&err) => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::BrokenPipe)
+    })
 }
