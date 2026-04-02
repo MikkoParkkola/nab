@@ -40,6 +40,7 @@ pub struct FetchConfig {
     pub parallel: usize,
     pub proxy: Option<String>,
     pub show_diff: bool,
+    pub html_options: nab::content::html::HtmlConversionOptions,
 }
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
@@ -129,9 +130,15 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     let body_len = body_bytes.len();
 
     let (body_text, quality) = if markdown && !cfg.links {
-        let converted =
-            convert_body_to_markdown(&body_bytes, &content_type, &cfg.url, cfg.format, body_len)
-                .await?;
+        let converted = convert_body_to_markdown(
+            &body_bytes,
+            &content_type,
+            &cfg.url,
+            cfg.format,
+            body_len,
+            cfg.html_options,
+        )
+        .await?;
 
         // Attempt Next.js content chunk recovery when extraction yields thin content.
         // The readability extractor may capture 300-600 chars of nav/header/footer
@@ -365,8 +372,9 @@ async fn convert_body_to_markdown(
     url: &str,
     format: OutputFormat,
     body_len: usize,
+    html_options: nab::content::html::HtmlConversionOptions,
 ) -> Result<ConvertedBody> {
-    let router = nab::content::ContentRouter::new();
+    let router = nab::content::ContentRouter::with_html_options(html_options);
     let bytes = body_bytes.to_vec();
     let ct = content_type.to_string();
     let fetch_url = url.to_string();
@@ -391,6 +399,9 @@ async fn convert_body_to_markdown(
             nab::content::html::detect_thin_content(body_len, result.markdown.len())
     {
         eprintln!("⚠️  {warning}");
+        if !html_options.allow_jina_fallback {
+            eprintln!("⚠️  Remote reader fallback is disabled by --no-fallback.");
+        }
     }
 
     Ok(ConvertedBody {

@@ -26,6 +26,24 @@ use super::{ContentHandler, ConversionResult};
 /// Converts HTML responses to clean markdown.
 pub struct HtmlHandler;
 
+/// HTML-specific extraction controls threaded from higher-level commands.
+#[derive(Debug, Clone, Copy)]
+pub struct HtmlConversionOptions {
+    /// Allow local SPA hydration-data extraction (`__NEXT_DATA__`, JSON-LD, etc.).
+    pub allow_spa_extraction: bool,
+    /// Allow remote thin-content recovery via `r.jina.ai`.
+    pub allow_jina_fallback: bool,
+}
+
+impl Default for HtmlConversionOptions {
+    fn default() -> Self {
+        Self {
+            allow_spa_extraction: true,
+            allow_jina_fallback: true,
+        }
+    }
+}
+
 impl ContentHandler for HtmlHandler {
     fn supported_types(&self) -> &[&str] {
         &["text/html", "application/xhtml+xml"]
@@ -52,9 +70,25 @@ impl HtmlHandler {
         content_type: &str,
         url: Option<&str>,
     ) -> Result<ConversionResult> {
+        self.to_markdown_with_url_and_options(
+            bytes,
+            content_type,
+            url,
+            HtmlConversionOptions::default(),
+        )
+    }
+
+    /// Convert HTML to markdown with explicit extraction controls.
+    pub fn to_markdown_with_url_and_options(
+        &self,
+        bytes: &[u8],
+        content_type: &str,
+        url: Option<&str>,
+        options: HtmlConversionOptions,
+    ) -> Result<ConversionResult> {
         let start = std::time::Instant::now();
         let html = String::from_utf8_lossy(bytes);
-        let markdown = html_to_markdown_with_url(&html, url);
+        let markdown = html_to_markdown_with_url_and_options(&html, url, options);
         let quality = quality::score_extraction(bytes, &markdown);
 
         Ok(ConversionResult {
@@ -82,10 +116,34 @@ impl HtmlHandler {
 /// complex DOM structures (`LessWrong`, `Ghost CMS`, etc.).
 #[must_use]
 pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
+    html_to_markdown_with_url_and_options(html, url, HtmlConversionOptions::default())
+}
+
+/// Convert HTML to markdown with URL-aware readability extraction and explicit controls.
+#[must_use]
+pub fn html_to_markdown_with_url_and_options(
+    html: &str,
+    url: Option<&str>,
+    options: HtmlConversionOptions,
+) -> String {
+    html_to_markdown_with_url_and_fetcher(html, url, options, fetch_jina_reader)
+}
+
+fn html_to_markdown_with_url_and_fetcher<F>(
+    html: &str,
+    url: Option<&str>,
+    options: HtmlConversionOptions,
+    jina_fetcher: F,
+) -> String
+where
+    F: Fn(&str) -> Option<String>,
+{
     const MIN_READABILITY_LEN: usize = 50;
 
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
-    if let Some(spa_content) = spa_extract::extract_spa_data(html) {
+    if options.allow_spa_extraction
+        && let Some(spa_content) = spa_extract::extract_spa_data(html)
+    {
         return spa_content;
     }
 
@@ -151,8 +209,9 @@ pub fn html_to_markdown_with_url(html: &str, url: Option<&str>) -> String {
 
         // Last-resort fallback: Jina reader can render JS-heavy pages.
         // Only attempt when we have a URL and local extraction failed.
-        if let Some(page_url) = url
-            && let Some(jina_md) = fetch_jina_reader(page_url)
+        if options.allow_jina_fallback
+            && let Some(page_url) = url
+            && let Some(jina_md) = jina_fetcher(page_url)
         {
             tracing::info!(
                 "Thin content recovered via Jina reader ({} chars)",
@@ -276,7 +335,7 @@ pub fn detect_thin_content(html_len: usize, markdown_len: usize) -> Option<Strin
 /// variant when the fetch URL is available.
 #[must_use]
 pub fn html_to_markdown_with_readability(html: &str) -> String {
-    html_to_markdown_with_url(html, None)
+    html_to_markdown_with_url_and_options(html, None, HtmlConversionOptions::default())
 }
 
 /// Remove hidden/collapsed sections from HTML before readability processing.
@@ -761,8 +820,8 @@ pub fn is_boilerplate(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        html_to_markdown_with_url, is_thin_content, strip_embedded_data_sections,
-        strip_hidden_sections, strip_noise_sections,
+        HtmlConversionOptions, html_to_markdown_with_url, html_to_markdown_with_url_and_fetcher,
+        is_thin_content, strip_embedded_data_sections, strip_hidden_sections, strip_noise_sections,
     };
 
     #[test]
@@ -858,6 +917,85 @@ mod tests {
 
         assert!(!markdown.contains("very noisy js bootstrap"));
         assert!(!markdown.contains("const boot="));
+    }
+
+    #[test]
+    fn html_to_markdown_uses_jina_fallback_when_enabled() {
+        let bootstrap = "const boot='very noisy js bootstrap';".repeat(220);
+        let html = format!(
+            "<html><body><div id='app'>Loading…</div><script>{bootstrap}</script></body></html>"
+        );
+        assert!(html.len() > 5_000);
+        let calls = std::cell::Cell::new(0);
+
+        let markdown = html_to_markdown_with_url_and_fetcher(
+            &html,
+            Some("https://example.com/article"),
+            HtmlConversionOptions::default(),
+            |url| {
+                calls.set(calls.get() + 1);
+                Some(format!("Recovered remotely from {url}"))
+            },
+        );
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            markdown,
+            "Recovered remotely from https://example.com/article"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_skips_jina_fallback_when_disabled() {
+        let bootstrap = "const boot='very noisy js bootstrap';".repeat(220);
+        let html = format!(
+            "<html><body><div id='app'>Loading…</div><script>{bootstrap}</script></body></html>"
+        );
+        assert!(html.len() > 5_000);
+        let calls = std::cell::Cell::new(0);
+
+        let markdown = html_to_markdown_with_url_and_fetcher(
+            &html,
+            Some("https://example.com/article"),
+            HtmlConversionOptions {
+                allow_spa_extraction: true,
+                allow_jina_fallback: false,
+            },
+            |_url| {
+                calls.set(calls.get() + 1);
+                Some("Recovered remotely".to_string())
+            },
+        );
+
+        assert_eq!(calls.get(), 0);
+        assert!(markdown.contains("Loading"));
+        assert!(!markdown.contains("Recovered remotely"));
+    }
+
+    #[test]
+    fn html_to_markdown_can_disable_spa_extraction() {
+        let article_body = "A".repeat(320);
+        let html = format!(
+            r#"<html><body>
+                <p>Loading…</p>
+                <script id="__NEXT_DATA__" type="application/json">
+                    {{"props":{{"pageProps":{{"body":"{article_body}"}}}}}}
+                </script>
+            </body></html>"#
+        );
+
+        let markdown = html_to_markdown_with_url_and_fetcher(
+            &html,
+            Some("https://example.com/article"),
+            HtmlConversionOptions {
+                allow_spa_extraction: false,
+                allow_jina_fallback: false,
+            },
+            |_url| Some("Recovered remotely".to_string()),
+        );
+
+        assert!(!markdown.contains(&article_body));
+        assert!(markdown.contains("Loading"));
     }
 
     #[test]

@@ -91,6 +91,7 @@ pub trait ContentHandler: Send + Sync {
 /// negligible (~nanoseconds). Falls back to [`PlainHandler`] for unknown types.
 pub struct ContentRouter {
     handlers: Vec<Box<dyn ContentHandler>>,
+    html_options: html::HtmlConversionOptions,
 }
 
 impl ContentRouter {
@@ -115,7 +116,18 @@ impl ContentRouter {
             Box::new(plain::PlainHandler),
         ];
 
-        Self { handlers }
+        Self {
+            handlers,
+            html_options: html::HtmlConversionOptions::default(),
+        }
+    }
+
+    /// Create a router with explicit HTML extraction controls.
+    #[must_use]
+    pub fn with_html_options(html_options: html::HtmlConversionOptions) -> Self {
+        let mut router = Self::new();
+        router.html_options = html_options;
+        router
     }
 
     /// Find a handler for the given content type and convert the bytes.
@@ -166,7 +178,12 @@ impl ContentRouter {
 
         // Route HTML through the URL-aware path
         if mime == "text/html" || mime == "application/xhtml+xml" {
-            return html::HtmlHandler.to_markdown_with_url(bytes, content_type, url);
+            return html::HtmlHandler.to_markdown_with_url_and_options(
+                bytes,
+                content_type,
+                url,
+                self.html_options,
+            );
         }
 
         for handler in &self.handlers {
@@ -177,7 +194,12 @@ impl ContentRouter {
 
         // Fallback: if bytes look like HTML (common for missing Content-Type)
         if bytes.starts_with(b"<!") || bytes.starts_with(b"<html") || bytes.starts_with(b"<HTML") {
-            return html::HtmlHandler.to_markdown_with_url(bytes, "text/html", url);
+            return html::HtmlHandler.to_markdown_with_url_and_options(
+                bytes,
+                "text/html",
+                url,
+                self.html_options,
+            );
         }
 
         // Ultimate fallback: plain text passthrough

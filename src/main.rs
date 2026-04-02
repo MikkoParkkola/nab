@@ -137,6 +137,10 @@ enum Commands {
         #[arg(long)]
         no_spa: bool,
 
+        /// Disable remote thin-content fallback via `r.jina.ai`
+        #[arg(long)]
+        no_fallback: bool,
+
         /// Batch fetch URLs from file (one per line, # comments allowed)
         #[arg(long)]
         batch: Option<String>,
@@ -553,6 +557,8 @@ async fn main() -> Result<()> {
                 data,
                 capture_cookies,
                 no_redirect,
+                no_spa,
+                no_fallback,
                 batch,
                 parallel,
                 proxy,
@@ -581,6 +587,10 @@ async fn main() -> Result<()> {
                     parallel,
                     proxy,
                     show_diff: diff,
+                    html_options: nab::content::html::HtmlConversionOptions {
+                        allow_spa_extraction: !no_spa,
+                        allow_jina_fallback: !no_fallback,
+                    },
                 };
                 cmd::cmd_fetch(&cfg).await?;
             }
