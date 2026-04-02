@@ -37,10 +37,26 @@ impl FetchClient {
     /// Create a new fetch client with optional cookies and base URL
     #[must_use]
     pub fn new(cookies: Option<String>, base_url: Option<String>) -> Self {
+        Self::new_with_options(cookies, base_url, false)
+    }
+
+    /// Create a new fetch client with transport options for SPA fallback execution.
+    #[must_use]
+    pub fn new_with_options(
+        cookies: Option<String>,
+        base_url: Option<String>,
+        http1_only: bool,
+    ) -> Self {
+        let mut builder = Client::builder()
+            .user_agent("nab/1.0")
+            .redirect(reqwest::redirect::Policy::none()); // SSRF: Disable automatic redirects
+
+        if http1_only {
+            builder = builder.http1_only();
+        }
+
         Self {
-            client: Client::builder()
-                .user_agent("nab/1.0")
-                .redirect(reqwest::redirect::Policy::none()) // SSRF: Disable automatic redirects
+            client: builder
                 .build()
                 .expect("HTTP client builder should succeed with default config"),
             cookie_header: cookies.unwrap_or_default(),

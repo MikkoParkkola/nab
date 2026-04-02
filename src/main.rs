@@ -179,7 +179,7 @@ enum Commands {
         #[arg(long, default_value = "5000")]
         wait: u64,
 
-        /// API endpoint patterns to look for (comma-separated)
+        /// API endpoint URL fragments to look for (comma-separated)
         #[arg(short, long)]
         patterns: Option<String>,
 
@@ -600,12 +600,14 @@ async fn main() -> Result<()> {
                 html,
                 console,
                 wait,
+                patterns,
                 output,
                 extract,
                 summary,
                 minify,
                 max_array,
                 max_depth,
+                http1,
                 ..
             } => {
                 let cfg = cmd::SpaConfig {
@@ -614,12 +616,24 @@ async fn main() -> Result<()> {
                     show_html: html,
                     show_console: console,
                     wait_ms: wait,
+                    endpoint_hints: patterns
+                        .into_iter()
+                        .flat_map(|value| {
+                            value
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|part| !part.is_empty())
+                                .map(ToOwned::to_owned)
+                                .collect::<Vec<_>>()
+                        })
+                        .collect(),
                     output,
                     extract_path: extract,
                     summary,
                     minify,
                     max_array,
                     max_depth,
+                    force_http1: http1,
                 };
                 cmd::cmd_spa(&cfg).await?;
             }

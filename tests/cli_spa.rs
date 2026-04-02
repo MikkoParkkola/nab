@@ -41,6 +41,7 @@ fn spa_help_lists_all_options() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--extract"))
+        .stdout(predicate::str::contains("--patterns"))
         .stdout(predicate::str::contains("--summary"))
         .stdout(predicate::str::contains("--minify"))
         .stdout(predicate::str::contains("--max-array"))

@@ -35,9 +35,16 @@ pub struct AcceleratedClient {
 /// Returns a reqwest `ClientBuilder` with common acceleration settings applied.
 ///
 /// Does NOT set redirect policy - callers must set that themselves.
+#[derive(Clone, Copy)]
+enum TransportMode {
+    Http2PriorKnowledge,
+    Http2Adaptive,
+    Http1Only,
+}
+
 fn accelerated_builder(
     headers: &reqwest::header::HeaderMap,
-    http2_prior: bool,
+    transport: TransportMode,
 ) -> reqwest::ClientBuilder {
     let mut builder = Client::builder()
         .pool_max_idle_per_host(10)
@@ -54,21 +61,21 @@ fn accelerated_builder(
         .timeout(Duration::from_secs(30))
         .cookie_store(true);
 
-    if http2_prior {
-        builder = builder.http2_prior_knowledge();
-    } else {
-        builder = builder.http2_adaptive_window(true);
-    }
+    builder = match transport {
+        TransportMode::Http2PriorKnowledge => builder.http2_prior_knowledge(),
+        TransportMode::Http2Adaptive => builder.http2_adaptive_window(true),
+        TransportMode::Http1Only => builder.http1_only(),
+    };
 
     builder
 }
 
 fn build_http_client(
     headers: &reqwest::header::HeaderMap,
-    http2_prior: bool,
+    transport: TransportMode,
     redirect_policy: reqwest::redirect::Policy,
 ) -> Result<Client> {
-    Ok(accelerated_builder(headers, http2_prior)
+    Ok(accelerated_builder(headers, transport)
         .redirect(redirect_policy)
         .build()?)
 }
@@ -91,12 +98,19 @@ impl AcceleratedClient {
     pub fn with_profile(profile: BrowserProfile) -> Result<Self> {
         let headers = profile.to_headers();
 
-        let client = build_http_client(&headers, true, reqwest::redirect::Policy::limited(10))?;
+        let client = build_http_client(
+            &headers,
+            TransportMode::Http2PriorKnowledge,
+            reqwest::redirect::Policy::limited(10),
+        )?;
 
         // The no-redirect client uses adaptive HTTP/2 for broader compatibility
         // since it handles the manual redirect chain in fetch_safe.
-        let no_redirect_client =
-            build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
+        let no_redirect_client = build_http_client(
+            &headers,
+            TransportMode::Http2Adaptive,
+            reqwest::redirect::Policy::none(),
+        )?;
 
         Ok(Self::from_parts(client, no_redirect_client, profile))
     }
@@ -106,10 +120,37 @@ impl AcceleratedClient {
         let profile = random_profile();
         let headers = profile.to_headers();
 
-        let client = build_http_client(&headers, false, reqwest::redirect::Policy::limited(10))?;
+        let client = build_http_client(
+            &headers,
+            TransportMode::Http2Adaptive,
+            reqwest::redirect::Policy::limited(10),
+        )?;
 
-        let no_redirect_client =
-            build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
+        let no_redirect_client = build_http_client(
+            &headers,
+            TransportMode::Http2Adaptive,
+            reqwest::redirect::Policy::none(),
+        )?;
+
+        Ok(Self::from_parts(client, no_redirect_client, profile))
+    }
+
+    /// Create a client that forces HTTP/1.1 for origin servers with HTTP/2 issues.
+    pub fn new_http1_only() -> Result<Self> {
+        let profile = random_profile();
+        let headers = profile.to_headers();
+
+        let client = build_http_client(
+            &headers,
+            TransportMode::Http1Only,
+            reqwest::redirect::Policy::limited(10),
+        )?;
+
+        let no_redirect_client = build_http_client(
+            &headers,
+            TransportMode::Http1Only,
+            reqwest::redirect::Policy::none(),
+        )?;
 
         Ok(Self::from_parts(client, no_redirect_client, profile))
     }
@@ -122,8 +163,11 @@ impl AcceleratedClient {
     fn from_client_with_profile(client: Client, profile: BrowserProfile) -> Result<Self> {
         let headers = profile.to_headers();
 
-        let no_redirect_client =
-            build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
+        let no_redirect_client = build_http_client(
+            &headers,
+            TransportMode::Http2Adaptive,
+            reqwest::redirect::Policy::none(),
+        )?;
 
         Ok(Self::from_parts(client, no_redirect_client, profile))
     }
@@ -133,7 +177,11 @@ impl AcceleratedClient {
         let profile = random_profile();
         let headers = profile.to_headers();
 
-        let client = build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
+        let client = build_http_client(
+            &headers,
+            TransportMode::Http2Adaptive,
+            reqwest::redirect::Policy::none(),
+        )?;
 
         let no_redirect_client = client.clone();
 
@@ -556,6 +604,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_fetch_example_http1_only() {
+        let (base_url, server) = spawn_test_server(1, |request| {
+            assert!(
+                request.starts_with("GET /example HTTP/1.1\r\n"),
+                "unexpected request: {request}"
+            );
+            TestResponse::ok("stable test body", "text/plain")
+        })
+        .await;
+
+        let client = AcceleratedClient::new_http1_only().unwrap();
+        let response = client.fetch(&format!("{base_url}/example")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.version(), reqwest::Version::HTTP_11);
+        assert_eq!(response.text().await.unwrap(), "stable test body");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_compression_negotiation() {
         let (base_url, server) = spawn_test_server(1, |request| {
             let request_lower = request.to_ascii_lowercase();
@@ -952,7 +1019,7 @@ mod tests {
     #[test]
     fn accelerated_builder_builds_with_h2_prior() {
         let headers = reqwest::header::HeaderMap::new();
-        let client = accelerated_builder(&headers, true)
+        let client = accelerated_builder(&headers, TransportMode::Http2PriorKnowledge)
             .redirect(reqwest::redirect::Policy::none())
             .build();
         assert!(client.is_ok());
@@ -961,7 +1028,7 @@ mod tests {
     #[test]
     fn accelerated_builder_builds_with_h2_adaptive() {
         let headers = reqwest::header::HeaderMap::new();
-        let client = accelerated_builder(&headers, false)
+        let client = accelerated_builder(&headers, TransportMode::Http2Adaptive)
             .redirect(reqwest::redirect::Policy::limited(5))
             .build();
         assert!(client.is_ok());

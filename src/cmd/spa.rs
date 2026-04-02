@@ -20,16 +20,22 @@ pub struct SpaConfig {
     pub show_html: bool,
     pub show_console: bool,
     pub wait_ms: u64,
+    pub endpoint_hints: Vec<String>,
     pub output: String,
     pub extract_path: Option<String>,
     pub summary: bool,
     pub minify: bool,
     pub max_array: Option<usize>,
     pub max_depth: Option<usize>,
+    pub force_http1: bool,
 }
 
 pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
-    let client = AcceleratedClient::new()?;
+    let client = if cfg.force_http1 {
+        AcceleratedClient::new_http1_only()?
+    } else {
+        AcceleratedClient::new()?
+    };
 
     let domain = super::extract_domain(&cfg.url);
     let cookie_header = super::resolve_cookie_header(&cfg.cookies, &domain);
@@ -98,7 +104,7 @@ async fn try_api_discovery(
     found_data: &mut bool,
     cfg: &SpaConfig,
 ) -> Result<()> {
-    let api_discovery = ApiDiscovery::new()?;
+    let api_discovery = ApiDiscovery::with_url_hints(&cfg.endpoint_hints)?;
     let discovered_endpoints = api_discovery.discover_from_html(html);
 
     if discovered_endpoints.is_empty() {
@@ -126,7 +132,7 @@ async fn try_api_discovery(
     }
 
     let mut sorted_endpoints = discovered_endpoints.clone();
-    sorted_endpoints.sort_by_key(|e| -ApiDiscovery::score_endpoint(e));
+    sorted_endpoints.sort_by_key(|e| -score_discovered_endpoint(&api_discovery, e));
 
     for endpoint in sorted_endpoints.iter().take(3) {
         if endpoint.method.as_deref() != Some("GET") && endpoint.method.is_some() {
@@ -157,6 +163,14 @@ async fn try_api_discovery(
     }
 
     Ok(())
+}
+
+fn score_discovered_endpoint(api_discovery: &ApiDiscovery, endpoint: &nab::ApiEndpoint) -> i32 {
+    let mut score = ApiDiscovery::score_endpoint(endpoint);
+    if api_discovery.matches_hint(endpoint) {
+        score += 50;
+    }
+    score
 }
 
 /// Fetch a single endpoint and parse its response as JSON.
@@ -239,9 +253,10 @@ fn try_javascript_extraction_blocking(
     let js_engine = JsEngine::new()?;
     js_engine.inject_minimal_dom()?;
 
-    let fetch_client = FetchClient::new(
+    let fetch_client = FetchClient::new_with_options(
         (!cookie_header.is_empty()).then(|| cookie_header.to_owned()),
         (!base_url.is_empty()).then(|| base_url.clone()),
+        cfg.force_http1,
     );
 
     inject_fetch_sync(js_engine.context(), fetch_client.clone())?;

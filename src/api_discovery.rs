@@ -36,10 +36,12 @@ pub struct ApiEndpoint {
 pub struct ApiDiscovery {
     /// Regex patterns for finding endpoints
     patterns: Vec<EndpointPattern>,
+    /// Optional user-provided URL fragments to prioritize or discover.
+    url_hints: Vec<String>,
 }
 
 struct EndpointPattern {
-    name: &'static str,
+    name: String,
     regex: Regex,
     url_group: usize,            // Which capture group contains the URL
     method_group: Option<usize>, // Which capture group contains the method (if any)
@@ -48,124 +50,43 @@ struct EndpointPattern {
 impl ApiDiscovery {
     /// Create a new API discovery engine with built-in patterns
     pub fn new() -> Result<Self> {
-        let patterns = vec![
-            // fetch() calls: fetch("/api/users"), fetch(`/api/${id}`)
-            EndpointPattern {
-                name: "fetch",
-                regex: Regex::new(r#"fetch\s*\(\s*["'`]([^"'`]+)["'`]"#)?,
-                url_group: 1,
-                method_group: None,
-            },
-            // fetch with method: fetch("/api/users", {method: "POST"})
-            EndpointPattern {
-                name: "fetch_with_method",
-                regex: Regex::new(
-                    r#"fetch\s*\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{[^}]*method:\s*["'](\w+)["']"#,
-                )?,
-                url_group: 1,
-                method_group: Some(2),
-            },
-            // axios: axios.get("/api/users"), axios.post("/api/users")
-            EndpointPattern {
-                name: "axios_method",
-                regex: Regex::new(r#"axios\.(\w+)\s*\(\s*["'`]([^"'`]+)["'`]"#)?,
-                url_group: 2,
-                method_group: Some(1),
-            },
-            // axios: axios({url: "/api/users", method: "GET"})
-            EndpointPattern {
-                name: "axios_config",
-                regex: Regex::new(
-                    r#"axios\s*\(\s*\{[^}]*url:\s*["'`]([^"'`]+)["'`][^}]*method:\s*["'](\w+)["']"#,
-                )?,
-                url_group: 1,
-                method_group: Some(2),
-            },
-            // XMLHttpRequest: xhr.open("GET", "/api/users")
-            EndpointPattern {
-                name: "xhr_open",
-                regex: Regex::new(r#"\.open\s*\(\s*["'](\w+)["']\s*,\s*["'`]([^"'`]+)["'`]"#)?,
-                url_group: 2,
-                method_group: Some(1),
-            },
-            // jQuery AJAX: $.ajax({url: "/api/users", type: "GET"})
-            EndpointPattern {
-                name: "jquery_ajax",
-                regex: Regex::new(
-                    r#"\$\.ajax\s*\(\s*\{[^}]*url:\s*["'`]([^"'`]+)["'`][^}]*type:\s*["'](\w+)["']"#,
-                )?,
-                url_group: 1,
-                method_group: Some(2),
-            },
-            // GraphQL: Common GraphQL endpoint patterns
-            EndpointPattern {
-                name: "graphql_endpoint",
-                regex: Regex::new(r#"["'`](/graphql|/__graphql|/api/graphql)["'`]"#)?,
-                url_group: 1,
-                method_group: None,
-            },
-            // Base URL configuration: baseURL: "https://api.example.com"
-            EndpointPattern {
-                name: "base_url",
-                regex: Regex::new(r#"baseURL:\s*["'`](https?://[^"'`]+)["'`]"#)?,
-                url_group: 1,
-                method_group: None,
-            },
-            // API endpoint in string: const API_URL = "/api/users"
-            EndpointPattern {
-                name: "api_constant",
-                regex: Regex::new(
-                    r#"(?:API_URL|ENDPOINT|API_ENDPOINT)\s*=\s*["'`]([^"'`]+)["'`]"#,
-                )?,
-                url_group: 1,
-                method_group: None,
-            },
-            // Google batchexecute: "/_/FlightSearch/data/batchexecute"
-            EndpointPattern {
-                name: "google_batchexecute",
-                regex: Regex::new(r#"["'`](/_/[A-Za-z]+/data/batchexecute)["'`]"#)?,
-                url_group: 1,
-                method_group: None,
-            },
-            // Google RPC-style: "https://www.google.com/_/..." or "/_/..."
-            EndpointPattern {
-                name: "google_rpc",
-                regex: Regex::new(r#"["'`]((?:https?://[^"'`]+)?/_/[A-Za-z]+[^"'`]*)["'`]"#)?,
-                url_group: 1,
-                method_group: None,
-            },
-            // Google Travel/Flights API patterns
-            EndpointPattern {
-                name: "google_travel",
-                regex: Regex::new(
-                    r#"["'`](/travel/[a-z]+/(?:search|offers|booking)[^"'`]*)["'`]"#,
-                )?,
-                url_group: 1,
-                method_group: None,
-            },
-            // gRPC-Web endpoints
-            EndpointPattern {
-                name: "grpc_web",
-                regex: Regex::new(r#"["'`]([^"'`]+\.grpc\.web[^"'`]*)["'`]"#)?,
-                url_group: 1,
-                method_group: None,
-            },
-            // Internal data endpoints: /data/, /api/v*, /_ah/
-            EndpointPattern {
-                name: "internal_data",
-                regex: Regex::new(r#"["'`](/(?:data|_ah|api/v\d+)/[^"'`]+)["'`]"#)?,
-                url_group: 1,
-                method_group: None,
-            },
-        ];
+        Self::with_url_hints(&[])
+    }
 
-        Ok(Self { patterns })
+    /// Create a discovery engine with additional user-provided URL hints.
+    pub fn with_url_hints(url_hints: &[String]) -> Result<Self> {
+        let mut patterns = default_patterns()?;
+
+        let mut normalized_hints = Vec::new();
+        for hint in url_hints {
+            let trimmed = hint.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            normalized_hints.push(trimmed.to_string());
+            patterns.push(EndpointPattern {
+                name: format!("custom_hint:{trimmed}"),
+                regex: Regex::new(&format!(
+                    r#"["'`]([^"'`]*{}[^"'`]*)["'`]"#,
+                    regex::escape(trimmed)
+                ))?,
+                url_group: 1,
+                method_group: None,
+            });
+        }
+
+        Ok(Self {
+            patterns,
+            url_hints: normalized_hints,
+        })
     }
 
     /// Discover API endpoints from JavaScript code
     #[must_use]
     pub fn discover(&self, js_code: &str) -> Vec<ApiEndpoint> {
-        let mut endpoints = HashSet::new();
+        let mut endpoints = Vec::new();
+        let mut seen = HashSet::new();
 
         for pattern in &self.patterns {
             for cap in pattern.regex.captures_iter(js_code) {
@@ -182,22 +103,30 @@ impl ApiDiscovery {
                         continue;
                     }
 
+                    if pattern.name.starts_with("custom_hint:")
+                        && !url.starts_with('/')
+                        && !url.starts_with("http://")
+                        && !url.starts_with("https://")
+                    {
+                        continue;
+                    }
+
                     let method = pattern
                         .method_group
                         .and_then(|group| cap.get(group))
                         .map(|m| m.as_str().to_uppercase());
 
-                    endpoints.insert(ApiEndpoint {
-                        url,
-                        method,
-                        source: pattern.name.to_string(),
-                    });
+                    if seen.insert((url.clone(), method.clone())) {
+                        endpoints.push(ApiEndpoint {
+                            url,
+                            method,
+                            source: pattern.name.clone(),
+                        });
+                    }
                 }
             }
         }
 
-        // Sort by URL for consistent ordering
-        let mut endpoints: Vec<_> = endpoints.into_iter().collect();
         endpoints.sort_by(|a, b| a.url.cmp(&b.url));
         endpoints
     }
@@ -270,8 +199,130 @@ impl ApiDiscovery {
             score -= 5;
         }
 
+        if endpoint.source.starts_with("custom_hint:") {
+            score += 25;
+        }
+
         score
     }
+
+    /// Return true when the endpoint matches a user-provided URL hint.
+    #[must_use]
+    pub fn matches_hint(&self, endpoint: &ApiEndpoint) -> bool {
+        let endpoint_url = endpoint.url.to_lowercase();
+        self.url_hints
+            .iter()
+            .any(|hint| endpoint_url.contains(&hint.to_lowercase()))
+    }
+}
+
+fn default_patterns() -> Result<Vec<EndpointPattern>> {
+    Ok(vec![
+        // fetch() calls: fetch("/api/users"), fetch(`/api/${id}`)
+        EndpointPattern {
+            name: "fetch".to_string(),
+            regex: Regex::new(r#"fetch\s*\(\s*["'`]([^"'`]+)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // fetch with method: fetch("/api/users", {method: "POST"})
+        EndpointPattern {
+            name: "fetch_with_method".to_string(),
+            regex: Regex::new(
+                r#"fetch\s*\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{[^}]*method:\s*["'](\w+)["']"#,
+            )?,
+            url_group: 1,
+            method_group: Some(2),
+        },
+        // axios: axios.get("/api/users"), axios.post("/api/users")
+        EndpointPattern {
+            name: "axios_method".to_string(),
+            regex: Regex::new(r#"axios\.(\w+)\s*\(\s*["'`]([^"'`]+)["'`]"#)?,
+            url_group: 2,
+            method_group: Some(1),
+        },
+        // axios: axios({url: "/api/users", method: "GET"})
+        EndpointPattern {
+            name: "axios_config".to_string(),
+            regex: Regex::new(
+                r#"axios\s*\(\s*\{[^}]*url:\s*["'`]([^"'`]+)["'`][^}]*method:\s*["'](\w+)["']"#,
+            )?,
+            url_group: 1,
+            method_group: Some(2),
+        },
+        // XMLHttpRequest: xhr.open("GET", "/api/users")
+        EndpointPattern {
+            name: "xhr_open".to_string(),
+            regex: Regex::new(r#"\.open\s*\(\s*["'](\w+)["']\s*,\s*["'`]([^"'`]+)["'`]"#)?,
+            url_group: 2,
+            method_group: Some(1),
+        },
+        // jQuery AJAX: $.ajax({url: "/api/users", type: "GET"})
+        EndpointPattern {
+            name: "jquery_ajax".to_string(),
+            regex: Regex::new(
+                r#"\$\.ajax\s*\(\s*\{[^}]*url:\s*["'`]([^"'`]+)["'`][^}]*type:\s*["'](\w+)["']"#,
+            )?,
+            url_group: 1,
+            method_group: Some(2),
+        },
+        // GraphQL: Common GraphQL endpoint patterns
+        EndpointPattern {
+            name: "graphql_endpoint".to_string(),
+            regex: Regex::new(r#"["'`](/graphql|/__graphql|/api/graphql)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // Base URL configuration: baseURL: "https://api.example.com"
+        EndpointPattern {
+            name: "base_url".to_string(),
+            regex: Regex::new(r#"baseURL:\s*["'`](https?://[^"'`]+)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // API endpoint in string: const API_URL = "/api/users"
+        EndpointPattern {
+            name: "api_constant".to_string(),
+            regex: Regex::new(r#"(?:API_URL|ENDPOINT|API_ENDPOINT)\s*=\s*["'`]([^"'`]+)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // Google batchexecute: "/_/FlightSearch/data/batchexecute"
+        EndpointPattern {
+            name: "google_batchexecute".to_string(),
+            regex: Regex::new(r#"["'`](/_/[A-Za-z]+/data/batchexecute)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // Google RPC-style: "https://www.google.com/_/..." or "/_/..."
+        EndpointPattern {
+            name: "google_rpc".to_string(),
+            regex: Regex::new(r#"["'`]((?:https?://[^"'`]+)?/_/[A-Za-z]+[^"'`]*)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // Google Travel/Flights API patterns
+        EndpointPattern {
+            name: "google_travel".to_string(),
+            regex: Regex::new(r#"["'`](/travel/[a-z]+/(?:search|offers|booking)[^"'`]*)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // gRPC-Web endpoints
+        EndpointPattern {
+            name: "grpc_web".to_string(),
+            regex: Regex::new(r#"["'`]([^"'`]+\.grpc\.web[^"'`]*)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+        // Internal data endpoints: /data/, /api/v*, /_ah/
+        EndpointPattern {
+            name: "internal_data".to_string(),
+            regex: Regex::new(r#"["'`](/(?:data|_ah|api/v\d+)/[^"'`]+)["'`]"#)?,
+            url_group: 1,
+            method_group: None,
+        },
+    ])
 }
 
 impl Default for ApiDiscovery {
@@ -355,5 +406,33 @@ mod tests {
         };
 
         assert!(ApiDiscovery::score_endpoint(&ep1) > ApiDiscovery::score_endpoint(&ep2));
+    }
+
+    #[test]
+    fn test_custom_url_hints_find_matching_strings() {
+        let discovery = ApiDiscovery::with_url_hints(&["/custom/data".to_string()]).unwrap();
+        let code = r#"
+            const endpoint = "/custom/data/items";
+            const ignored = "not-an-endpoint";
+        "#;
+
+        let endpoints = discovery.discover(code);
+        assert!(endpoints.iter().any(|e| e.url == "/custom/data/items"));
+        assert!(
+            endpoints
+                .iter()
+                .any(|e| e.source == "custom_hint:/custom/data")
+        );
+    }
+
+    #[test]
+    fn test_custom_hints_do_not_duplicate_existing_discoveries() {
+        let discovery = ApiDiscovery::with_url_hints(&["/api/users".to_string()]).unwrap();
+        let code = r#"fetch("/api/users");"#;
+
+        let endpoints = discovery.discover(code);
+        let users_matches = endpoints.iter().filter(|e| e.url == "/api/users").count();
+
+        assert_eq!(users_matches, 1);
     }
 }
