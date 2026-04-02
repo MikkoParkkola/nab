@@ -105,6 +105,90 @@ fn keychain_service_firefox_safari_are_empty() {
     assert!(CookieSource::Safari.keychain_service().is_empty());
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn cookie_paths_use_macos_locations() {
+    let app_support = dirs::config_dir().expect("macOS should expose Application Support");
+    let home = dirs::home_dir().expect("home directory should be available");
+
+    assert_eq!(
+        CookieSource::Brave.cookie_path().unwrap(),
+        app_support.join("BraveSoftware/Brave-Browser/Default/Cookies")
+    );
+    assert_eq!(
+        CookieSource::Chrome.cookie_path().unwrap(),
+        app_support.join("Google/Chrome/Default/Cookies")
+    );
+    assert_eq!(
+        CookieSource::Firefox.cookie_path().unwrap(),
+        app_support.join("Firefox/Profiles")
+    );
+    assert_eq!(
+        CookieSource::Safari.cookie_path().unwrap(),
+        home.join("Library/Cookies/Cookies.binarycookies")
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn cookie_paths_use_linux_locations() {
+    let config_dir = dirs::config_dir().expect("Linux should expose ~/.config");
+    let home = dirs::home_dir().expect("home directory should be available");
+
+    assert_eq!(
+        CookieSource::Brave.cookie_path().unwrap(),
+        config_dir.join("BraveSoftware/Brave-Browser/Default/Cookies")
+    );
+    assert_eq!(
+        CookieSource::Chrome.cookie_path().unwrap(),
+        config_dir.join("google-chrome/Default/Cookies")
+    );
+    assert_eq!(
+        CookieSource::Firefox.cookie_path().unwrap(),
+        home.join(".mozilla/firefox")
+    );
+    assert!(
+        CookieSource::Safari.cookie_path().is_none(),
+        "Safari should not advertise a Linux cookie store"
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cookie_paths_use_windows_locations() {
+    let local_data = dirs::data_local_dir().expect("Windows should expose LocalAppData");
+    let config_dir = dirs::config_dir().expect("Windows should expose AppData/Roaming");
+
+    assert_eq!(
+        CookieSource::Brave.cookie_path().unwrap(),
+        local_data.join("BraveSoftware/Brave-Browser/User Data/Default/Cookies")
+    );
+    assert_eq!(
+        CookieSource::Chrome.cookie_path().unwrap(),
+        local_data.join("Google/Chrome/User Data/Default/Cookies")
+    );
+    assert_eq!(
+        CookieSource::Firefox.cookie_path().unwrap(),
+        config_dir.join("Mozilla/Firefox/Profiles")
+    );
+    assert!(
+        CookieSource::Safari.cookie_path().is_none(),
+        "Safari should not advertise a Windows cookie store"
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn non_macos_keychain_lookup_returns_fallback_error() {
+    let err = CookieSource::Chrome
+        .get_keychain_key()
+        .expect_err("non-macOS should not attempt native keychain lookup");
+    assert!(
+        err.to_string().contains("Python cookie fallback"),
+        "error should direct callers toward the Python fallback: {err}"
+    );
+}
+
 // ─── PBKDF2 key derivation ────────────────────────────────────────────────────
 
 #[test]

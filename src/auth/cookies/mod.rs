@@ -57,18 +57,7 @@ impl CookieSource {
 
     /// Get the cookie database path for this browser.
     fn cookie_path(self) -> Option<std::path::PathBuf> {
-        let home = dirs::home_dir()?;
-        let path = match self {
-            CookieSource::Brave => {
-                home.join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies")
-            }
-            CookieSource::Chrome => {
-                home.join("Library/Application Support/Google/Chrome/Default/Cookies")
-            }
-            CookieSource::Firefox => home.join("Library/Application Support/Firefox/Profiles"),
-            CookieSource::Safari => home.join("Library/Cookies/Cookies.binarycookies"),
-        };
-        Some(path)
+        platform_cookie_path(self)
     }
 
     /// Get the Keychain service name for this browser.
@@ -95,8 +84,8 @@ impl CookieSource {
 
     /// Read the raw password bytes from the macOS Keychain.
     ///
-    /// Uses `security-framework` on macOS; falls back to `security` CLI on other
-    /// platforms (Linux uses GNOME Keyring — not yet implemented natively).
+    /// Uses `security-framework` on macOS. Other platforms intentionally return an
+    /// error so cookie extraction can fall back to Python `browser_cookie3`.
     #[cfg(target_os = "macos")]
     fn read_keychain_password(service: &str) -> Result<Vec<u8>> {
         use security_framework::passwords::get_generic_password;
@@ -106,20 +95,12 @@ impl CookieSource {
             .with_context(|| format!("Keychain access denied for service '{service}'"))
     }
 
-    /// Fallback for non-macOS: shell out to `security` CLI.
+    /// Non-macOS platforms do not have native keychain support in `nab` yet.
     #[cfg(not(target_os = "macos"))]
-    fn read_keychain_password(service: &str) -> Result<Vec<u8>> {
-        // TODO(linux): implement GNOME Keyring support via `secret-service` crate.
-        let output = Command::new("security")
-            .args(["find-generic-password", "-s", service, "-w"])
-            .output()
-            .context("Failed to access Keychain")?;
-
-        if !output.status.success() {
-            anyhow::bail!("Keychain access denied for {service}");
-        }
-
-        Ok(output.stdout.trim_ascii().to_vec())
+    fn read_keychain_password(_service: &str) -> Result<Vec<u8>> {
+        anyhow::bail!(
+            "Native keychain lookup is only supported on macOS; using Python cookie fallback"
+        )
     }
 
     /// Get cookies for a domain from the specified browser.
@@ -240,6 +221,52 @@ except Exception as e:
             .join("; ");
         Ok(header)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
+    let app_support = dirs::config_dir()?;
+    let home = dirs::home_dir()?;
+
+    Some(match source {
+        CookieSource::Brave => app_support.join("BraveSoftware/Brave-Browser/Default/Cookies"),
+        CookieSource::Chrome => app_support.join("Google/Chrome/Default/Cookies"),
+        CookieSource::Firefox => app_support.join("Firefox/Profiles"),
+        CookieSource::Safari => home.join("Library/Cookies/Cookies.binarycookies"),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn platform_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
+    let config_dir = dirs::config_dir()?;
+    let home = dirs::home_dir()?;
+
+    match source {
+        CookieSource::Brave => Some(config_dir.join("BraveSoftware/Brave-Browser/Default/Cookies")),
+        CookieSource::Chrome => Some(config_dir.join("google-chrome/Default/Cookies")),
+        CookieSource::Firefox => Some(home.join(".mozilla/firefox")),
+        CookieSource::Safari => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn platform_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
+    let local_data = dirs::data_local_dir()?;
+    let config_dir = dirs::config_dir()?;
+
+    match source {
+        CookieSource::Brave => {
+            Some(local_data.join("BraveSoftware/Brave-Browser/User Data/Default/Cookies"))
+        }
+        CookieSource::Chrome => Some(local_data.join("Google/Chrome/User Data/Default/Cookies")),
+        CookieSource::Firefox => Some(config_dir.join("Mozilla/Firefox/Profiles")),
+        CookieSource::Safari => None,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn platform_cookie_path(_source: CookieSource) -> Option<std::path::PathBuf> {
+    None
 }
 
 // ─── Credential source ────────────────────────────────────────────────────────
