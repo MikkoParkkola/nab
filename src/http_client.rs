@@ -63,7 +63,25 @@ fn accelerated_builder(
     builder
 }
 
+fn build_http_client(
+    headers: &reqwest::header::HeaderMap,
+    http2_prior: bool,
+    redirect_policy: reqwest::redirect::Policy,
+) -> Result<Client> {
+    Ok(accelerated_builder(headers, http2_prior)
+        .redirect(redirect_policy)
+        .build()?)
+}
+
 impl AcceleratedClient {
+    fn from_parts(client: Client, no_redirect_client: Client, profile: BrowserProfile) -> Self {
+        Self {
+            client,
+            no_redirect_client,
+            profile: Arc::new(RwLock::new(profile)),
+        }
+    }
+
     /// Create a new accelerated HTTP client
     pub fn new() -> Result<Self> {
         Self::with_profile(random_profile())
@@ -73,21 +91,14 @@ impl AcceleratedClient {
     pub fn with_profile(profile: BrowserProfile) -> Result<Self> {
         let headers = profile.to_headers();
 
-        let client = accelerated_builder(&headers, true)
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()?;
+        let client = build_http_client(&headers, true, reqwest::redirect::Policy::limited(10))?;
 
         // The no-redirect client uses adaptive HTTP/2 for broader compatibility
         // since it handles the manual redirect chain in fetch_safe.
-        let no_redirect_client = accelerated_builder(&headers, false)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+        let no_redirect_client =
+            build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
 
-        Ok(Self {
-            client,
-            no_redirect_client,
-            profile: Arc::new(RwLock::new(profile)),
-        })
+        Ok(Self::from_parts(client, no_redirect_client, profile))
     }
 
     /// Create client that tries HTTP/2 with fallback to HTTP/1.1
@@ -95,35 +106,26 @@ impl AcceleratedClient {
         let profile = random_profile();
         let headers = profile.to_headers();
 
-        let client = accelerated_builder(&headers, false)
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()?;
+        let client = build_http_client(&headers, false, reqwest::redirect::Policy::limited(10))?;
 
-        let no_redirect_client = accelerated_builder(&headers, false)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+        let no_redirect_client =
+            build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
 
-        Ok(Self {
-            client,
-            no_redirect_client,
-            profile: Arc::new(RwLock::new(profile)),
-        })
+        Ok(Self::from_parts(client, no_redirect_client, profile))
     }
 
     /// Create client from an existing `reqwest::Client` (for custom configurations like proxies)
     pub fn from_client(client: Client) -> Result<Self> {
-        let profile = random_profile();
+        Self::from_client_with_profile(client, random_profile())
+    }
+
+    fn from_client_with_profile(client: Client, profile: BrowserProfile) -> Result<Self> {
         let headers = profile.to_headers();
 
-        let no_redirect_client = accelerated_builder(&headers, false)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+        let no_redirect_client =
+            build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
 
-        Ok(Self {
-            client,
-            no_redirect_client,
-            profile: Arc::new(RwLock::new(random_profile())),
-        })
+        Ok(Self::from_parts(client, no_redirect_client, profile))
     }
 
     /// Create client that doesn't follow redirects (for auth flows)
@@ -131,17 +133,11 @@ impl AcceleratedClient {
         let profile = random_profile();
         let headers = profile.to_headers();
 
-        let client = accelerated_builder(&headers, false)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+        let client = build_http_client(&headers, false, reqwest::redirect::Policy::none())?;
 
         let no_redirect_client = client.clone();
 
-        Ok(Self {
-            client,
-            no_redirect_client,
-            profile: Arc::new(RwLock::new(profile)),
-        })
+        Ok(Self::from_parts(client, no_redirect_client, profile))
     }
 
     /// Fetch a URL with all accelerations
@@ -412,6 +408,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use crate::error::NabError;
+    use crate::fingerprint::chrome_profile;
 
     #[derive(Debug)]
     struct TestResponse {
@@ -711,6 +708,53 @@ mod tests {
     #[test]
     fn client_new_no_redirect_succeeds() {
         assert!(AcceleratedClient::new_no_redirect().is_ok());
+    }
+
+    #[tokio::test]
+    async fn from_client_with_profile_keeps_safe_fetch_headers_in_sync() {
+        let profile = chrome_profile();
+        let expected_user_agent = profile.user_agent.to_ascii_lowercase();
+        let expected_accept_language = profile.accept_language.to_ascii_lowercase();
+        let (base_url, server) = spawn_test_server(1, move |request| {
+            let request = request.to_ascii_lowercase();
+            assert!(
+                request.contains(&format!("user-agent: {expected_user_agent}\r\n")),
+                "request should include stored profile user-agent: {request}"
+            );
+            assert!(
+                request.contains(&format!("accept-language: {expected_accept_language}\r\n")),
+                "request should include stored profile accept-language: {request}"
+            );
+            TestResponse::ok("profile headers stable", "text/plain")
+        })
+        .await;
+
+        let client = AcceleratedClient::from_client_with_profile(
+            reqwest::Client::builder()
+                .http1_only()
+                .brotli(true)
+                .zstd(true)
+                .gzip(true)
+                .deflate(true)
+                .build()
+                .unwrap(),
+            profile,
+        )
+        .unwrap();
+
+        let config = SafeFetchConfig::default();
+        let response = client
+            .fetch_safe_with_validators(
+                &format!("{base_url}/profile"),
+                &config,
+                loopback_url_allowed_for_tests,
+                loopback_redirect_allowed_for_tests,
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status, StatusCode::OK);
+        assert_eq!(response.text_lossy(), "profile headers stable");
+        server.await.unwrap();
     }
 
     #[test]
