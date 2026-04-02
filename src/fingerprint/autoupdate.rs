@@ -1,7 +1,7 @@
 // Browser version auto-updater
 // Fetches latest versions from official APIs and caches them locally
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -29,7 +29,7 @@ impl BrowserVersions {
             if config.is_stale() {
                 eprintln!(
                     "🔄 Browser versions outdated ({} days old), updating...",
-                    (Utc::now() - config.last_updated).num_days()
+                    config.cache_age_days()
                 );
 
                 match config.fetch_and_update() {
@@ -46,6 +46,7 @@ impl BrowserVersions {
                     }
                 }
             }
+            config.check_safari_staleness();
             return config;
         }
 
@@ -57,33 +58,53 @@ impl BrowserVersions {
             Ok(updated) => {
                 if let Err(e) = updated.save_to_file(&config_path) {
                     eprintln!("⚠️  Failed to save initial config: {e}");
+                    config.check_safari_staleness();
                     return config;
                 }
                 eprintln!("✅ Browser versions initialized");
+                updated.check_safari_staleness();
                 updated
             }
             Err(e) => {
                 eprintln!("⚠️  Failed to fetch initial versions ({e}), using defaults");
+                config.check_safari_staleness();
                 config
             }
         }
     }
 
+    fn cache_age_days(&self) -> i64 {
+        Utc::now()
+            .signed_duration_since(self.last_updated)
+            .num_days()
+    }
+
+    fn safari_age_days(&self) -> i64 {
+        Utc::now()
+            .signed_duration_since(self.safari_last_checked)
+            .num_days()
+    }
+
     fn is_stale(&self) -> bool {
-        let now = Utc::now();
-        let age = now.signed_duration_since(self.last_updated);
-        age > Duration::days(UPDATE_THRESHOLD_DAYS)
+        self.cache_age_days() > UPDATE_THRESHOLD_DAYS
     }
 
     fn is_safari_critically_stale(&self) -> bool {
-        let safari_age = Utc::now().signed_duration_since(self.safari_last_checked);
-        safari_age > Duration::days(SAFARI_STALE_THRESHOLD_DAYS)
+        self.safari_age_days() > SAFARI_STALE_THRESHOLD_DAYS
+    }
+
+    fn safari_staleness_notice(&self) -> Option<String> {
+        self.is_safari_critically_stale().then(|| {
+            format!(
+                "⚠️  Safari versions are {} days old (>6 months)",
+                self.safari_age_days()
+            )
+        })
     }
 
     fn check_safari_staleness(&self) {
-        if self.is_safari_critically_stale() {
-            let days = (Utc::now() - self.safari_last_checked).num_days();
-            eprintln!("⚠️  Safari versions are {days} days old (>6 months)");
+        if let Some(notice) = self.safari_staleness_notice() {
+            eprintln!("{notice}");
             eprintln!("   Check: https://developer.apple.com/documentation/safari-release-notes");
             eprintln!("   Or edit: {}", Self::config_path().display());
         }
@@ -92,7 +113,7 @@ impl BrowserVersions {
     #[allow(clippy::unnecessary_wraps)] // Result used for ? operator on inner calls
     fn fetch_and_update(&self) -> Result<Self, Box<dyn std::error::Error>> {
         // Determine cache severity level for better observability
-        let cache_age_days = (Utc::now() - self.last_updated).num_days();
+        let cache_age_days = self.cache_age_days();
         let severity = if cache_age_days > 60 {
             ("🔴 ERROR", "CRITICAL") // >2 months = critical
         } else if cache_age_days > 14 {
@@ -124,7 +145,14 @@ impl BrowserVersions {
                 eprintln!("✅ Safari: Updated from community list");
                 (versions, Utc::now())
             }
-            Err(_) => {
+            Err(e) => {
+                if self.is_safari_critically_stale() {
+                    eprintln!(
+                        "{} Safari update failed ({e}), using {}-day-old cache",
+                        severity.0,
+                        self.safari_age_days()
+                    );
+                }
                 // Keep existing Safari versions and timestamp
                 (self.safari.clone(), self.safari_last_checked)
             }
@@ -315,6 +343,7 @@ impl Default for BrowserVersions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
     #[test]
     fn test_staleness() {
@@ -337,6 +366,13 @@ mod tests {
             ..Default::default()
         };
         assert!(old_safari.is_safari_critically_stale());
+        assert_eq!(
+            old_safari.safari_staleness_notice(),
+            Some("⚠️  Safari versions are 185 days old (>6 months)".to_string())
+        );
+
+        let fresh_safari = BrowserVersions::default();
+        assert_eq!(fresh_safari.safari_staleness_notice(), None);
     }
 
     #[test]
