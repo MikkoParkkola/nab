@@ -168,13 +168,19 @@ impl AcceleratedClient {
         self.profile.read().await.clone()
     }
 
-    /// Rotate to a new random browser profile
+    /// Rotate to a new random browser profile.
+    ///
+    /// Reqwest bakes default headers into the client at construction time, so this
+    /// client cannot swap profiles in place without rebuilding the underlying
+    /// connection pools. Callers that need a different fingerprint should create a
+    /// new `AcceleratedClient` with the desired profile instead.
     pub async fn rotate_profile(&self) -> Result<()> {
-        let new_profile = random_profile();
-        *self.profile.write().await = new_profile;
-        // Note: This only affects the stored profile, not the client
-        // For full rotation, create a new client
-        Ok(())
+        // Preserve the async API for existing callers even though rotation is now
+        // rejected explicitly for truthfulness.
+        drop(self.profile.read().await);
+        bail!(
+            "Cannot rotate browser profile on an existing client; create a new AcceleratedClient with the desired profile"
+        )
     }
 
     /// Fetch with SSRF protection, DNS pinning, redirect validation, and body size cap.
@@ -754,6 +760,51 @@ mod tests {
             .unwrap();
         assert_eq!(response.status, StatusCode::OK);
         assert_eq!(response.text_lossy(), "profile headers stable");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rotate_profile_returns_error_and_preserves_profile_truth() {
+        let profile = chrome_profile();
+        let expected_user_agent = profile.user_agent.to_ascii_lowercase();
+        let expected_accept_language = profile.accept_language.to_ascii_lowercase();
+        let (base_url, server) = spawn_test_server(1, move |request| {
+            let request = request.to_ascii_lowercase();
+            assert!(
+                request.contains(&format!("user-agent: {expected_user_agent}\r\n")),
+                "request should keep the original user-agent after failed rotation: {request}"
+            );
+            assert!(
+                request.contains(&format!("accept-language: {expected_accept_language}\r\n")),
+                "request should keep the original accept-language after failed rotation: {request}"
+            );
+            TestResponse::ok("rotation remains truthful", "text/plain")
+        })
+        .await;
+
+        let client = AcceleratedClient::with_profile(profile.clone()).unwrap();
+        let error = client.rotate_profile().await.unwrap_err().to_string();
+        assert!(
+            error.contains("create a new AcceleratedClient"),
+            "rotation failure should explain the truthful recovery path: {error}"
+        );
+
+        let stored_profile = client.profile().await;
+        assert_eq!(stored_profile.user_agent, profile.user_agent);
+        assert_eq!(stored_profile.accept_language, profile.accept_language);
+
+        let config = SafeFetchConfig::default();
+        let response = client
+            .fetch_safe_with_validators(
+                &format!("{base_url}/rotate"),
+                &config,
+                loopback_url_allowed_for_tests,
+                loopback_redirect_allowed_for_tests,
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status, StatusCode::OK);
+        assert_eq!(response.text_lossy(), "rotation remains truthful");
         server.await.unwrap();
     }
 
