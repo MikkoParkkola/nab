@@ -138,6 +138,10 @@ impl FetchClient {
     }
 }
 
+fn build_fetch_error_body(error: impl std::fmt::Display) -> String {
+    serde_json::json!({ "error": error.to_string() }).to_string()
+}
+
 /// Inject `fetch()` global into `QuickJS` context
 /// This creates a synchronous `fetch()` that blocks on HTTP requests
 #[allow(clippy::too_many_lines)] // Complex JS bridge function; splitting would reduce clarity
@@ -148,7 +152,7 @@ pub fn inject_fetch_sync(ctx: &Context, client: FetchClient) -> Result<()> {
             move |url: String| {
                 client
                     .fetch_sync(url)
-                    .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
+                    .unwrap_or_else(build_fetch_error_body)
             }
         })?;
 
@@ -455,6 +459,19 @@ mod tests {
                 "Should not fail on URL parsing for absolute URLs"
             );
         }
+    }
+
+    #[test]
+    fn fetch_error_body_escapes_quotes_for_js_bridge() {
+        let body = build_fetch_error_body(r#"Invalid URL 'https://host/path?q="foo"': boom"#);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).expect("error body should stay valid JSON");
+
+        assert!(body.starts_with(r#"{"error":"#));
+        assert_eq!(
+            parsed["error"],
+            r#"Invalid URL 'https://host/path?q="foo"': boom"#
+        );
     }
 
     // ─── Integration tests (require network) ─────────────────────────────
