@@ -2,10 +2,9 @@
 //!
 //! SPA extraction requires a JS engine and real page content, so these tests
 //! focus on argument parsing, error handling, and verifying the command starts
-//! correctly. The SPA command currently has a known issue where pages without
-//! embedded JSON fall through to JS execution and encounter a Tokio runtime
-//! drop panic — tests that trigger this path assert on the partial output
-//! rather than exit code.
+//! correctly. Regressions here also cover the JavaScript fallback path for
+//! pages without embedded JSON so the command exits cleanly instead of
+//! panicking inside async execution.
 
 #![allow(deprecated)] // cargo_bin deprecation — replacement not yet stable
 
@@ -59,10 +58,8 @@ fn spa_starts_extraction_pipeline() {
         return;
     }
 
-    // The SPA command fetches the page and begins extraction. For pages
-    // without embedded JSON (like example.com) it falls into the JS engine
-    // path which currently panics due to a nested Tokio runtime issue.
-    // We verify the command at least starts and produces initial output.
+    // example.com has no embedded SPA data, so this exercises the full
+    // JavaScript fallback path without relying on framework-specific globals.
     let output = nab()
         .args([
             "spa",
@@ -76,11 +73,25 @@ fn spa_starts_extraction_pipeline() {
         .output()
         .expect("command should execute");
 
+    assert!(
+        output.status.success(),
+        "SPA command should exit successfully, got: {:?}",
+        output.status
+    );
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Status messages go to stderr (data-only on stdout since v0.6.0)
     assert!(
         stderr.contains("Extracting SPA data from") || stderr.contains("example.com"),
         "SPA command should start extraction pipeline, got stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Cannot drop a runtime"),
+        "SPA command should not panic on Tokio runtime shutdown: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked at"),
+        "SPA command should not panic during fallback execution: {stderr}"
     );
 }
 

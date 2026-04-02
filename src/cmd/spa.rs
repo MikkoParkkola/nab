@@ -1,12 +1,14 @@
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use scraper::{Html, Selector};
 
+use super::output::write_stdout_line;
 use nab::fetch_bridge::{FetchClient, inject_fetch_sync};
 use nab::js_engine::JsEngine;
 use nab::{AcceleratedClient, ApiDiscovery};
 
+#[derive(Clone)]
 /// Configuration for the `nab spa` command.
 ///
 /// Each field is a 1:1 mapping of a CLI boolean flag; grouping them further
@@ -80,7 +82,7 @@ pub async fn cmd_spa(cfg: &SpaConfig) -> Result<()> {
 
     // STEP 2: Fall back to full JavaScript execution
     if !found_data {
-        try_javascript_extraction(&html, &cookie_header, elapsed, &mut found_data, cfg)?;
+        try_javascript_extraction(&html, &cookie_header, elapsed, cfg).await?;
     }
 
     Ok(())
@@ -202,14 +204,31 @@ fn resolve_endpoint_url(endpoint: &str, page_url: &str) -> Option<String> {
 /// Execute inline scripts in the page and probe known SPA globals.
 ///
 /// This is the slow fallback path (~500ms+) used when static extraction fails.
-fn try_javascript_extraction(
+async fn try_javascript_extraction(
     html: &str,
     cookie_header: &str,
     elapsed: Duration,
-    found_data: &mut bool,
+    cfg: &SpaConfig,
+) -> Result<()> {
+    let html = html.to_string();
+    let cookie_header = cookie_header.to_string();
+    let cfg = cfg.clone();
+
+    tokio::task::spawn_blocking(move || {
+        try_javascript_extraction_blocking(&html, &cookie_header, elapsed, &cfg)
+    })
+    .await
+    .context("JavaScript extraction task failed")?
+}
+
+fn try_javascript_extraction_blocking(
+    html: &str,
+    cookie_header: &str,
+    elapsed: Duration,
     cfg: &SpaConfig,
 ) -> Result<()> {
     eprintln!("\n⚙️  No embedded JSON found, trying JavaScript execution...");
+    let mut found_data = false;
 
     let domain = super::extract_domain(&cfg.url);
     let base_url = url::Url::parse(&cfg.url)
@@ -241,15 +260,15 @@ fn try_javascript_extraction(
         std::thread::sleep(std::time::Duration::from_millis(cfg.wait_ms));
     }
 
-    probe_spa_globals(&js_engine, elapsed, found_data, cfg)?;
+    probe_spa_globals(&js_engine, elapsed, &mut found_data, cfg)?;
 
-    if !*found_data {
-        probe_window_object(&js_engine, elapsed, found_data, cfg)?;
+    if !found_data {
+        probe_window_object(&js_engine, elapsed, &mut found_data, cfg)?;
     }
 
     report_fetch_calls(&fetch_client);
 
-    if !*found_data {
+    if !found_data {
         report_extraction_failure(html, scripts_executed, cfg);
     }
 
@@ -500,16 +519,19 @@ fn output_spa_data(data: &serde_json::Value, cfg: &SpaConfig) -> Result<()> {
     };
 
     if cfg.summary {
-        println!("   {} bytes", serde_json::to_string(&transformed)?.len());
-        print_structure(&transformed, 3, 0);
+        write_stdout_line(&format!(
+            "   {} bytes",
+            serde_json::to_string(&transformed)?.len()
+        ))?;
+        print_structure(&transformed, 3, 0)?;
     } else if cfg.output == "json" || cfg.minify {
         if cfg.minify {
-            println!("{}", serde_json::to_string(&transformed)?);
+            write_stdout_line(&serde_json::to_string(&transformed)?)?;
         } else {
-            println!("{}", serde_json::to_string_pretty(&transformed)?);
+            write_stdout_line(&serde_json::to_string_pretty(&transformed)?)?;
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&transformed)?);
+        write_stdout_line(&serde_json::to_string_pretty(&transformed)?)?;
     }
 
     Ok(())
@@ -572,12 +594,12 @@ fn transform_json(
     }
 }
 
-fn print_structure(value: &serde_json::Value, max_depth: usize, depth: usize) {
+fn print_structure(value: &serde_json::Value, max_depth: usize, depth: usize) -> Result<()> {
     let indent = "  ".repeat(depth);
 
     if depth >= max_depth {
-        println!("{indent}...");
-        return;
+        write_stdout_line(&format!("{indent}..."))?;
+        return Ok(());
     }
 
     match value {
@@ -585,11 +607,11 @@ fn print_structure(value: &serde_json::Value, max_depth: usize, depth: usize) {
             for (key, val) in obj {
                 match val {
                     serde_json::Value::Object(_) => {
-                        println!("{indent}{key}: {{...}}");
-                        print_structure(val, max_depth, depth + 1);
+                        write_stdout_line(&format!("{indent}{key}: {{...}}"))?;
+                        print_structure(val, max_depth, depth + 1)?;
                     }
                     serde_json::Value::Array(arr) => {
-                        println!("{indent}{key}: [{} items]", arr.len());
+                        write_stdout_line(&format!("{indent}{key}: [{} items]", arr.len()))?;
                     }
                     _ => {
                         let type_name = match val {
@@ -599,15 +621,17 @@ fn print_structure(value: &serde_json::Value, max_depth: usize, depth: usize) {
                             serde_json::Value::Null => "null",
                             _ => "?",
                         };
-                        println!("{indent}{key}: {type_name}");
+                        write_stdout_line(&format!("{indent}{key}: {type_name}"))?;
                     }
                 }
             }
         }
         serde_json::Value::Array(arr) if !arr.is_empty() => {
-            println!("{indent}[0]:");
-            print_structure(&arr[0], max_depth, depth + 1);
+            write_stdout_line(&format!("{indent}[0]:"))?;
+            print_structure(&arr[0], max_depth, depth + 1)?;
         }
         _ => {}
     }
+
+    Ok(())
 }
