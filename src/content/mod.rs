@@ -36,6 +36,7 @@ pub mod pdf_light;
 pub mod plain;
 pub mod quality;
 pub mod readability;
+pub mod response_classifier;
 pub mod snapshot_store;
 pub mod spa_extract;
 pub mod structured;

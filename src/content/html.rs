@@ -138,7 +138,13 @@ fn html_to_markdown_with_url_and_fetcher<F>(
 where
     F: Fn(&str) -> Option<String>,
 {
-    html_to_markdown_with_url_and_sources(html, url, options, spa_extract::extract_spa_data, jina_fetcher)
+    html_to_markdown_with_url_and_sources(
+        html,
+        url,
+        options,
+        spa_extract::extract_spa_data,
+        jina_fetcher,
+    )
 }
 
 fn html_to_markdown_with_url_and_sources<S, F>(
@@ -256,7 +262,8 @@ where
             "Output is suspiciously thin ({} chars from {} bytes of HTML). \
              The page likely uses JavaScript rendering. Try:\n  \
              1. nab spa <url>              (extract embedded SPA data)\n  \
-             2. nab fetch --cookies brave <url>  (use browser session cookies)",
+             2. nab fetch <url>            (uses default browser cookies automatically)\n  \
+             3. nab fetch --cookies brave <url>  (override the browser profile if needed)",
             markdown.len(),
             html.len()
         );
@@ -352,7 +359,8 @@ pub fn detect_thin_content(html_len: usize, markdown_len: usize) -> Option<Strin
              {ratio_percent}% ratio). The page likely uses JavaScript rendering — \
              the article body may be missing. Try:\n  \
              1. nab spa <url>              (extract embedded SPA data)\n  \
-             2. nab fetch --cookies brave <url>  (use browser session cookies)"
+             2. nab fetch <url>            (uses default browser cookies automatically)\n  \
+             3. nab fetch --cookies brave <url>  (override the browser profile if needed)"
         ))
     } else {
         None

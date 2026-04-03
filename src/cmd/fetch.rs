@@ -7,6 +7,10 @@ use anyhow::Result;
 
 use nab::content::diff::ContentSnapshot;
 use nab::content::diff_format::format_diff_terminal;
+use nab::content::response_classifier::{
+    AuthRequiredKind, ResponseDiagnosticKind, ThinContentDiagnostic, classify_http_response,
+    classify_thin_content,
+};
 use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, OnePasswordAuth, SafeFetchConfig};
 
@@ -114,10 +118,6 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     let elapsed = start.elapsed();
     let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
 
-    if let Some(warning) = detect_bot_challenge(status.as_u16(), &raw_text) {
-        eprintln!("⚠️  {warning}");
-    }
-
     if cfg.capture_cookies && !set_cookies.is_empty() {
         write_stdout_line("🍪 Set-Cookie:")?;
         for cookie in &set_cookies {
@@ -135,7 +135,6 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
             &content_type,
             &cfg.url,
             cfg.format,
-            body_len,
             cfg.html_options,
         )
         .await?;
@@ -166,6 +165,18 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     } else {
         (raw_text.clone(), None)
     };
+
+    for warning in build_fetch_diagnostics(
+        status.as_u16(),
+        &raw_text,
+        Some(&content_type),
+        body_len,
+        body_text.len(),
+        quality.as_ref(),
+        cfg.html_options.allow_jina_fallback,
+    ) {
+        eprintln!("⚠️  {warning}");
+    }
 
     if cfg.show_diff {
         emit_diff(&cfg.url, &body_text, cfg.format)?;
@@ -371,7 +382,6 @@ async fn convert_body_to_markdown(
     content_type: &str,
     url: &str,
     format: OutputFormat,
-    body_len: usize,
     html_options: nab::content::html::HtmlConversionOptions,
 ) -> Result<ConvertedBody> {
     let router = nab::content::ContentRouter::with_html_options(html_options);
@@ -391,17 +401,6 @@ async fn convert_body_to_markdown(
     {
         write_stdout_line(&format!("   Pages: {pages}"))?;
         write_stdout_line(&format!("   Conversion: {:.1}ms", result.elapsed_ms))?;
-    }
-
-    let is_html = content_type.contains("html");
-    if is_html
-        && let Some(warning) =
-            nab::content::html::detect_thin_content(body_len, result.markdown.len())
-    {
-        eprintln!("⚠️  {warning}");
-        if !html_options.allow_jina_fallback {
-            eprintln!("⚠️  Remote reader fallback is disabled by --no-fallback.");
-        }
     }
 
     Ok(ConvertedBody {
@@ -532,44 +531,63 @@ fn extract_title(html: &str) -> Option<String> {
         .map(|el| el.text().collect::<String>().trim().to_string())
 }
 
-/// Detect bot-challenge pages (Vercel, Cloudflare).
-///
-/// Returns an actionable warning or `None` for regular content.
-pub(super) fn detect_bot_challenge(status: u16, body: &str) -> Option<String> {
-    if status == 429
-        && (body.contains("Vercel Security Checkpoint")
-            || body.contains("We're verifying your browser"))
+fn build_fetch_diagnostics(
+    status: u16,
+    raw_text: &str,
+    content_type: Option<&str>,
+    html_len: usize,
+    markdown_len: usize,
+    quality: Option<&nab::content::quality::QualityScore>,
+    allow_jina_fallback: bool,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    if let Some(diagnostic) = classify_http_response(status, raw_text) {
+        let warning = match diagnostic.kind {
+            ResponseDiagnosticKind::BrowserChallenge(_) => format!(
+                "{} Browser challenge likely requires cookies or JavaScript.\nTry:\n1. Visit the URL in a browser first\n2. Let nab reuse your default browser cookies automatically unless you intentionally disabled them\n3. Use --cookies brave|chrome|firefox|safari only to override the default browser profile",
+                diagnostic.summary()
+            ),
+            ResponseDiagnosticKind::RateLimited => format!(
+                "Rate limiting detected (HTTP {status}).\n{}",
+                diagnostic.guidance()
+            ),
+            ResponseDiagnosticKind::AuthRequired(AuthRequiredKind::LoginRequired) => {
+                "The response looks like a login page.\nSign in in your browser first, then retry. nab already uses your default browser cookies automatically unless you disabled them."
+                    .to_string()
+            }
+            ResponseDiagnosticKind::AuthRequired(AuthRequiredKind::SessionExpired) => {
+                diagnostic.message()
+            }
+        };
+        warnings.push(warning);
+    }
+
+    if let Some(thin) = classify_thin_content(content_type, html_len, markdown_len, quality) {
+        warnings.push(thin_content_message(thin));
+        if !allow_jina_fallback {
+            warnings.push("Remote reader fallback is disabled by --no-fallback.".to_string());
+        }
+    }
+
+    warnings
+}
+
+fn thin_content_message(diagnostic: ThinContentDiagnostic) -> String {
+    if let Some(message) =
+        nab::content::html::detect_thin_content(diagnostic.html_bytes, diagnostic.markdown_chars)
     {
-        return Some(
-            "Vercel Security Checkpoint detected. This site requires JavaScript challenge solving.\n\
-             Workarounds:\n\
-             1. Visit the URL in your browser first to set challenge cookies, then retry with --cookies\n\
-             2. Try an alternative URL (e.g., lesswrong.com instead of alignmentforum.org)\n\
-             3. Use a proxy service"
-                .to_string(),
-        );
+        return message;
     }
 
-    // LinkedIn bot detection (HTTP 999)
-    if status == 999 {
-        return Some(
-            "LinkedIn bot detection (HTTP 999). LinkedIn blocks non-browser TLS fingerprints.\n\
-             Use: nab fetch <url> --cookies brave\n\
-             This uses TLS fingerprint impersonation to match a real Chrome browser."
-                .to_string(),
-        );
-    }
-
-    if matches!(status, 403 | 503) && body.contains("cf-browser-verification") {
-        return Some(format!(
-            "Cloudflare browser verification detected (HTTP {status}).\n\
-             Workarounds:\n\
-             1. Visit the URL in your browser first, then: nab fetch <url> --cookies brave\n\
-             2. Use a different browser profile: --cookies chrome|firefox|safari"
-        ));
-    }
-
-    None
+    format!(
+        "Output is suspiciously thin ({} chars from {} bytes of HTML). \
+         Extraction confidence is low, so the main content may be missing.\n  \
+         1. nab spa <url>              (extract embedded SPA data)\n  \
+         2. nab fetch <url>            (uses default browser cookies automatically)\n  \
+         3. nab fetch --cookies brave <url>  (override the browser profile if needed)",
+        diagnostic.markdown_chars, diagnostic.html_bytes
+    )
 }
 
 /// Build HTTP client with optional proxy and redirect settings.
@@ -606,18 +624,25 @@ pub(super) use super::non_empty;
 
 #[cfg(test)]
 mod tests {
-    use super::detect_bot_challenge;
-
-    // ── Vercel Security Checkpoint ──────────────────────────────────────────
+    use super::build_fetch_diagnostics;
 
     #[test]
-    fn detect_bot_challenge_vercel_checkpoint_keyword_returns_warning() {
-        let body = "<html><body>Vercel Security Checkpoint</body></html>";
-        let result = detect_bot_challenge(429, body);
-        let warning = result.expect("expected a warning for Vercel checkpoint");
+    fn build_fetch_diagnostics_for_bot_challenge_mentions_cookies() {
+        let warning = build_fetch_diagnostics(
+            429,
+            "<html><body>Vercel Security Checkpoint</body></html>",
+            Some("text/html"),
+            0,
+            0,
+            None,
+            true,
+        )
+        .into_iter()
+        .next()
+        .expect("expected challenge warning");
         assert!(
-            warning.contains("Vercel"),
-            "warning should mention Vercel, got: {warning}"
+            warning.contains("challenge"),
+            "warning should mention challenge, got: {warning}"
         );
         assert!(
             warning.contains("--cookies"),
@@ -626,79 +651,47 @@ mod tests {
     }
 
     #[test]
-    fn detect_bot_challenge_vercel_browser_verification_phrase_returns_warning() {
-        let body = "We're verifying your browser. Please wait…";
+    fn build_fetch_diagnostics_for_rate_limit_is_not_bot_specific() {
+        let warning = build_fetch_diagnostics(
+            429,
+            "Rate limit exceeded. Please slow down.",
+            Some("text/html"),
+            0,
+            0,
+            None,
+            true,
+        )
+        .into_iter()
+        .next()
+        .expect("expected rate-limit warning");
         assert!(
-            detect_bot_challenge(429, body).is_some(),
-            "expected a warning for 'verifying your browser' phrase"
+            warning.contains("Rate limiting"),
+            "warning should mention rate limiting, got: {warning}"
         );
     }
 
     #[test]
-    fn detect_bot_challenge_vercel_wrong_status_no_warning() {
-        let body = "Vercel Security Checkpoint";
-        assert!(
-            detect_bot_challenge(200, body).is_none(),
-            "should not warn when status is 200"
+    fn build_fetch_diagnostics_for_thin_content_includes_no_fallback_hint() {
+        let warnings = build_fetch_diagnostics(
+            200,
+            "<html></html>",
+            Some("text/html"),
+            20_000,
+            100,
+            None,
+            false,
         );
-    }
-
-    // ── Cloudflare browser verification ────────────────────────────────────
-
-    #[test]
-    fn detect_bot_challenge_cloudflare_403_returns_warning() {
-        let body = "<div id='cf-browser-verification'>Please wait…</div>";
-        let result = detect_bot_challenge(403, body);
-        let warning = result.expect("expected a warning for Cloudflare 403");
         assert!(
-            warning.contains("Cloudflare"),
-            "warning should mention Cloudflare, got: {warning}"
+            warnings
+                .iter()
+                .any(|warning| warning.contains("suspiciously thin")),
+            "expected thin-content warning, got: {warnings:?}"
         );
-    }
-
-    #[test]
-    fn detect_bot_challenge_cloudflare_503_returns_warning() {
-        let body = "cf-browser-verification required";
         assert!(
-            detect_bot_challenge(503, body).is_some(),
-            "expected a warning for Cloudflare 503"
-        );
-    }
-
-    #[test]
-    fn detect_bot_challenge_cloudflare_wrong_status_no_warning() {
-        let body = "cf-browser-verification";
-        assert!(
-            detect_bot_challenge(200, body).is_none(),
-            "should not warn for status 200 with CF body"
-        );
-    }
-
-    // ── Normal responses ────────────────────────────────────────────────────
-
-    #[test]
-    fn detect_bot_challenge_normal_200_html_no_warning() {
-        let body = "<html><body><h1>Hello world</h1></body></html>";
-        assert!(
-            detect_bot_challenge(200, body).is_none(),
-            "should not warn for normal 200 response"
-        );
-    }
-
-    #[test]
-    fn detect_bot_challenge_empty_body_no_warning() {
-        assert!(
-            detect_bot_challenge(200, "").is_none(),
-            "should not warn for empty body"
-        );
-    }
-
-    #[test]
-    fn detect_bot_challenge_429_unrelated_body_no_warning() {
-        let body = "Rate limit exceeded. Please slow down.";
-        assert!(
-            detect_bot_challenge(429, body).is_none(),
-            "should not warn for generic 429"
+            warnings
+                .iter()
+                .any(|warning| warning.contains("--no-fallback")),
+            "expected no-fallback hint, got: {warnings:?}"
         );
     }
 }

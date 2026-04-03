@@ -11,6 +11,7 @@ use nab::content::budget::truncate_to_budget;
 use nab::content::diff::{ContentSnapshot, compute_diff};
 use nab::content::diff_format::format_diff_markdown;
 use nab::content::focus::extract_focused;
+use nab::content::response_classifier::{classify_http_response, classify_thin_content};
 use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, SafeFetchConfig};
 
@@ -152,6 +153,7 @@ impl FetchTool {
 
             let (status, content_type, response_headers, body_bytes, elapsed) =
                 fetch_with_session_response(&session_client, &self.url, start).await?;
+            let raw_text = String::from_utf8_lossy(&body_bytes).into_owned();
 
             write_response_summary(
                 &mut output,
@@ -163,6 +165,14 @@ impl FetchTool {
             write_body_info(&mut output, body_bytes.len());
 
             let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
+            trace_fetch_classification(
+                status.as_u16(),
+                &content_type,
+                &raw_text,
+                body_bytes.len(),
+                &conversion.markdown,
+                conversion.quality.as_ref(),
+            );
 
             if let Some(pages) = conversion.page_count {
                 let _ = writeln!(
@@ -211,6 +221,7 @@ impl FetchTool {
                 } else {
                     fetch_with_cookies(client, &self.url, &cookie_header, &profile, start).await?
                 };
+            let raw_text = String::from_utf8_lossy(&body_bytes).into_owned();
 
             write_response_summary(
                 &mut output,
@@ -222,6 +233,14 @@ impl FetchTool {
             write_body_info(&mut output, body_bytes.len());
 
             let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
+            trace_fetch_classification(
+                status.as_u16(),
+                &content_type,
+                &raw_text,
+                body_bytes.len(),
+                &conversion.markdown,
+                conversion.quality.as_ref(),
+            );
 
             if let Some(pages) = conversion.page_count {
                 let _ = writeln!(
@@ -344,6 +363,33 @@ impl FetchTool {
 /// regardless of whether content changed.
 fn apply_diff(url: &str, markdown: &str) -> (String, bool) {
     apply_diff_with_store(&SnapshotStore::new(), url, markdown)
+}
+
+fn trace_fetch_classification(
+    status: u16,
+    content_type: &str,
+    raw_text: &str,
+    body_len: usize,
+    markdown: &str,
+    quality: Option<&nab::content::quality::QualityScore>,
+) {
+    if let Some(primary) = classify_http_response(status, raw_text) {
+        tracing::warn!(
+            status,
+            class = primary.code(),
+            summary = primary.summary(),
+            "fetch response classified"
+        );
+    }
+
+    if classify_thin_content(Some(content_type), body_len, markdown.len(), quality).is_some() {
+        tracing::warn!(
+            status,
+            markdown_len = markdown.len(),
+            body_len,
+            "fetch response classified as thin content"
+        );
+    }
 }
 
 /// Testable variant: same logic as [`apply_diff`] but uses an explicit store.
