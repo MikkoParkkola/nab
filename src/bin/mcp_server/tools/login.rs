@@ -69,8 +69,8 @@ impl LoginTool {
                 ElicitResultAction::Accept => {
                     output.push_str("   ✅ OAuth flow completed by user\n");
                     output.push_str(
-                        "   Note: Use the `fetch` tool with `cookies: \"brave\"` (or your browser) \
-                         to access the authenticated session.\n",
+                        "   Note: Reuse the same `session` with the `fetch` tool, or let `fetch` \
+                         use the default browser cookies automatically.\n",
                     );
                 }
                 ElicitResultAction::Decline | ElicitResultAction::Cancel => {

@@ -47,3 +47,20 @@ pub(crate) async fn resolve_session_client(
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
     Ok(entry.client)
 }
+
+/// Build a temporary per-call client with its own cookie jar.
+///
+/// Used by non-session MCP flows that still need cookie seeding and `Set-Cookie`
+/// persistence across multiple requests inside a single tool invocation.
+pub(crate) async fn build_transient_client(
+    seed_cookies: Option<&str>,
+    seed_url: &str,
+) -> Result<reqwest::Client, CallToolError> {
+    let store = SessionStore::new();
+    let seed = seed_cookies.filter(|s| !s.is_empty());
+    let entry = store
+        .get_or_create("transient", seed, Some(seed_url))
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    Ok(entry.client)
+}

@@ -338,7 +338,7 @@ fn build_prompt_result_multi_page_research_uses_fetch_batch_hint() {
 }
 
 #[test]
-fn build_prompt_result_authenticated_fetch_defaults_to_cookies() {
+fn build_prompt_result_authenticated_fetch_uses_automatic_browser_cookies() {
     // GIVEN only url provided (no auth_method)
     let mut args = std::collections::BTreeMap::new();
     args.insert("url".into(), "https://secure.example.com".into());
@@ -347,12 +347,18 @@ fn build_prompt_result_authenticated_fetch_defaults_to_cookies() {
     let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
         panic!("expected TextContent");
     };
-    // THEN defaults to cookies flag
-    assert!(tc.text.contains("--cookies brave"), "text: {}", tc.text);
+    // THEN it describes automatic browser-cookie behavior instead of CLI flags
+    assert!(
+        tc.text.contains("automatically uses cookies"),
+        "text: {}",
+        tc.text
+    );
+    assert!(tc.text.contains("cookies = \"none\""), "text: {}", tc.text);
+    assert!(!tc.text.contains("--cookies"), "text: {}", tc.text);
 }
 
 #[test]
-fn build_prompt_result_authenticated_fetch_uses_1password_flag() {
+fn build_prompt_result_authenticated_fetch_uses_login_session_flow() {
     // GIVEN auth_method = "1password"
     let mut args = std::collections::BTreeMap::new();
     args.insert("url".into(), "https://secure.example.com".into());
@@ -362,8 +368,11 @@ fn build_prompt_result_authenticated_fetch_uses_1password_flag() {
     let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
         panic!("expected TextContent");
     };
-    // THEN 1password flag is used
-    assert!(tc.text.contains("--1password"), "text: {}", tc.text);
+    // THEN it points to the login + session workflow
+    assert!(tc.text.contains("login"), "text: {}", tc.text);
+    assert!(tc.text.contains("session"), "text: {}", tc.text);
+    assert!(tc.text.contains("1Password"), "text: {}", tc.text);
+    assert!(!tc.text.contains("--1password"), "text: {}", tc.text);
 }
 
 // ── all_resources ─────────────────────────────────────────────────────────────
@@ -399,6 +408,13 @@ fn quickstart_resource_contains_key_sections() {
     assert!(content.contains("Basic Fetch"));
     assert!(content.contains("Batch Fetch"));
     assert!(content.contains("Authentication"));
+}
+
+#[test]
+fn quickstart_resource_describes_automatic_cookie_defaults() {
+    let content = crate::resource_content("nab://guide/quickstart").unwrap();
+    assert!(content.contains("automatically try cookies from the default browser"));
+    assert!(content.contains("cookies = \"none\""));
 }
 
 #[test]

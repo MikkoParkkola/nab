@@ -388,13 +388,14 @@ fn all_prompts() -> Vec<Prompt> {
             name: "authenticated-fetch".into(),
             title: Some("Authenticated Fetch".into()),
             description: Some(
-                "Fetch a URL that requires authentication via browser cookies or 1Password.".into(),
+                "Fetch a URL that requires authentication using automatic browser cookies or a login session."
+                    .into(),
             ),
             arguments: vec![
                 prompt_arg("url", "URL to fetch", true),
                 prompt_arg(
                     "auth_method",
-                    "Authentication method: 'cookies' (use saved browser cookies) or '1password'",
+                    "Authentication method: 'cookies' (automatic browser cookies) or '1password' (login + session)",
                     false,
                 ),
             ],
@@ -443,15 +444,18 @@ fn build_prompt_result(
         "authenticated-fetch" => {
             let url = args.get("url").map_or("<url>", String::as_str);
             let method = args.get("auth_method").map_or("cookies", String::as_str);
-            let flag = if method == "1password" {
-                "--1password"
+            if method == "1password" {
+                format!(
+                    "Use the `login` tool for {url} with a session name to establish an authenticated session via 1Password.\n\
+                     Then call the `fetch` tool with the same `session` to retrieve the protected page."
+                )
             } else {
-                "--cookies brave"
-            };
-            format!(
-                "Use the `fetch` tool with auth flag `{flag}` to retrieve {url}.\n\
-                 This will use {method} authentication to access the protected page."
-            )
+                format!(
+                    "Use the `fetch` tool to retrieve {url}.\n\
+                     By default it automatically uses cookies from the default browser for that domain.\n\
+                     Only set `cookies` when you need to override the browser choice or disable cookies with `cookies = \"none\"`."
+                )
+            }
         }
         _ => return None,
     };
@@ -528,14 +532,17 @@ Use `fetch_batch` for multiple URLs in parallel:
 ## Authentication
 
 ### Browser cookies
-Pass `cookies = \"brave\"` (or `\"chrome\"`, `\"firefox\"`) to use saved browser cookies.
-Useful for sites where you are already logged in.
+`fetch` and `submit` automatically try cookies from the default browser for the target domain.
+Useful for sites where you are already logged in without needing extra parameters.
+
+Override with `cookies = \"brave\"` (or `\"chrome\"`, `\"firefox\"`, `\"safari\"`, `\"edge\"`) when needed.
+Pass `cookies = \"none\"` to disable cookies.
 
 ### 1Password
-Pass `use_1password = true` to look up credentials from 1Password and auto-login.
+Use the `login` tool to authenticate with 1Password and optionally persist the result in a named `session`.
 
 ### Interactive login
-Use the `login` tool to open an interactive browser session and capture cookies.
+Use the `login` tool to open an interactive browser session and then reuse the same `session` in `fetch` or `submit`.
 
 ## Form Submission
 

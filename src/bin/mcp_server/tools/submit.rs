@@ -6,12 +6,11 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
 use serde::{Deserialize, Serialize};
 
-use nab::AcceleratedClient;
 use nab::content::ContentRouter;
 
 use crate::helpers::resolve_cookie_header;
 use crate::structured::{TOOL_TRUNCATION_LIMIT, truncate_markdown};
-use crate::tools::client::{get_client, resolve_session_client};
+use crate::tools::client::{build_transient_client, resolve_session_client};
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
 
@@ -34,6 +33,11 @@ pub struct SubmitTool {
     fields: Vec<String>,
     #[serde(default)]
     csrf_selector: Option<String>,
+    /// Browser cookie source.
+    ///
+    /// Omit or use `"auto"` to seed from the default browser for this domain.
+    /// Use `"none"` to disable cookie seeding, or pass an explicit browser name
+    /// such as `"brave"`, `"chrome"`, `"firefox"`, `"safari"`, or `"edge"`.
     #[serde(default)]
     cookies: Option<String>,
     /// Named session for cookie persistence.  When set, the form page fetch
@@ -130,13 +134,14 @@ impl SubmitTool {
     /// Fetch the form page and return `(html, reqwest::Client)`.
     ///
     /// Uses the session's cookie-jar client when a session name is set,
-    /// otherwise falls back to the global `AcceleratedClient`.
+    /// otherwise builds a transient per-call client so cookies and `Set-Cookie`
+    /// state persist across the initial page fetch and the eventual form submit.
     async fn fetch_page(
         &self,
         output: &mut String,
     ) -> Result<(String, reqwest::Client), CallToolError> {
+        let cookie_header = resolve_cookie_header(&self.url, self.cookies.as_deref());
         if let Some(ref session_name) = self.session {
-            let cookie_header = resolve_cookie_header(&self.url, self.cookies.as_deref());
             let session_client =
                 resolve_session_client(session_name, Some(&cookie_header), &self.url).await?;
             let _ = writeln!(output, "   Session: {session_name}");
@@ -151,12 +156,17 @@ impl SubmitTool {
                 .map_err(|e| CallToolError::from_message(e.to_string()))?;
             Ok((html, session_client))
         } else {
-            let client: &AcceleratedClient = get_client().await;
-            let html = client
-                .fetch_text(&self.url)
+            let client = build_transient_client(Some(&cookie_header), &self.url).await?;
+            let resp = client
+                .get(&self.url)
+                .send()
                 .await
                 .map_err(|e| CallToolError::from_message(e.to_string()))?;
-            Ok((html, client.inner().clone()))
+            let html = resp
+                .text()
+                .await
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            Ok((html, client))
         }
     }
 }

@@ -65,6 +65,11 @@ pub struct FetchTool {
     headers: bool,
     #[serde(default)]
     body: bool,
+    /// Browser cookie source.
+    ///
+    /// Omit or use `"auto"` to use the default browser for this domain.
+    /// Use `"none"` to disable cookies, or pass an explicit browser name such
+    /// as `"brave"`, `"chrome"`, `"firefox"`, `"safari"`, or `"edge"`.
     #[serde(default)]
     cookies: Option<String>,
     /// When true, return only changed content vs the previous snapshot.

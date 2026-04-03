@@ -14,9 +14,31 @@ use nab::{AcceleratedClient, SafeFetchConfig};
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 
+fn resolve_cookie_browser_name(browser: Option<&str>) -> Option<String> {
+    resolve_cookie_browser_name_with(browser, || {
+        nab::detect_default_browser().map_or_else(
+            |_| "chrome".to_string(),
+            |browser| browser.as_str().to_string(),
+        )
+    })
+}
+
+fn resolve_cookie_browser_name_with<F>(browser: Option<&str>, detect_default: F) -> Option<String>
+where
+    F: FnOnce() -> String,
+{
+    match browser.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) if value.eq_ignore_ascii_case("none") => None,
+        Some(value) if value.eq_ignore_ascii_case("auto") => Some(detect_default()),
+        Some(value) => Some(value.to_string()),
+        None => Some(detect_default()),
+    }
+}
+
 /// Resolve cookie header for a URL from the requested browser.
 pub(crate) fn resolve_cookie_header(url: &str, browser: Option<&str>) -> String {
-    nab::util::resolve_cookie_header_for_url(url, browser)
+    let browser = resolve_cookie_browser_name(browser);
+    nab::util::resolve_cookie_header_for_url(url, browser.as_deref())
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -253,5 +275,34 @@ pub(crate) async fn run_tls_test(client: &AcceleratedClient, output: &mut String
         Err(e) => {
             let _ = writeln!(output, "❌ {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_cookie_browser_name_with;
+
+    #[test]
+    fn cookie_browser_defaults_to_auto_detection_when_omitted() {
+        let browser = resolve_cookie_browser_name_with(None, || "firefox".to_string());
+        assert_eq!(browser.as_deref(), Some("firefox"));
+    }
+
+    #[test]
+    fn cookie_browser_auto_uses_detected_default() {
+        let browser = resolve_cookie_browser_name_with(Some("auto"), || "brave".to_string());
+        assert_eq!(browser.as_deref(), Some("brave"));
+    }
+
+    #[test]
+    fn cookie_browser_none_disables_cookies() {
+        let browser = resolve_cookie_browser_name_with(Some("none"), || "chrome".to_string());
+        assert_eq!(browser, None);
+    }
+
+    #[test]
+    fn cookie_browser_preserves_explicit_override() {
+        let browser = resolve_cookie_browser_name_with(Some("safari"), || "chrome".to_string());
+        assert_eq!(browser.as_deref(), Some("safari"));
     }
 }
