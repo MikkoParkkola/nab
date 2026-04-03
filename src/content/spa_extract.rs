@@ -200,7 +200,10 @@ fn extract_content_from_named_inline_assignment(
     let remaining = &script_text[after_pattern..];
     let eq_offset = remaining.find('=')?;
     let after_eq = &remaining[eq_offset + 1..];
-    let json_offset = after_eq.chars().position(|c| c == '{' || c == '[')?;
+    let json_offset = after_eq
+        .char_indices()
+        .find(|(_, c)| *c == '{' || *c == '[')
+        .map(|(idx, _)| idx)?;
     let json_start = &after_eq[json_offset..];
     extract_content_from_json_slice(json_start, min_content_len)
 }
@@ -215,7 +218,11 @@ fn extract_content_from_generic_inline_assignments(
     while let Some(eq_offset) = script_text[search_from..].find('=') {
         let after_eq_idx = search_from + eq_offset + 1;
         let after_eq = &script_text[after_eq_idx..];
-        let Some(json_offset) = after_eq.chars().position(|c| c == '{' || c == '[') else {
+        let Some(json_offset) = after_eq
+            .char_indices()
+            .find(|(_, c)| *c == '{' || *c == '[')
+            .map(|(idx, _)| idx)
+        else {
             search_from = after_eq_idx;
             continue;
         };
@@ -1356,6 +1363,42 @@ mod tests {
         </body></html>"#;
         let document = scraper::Html::parse_document(html);
         assert!(extract_hidden_code_json(&document).is_none());
+    }
+
+    #[test]
+    fn extract_inline_script_json_handles_multibyte_named_assignment_prefix() {
+        let body = "This is a substantial article body extracted from a named inline assignment after multibyte banner text. It should remain long enough to cross the minimum-content threshold and prove UTF-8-safe scanning."
+            .to_string();
+        let html = format!(
+            r#"<html><body>
+                <script>
+                    // ─── Banner ───────────────────────────────────────
+                    window.__NEXT_DATA__ = {{"props":{{"pageProps":{{"body":"{body}"}}}}}};
+                </script>
+            </body></html>"#
+        );
+
+        let content = extract_inline_script_json(&html).expect("content from named assignment");
+        assert!(content.contains("substantial article body"));
+    }
+
+    #[test]
+    fn extract_inline_script_json_handles_multibyte_generic_assignment_prefix() {
+        let commentary = "This is a substantial article body extracted from a generic inline JSON assignment after multibyte banner text. It should remain long enough to cross the minimum-content threshold and prove UTF-8-safe scanning."
+            .to_string();
+        let html = format!(
+            r#"<html><body>
+                <script>
+                    window.addEventListener('DOMContentLoaded', function () {{
+                        // ─── Rotating announcement items ───────────────────────────────────────
+                        cfg = {{"commentary":"{commentary}"}};
+                    }});
+                </script>
+            </body></html>"#
+        );
+
+        let content = extract_inline_script_json(&html).expect("content from generic assignment");
+        assert!(content.contains("substantial article body"));
     }
 
     // ── Next.js content chunk discovery ─────────────────────────────────
