@@ -49,6 +49,22 @@ fn stream_help_shows_all_options() {
         .stdout(predicate::str::contains("--player"));
 }
 
+#[cfg(unix)]
+#[test]
+fn stream_info_piped_to_closed_stdout_exits_cleanly() {
+    let nab_bin = assert_cmd::cargo::cargo_bin("nab");
+    let mut shell = std::process::Command::new("bash");
+    shell
+        .arg("-lc")
+        .arg("set -o pipefail; \"$NAB_BIN\" stream generic https://example.com/stream.m3u8 --info | true")
+        .env("NAB_BIN", nab_bin);
+
+    Command::from_std(shell)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("panicked").not());
+}
+
 // ─── Analyze/Annotate argument validation ────────────────────────────────────
 
 #[test]

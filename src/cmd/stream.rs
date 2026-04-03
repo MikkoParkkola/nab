@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::{resolve_browser_name, resolve_cookie_source};
 
@@ -17,6 +17,63 @@ pub struct StreamCmdConfig {
     pub duration: Option<String>,
     pub ffmpeg_opts: Option<String>,
     pub player: Option<String>,
+}
+
+fn write_stream_info<W: std::io::Write>(
+    writer: &mut W,
+    stream_info: &nab::stream::provider::StreamInfo,
+) -> Result<()> {
+    writeln!(writer, "Title: {}", stream_info.title).context("Failed to write stream title")?;
+    if let Some(ref desc) = stream_info.description {
+        writeln!(writer, "Description: {desc}").context("Failed to write stream description")?;
+    }
+    if let Some(dur) = stream_info.duration_seconds {
+        writeln!(writer, "Duration: {}:{:02}", dur / 60, dur % 60)
+            .context("Failed to write stream duration")?;
+    }
+    writeln!(writer, "Live: {}", stream_info.is_live).context("Failed to write live flag")?;
+    writeln!(writer, "Manifest: {}", stream_info.manifest_url)
+        .context("Failed to write manifest URL")?;
+    if let Some(ref thumb) = stream_info.thumbnail_url {
+        writeln!(writer, "Thumbnail: {thumb}").context("Failed to write thumbnail URL")?;
+    }
+    writer
+        .flush()
+        .context("Failed to flush stream info output")?;
+    Ok(())
+}
+
+fn write_series_listing<W: std::io::Write>(
+    writer: &mut W,
+    series: &nab::stream::provider::SeriesInfo,
+) -> Result<()> {
+    writeln!(writer, "Series: {}", series.title).context("Failed to write series title")?;
+    writeln!(writer, "Episodes: {}", series.episodes.len())
+        .context("Failed to write episode count")?;
+    for ep in &series.episodes {
+        let duration = ep
+            .duration_seconds
+            .map(|d| format!(" ({}:{:02})", d / 60, d % 60))
+            .unwrap_or_default();
+        let ep_num = ep
+            .episode_number
+            .map(|n| format!("E{n}"))
+            .unwrap_or_default();
+        let season = ep
+            .season_number
+            .map(|n| format!("S{n}"))
+            .unwrap_or_default();
+        writeln!(
+            writer,
+            "  {} {}{}: {}{}",
+            ep.id, season, ep_num, ep.title, duration
+        )
+        .context("Failed to write episode listing")?;
+    }
+    writer
+        .flush()
+        .context("Failed to flush series listing output")?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)] // 323 lines — backend dispatch (ffmpeg/native/streamlink) is inherently branchy
@@ -77,23 +134,8 @@ pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
     if cfg.list_episodes {
         eprintln!("📋 Listing episodes for: {}", cfg.id);
         let series = provider.list_series(&cfg.id).await?;
-        println!("Series: {}", series.title);
-        println!("Episodes: {}", series.episodes.len());
-        for ep in &series.episodes {
-            let duration = ep
-                .duration_seconds
-                .map(|d| format!(" ({}:{:02})", d / 60, d % 60))
-                .unwrap_or_default();
-            let ep_num = ep
-                .episode_number
-                .map(|n| format!("E{n}"))
-                .unwrap_or_default();
-            let season = ep
-                .season_number
-                .map(|n| format!("S{n}"))
-                .unwrap_or_default();
-            println!("  {} {}{}: {}{}", ep.id, season, ep_num, ep.title, duration);
-        }
+        let mut stdout = std::io::stdout().lock();
+        write_series_listing(&mut stdout, &series)?;
         return Ok(());
     }
 
@@ -103,18 +145,8 @@ pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
 
     // Info only mode
     if cfg.info_only {
-        println!("Title: {}", stream_info.title);
-        if let Some(ref desc) = stream_info.description {
-            println!("Description: {desc}");
-        }
-        if let Some(dur) = stream_info.duration_seconds {
-            println!("Duration: {}:{:02}", dur / 60, dur % 60);
-        }
-        println!("Live: {}", stream_info.is_live);
-        println!("Manifest: {}", stream_info.manifest_url);
-        if let Some(ref thumb) = stream_info.thumbnail_url {
-            println!("Thumbnail: {thumb}");
-        }
+        let mut stdout = std::io::stdout().lock();
+        write_stream_info(&mut stdout, &stream_info)?;
         return Ok(());
     }
 
@@ -433,4 +465,70 @@ fn parse_duration(s: &str) -> Result<u64> {
     }
 
     Ok(total_secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+
+    use super::{write_series_listing, write_stream_info};
+    use nab::stream::provider::{EpisodeInfo, SeriesInfo, StreamInfo};
+
+    struct BrokenPipeWriter;
+
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"))
+        }
+    }
+
+    #[test]
+    fn write_stream_info_propagates_broken_pipe() {
+        let info = StreamInfo {
+            id: "stream-1".into(),
+            title: "Direct Stream".into(),
+            description: Some("Example stream".into()),
+            duration_seconds: Some(125),
+            manifest_url: "https://example.com/stream.m3u8".into(),
+            is_live: false,
+            qualities: vec![],
+            thumbnail_url: Some("https://example.com/thumb.jpg".into()),
+        };
+
+        let err = write_stream_info(&mut BrokenPipeWriter, &info)
+            .expect_err("broken pipe should propagate as an error");
+        assert!(err.chain().any(|cause| {
+            cause
+                .downcast_ref::<io::Error>()
+                .is_some_and(|io_err| io_err.kind() == io::ErrorKind::BrokenPipe)
+        }));
+    }
+
+    #[test]
+    fn write_series_listing_propagates_broken_pipe() {
+        let series = SeriesInfo {
+            id: "series-1".into(),
+            title: "Example Series".into(),
+            episodes: vec![EpisodeInfo {
+                id: "episode-1".into(),
+                title: "Pilot".into(),
+                episode_number: Some(1),
+                season_number: Some(2),
+                duration_seconds: Some(95),
+                publish_date: None,
+            }],
+        };
+
+        let err = write_series_listing(&mut BrokenPipeWriter, &series)
+            .expect_err("broken pipe should propagate as an error");
+        assert!(err.chain().any(|cause| {
+            cause
+                .downcast_ref::<io::Error>()
+                .is_some_and(|io_err| io_err.kind() == io::ErrorKind::BrokenPipe)
+        }));
+    }
 }
