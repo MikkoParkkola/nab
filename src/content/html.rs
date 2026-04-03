@@ -138,13 +138,39 @@ fn html_to_markdown_with_url_and_fetcher<F>(
 where
     F: Fn(&str) -> Option<String>,
 {
+    html_to_markdown_with_url_and_sources(html, url, options, spa_extract::extract_spa_data, jina_fetcher)
+}
+
+fn html_to_markdown_with_url_and_sources<S, F>(
+    html: &str,
+    url: Option<&str>,
+    options: HtmlConversionOptions,
+    spa_extractor: S,
+    jina_fetcher: F,
+) -> String
+where
+    S: Fn(&str) -> Option<String>,
+    F: Fn(&str) -> Option<String>,
+{
     const MIN_READABILITY_LEN: usize = 50;
 
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
-    if options.allow_spa_extraction
-        && let Some(spa_content) = spa_extract::extract_spa_data(html)
-    {
-        return spa_content;
+    let spa_candidate = if options.allow_spa_extraction {
+        spa_extractor(html)
+    } else {
+        None
+    };
+
+    if let Some(spa_content) = spa_candidate.as_ref() {
+        if !is_thin_content(html.len(), spa_content.len()) {
+            return spa_content.clone();
+        }
+
+        tracing::debug!(
+            "Thin SPA extraction detected ({} chars from {} bytes HTML) — continuing to fallback paths",
+            spa_content.len(),
+            html.len()
+        );
     }
 
     // Pre-strip noise before readability to prevent non-article content
@@ -194,6 +220,10 @@ where
 
     // Post-process: strip markdown noise from html2md output
     let markdown = clean_markdown_noise(&markdown);
+    let markdown = match spa_candidate {
+        Some(spa_content) if spa_content.len() > markdown.len() => spa_content,
+        _ => markdown,
+    };
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
@@ -821,7 +851,8 @@ pub fn is_boilerplate(line: &str) -> bool {
 mod tests {
     use super::{
         HtmlConversionOptions, html_to_markdown_with_url, html_to_markdown_with_url_and_fetcher,
-        is_thin_content, strip_embedded_data_sections, strip_hidden_sections, strip_noise_sections,
+        html_to_markdown_with_url_and_sources, is_thin_content, strip_embedded_data_sections,
+        strip_hidden_sections, strip_noise_sections,
     };
 
     #[test]
@@ -946,6 +977,33 @@ mod tests {
     }
 
     #[test]
+    fn thin_spa_extraction_uses_jina_fallback_when_enabled() {
+        let code_sample = "from vllm import LLM\\n".repeat(18);
+        let bootstrap = "const boot='very noisy js bootstrap';".repeat(1_000);
+        let html = format!(
+            "<html><body><div id='app'>Loading…</div><script>{bootstrap}</script></body></html>"
+        );
+        let calls = std::cell::Cell::new(0);
+
+        let markdown = html_to_markdown_with_url_and_sources(
+            &html,
+            Some("https://example.com/article"),
+            HtmlConversionOptions::default(),
+            |_html| Some(code_sample.clone()),
+            |url| {
+                calls.set(calls.get() + 1);
+                Some(format!("Recovered remotely from {url}"))
+            },
+        );
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            markdown,
+            "Recovered remotely from https://example.com/article"
+        );
+    }
+
+    #[test]
     fn html_to_markdown_skips_jina_fallback_when_disabled() {
         let bootstrap = "const boot='very noisy js bootstrap';".repeat(220);
         let html = format!(
@@ -969,6 +1027,34 @@ mod tests {
 
         assert_eq!(calls.get(), 0);
         assert!(markdown.contains("Loading"));
+        assert!(!markdown.contains("Recovered remotely"));
+    }
+
+    #[test]
+    fn thin_spa_extraction_is_retained_when_jina_fallback_disabled() {
+        let code_sample = "from vllm import LLM\\n".repeat(18);
+        let bootstrap = "const boot='very noisy js bootstrap';".repeat(1_000);
+        let html = format!(
+            "<html><body><div id='app'>Loading…</div><script>{bootstrap}</script></body></html>"
+        );
+        let calls = std::cell::Cell::new(0);
+
+        let markdown = html_to_markdown_with_url_and_sources(
+            &html,
+            Some("https://example.com/article"),
+            HtmlConversionOptions {
+                allow_spa_extraction: true,
+                allow_jina_fallback: false,
+            },
+            |_html| Some(code_sample.clone()),
+            |_url| {
+                calls.set(calls.get() + 1);
+                Some("Recovered remotely".to_string())
+            },
+        );
+
+        assert_eq!(calls.get(), 0);
+        assert!(markdown.contains("from vllm import LLM"));
         assert!(!markdown.contains("Recovered remotely"));
     }
 
