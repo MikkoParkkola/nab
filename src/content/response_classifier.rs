@@ -136,6 +136,7 @@ pub enum ResponseClass {
     Forbidden,
     BotChallenge,
     RateLimited,
+    ObfuscatedContent,
     ThinContent,
 }
 
@@ -149,6 +150,7 @@ impl ResponseClass {
             Self::Forbidden => "forbidden",
             Self::BotChallenge => "bot_challenge",
             Self::RateLimited => "rate_limited",
+            Self::ObfuscatedContent => "obfuscated_content",
             Self::ThinContent => "thin_content",
         }
     }
@@ -195,6 +197,7 @@ pub struct ResponseAnalysis<'a> {
     pub body: &'a str,
     pub content_type: Option<&'a str>,
     pub html_bytes: Option<usize>,
+    pub markdown: Option<&'a str>,
     pub markdown_chars: Option<usize>,
     pub quality: Option<&'a QualityScore>,
 }
@@ -255,6 +258,16 @@ pub fn classify_response(analysis: ResponseAnalysis<'_>) -> ResponseClassificati
         });
     }
 
+    if let Some(markdown) = analysis.markdown
+        && classify_obfuscated_content(analysis.content_type, markdown).is_some()
+    {
+        classification.push(ResponseSignal {
+            class: ResponseClass::ObfuscatedContent,
+            confidence: 0.95,
+            reason: "extracted content is dominated by a long encoded or obfuscated blob",
+        });
+    }
+
     classification
 }
 
@@ -296,6 +309,59 @@ pub fn classify_thin_content(
             html_bytes,
             markdown_chars,
             low_confidence: true,
+        });
+    }
+
+    None
+}
+
+/// Obfuscated-content diagnostic payload used by CLI / MCP fetch diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObfuscatedContentDiagnostic {
+    pub dominant_blob_chars: usize,
+    pub non_whitespace_chars: usize,
+    pub readable_word_count: usize,
+}
+
+/// Detect HTML extractions that are dominated by a long encoded/blob-like token
+/// rather than readable text. This catches paywall/protected pages that return a
+/// large opaque payload instead of article content.
+#[must_use]
+pub fn classify_obfuscated_content(
+    content_type: Option<&str>,
+    markdown: &str,
+) -> Option<ObfuscatedContentDiagnostic> {
+    let is_html = content_type.is_some_and(|value| value.contains("html"));
+    if !is_html {
+        return None;
+    }
+
+    let non_whitespace_chars = markdown.chars().filter(|c| !c.is_whitespace()).count();
+    if non_whitespace_chars < 2_048 {
+        return None;
+    }
+
+    let readable_word_count = markdown
+        .split_whitespace()
+        .filter(|token| looks_like_readable_word(token))
+        .take(32)
+        .count();
+    if readable_word_count >= 24 {
+        return None;
+    }
+
+    let dominant_blob_chars = markdown
+        .split_whitespace()
+        .filter_map(base64ish_blob_token_len)
+        .max()
+        .unwrap_or(0);
+    let dominant_ratio = (dominant_blob_chars * 100) / non_whitespace_chars.max(1);
+
+    if dominant_blob_chars >= 2_048 || (dominant_blob_chars >= 1_024 && dominant_ratio >= 60) {
+        return Some(ObfuscatedContentDiagnostic {
+            dominant_blob_chars,
+            non_whitespace_chars,
+            readable_word_count,
         });
     }
 
@@ -519,6 +585,41 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
+fn looks_like_readable_word(token: &str) -> bool {
+    let len = token.chars().count();
+    if !(4..=24).contains(&len) {
+        return false;
+    }
+
+    let alpha_count = token.chars().filter(char::is_ascii_alphabetic).count();
+    alpha_count * 100 / len >= 80
+}
+
+fn base64ish_blob_token_len(token: &str) -> Option<usize> {
+    let len = token.len();
+    if len < 768 {
+        return None;
+    }
+
+    let allowed_count = token
+        .bytes()
+        .filter(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(*byte, b'+' | b'/' | b'=' | b'_' | b'-')
+        })
+        .count();
+    if allowed_count * 100 / len < 98 {
+        return None;
+    }
+
+    let digit_count = token.bytes().filter(u8::is_ascii_digit).count();
+    let alpha_count = token.bytes().filter(u8::is_ascii_alphabetic).count();
+    if digit_count == 0 || alpha_count == 0 {
+        return None;
+    }
+
+    Some(len)
+}
+
 fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
     const MIN_HTML_LEN: usize = 5_000;
     const MIN_MARKDOWN_LEN: usize = 800;
@@ -536,7 +637,8 @@ fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
 mod tests {
     use super::{
         AuthRequiredKind, BrowserChallengeKind, ResponseAnalysis, ResponseClass,
-        ResponseDiagnosticKind, classify_http_response, classify_response,
+        ResponseDiagnosticKind, classify_http_response, classify_obfuscated_content,
+        classify_response,
     };
 
     #[test]
@@ -619,6 +721,7 @@ mod tests {
             body: "<html></html>",
             content_type: Some("text/html"),
             html_bytes: Some(20_000),
+            markdown: Some("short"),
             markdown_chars: Some(120),
             quality: None,
         });
@@ -632,6 +735,7 @@ mod tests {
             body: "<html><body>Your session has expired. Please sign in again.</body></html>",
             content_type: Some("text/html"),
             html_bytes: None,
+            markdown: None,
             markdown_chars: None,
             quality: None,
         });
@@ -648,12 +752,50 @@ mod tests {
             body: "<html><body>Unauthorized</body></html>",
             content_type: Some("text/html"),
             html_bytes: None,
+            markdown: None,
             markdown_chars: None,
             quality: None,
         });
         assert_eq!(
             classification.primary().map(|signal| signal.class),
             Some(ResponseClass::Unauthorized)
+        );
+    }
+
+    #[test]
+    fn classify_response_detects_obfuscated_content_blob() {
+        let blob = format!("Title: Protected article\n\n{}", "AbC123+/".repeat(700));
+        let classification = classify_response(ResponseAnalysis {
+            status: 200,
+            body: "<html><body><script>protected payload</script></body></html>",
+            content_type: Some("text/html"),
+            html_bytes: Some(40_000),
+            markdown: Some(&blob),
+            markdown_chars: Some(blob.len()),
+            quality: None,
+        });
+        assert_eq!(
+            classification.primary().map(|signal| signal.class),
+            Some(ResponseClass::ObfuscatedContent)
+        );
+        assert!(
+            classify_obfuscated_content(Some("text/html"), &blob).is_some(),
+            "expected blob classification for encoded markdown"
+        );
+    }
+
+    #[test]
+    fn classify_obfuscated_content_ignores_readable_article_with_one_blob() {
+        let article = [
+            "This article explains a benchmark result in normal prose.",
+            "It includes enough readable words to look like a real article body.",
+            "A single pasted token should not dominate the classification.",
+            &"AbC123+/".repeat(180),
+        ]
+        .join(" ");
+        assert!(
+            classify_obfuscated_content(Some("text/html"), &article).is_none(),
+            "expected readable article to avoid obfuscated classification"
         );
     }
 

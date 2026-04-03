@@ -171,7 +171,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         &raw_text,
         Some(&content_type),
         body_len,
-        body_text.len(),
+        &body_text,
         quality.as_ref(),
         cfg.html_options.allow_jina_fallback,
     ) {
@@ -536,11 +536,12 @@ fn build_fetch_diagnostics(
     raw_text: &str,
     content_type: Option<&str>,
     html_len: usize,
-    markdown_len: usize,
+    body_text: &str,
     quality: Option<&nab::content::quality::QualityScore>,
     allow_jina_fallback: bool,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
+    let markdown_len = body_text.len();
 
     let classification = classify_response(ResponseAnalysis {
         status,
@@ -549,6 +550,9 @@ fn build_fetch_diagnostics(
         html_bytes: content_type
             .is_some_and(|value| value.contains("html"))
             .then_some(html_len),
+        markdown: content_type
+            .is_some_and(|value| value.contains("html"))
+            .then_some(body_text),
         markdown_chars: content_type
             .is_some_and(|value| value.contains("html"))
             .then_some(markdown_len),
@@ -578,6 +582,9 @@ fn build_fetch_diagnostics(
                     )
                 }
             }
+            ResponseClass::ObfuscatedContent => {
+                obfuscated_content_message(status, markdown_len, html_len)
+            }
             ResponseClass::ThinContent => String::new(),
         };
         if !warning.is_empty() {
@@ -593,6 +600,12 @@ fn build_fetch_diagnostics(
     }
 
     warnings
+}
+
+fn obfuscated_content_message(status: u16, markdown_len: usize, html_len: usize) -> String {
+    format!(
+        "The extracted page content looks encoded or obfuscated rather than readable text (HTTP {status}).\nThis often happens on protected or paywalled pages that return an opaque payload instead of article content.\nObserved output: {markdown_len} chars extracted from {html_len} bytes of HTML.\nTry:\n1. Sign in in your browser first and retry with the default browser cookies\n2. Use a named login session if the site requires an authenticated flow\n3. If the page still returns an opaque blob, the site is likely withholding readable content from non-browser automation"
+    )
 }
 
 fn thin_content_message(diagnostic: ThinContentDiagnostic) -> String {
@@ -655,7 +668,7 @@ mod tests {
             "<html><body>Vercel Security Checkpoint</body></html>",
             Some("text/html"),
             0,
-            0,
+            "",
             None,
             true,
         )
@@ -679,7 +692,7 @@ mod tests {
             "Rate limit exceeded. Please slow down.",
             Some("text/html"),
             0,
-            0,
+            "",
             None,
             true,
         )
@@ -695,7 +708,7 @@ mod tests {
     #[test]
     fn build_fetch_diagnostics_for_http_401_mentions_authenticated_access() {
         let warning =
-            build_fetch_diagnostics(401, "Unauthorized", Some("text/html"), 0, 0, None, true)
+            build_fetch_diagnostics(401, "Unauthorized", Some("text/html"), 0, "", None, true)
                 .into_iter()
                 .next()
                 .expect("expected unauthorized warning");
@@ -711,12 +724,13 @@ mod tests {
 
     #[test]
     fn build_fetch_diagnostics_for_thin_content_includes_no_fallback_hint() {
+        let thin_markdown = "x".repeat(100);
         let warnings = build_fetch_diagnostics(
             200,
             "<html></html>",
             Some("text/html"),
             20_000,
-            100,
+            &thin_markdown,
             None,
             false,
         );
@@ -731,6 +745,31 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("--no-fallback")),
             "expected no-fallback hint, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn build_fetch_diagnostics_for_obfuscated_content_mentions_paywall_behavior() {
+        let blob = format!("Title: Protected article\n\n{}", "AbC123+/".repeat(700));
+        let warning = build_fetch_diagnostics(
+            200,
+            "<html><body><script>protected payload</script></body></html>",
+            Some("text/html"),
+            40_000,
+            &blob,
+            None,
+            true,
+        )
+        .into_iter()
+        .next()
+        .expect("expected obfuscated-content warning");
+        assert!(
+            warning.contains("encoded or obfuscated"),
+            "warning should explain the blob-like output, got: {warning}"
+        );
+        assert!(
+            warning.contains("paywalled"),
+            "warning should mention protected/paywalled pages, got: {warning}"
         );
     }
 }

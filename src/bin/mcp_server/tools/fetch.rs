@@ -410,6 +410,7 @@ fn trace_fetch_classification(
         body: raw_text,
         content_type: Some(content_type),
         html_bytes: content_type.contains("html").then_some(body_len),
+        markdown: content_type.contains("html").then_some(markdown),
         markdown_chars: content_type.contains("html").then_some(markdown.len()),
         quality,
     });
