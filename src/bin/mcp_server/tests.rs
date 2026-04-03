@@ -151,6 +151,32 @@ fn fetch_structured_has_all_required_fields() {
 }
 
 #[test]
+fn fetch_output_schema_advertises_optional_metadata_fields() {
+    let schema = crate::fetch_output_schema();
+    let properties = schema.properties.expect("fetch schema properties");
+
+    for key in [
+        "omitted_sections",
+        "total_sections",
+        "truncated",
+        "full_tokens",
+        "response_class",
+        "response_confidence",
+        "response_reason",
+        "thin_content_detected",
+    ] {
+        assert!(
+            properties.contains_key(key),
+            "fetch outputSchema should advertise optional field {key}"
+        );
+        assert!(
+            !schema.required.iter().any(|required| required == key),
+            "optional field {key} should not be required"
+        );
+    }
+}
+
+#[test]
 fn fetch_structured_preserves_content_verbatim() {
     // GIVEN content passed to the structured builder
     // (truncation is now handled upstream by budget::truncate_to_budget)

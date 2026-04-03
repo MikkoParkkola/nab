@@ -67,7 +67,10 @@ tool_box!(
 
 /// Build the `outputSchema` for the `fetch` tool.
 ///
-/// Returns: `{ url, status, content_type, content, timing_ms }`
+/// Required fields: `{ url, status, content, timing_ms, has_diff }`
+///
+/// Optional fields may also be present when focus, token budgets, or response
+/// diagnostics are active.
 fn fetch_output_schema() -> ToolOutputSchema {
     let mut props = BTreeMap::new();
     props.insert("url".into(), string_prop("The fetched URL"));
@@ -87,6 +90,38 @@ fn fetch_output_schema() -> ToolOutputSchema {
     props.insert(
         "has_diff".into(),
         bool_prop("True when diff mode was requested and content changed since last snapshot"),
+    );
+    props.insert(
+        "omitted_sections".into(),
+        integer_prop("Number of sections omitted when focus filtering was applied"),
+    );
+    props.insert(
+        "total_sections".into(),
+        integer_prop("Total number of sections considered by focus filtering"),
+    );
+    props.insert(
+        "truncated".into(),
+        bool_prop("True when max_tokens caused the content to be truncated"),
+    );
+    props.insert(
+        "full_tokens".into(),
+        integer_prop("Estimated token count before truncation when max_tokens was applied"),
+    );
+    props.insert(
+        "response_class".into(),
+        string_prop("Machine-readable primary response classification code"),
+    );
+    props.insert(
+        "response_confidence".into(),
+        number_prop("Confidence score for the primary response classification"),
+    );
+    props.insert(
+        "response_reason".into(),
+        string_prop("Human-readable reason for the primary response classification"),
+    );
+    props.insert(
+        "thin_content_detected".into(),
+        bool_prop("True when HTML extraction looked suspiciously thin relative to the source body"),
     );
     ToolOutputSchema::new(
         vec![
