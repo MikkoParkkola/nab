@@ -12,7 +12,7 @@ use nab::content::diff::{ContentSnapshot, compute_diff};
 use nab::content::diff_format::format_diff_markdown;
 use nab::content::focus::extract_focused;
 use nab::content::response_classifier::{
-    ResponseAnalysis, classify_response, classify_thin_content,
+    ResponseAnalysis, ResponseClass, classify_response, classify_thin_content,
 };
 use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, SafeFetchConfig};
@@ -23,6 +23,14 @@ use crate::helpers::{
 };
 use crate::structured::{FetchStructuredParams, build_fetch_structured_v2, truncate_markdown};
 use crate::tools::client::{get_client, resolve_session_client};
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FetchDiagnosticMetadata {
+    response_class: Option<&'static str>,
+    response_confidence: Option<f32>,
+    response_reason: Option<&'static str>,
+    thin_content_detected: bool,
+}
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
 
@@ -167,7 +175,7 @@ impl FetchTool {
             write_body_info(&mut output, body_bytes.len());
 
             let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
-            trace_fetch_classification(
+            let diagnostics = trace_fetch_classification(
                 status.as_u16(),
                 &content_type,
                 &raw_text,
@@ -188,7 +196,14 @@ impl FetchTool {
             let status_u16 = status.as_u16();
             let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
 
-            return Ok(self.finish_fetch(output, markdown, status_u16, &content_type, elapsed_ms));
+            return Ok(self.finish_fetch(
+                output,
+                markdown,
+                status_u16,
+                &content_type,
+                elapsed_ms,
+                diagnostics,
+            ));
         }
 
         // ── Standard path (no session) ────────────────────────────────────────
@@ -203,7 +218,9 @@ impl FetchTool {
         // Determine markdown, status, content_type, and elapsed_ms from either
         // a specialized site provider or the standard HTTP fetch path.  Both
         // paths converge below into the single diff + structured_content pipeline.
-        let (markdown, status_u16, content_type, elapsed_ms) = if let Some(site_content) =
+        let (markdown, status_u16, content_type, elapsed_ms, diagnostics) = if let Some(
+            site_content,
+        ) =
             site_router.try_extract(&self.url, client, cookie_opt).await
         {
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -213,6 +230,7 @@ impl FetchTool {
                 200u16,
                 "text/html".to_owned(),
                 elapsed_ms,
+                FetchDiagnosticMetadata::default(),
             )
         } else {
             let config = SafeFetchConfig::default();
@@ -235,15 +253,6 @@ impl FetchTool {
             write_body_info(&mut output, body_bytes.len());
 
             let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
-            trace_fetch_classification(
-                status.as_u16(),
-                &content_type,
-                &raw_text,
-                body_bytes.len(),
-                &conversion.markdown,
-                conversion.quality.as_ref(),
-            );
-
             if let Some(pages) = conversion.page_count {
                 let _ = writeln!(
                     output,
@@ -281,16 +290,32 @@ impl FetchTool {
             } else {
                 conversion.markdown
             };
+            let diagnostics = trace_fetch_classification(
+                status.as_u16(),
+                &content_type,
+                &raw_text,
+                body_bytes.len(),
+                &final_markdown,
+                conversion.quality.as_ref(),
+            );
 
             (
                 final_markdown,
                 status.as_u16(),
                 content_type,
                 elapsed.as_secs_f64() * 1000.0,
+                diagnostics,
             )
         };
 
-        Ok(self.finish_fetch(output, markdown, status_u16, &content_type, elapsed_ms))
+        Ok(self.finish_fetch(
+            output,
+            markdown,
+            status_u16,
+            &content_type,
+            elapsed_ms,
+            diagnostics,
+        ))
     }
 
     /// Unified post-processing pipeline shared by both the session and the
@@ -302,6 +327,7 @@ impl FetchTool {
         status_u16: u16,
         content_type: &str,
         elapsed_ms: f64,
+        diagnostics: FetchDiagnosticMetadata,
     ) -> CallToolResult {
         // Unified post-processing pipeline: diff → focus → budget
         let has_diff = if self.diff {
@@ -348,6 +374,10 @@ impl FetchTool {
             total_sections,
             truncated: budget_result.truncated,
             full_tokens: budget_result.total_tokens,
+            response_class: diagnostics.response_class,
+            response_confidence: diagnostics.response_confidence,
+            response_reason: diagnostics.response_reason,
+            thin_content_detected: diagnostics.thin_content_detected,
         });
 
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
@@ -374,7 +404,7 @@ fn trace_fetch_classification(
     body_len: usize,
     markdown: &str,
     quality: Option<&nab::content::quality::QualityScore>,
-) {
+) -> FetchDiagnosticMetadata {
     let classification = classify_response(ResponseAnalysis {
         status,
         body: raw_text,
@@ -394,13 +424,24 @@ fn trace_fetch_classification(
         );
     }
 
-    if classify_thin_content(Some(content_type), body_len, markdown.len(), quality).is_some() {
+    let thin_content_detected =
+        classify_thin_content(Some(content_type), body_len, markdown.len(), quality).is_some();
+    if thin_content_detected {
         tracing::warn!(
             status,
             markdown_len = markdown.len(),
             body_len,
             "fetch response classified as thin content"
         );
+    }
+
+    let primary = classification.primary();
+    FetchDiagnosticMetadata {
+        response_class: primary.map(|signal| signal.class.code()),
+        response_confidence: primary.map(|signal| signal.confidence),
+        response_reason: primary.map(|signal| signal.reason),
+        thin_content_detected: thin_content_detected
+            || classification.has_class(ResponseClass::ThinContent),
     }
 }
 

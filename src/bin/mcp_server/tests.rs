@@ -134,6 +134,10 @@ fn fetch_structured_has_all_required_fields() {
         total_sections: 0,
         truncated: false,
         full_tokens: 0,
+        response_class: None,
+        response_confidence: None,
+        response_reason: None,
+        thin_content_detected: false,
     });
     // WHEN inspected
     // THEN all outputSchema fields are present
@@ -162,6 +166,10 @@ fn fetch_structured_preserves_content_verbatim() {
         total_sections: 0,
         truncated: false,
         full_tokens: 0,
+        response_class: None,
+        response_confidence: None,
+        response_reason: None,
+        thin_content_detected: false,
     });
     // WHEN inspected
     // THEN content is stored verbatim (no internal truncation)
@@ -183,10 +191,47 @@ fn fetch_structured_includes_truncation_metadata_when_flagged() {
         total_sections: 0,
         truncated: true,
         full_tokens: 8000,
+        response_class: None,
+        response_confidence: None,
+        response_reason: None,
+        thin_content_detected: false,
     });
     // THEN truncation metadata fields are present
     assert_eq!(map["truncated"], serde_json::Value::Bool(true));
     assert_eq!(map["full_tokens"], serde_json::Value::Number(8000.into()));
+}
+
+#[test]
+fn fetch_structured_includes_response_diagnostics_when_present() {
+    let map = build_fetch_structured_v2(&FetchStructuredParams {
+        url: "https://example.com",
+        status: 403,
+        content_type: "text/html",
+        markdown: "challenge page",
+        timing_ms: 10.0,
+        has_diff: false,
+        omitted_sections: 0,
+        total_sections: 0,
+        truncated: false,
+        full_tokens: 0,
+        response_class: Some("bot_challenge"),
+        response_confidence: Some(0.97),
+        response_reason: Some("browser-challenge or CAPTCHA markers detected"),
+        thin_content_detected: true,
+    });
+    assert_eq!(
+        map["response_class"],
+        serde_json::Value::String("bot_challenge".into())
+    );
+    assert_eq!(map["thin_content_detected"], serde_json::Value::Bool(true));
+    assert_eq!(
+        map["response_reason"],
+        serde_json::Value::String("browser-challenge or CAPTCHA markers detected".into())
+    );
+    assert!(
+        map.contains_key("response_confidence"),
+        "response_confidence should be present when provided"
+    );
 }
 
 // ── server_icons ─────────────────────────────────────────────────────────────

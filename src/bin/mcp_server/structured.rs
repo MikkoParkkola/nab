@@ -50,6 +50,10 @@ pub(crate) struct FetchStructuredParams<'a> {
     pub total_sections: usize,
     pub truncated: bool,
     pub full_tokens: usize,
+    pub response_class: Option<&'a str>,
+    pub response_confidence: Option<f32>,
+    pub response_reason: Option<&'a str>,
+    pub thin_content_detected: bool,
 }
 
 /// Build the `structuredContent` map for the `fetch` tool response.
@@ -93,6 +97,33 @@ pub(crate) fn build_fetch_structured_v2(
         map.insert(
             "full_tokens".to_string(),
             serde_json::Value::Number(p.full_tokens.into()),
+        );
+    }
+
+    if let Some(response_class) = p.response_class {
+        map.insert(
+            "response_class".to_string(),
+            serde_json::Value::String(response_class.to_string()),
+        );
+    }
+    if let Some(response_confidence) = p.response_confidence
+        && let Some(number) = serde_json::Number::from_f64(f64::from(response_confidence))
+    {
+        map.insert(
+            "response_confidence".to_string(),
+            serde_json::Value::Number(number),
+        );
+    }
+    if let Some(response_reason) = p.response_reason {
+        map.insert(
+            "response_reason".to_string(),
+            serde_json::Value::String(response_reason.to_string()),
+        );
+    }
+    if p.thin_content_detected {
+        map.insert(
+            "thin_content_detected".to_string(),
+            serde_json::Value::Bool(true),
         );
     }
 

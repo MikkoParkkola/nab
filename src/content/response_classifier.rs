@@ -139,6 +139,21 @@ pub enum ResponseClass {
     ThinContent,
 }
 
+impl ResponseClass {
+    /// Stable machine-readable code for structured output.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Unauthorized => "unauthorized",
+            Self::LoginRequired => "login_required",
+            Self::Forbidden => "forbidden",
+            Self::BotChallenge => "bot_challenge",
+            Self::RateLimited => "rate_limited",
+            Self::ThinContent => "thin_content",
+        }
+    }
+}
+
 /// One classified response signal with a confidence estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResponseSignal {
