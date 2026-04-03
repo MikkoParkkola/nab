@@ -391,6 +391,22 @@ pub fn validate_config(config: &CssExtractorConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::LazyLock;
+
+    static H1_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("h1").expect("static h1 selector"));
+    static H2_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("h2").expect("static h2 selector"));
+    static P_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("p").expect("static p selector"));
+    static ARTICLE_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("article").expect("static article selector"));
+    static NAV_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("nav").expect("static nav selector"));
+    static ASIDE_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("aside").expect("static aside selector"));
+    static MAIN_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("main").expect("static main selector"));
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -508,26 +524,23 @@ mod tests {
 
     #[test]
     fn extract_text_returns_text_of_first_match() {
-        let sel = Selector::parse("h1").unwrap();
         let doc = Html::parse_document("<html><body><h1>  Title Here  </h1></body></html>");
         assert_eq!(
-            extract_text_opt(&doc, Some(&sel)),
+            extract_text_opt(&doc, Some(&H1_SELECTOR)),
             Some("Title Here".to_string())
         );
     }
 
     #[test]
     fn extract_text_returns_none_when_no_element_matches() {
-        let sel = Selector::parse("h2").unwrap();
         let doc = Html::parse_document("<html><body><h1>Only H1</h1></body></html>");
-        assert!(extract_text_opt(&doc, Some(&sel)).is_none());
+        assert!(extract_text_opt(&doc, Some(&H2_SELECTOR)).is_none());
     }
 
     #[test]
     fn extract_text_joins_inner_text_nodes() {
-        let sel = Selector::parse("p").unwrap();
         let doc = Html::parse_document("<p>Hello <strong>world</strong></p>");
-        let text = extract_text_opt(&doc, Some(&sel)).unwrap();
+        let text = extract_text_opt(&doc, Some(&P_SELECTOR)).unwrap();
         assert!(text.contains("Hello"));
         assert!(text.contains("world"));
     }
@@ -538,8 +551,7 @@ mod tests {
     fn serialise_keeps_all_content_when_no_remove_sels() {
         let html = "<html><body><article><p>Keep</p><nav>Nav</nav></article></body></html>";
         let doc = Html::parse_document(html);
-        let art_sel = Selector::parse("article").unwrap();
-        let el = doc.select(&art_sel).next().unwrap();
+        let el = doc.select(&ARTICLE_SELECTOR).next().unwrap();
         let out = serialise_element_filtered(el, &[]);
         assert!(out.contains("Keep"));
         assert!(out.contains("Nav"));
@@ -549,10 +561,8 @@ mod tests {
     fn serialise_strips_removed_element() {
         let html = "<html><body><article><p>Keep</p><nav>Remove</nav></article></body></html>";
         let doc = Html::parse_document(html);
-        let art_sel = Selector::parse("article").unwrap();
-        let nav_sel = Selector::parse("nav").unwrap();
-        let el = doc.select(&art_sel).next().unwrap();
-        let out = serialise_element_filtered(el, &[nav_sel]);
+        let el = doc.select(&ARTICLE_SELECTOR).next().unwrap();
+        let out = serialise_element_filtered(el, std::slice::from_ref(&*NAV_SELECTOR));
         assert!(out.contains("Keep"));
         assert!(!out.contains("Remove"));
     }
@@ -564,10 +574,8 @@ mod tests {
             <p>Body</p>\
             </article></body></html>";
         let doc = Html::parse_document(html);
-        let art_sel = Selector::parse("article").unwrap();
-        let aside_sel = Selector::parse("aside").unwrap();
-        let el = doc.select(&art_sel).next().unwrap();
-        let out = serialise_element_filtered(el, &[aside_sel]);
+        let el = doc.select(&ARTICLE_SELECTOR).next().unwrap();
+        let out = serialise_element_filtered(el, std::slice::from_ref(&*ASIDE_SELECTOR));
         assert!(out.contains("Body"));
         assert!(!out.contains("Link1"));
         assert!(!out.contains("Link2"));
@@ -579,8 +587,7 @@ mod tests {
     fn content_html_returns_empty_when_selector_misses() {
         let html = "<html><body><p>No article here</p></body></html>";
         let doc = Html::parse_document(html);
-        let sel = Selector::parse("article").unwrap();
-        let result = build_content_html(&doc, &sel, &[], "https://example.com");
+        let result = build_content_html(&doc, &ARTICLE_SELECTOR, &[], "https://example.com");
         assert!(result.is_empty());
     }
 
@@ -588,8 +595,7 @@ mod tests {
     fn content_html_captures_matched_element() {
         let html = "<html><body><article><p>Article text</p></article></body></html>";
         let doc = Html::parse_document(html);
-        let sel = Selector::parse("article").unwrap();
-        let result = build_content_html(&doc, &sel, &[], "https://example.com");
+        let result = build_content_html(&doc, &ARTICLE_SELECTOR, &[], "https://example.com");
         assert!(result.contains("Article text"));
         // Should be wrapped in a valid HTML document
         assert!(result.contains("<html>"));
@@ -603,8 +609,7 @@ mod tests {
             <article><p>Second</p></article>\
             </body></html>";
         let doc = Html::parse_document(html);
-        let sel = Selector::parse("article").unwrap();
-        let result = build_content_html(&doc, &sel, &[], "https://example.com");
+        let result = build_content_html(&doc, &ARTICLE_SELECTOR, &[], "https://example.com");
         assert!(result.contains("First"));
         assert!(result.contains("Second"));
     }
@@ -613,8 +618,7 @@ mod tests {
     fn content_html_wraps_in_document_for_content_router() {
         let html = "<html><body><main><h1>Hello</h1><p>World</p></main></body></html>";
         let doc = Html::parse_document(html);
-        let sel = Selector::parse("main").unwrap();
-        let result = build_content_html(&doc, &sel, &[], "https://example.com");
+        let result = build_content_html(&doc, &MAIN_SELECTOR, &[], "https://example.com");
         assert!(result.starts_with("<!DOCTYPE html>"));
     }
 

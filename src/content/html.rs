@@ -17,11 +17,33 @@
 //! footers, ads, and other noise before markdown conversion.
 
 use anyhow::Result;
+use scraper::Selector;
+use std::sync::LazyLock;
 
 use super::quality;
 use super::readability;
 use super::spa_extract;
 use super::{ContentHandler, ConversionResult};
+
+static HIDDEN_SECTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("details, noscript, dialog").expect("static hidden section selector")
+});
+static EMBEDDED_NON_SCRIPT_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("style, template").expect("static embedded selector"));
+static SCRIPT_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("script").expect("static script selector"));
+static BODY_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("body").expect("static body selector"));
+static ATTR_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("[class], [id]").expect("static attr selector"));
+static HEADING_WITH_ID_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]")
+        .expect("static heading selector")
+});
+static COMMENT_CONTAINER_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("div[class], div[id], section[class], section[id]")
+        .expect("static comment container selector")
+});
 
 /// Converts HTML responses to clean markdown.
 pub struct HtmlHandler;
@@ -397,15 +419,10 @@ pub fn html_to_markdown_with_readability(html: &str) -> String {
 pub fn strip_hidden_sections(html: &str) -> String {
     let document = scraper::Html::parse_document(html);
 
-    // Select all details, noscript, and dialog elements
-    #[allow(clippy::unwrap_used)]
-    let hidden_sel = scraper::Selector::parse("details, noscript, dialog")
-        .unwrap_or_else(|_| scraper::Selector::parse("details").unwrap());
-
     // Collect node IDs of hidden elements to remove
     // Keep <details open>, <dialog open> — those are intentionally visible
     let hidden_ids: std::collections::HashSet<ego_tree::NodeId> = document
-        .select(&hidden_sel)
+        .select(&HIDDEN_SECTION_SELECTOR)
         .filter(|el| {
             let name = el.value().name();
             // noscript is always hidden in a JS-capable context
@@ -436,18 +453,17 @@ pub fn strip_embedded_data_sections(html: &str) -> String {
 
     let mut embedded_ids = std::collections::HashSet::new();
 
-    if let Ok(non_script_sel) = scraper::Selector::parse("style, template") {
-        embedded_ids.extend(document.select(&non_script_sel).map(|el| el.id()));
-    }
-
-    if let Ok(script_sel) = scraper::Selector::parse("script") {
-        embedded_ids.extend(
-            document
-                .select(&script_sel)
-                .filter(|script| !is_jsonld_script(script))
-                .map(|script| script.id()),
-        );
-    }
+    embedded_ids.extend(
+        document
+            .select(&EMBEDDED_NON_SCRIPT_SELECTOR)
+            .map(|el| el.id()),
+    );
+    embedded_ids.extend(
+        document
+            .select(&SCRIPT_SELECTOR)
+            .filter(|script| !is_jsonld_script(script))
+            .map(|script| script.id()),
+    );
 
     rebuild_document_excluding(&document, html, &embedded_ids)
 }
@@ -474,7 +490,9 @@ fn serialize_children_excluding(
     parent_id: ego_tree::NodeId,
     exclude: &std::collections::HashSet<ego_tree::NodeId>,
 ) -> String {
-    let node = document.tree.get(parent_id).unwrap();
+    let Some(node) = document.tree.get(parent_id) else {
+        return String::new();
+    };
     let mut out = String::new();
 
     for child in node.children() {
@@ -585,14 +603,9 @@ fn is_void_element(name: &str) -> bool {
 pub fn strip_noise_sections(html: &str) -> String {
     let document = scraper::Html::parse_document(html);
 
-    // Match any element with class or id attributes
-    #[allow(clippy::unwrap_used)]
-    let attr_sel = scraper::Selector::parse("[class], [id]")
-        .unwrap_or_else(|_| scraper::Selector::parse("div").unwrap());
-
     // Collect node IDs of noise elements
     let mut noise_ids: std::collections::HashSet<ego_tree::NodeId> = document
-        .select(&attr_sel)
+        .select(&ATTR_SELECTOR)
         .filter(|el| {
             let class = el.value().attr("class").unwrap_or("");
             let id = el.value().attr("id").unwrap_or("");
@@ -605,11 +618,7 @@ pub fn strip_noise_sections(html: &str) -> String {
     // Special case: headings with noise IDs (e.g., <h3 id="vulnerabilities">)
     // Strip all subsequent siblings of such headings, since the advisory content
     // follows the heading as sibling <div> elements (deps.rs pattern).
-    #[allow(clippy::unwrap_used)]
-    let heading_sel = scraper::Selector::parse("h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]")
-        .unwrap_or_else(|_| scraper::Selector::parse("h3").unwrap());
-
-    for heading in document.select(&heading_sel) {
+    for heading in document.select(&HEADING_WITH_ID_SELECTOR) {
         let id = heading.value().attr("id").unwrap_or("");
         if is_noise_section(&id.to_lowercase()) {
             // Mark the heading itself
@@ -650,17 +659,9 @@ pub fn strip_comment_sections(html: &str) -> String {
 
     // We can't mutate the scraper DOM, so we serialize element HTML of everything
     // EXCEPT comment containers, then reconstruct a valid document.
-    let body_selector = scraper::Selector::parse("body").ok();
-
     // Build a set of comment container hashes to skip
-    // The primary selector targets elements with class or id attributes.
-    // Fallback to "div" is always valid, so the unwrap() is safe.
-    #[allow(clippy::unwrap_used)]
-    let div_sel = scraper::Selector::parse("div[class], div[id], section[class], section[id]")
-        .unwrap_or_else(|_| scraper::Selector::parse("div").unwrap());
-
     let comment_container_ids: std::collections::HashSet<u64> = document
-        .select(&div_sel)
+        .select(&COMMENT_CONTAINER_SELECTOR)
         .filter(|el| is_comment_container(el))
         .map(|el| element_hash(el))
         .collect();
@@ -672,25 +673,22 @@ pub fn strip_comment_sections(html: &str) -> String {
     // Rebuild HTML without comment containers by serializing the body's
     // direct children that aren't comment containers, then wrapping.
     // For simplicity and correctness, we blank the comment node HTML.
-    let body_html = body_selector
-        .as_ref()
-        .and_then(|sel| document.select(sel).next())
-        .map_or_else(
-            || html.to_string(),
-            |body| {
-                // Filter children: collect HTML of non-comment children
-                body.children()
-                    .filter_map(|child| {
-                        let el_ref = scraper::ElementRef::wrap(child)?;
-                        if comment_container_ids.contains(&element_hash(el_ref)) {
-                            None
-                        } else {
-                            Some(el_ref.html())
-                        }
-                    })
-                    .collect::<String>()
-            },
-        );
+    let body_html = document.select(&BODY_SELECTOR).next().map_or_else(
+        || html.to_string(),
+        |body| {
+            // Filter children: collect HTML of non-comment children
+            body.children()
+                .filter_map(|child| {
+                    let el_ref = scraper::ElementRef::wrap(child)?;
+                    if comment_container_ids.contains(&element_hash(el_ref)) {
+                        None
+                    } else {
+                        Some(el_ref.html())
+                    }
+                })
+                .collect::<String>()
+        },
+    );
 
     // Preserve head and wrap body
     let head_html = scraper::Selector::parse("head")

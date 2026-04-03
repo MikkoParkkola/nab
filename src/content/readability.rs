@@ -15,7 +15,23 @@
 //! If extraction fails (e.g., non-article pages), returns `None` and the caller
 //! falls back to raw `html2md` conversion.
 
+use std::sync::LazyLock;
+
 use scraper::{Html, Selector};
+
+static H1_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("h1").expect("static h1 selector"));
+static ARTICLE_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("article").expect("static article selector"));
+static MAIN_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("main").expect("static main selector"));
+static DENSITY_CANDIDATE_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("div, section").expect("static density selector"));
+static TITLE_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("title").expect("static title selector"));
+static OG_TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("meta[property='og:title']").expect("static og:title selector")
+});
 
 /// Extracted article content from HTML.
 #[derive(Debug, Clone)]
@@ -99,8 +115,7 @@ fn extract_with_readability_crate(html: &str, url: &str) -> Option<Article> {
 /// Extract h1 text from HTML fragment.
 fn extract_h1_from_html(html: &str) -> Option<String> {
     let document = Html::parse_fragment(html);
-    let h1_selector = Selector::parse("h1").ok()?;
-    let h1 = document.select(&h1_selector).next()?;
+    let h1 = document.select(&H1_SELECTOR).next()?;
     let title = h1.text().collect::<Vec<_>>().join(" ").trim().to_string();
     if title.is_empty() { None } else { Some(title) }
 }
@@ -126,16 +141,12 @@ fn extract_with_scraper(html: &str) -> Option<Article> {
 /// Try extracting from semantic HTML5 elements (<article>, <main>).
 fn try_semantic_extraction(document: &Html) -> Option<Article> {
     // Try <article> first
-    if let Ok(article_selector) = Selector::parse("article")
-        && let Some(article_elem) = document.select(&article_selector).next()
-    {
+    if let Some(article_elem) = document.select(&ARTICLE_SELECTOR).next() {
         return extract_from_element(article_elem, document);
     }
 
     // Try <main>
-    if let Ok(main_selector) = Selector::parse("main")
-        && let Some(main_elem) = document.select(&main_selector).next()
-    {
+    if let Some(main_elem) = document.select(&MAIN_SELECTOR).next() {
         return extract_from_element(main_elem, document);
     }
 
@@ -185,10 +196,9 @@ fn extract_from_element(
 /// Find main content by analyzing text density of all elements.
 fn find_main_content_by_density(document: &Html) -> Option<Article> {
     // Score all div and section elements
-    let candidates_selector = Selector::parse("div, section").ok()?;
     let mut scored_elements = Vec::new();
 
-    for element in document.select(&candidates_selector) {
+    for element in document.select(&DENSITY_CANDIDATE_SELECTOR) {
         // Skip elements that look like navigation/boilerplate
         if is_unlikely_candidate(&element) {
             continue;
@@ -255,9 +265,7 @@ fn is_unlikely_candidate(element: &scraper::element_ref::ElementRef) -> bool {
 /// Extract title from document (`<title>`, `<h1>`, or `OpenGraph`).
 fn extract_title(document: &Html) -> String {
     // Try <h1> first
-    if let Ok(h1_selector) = Selector::parse("h1")
-        && let Some(h1) = document.select(&h1_selector).next()
-    {
+    if let Some(h1) = document.select(&H1_SELECTOR).next() {
         let title = h1.text().collect::<Vec<_>>().join(" ").trim().to_string();
         if !title.is_empty() {
             return title;
@@ -265,9 +273,7 @@ fn extract_title(document: &Html) -> String {
     }
 
     // Try <title>
-    if let Ok(title_selector) = Selector::parse("title")
-        && let Some(title) = document.select(&title_selector).next()
-    {
+    if let Some(title) = document.select(&TITLE_SELECTOR).next() {
         let title = title
             .text()
             .collect::<Vec<_>>()
@@ -280,8 +286,7 @@ fn extract_title(document: &Html) -> String {
     }
 
     // Try OpenGraph meta tag
-    if let Ok(og_selector) = Selector::parse("meta[property='og:title']")
-        && let Some(og) = document.select(&og_selector).next()
+    if let Some(og) = document.select(&OG_TITLE_SELECTOR).next()
         && let Some(content) = og.value().attr("content")
     {
         let title = content.trim().to_string();
@@ -309,6 +314,9 @@ fn strip_html_tags(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static DIV_SELECTOR: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse("div").expect("static div selector"));
 
     #[test]
     fn extracts_article_with_semantic_html() {
@@ -537,18 +545,17 @@ mod tests {
     fn test_is_unlikely_candidate_detects_boilerplate() {
         let html = r#"<div class="navigation">Nav</div>"#;
         let doc = Html::parse_fragment(html);
-        let selector = Selector::parse("div").unwrap();
-        let element = doc.select(&selector).next().unwrap();
+        let element = doc.select(&DIV_SELECTOR).next().unwrap();
         assert!(is_unlikely_candidate(&element));
 
         let html = r#"<div class="sidebar">Side</div>"#;
         let doc = Html::parse_fragment(html);
-        let element = doc.select(&selector).next().unwrap();
+        let element = doc.select(&DIV_SELECTOR).next().unwrap();
         assert!(is_unlikely_candidate(&element));
 
         let html = r#"<div class="content">Content</div>"#;
         let doc = Html::parse_fragment(html);
-        let element = doc.select(&selector).next().unwrap();
+        let element = doc.select(&DIV_SELECTOR).next().unwrap();
         assert!(!is_unlikely_candidate(&element));
     }
 }

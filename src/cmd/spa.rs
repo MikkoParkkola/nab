@@ -1,3 +1,4 @@
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -7,6 +8,9 @@ use super::output::write_stdout_line;
 use nab::fetch_bridge::{FetchClient, inject_fetch_sync};
 use nab::js_engine::JsEngine;
 use nab::{AcceleratedClient, ApiDiscovery};
+
+static SCRIPT_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("script").expect("static script selector"));
 
 #[derive(Clone)]
 /// Configuration for the `nab spa` command.
@@ -293,10 +297,9 @@ fn try_javascript_extraction_blocking(
 /// Execute all inline (non-src) scripts and return the count of successful executions.
 fn execute_inline_scripts(html: &str, js_engine: &JsEngine, show_console: bool) -> usize {
     let document = Html::parse_document(html);
-    let script_selector = Selector::parse("script").unwrap();
     let mut scripts_executed = 0;
 
-    for script in document.select(&script_selector) {
+    for script in document.select(&SCRIPT_SELECTOR) {
         if script.value().attr("src").is_some() {
             continue;
         }

@@ -2,9 +2,13 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
 use scraper::{Html, Selector};
+
+static LINK_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("a[href]").expect("static link selector"));
 
 pub(crate) fn write_stdout(content: &str) -> Result<()> {
     let mut stdout = io::stdout().lock();
@@ -78,12 +82,11 @@ pub fn output_body(
 
 pub fn extract_links(html: &str) -> Vec<(String, String)> {
     let document = Html::parse_document(html);
-    let selector = Selector::parse("a[href]").unwrap();
 
     let mut links = Vec::new();
     let mut seen = HashSet::new();
 
-    for element in document.select(&selector) {
+    for element in document.select(&LINK_SELECTOR) {
         if let Some(href) = element.value().attr("href") {
             // Skip anchors, javascript, and duplicates
             if href.starts_with('#') || href.starts_with("javascript:") || seen.contains(href) {
