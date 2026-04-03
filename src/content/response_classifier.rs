@@ -197,7 +197,13 @@ pub fn classify_response(analysis: ResponseAnalysis<'_>) -> ResponseClassificati
     let body_lower = analysis.body.to_lowercase();
     let mut classification = ResponseClassification::default();
 
-    if let Some(diagnostic) = classify_http_response_lower(analysis.status, &body_lower) {
+    if analysis.status == 401 {
+        classification.push(ResponseSignal {
+            class: ResponseClass::Unauthorized,
+            confidence: 0.97,
+            reason: "http 401 unauthorized response",
+        });
+    } else if let Some(diagnostic) = classify_http_response_lower(analysis.status, &body_lower) {
         classification.push(map_diagnostic_signal(diagnostic));
     } else if matches!(analysis.status, 403 | 999) && looks_like_forbidden(&body_lower) {
         classification.push(ResponseSignal {
@@ -312,7 +318,7 @@ fn classify_http_response_lower(status: u16, body_lower: &str) -> Option<Respons
         });
     }
 
-    if looks_like_captcha(body_lower) && matches!(status, 200 | 401 | 403 | 429 | 503) {
+    if matches!(status, 403 | 429 | 503) && looks_like_captcha_interstitial(body_lower) {
         return Some(ResponseDiagnostic {
             kind: ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Captcha),
             status,
@@ -333,9 +339,8 @@ fn classify_http_response_lower(status: u16, body_lower: &str) -> Option<Respons
         });
     }
 
-    if status == 401
-        || (status == 403
-            && (looks_like_login_wall(body_lower) || looks_like_password_gate(body_lower)))
+    if (status == 403
+        && (looks_like_login_wall(body_lower) || looks_like_password_gate(body_lower)))
         || (looks_like_login_wall(body_lower) && looks_like_password_gate(body_lower))
     {
         return Some(ResponseDiagnostic {
@@ -409,6 +414,21 @@ fn looks_like_captcha(body_lower: &str) -> bool {
         body_lower,
         &["g-recaptcha", "grecaptcha", "h-captcha", "hcaptcha"],
     ) || (body_lower.contains("captcha") && body_lower.contains("<img"))
+}
+
+fn looks_like_captcha_interstitial(body_lower: &str) -> bool {
+    looks_like_captcha(body_lower)
+        && contains_any(
+            body_lower,
+            &[
+                "verify you are human",
+                "are you human",
+                "security check",
+                "browser verification",
+                "checking your browser",
+                "please enable javascript and cookies to continue",
+            ],
+        )
 }
 
 fn looks_like_rate_limit(body_lower: &str) -> bool {
@@ -603,6 +623,38 @@ mod tests {
         assert_eq!(
             classification.primary().map(|signal| signal.class),
             Some(ResponseClass::Unauthorized)
+        );
+    }
+
+    #[test]
+    fn classify_response_maps_http_401_to_unauthorized() {
+        let classification = classify_response(ResponseAnalysis {
+            status: 401,
+            body: "<html><body>Unauthorized</body></html>",
+            content_type: Some("text/html"),
+            html_bytes: None,
+            markdown_chars: None,
+            quality: None,
+        });
+        assert_eq!(
+            classification.primary().map(|signal| signal.class),
+            Some(ResponseClass::Unauthorized)
+        );
+    }
+
+    #[test]
+    fn classify_http_response_avoids_login_page_recaptcha_false_positive() {
+        let body = r#"
+            <html><body>
+              <h1>Sign in to continue</h1>
+              <form><input type="password" name="password"></form>
+              <div class="g-recaptcha"></div>
+            </body></html>
+        "#;
+        let diagnostic = classify_http_response(200, body).expect("login wall classification");
+        assert_eq!(
+            diagnostic.kind,
+            ResponseDiagnosticKind::AuthRequired(AuthRequiredKind::LoginRequired)
         );
     }
 }

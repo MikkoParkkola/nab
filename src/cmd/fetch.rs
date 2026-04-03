@@ -8,7 +8,7 @@ use anyhow::Result;
 use nab::content::diff::ContentSnapshot;
 use nab::content::diff_format::format_diff_terminal;
 use nab::content::response_classifier::{
-    AuthRequiredKind, ResponseDiagnosticKind, ThinContentDiagnostic, classify_http_response,
+    ResponseAnalysis, ResponseClass, ThinContentDiagnostic, classify_response,
     classify_thin_content,
 };
 use nab::content::snapshot_store::SnapshotStore;
@@ -542,25 +542,47 @@ fn build_fetch_diagnostics(
 ) -> Vec<String> {
     let mut warnings = Vec::new();
 
-    if let Some(diagnostic) = classify_http_response(status, raw_text) {
-        let warning = match diagnostic.kind {
-            ResponseDiagnosticKind::BrowserChallenge(_) => format!(
-                "{} Browser challenge likely requires cookies or JavaScript.\nTry:\n1. Visit the URL in a browser first\n2. Let nab reuse your default browser cookies automatically unless you intentionally disabled them\n3. Use --cookies brave|chrome|firefox|safari only to override the default browser profile",
-                diagnostic.summary()
+    let classification = classify_response(ResponseAnalysis {
+        status,
+        body: raw_text,
+        content_type,
+        html_bytes: content_type
+            .is_some_and(|value| value.contains("html"))
+            .then_some(html_len),
+        markdown_chars: content_type
+            .is_some_and(|value| value.contains("html"))
+            .then_some(markdown_len),
+        quality,
+    });
+
+    if let Some(primary) = classification.primary() {
+        let warning = match primary.class {
+            ResponseClass::BotChallenge => format!(
+                "Bot or browser challenge detected (HTTP {status}). Browser challenge likely requires cookies or JavaScript.\nTry:\n1. Visit the URL in a browser first\n2. Let nab reuse your default browser cookies automatically unless you intentionally disabled them\n3. Use --cookies brave|chrome|firefox|safari only to override the default browser profile"
             ),
-            ResponseDiagnosticKind::RateLimited => format!(
-                "Rate limiting detected (HTTP {status}).\n{}",
-                diagnostic.guidance()
+            ResponseClass::RateLimited => format!(
+                "Rate limiting detected (HTTP {status}).\nRetry later, or use an authenticated browser/session path if the site rate-limits anonymous traffic."
             ),
-            ResponseDiagnosticKind::AuthRequired(AuthRequiredKind::LoginRequired) => {
-                "The response looks like a login page.\nSign in in your browser first, then retry. nab already uses your default browser cookies automatically unless you disabled them."
-                    .to_string()
+            ResponseClass::Unauthorized => format!(
+                "Authenticated access appears to be required (HTTP {status}).\nSign in in your browser first, then retry with the default browser cookies or a named session. If you explicitly disabled cookies, re-enable them."
+            ),
+            ResponseClass::LoginRequired => "The response looks like a login page.\nSign in in your browser first, then retry. nab already uses your default browser cookies automatically unless you disabled them."
+                .to_string(),
+            ResponseClass::Forbidden => {
+                if status == 999 {
+                    "Nonstandard block status HTTP 999 detected.\nSome sites use this as an anti-automation or access-control response. Retry with the default browser cookies, or override the browser profile with --cookies brave if the authenticated session lives outside your default browser."
+                        .to_string()
+                } else {
+                    format!(
+                        "Forbidden response (HTTP {status}).\nAccess may require authentication, an allowed browser session, or different permissions."
+                    )
+                }
             }
-            ResponseDiagnosticKind::AuthRequired(AuthRequiredKind::SessionExpired) => {
-                diagnostic.message()
-            }
+            ResponseClass::ThinContent => String::new(),
         };
-        warnings.push(warning);
+        if !warning.is_empty() {
+            warnings.push(warning);
+        }
     }
 
     if let Some(thin) = classify_thin_content(content_type, html_len, markdown_len, quality) {
@@ -667,6 +689,23 @@ mod tests {
         assert!(
             warning.contains("Rate limiting"),
             "warning should mention rate limiting, got: {warning}"
+        );
+    }
+
+    #[test]
+    fn build_fetch_diagnostics_for_http_401_mentions_authenticated_access() {
+        let warning =
+            build_fetch_diagnostics(401, "Unauthorized", Some("text/html"), 0, 0, None, true)
+                .into_iter()
+                .next()
+                .expect("expected unauthorized warning");
+        assert!(
+            warning.contains("Authenticated access appears to be required"),
+            "warning should mention authenticated access, got: {warning}"
+        );
+        assert!(
+            !warning.contains("login page"),
+            "warning should not pretend a bare 401 is a login page, got: {warning}"
         );
     }
 

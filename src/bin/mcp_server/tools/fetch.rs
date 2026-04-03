@@ -11,7 +11,9 @@ use nab::content::budget::truncate_to_budget;
 use nab::content::diff::{ContentSnapshot, compute_diff};
 use nab::content::diff_format::format_diff_markdown;
 use nab::content::focus::extract_focused;
-use nab::content::response_classifier::{classify_http_response, classify_thin_content};
+use nab::content::response_classifier::{
+    ResponseAnalysis, classify_response, classify_thin_content,
+};
 use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, SafeFetchConfig};
 
@@ -373,11 +375,21 @@ fn trace_fetch_classification(
     markdown: &str,
     quality: Option<&nab::content::quality::QualityScore>,
 ) {
-    if let Some(primary) = classify_http_response(status, raw_text) {
+    let classification = classify_response(ResponseAnalysis {
+        status,
+        body: raw_text,
+        content_type: Some(content_type),
+        html_bytes: content_type.contains("html").then_some(body_len),
+        markdown_chars: content_type.contains("html").then_some(markdown.len()),
+        quality,
+    });
+
+    if let Some(primary) = classification.primary() {
         tracing::warn!(
             status,
-            class = primary.code(),
-            summary = primary.summary(),
+            class = ?primary.class,
+            confidence = ?primary.confidence,
+            reason = primary.reason,
             "fetch response classified"
         );
     }
