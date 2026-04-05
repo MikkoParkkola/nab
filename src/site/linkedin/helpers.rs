@@ -1,5 +1,6 @@
 //! Shared utility helpers for `LinkedIn` extraction.
 
+#[cfg(feature = "impersonate")]
 use super::url::LinkedInUrlKind;
 
 #[cfg(feature = "impersonate")]
@@ -10,6 +11,7 @@ use super::types::VoyagerProfileResponse;
 use std::fmt::Write as _;
 
 /// Human-readable label for a URL kind (used in platform metadata).
+#[cfg(feature = "impersonate")]
 pub(super) fn kind_label(kind: LinkedInUrlKind) -> &'static str {
     match kind {
         LinkedInUrlKind::Profile => "Profile",
