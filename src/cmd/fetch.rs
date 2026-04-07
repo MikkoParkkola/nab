@@ -4,9 +4,11 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 
 use anyhow::Result;
+use serde_json::json;
 
 use nab::content::diff::ContentSnapshot;
 use nab::content::diff_format::format_diff_terminal;
+use nab::content::ocr::fetch_integration::FetchOcrEnricher;
 use nab::content::response_classifier::{
     ResponseAnalysis, ResponseClass, ThinContentDiagnostic, classify_response,
     classify_thin_content,
@@ -45,6 +47,10 @@ pub struct FetchConfig {
     pub proxy: Option<String>,
     pub show_diff: bool,
     pub html_options: nab::content::html::HtmlConversionOptions,
+    /// When `true`, skip saving the fetch result to hebb's kv store.
+    pub no_save: bool,
+    /// When `true`, skip OCR-enriching images in the fetched HTML.
+    pub no_ocr: bool,
 }
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
@@ -165,6 +171,18 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     } else {
         (raw_text.clone(), None)
     };
+
+    // ── Apple Vision OCR enrichment ────────────────────────────────────────
+    let body_text = if !cfg.no_ocr && !cfg.raw_html && content_type.contains("html") {
+        enrich_with_ocr(&body_text, &raw_text, &cfg.url, &client).await
+    } else {
+        body_text
+    };
+
+    // ── Auto-save to hebb kv:urls ──────────────────────────────────────────
+    if !cfg.no_save {
+        save_to_hebb(&cfg.url, &body_text, &raw_text).await;
+    }
 
     for warning in build_fetch_diagnostics(
         status.as_u16(),
@@ -623,6 +641,149 @@ fn thin_content_message(diagnostic: ThinContentDiagnostic) -> String {
          3. nab fetch --cookies brave <url>  (override the browser profile if needed)",
         diagnostic.markdown_chars, diagnostic.html_bytes
     )
+}
+
+// ─── OCR enrichment ───────────────────────────────────────────────────────────
+
+/// Run OCR on images in `html` and annotate `markdown` with recognized text.
+///
+/// Returns the original markdown unchanged when the OCR engine is unavailable
+/// or when no thin-alt images are found.  Per-image errors are silently skipped.
+async fn enrich_with_ocr(markdown: &str, html: &str, url: &str, client: &AcceleratedClient) -> String {
+    let enricher = match FetchOcrEnricher::new() {
+        Ok(e) if e.is_available() => e,
+        _ => return markdown.to_string(),
+    };
+
+    let http = client.inner().clone();
+    let ocr_map = enricher.enrich_images(html, url, &http).await;
+    if ocr_map.is_empty() {
+        return markdown.to_string();
+    }
+    enricher.annotate_markdown(markdown, &ocr_map)
+}
+
+// ─── hebb kv save ─────────────────────────────────────────────────────────────
+
+/// Save the fetch result to hebb's `kv:urls` namespace for future retrieval.
+///
+/// Spawns `hebb-mcp` as a one-shot child process and sends a single
+/// `tools/call kv_set` request over its stdio.  Silently no-ops when
+/// `hebb-mcp` is not installed.  All errors are logged as `debug`.
+async fn save_to_hebb(url: &str, markdown: &str, html: &str) {
+    if !hebb_is_available() {
+        return;
+    }
+    let key = url_key(url);
+    let title = extract_title(html).unwrap_or_default();
+    if let Err(e) = hebb_kv_set_oneshot("urls", &key, url, &title, markdown).await {
+        tracing::debug!("hebb kv_set skipped: {e}");
+    }
+}
+
+/// Return `true` when `hebb-mcp` is locatable on this system.
+fn hebb_is_available() -> bool {
+    if which::which("hebb-mcp").is_ok() {
+        return true;
+    }
+    dirs::data_local_dir()
+        .map(|d| d.join("hebb/bin/hebb-mcp").exists())
+        .unwrap_or(false)
+}
+
+/// Spawn `hebb-mcp` for a single `kv_set` call then let the process exit.
+///
+/// Uses the same MCP JSON-RPC stdio protocol as `HebbClient` but without
+/// maintaining a long-lived subprocess.
+async fn hebb_kv_set_oneshot(
+    namespace: &str,
+    key: &str,
+    url: &str,
+    title: &str,
+    markdown: &str,
+) -> Result<()> {
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let binary = if let Ok(p) = which::which("hebb-mcp") {
+        p
+    } else if let Some(managed) = dirs::data_local_dir().map(|d| d.join("hebb/bin/hebb-mcp")) {
+        if managed.exists() { managed } else {
+            return Err(anyhow::anyhow!("hebb-mcp not found"));
+        }
+    } else {
+        return Err(anyhow::anyhow!("hebb-mcp not found"));
+    };
+
+    let mut child = tokio::process::Command::new(&binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("spawn hebb-mcp: {e}"))?;
+
+    let mut stdin = child.stdin.take().expect("piped");
+    let stdout = child.stdout.take().expect("piped");
+    let mut reader = BufReader::new(stdout);
+
+    // ── initialize ──────────────────────────────────────────────────────
+    let init_req = serde_json::to_string(&json!({
+        "jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": { "sampling": {} },
+            "clientInfo": { "name": "nab-cli", "version": env!("CARGO_PKG_VERSION") }
+        }
+    }))?;
+    stdin.write_all(format!("{init_req}\n").as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Wait for initialize response.
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+    let _init_resp: serde_json::Value = serde_json::from_str(line.trim())?;
+
+    // initialized notification
+    let notif = serde_json::to_string(&json!({
+        "jsonrpc": "2.0", "method": "notifications/initialized", "params": {}
+    }))?;
+    stdin.write_all(format!("{notif}\n").as_bytes()).await?;
+    stdin.flush().await?;
+
+    // ── kv_set ──────────────────────────────────────────────────────────
+    let call_req = serde_json::to_string(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {
+            "name": "kv_set",
+            "arguments": {
+                "namespace": namespace,
+                "key": key,
+                "value": { "url": url, "title": title },
+                "content_text": markdown,
+            }
+        }
+    }))?;
+    stdin.write_all(format!("{call_req}\n").as_bytes()).await?;
+    stdin.flush().await?;
+    drop(stdin);
+
+    // Read kv_set response (best-effort; don't block indefinitely).
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut resp_line = String::new();
+        let _ = reader.read_line(&mut resp_line).await;
+    })
+    .await;
+
+    let _ = child.kill().await;
+    Ok(())
+}
+
+/// Derive a short, stable key from a URL using the first 16 hex chars of
+/// its SHA-256 hash.
+fn url_key(url: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(url.as_bytes());
+    hex::encode(&digest[..8]) // 8 bytes = 16 hex chars
 }
 
 /// Build HTTP client with optional proxy and redirect settings.

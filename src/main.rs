@@ -156,6 +156,14 @@ enum Commands {
         /// Show what changed since the last fetch (stores snapshots in ~/.nab/snapshots/)
         #[arg(long)]
         diff: bool,
+
+        /// Do not save the fetch result to hebb kv store (default: save when hebb is available)
+        #[arg(long)]
+        no_save: bool,
+
+        /// Do not OCR images in the fetched HTML (default: OCR when Apple Vision is available)
+        #[arg(long)]
+        no_ocr: bool,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -649,6 +657,8 @@ async fn main() -> Result<()> {
                 parallel,
                 proxy,
                 diff,
+                no_save,
+                no_ocr,
                 ..
             } => {
                 let cfg = cmd::FetchConfig {
@@ -673,6 +683,8 @@ async fn main() -> Result<()> {
                     parallel,
                     proxy,
                     show_diff: diff,
+                    no_save,
+                    no_ocr,
                     html_options: nab::content::html::HtmlConversionOptions {
                         allow_spa_extraction: !no_spa,
                         allow_jina_fallback: !no_fallback,

@@ -23,6 +23,7 @@ use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 pub mod apple_vision;
+pub mod fetch_integration;
 #[cfg(not(target_os = "macos"))]
 pub mod stub;
 
