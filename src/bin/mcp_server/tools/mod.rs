@@ -28,6 +28,7 @@ pub(crate) mod fingerprint;
 pub(crate) mod login;
 pub(crate) mod submit;
 pub(crate) mod validate;
+pub(crate) mod watch;
 
 // ─── Re-exports ───────────────────────────────────────────────────────────────
 //
@@ -45,3 +46,4 @@ pub use fingerprint::FingerprintTool;
 pub use login::LoginTool;
 pub use submit::SubmitTool;
 pub use validate::ValidateTool;
+pub use watch::{WatchCreateTool, WatchListTool, WatchRemoveTool, get_watch_manager, init_watch_manager};

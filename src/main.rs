@@ -461,6 +461,12 @@ enum Commands {
         #[command(subcommand)]
         action: ProviderAction,
     },
+
+    /// Monitor URLs for content changes (RSS for the entire web)
+    Watch {
+        #[command(subcommand)]
+        action: WatchAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -511,6 +517,46 @@ enum ProviderAction {
     Remove {
         /// Provider name (as shown in `nab provider list`)
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WatchAction {
+    /// Add a new URL watch (does an initial fetch to seed the first snapshot)
+    Add {
+        /// URL to watch
+        url: String,
+
+        /// Polling interval: `30s`, `5m`, `1h`, `24h` (default: `1h`)
+        #[arg(short, long)]
+        interval: Option<String>,
+
+        /// CSS selector — only the matched element is watched
+        #[arg(short, long)]
+        selector: Option<String>,
+
+        /// Diff algorithm: `text` | `semantic` | `dom` (default: `text`)
+        #[arg(long = "diff-kind", default_value = "text")]
+        diff_kind: String,
+    },
+
+    /// List all active watches
+    List {
+        /// Output format: `table` | `json`
+        #[arg(short, long, default_value = "table")]
+        format: String,
+    },
+
+    /// Remove a watch by ID
+    Remove {
+        /// Watch ID (as shown in `nab watch list`)
+        id: String,
+    },
+
+    /// Show snapshot history for a watch
+    Logs {
+        /// Watch ID
+        id: String,
     },
 }
 
@@ -789,6 +835,36 @@ async fn main() -> Result<()> {
                 }
                 ProviderAction::Remove { name } => {
                     cmd::cmd_provider_remove(&name)?;
+                }
+            },
+            Commands::Watch { action } => match action {
+                WatchAction::Add {
+                    url,
+                    interval,
+                    selector,
+                    diff_kind,
+                } => {
+                    cmd::cmd_watch_add(&cmd::WatchAddConfig {
+                        url,
+                        interval,
+                        selector,
+                        diff_kind: Some(diff_kind),
+                    })
+                    .await?;
+                }
+                WatchAction::List { format } => {
+                    let fmt = if format.eq_ignore_ascii_case("json") {
+                        cmd::WatchListFormat::Json
+                    } else {
+                        cmd::WatchListFormat::Table
+                    };
+                    cmd::cmd_watch_list(&cmd::WatchListConfig { format: fmt }).await?;
+                }
+                WatchAction::Remove { id } => {
+                    cmd::cmd_watch_remove(&id).await?;
+                }
+                WatchAction::Logs { id } => {
+                    cmd::cmd_watch_logs(&cmd::WatchLogsConfig { id }).await?;
                 }
             },
         }

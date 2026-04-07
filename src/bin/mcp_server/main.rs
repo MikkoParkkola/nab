@@ -19,8 +19,8 @@ pub mod structured;
 mod tests;
 pub mod tools;
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
@@ -29,11 +29,11 @@ use rust_mcp_sdk::schema::{
     CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult, GetPromptRequestParams,
     GetPromptResult, Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ListPromptsResult,
     ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument,
-    PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource, RpcError,
-    ServerCapabilities, ServerCapabilitiesPrompts, ServerCapabilitiesResources,
-    ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, TextContent,
-    TextResourceContents, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport,
-    ToolOutputSchema, schema_utils::CallToolError,
+    PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceUpdatedNotificationParams,
+    RpcError, ServerCapabilities, ServerCapabilitiesPrompts, ServerCapabilitiesResources,
+    ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, SubscribeRequestParams,
+    TextContent, TextResourceContents, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport,
+    ToolOutputSchema, UnsubscribeRequestParams, schema_utils::CallToolError,
 };
 use rust_mcp_sdk::schema::{
     TaskStatus,
@@ -42,10 +42,13 @@ use rust_mcp_sdk::schema::{
 use rust_mcp_sdk::task_store::{CreateTaskOptions, InMemoryTaskStore, ServerTaskCreator};
 use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 
+use nab::watch::WatchManager;
+
 use structured::server_icons;
 use tools::{
     AnalyzeTool, AuthLookupTool, BenchmarkTool, FetchBatchTool, FetchTool, FingerprintTool,
-    LoginTool, SubmitTool, ValidateTool, get_client,
+    LoginTool, SubmitTool, ValidateTool, WatchCreateTool, WatchListTool, WatchRemoveTool,
+    get_client, init_watch_manager,
 };
 
 // Generate the tools enum
@@ -60,7 +63,10 @@ tool_box!(
         FingerprintTool,
         ValidateTool,
         BenchmarkTool,
-        AnalyzeTool
+        AnalyzeTool,
+        WatchCreateTool,
+        WatchListTool,
+        WatchRemoveTool
     ]
 );
 
@@ -496,6 +502,12 @@ fn tool_annotations(name: &str) -> ToolAnnotations {
         "login" => (false, false, false, Some(true)),
         // analyze reads a local file; result is deterministic for the same input
         "analyze" => (true, false, true, Some(false)),
+        // watch_create registers a new watch (state change, non-destructive)
+        "watch_create" => (false, false, false, Some(true)),
+        // watch_remove deletes a watch (state change, destructive)
+        "watch_remove" => (false, true, true, None),
+        // watch_list is read-only
+        "watch_list" => (true, false, true, None),
         _ => (true, false, true, None), // fetch, fetch_batch, validate, fingerprint, auth_lookup, benchmark
     };
     ToolAnnotations {
@@ -629,8 +641,8 @@ fn build_prompt_result(
 
 // ─── Resources ────────────────────────────────────────────────────────────────
 
-/// Build the static list of resources this server exposes.
-fn all_resources() -> Vec<Resource> {
+/// Build the static resources this server always exposes.
+fn static_resources() -> Vec<Resource> {
     vec![
         Resource {
             uri: "nab://guide/quickstart".into(),
@@ -659,8 +671,36 @@ fn all_resources() -> Vec<Resource> {
     ]
 }
 
+/// Build a `Resource` descriptor from a watch.
+fn watch_resource(watch: &nab::watch::Watch) -> Resource {
+    Resource {
+        uri: format!("nab://watch/{}", watch.id),
+        name: format!("Watch: {}", watch.url),
+        title: Some(format!("Watch: {}", watch.url)),
+        description: Some(format!(
+            "Monitors {} every {}s for content changes.",
+            watch.url, watch.interval_secs,
+        )),
+        mime_type: Some("text/markdown".into()),
+        annotations: None,
+        icons: vec![],
+        meta: None,
+        size: None,
+    }
+}
+
+/// Build the full dynamic resource list: static + all watches.
+async fn all_resources(watch_manager: &WatchManager) -> Vec<Resource> {
+    let mut resources = static_resources();
+    let watches = watch_manager.list().await;
+    resources.extend(watches.iter().map(watch_resource));
+    resources
+}
+
 /// Return the text content for a known resource URI, or `None` if unknown.
-fn resource_content(uri: &str) -> Option<String> {
+///
+/// Watch URIs (`nab://watch/<id>`) are handled separately via the async path.
+fn static_resource_content(uri: &str) -> Option<String> {
     match uri {
         "nab://guide/quickstart" => Some(QUICKSTART_GUIDE.to_string()),
         "nab://status" => Some(status_content()),
@@ -720,9 +760,10 @@ fn status_content() -> String {
         "# nab Server Status\n\n\
          **Version**: {}\n\
          **Status**: running\n\
-         **Tools**: fetch, fetch_batch, submit, login, auth_lookup, fingerprint, validate, benchmark\n\
+         **Tools**: fetch, fetch_batch, submit, login, auth_lookup, fingerprint, validate, benchmark, watch_create, watch_list, watch_remove\n\
          **Prompts**: fetch-and-extract, multi-page-research, authenticated-fetch\n\
-         **Resources**: nab://guide/quickstart, nab://status\n",
+         **Resources**: nab://guide/quickstart, nab://status, nab://watch/<id> (subscribable)\n\
+         **Watch subscriptions**: enabled — use watch_create then resources/subscribe nab://watch/<id>\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -734,7 +775,16 @@ fn status_content() -> String {
 /// Handles all standard MCP tool requests synchronously, and routes
 /// `fetch_batch` through task-augmented execution when the client requests it,
 /// enabling non-blocking parallel fetches for long-running batch operations.
-pub struct MicroFetchHandler;
+///
+/// Also manages subscriptions to `nab://watch/<id>` resources and pushes
+/// `notifications/resources/updated` when the background poller detects changes.
+pub struct MicroFetchHandler {
+    /// Watch manager for dynamic resource enumeration and subscription support.
+    watch_manager: Arc<WatchManager>,
+    /// Set of watch resource URIs the client has subscribed to.
+    /// Shared with the notification fanout task via `Arc`.
+    subscribed_uris: Arc<Mutex<HashSet<String>>>,
+}
 
 #[async_trait]
 impl ServerHandler for MicroFetchHandler {
@@ -759,7 +809,7 @@ impl ServerHandler for MicroFetchHandler {
                 "validate" => Some(validate_output_schema()),
                 "benchmark" => Some(benchmark_output_schema()),
                 "analyze" => Some(analyze_output_schema()),
-                _ => None,
+                _ => None, // watch tools return freeform text
             };
 
             tool.annotations = Some(tool_annotations(tool.name.as_str()));
@@ -806,6 +856,9 @@ impl ServerHandler for MicroFetchHandler {
             MicroFetchTools::ValidateTool(t) => t.run().await,
             MicroFetchTools::BenchmarkTool(t) => t.run().await,
             MicroFetchTools::AnalyzeTool(t) => t.run().await,
+            MicroFetchTools::WatchCreateTool(t) => t.run().await,
+            MicroFetchTools::WatchListTool(t) => t.run().await,
+            MicroFetchTools::WatchRemoveTool(t) => t.run().await,
         }
     }
 
@@ -841,7 +894,7 @@ impl ServerHandler for MicroFetchHandler {
         Ok(ListResourcesResult {
             meta: None,
             next_cursor: None,
-            resources: all_resources(),
+            resources: all_resources(&self.watch_manager).await,
         })
     }
 
@@ -851,9 +904,22 @@ impl ServerHandler for MicroFetchHandler {
         _runtime: Arc<dyn McpServer>,
     ) -> Result<ReadResourceResult, RpcError> {
         use rust_mcp_sdk::schema::ReadResourceContent;
-        let text = resource_content(&params.uri).ok_or_else(|| {
-            RpcError::method_not_found().with_message(format!("Unknown resource: '{}'", params.uri))
-        })?;
+
+        let text = if let Some(id) = params.uri.strip_prefix("nab://watch/") {
+            self.watch_manager
+                .render_resource(&id.to_owned())
+                .await
+                .ok_or_else(|| {
+                    RpcError::method_not_found()
+                        .with_message(format!("Watch '{}' not found", id))
+                })?
+        } else {
+            static_resource_content(&params.uri).ok_or_else(|| {
+                RpcError::method_not_found()
+                    .with_message(format!("Unknown resource: '{}'", params.uri))
+            })?
+        };
+
         Ok(ReadResourceResult {
             meta: None,
             contents: vec![ReadResourceContent::TextResourceContents(
@@ -865,6 +931,36 @@ impl ServerHandler for MicroFetchHandler {
                 },
             )],
         })
+    }
+
+    async fn handle_subscribe_request(
+        &self,
+        params: SubscribeRequestParams,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<rust_mcp_sdk::schema::Result, RpcError> {
+        let uri = &params.uri;
+        if uri.starts_with("nab://watch/") {
+            self.subscribed_uris
+                .lock()
+                .expect("subscription lock")
+                .insert(uri.clone());
+            tracing::info!(%uri, "Client subscribed to watch resource");
+        }
+        Ok(rust_mcp_sdk::schema::Result::default())
+    }
+
+    async fn handle_unsubscribe_request(
+        &self,
+        params: UnsubscribeRequestParams,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<rust_mcp_sdk::schema::Result, RpcError> {
+        let uri = &params.uri;
+        self.subscribed_uris
+            .lock()
+            .expect("subscription lock")
+            .remove(uri);
+        tracing::info!(%uri, "Client unsubscribed from watch resource");
+        Ok(rust_mcp_sdk::schema::Result::default())
     }
 
     /// Handles task-augmented `fetch_batch` calls.
@@ -999,8 +1095,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tools: Some(ServerCapabilitiesTools { list_changed: None }),
             prompts: Some(ServerCapabilitiesPrompts { list_changed: None }),
             resources: Some(ServerCapabilitiesResources {
-                list_changed: None,
-                subscribe: None,
+                list_changed: Some(true),
+                subscribe: Some(true),
             }),
             // Advertise task support: clients can create tasks, cancel them,
             // list them, and use task-augmented tool calls.
@@ -1031,8 +1127,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
     };
 
+    // Initialize the WatchManager (loads persisted watches from disk).
+    let watch_manager = Arc::new(
+        WatchManager::new_default()
+            .expect("Failed to initialize WatchManager"),
+    );
+
+    // Register the shared singleton so MCP watch tools can access it.
+    init_watch_manager(Arc::clone(&watch_manager));
+
+    // Spawn the background poller (ticks every 60 seconds).
+    tokio::spawn(Arc::clone(&watch_manager).poll_loop());
+
+    // Subscribed-URI set shared between the handler and the notification fanout task.
+    let subscribed_uris: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
     let transport = StdioTransport::new(TransportOptions::default())?;
-    let handler = MicroFetchHandler;
+    let handler = MicroFetchHandler {
+        watch_manager: Arc::clone(&watch_manager),
+        subscribed_uris: Arc::clone(&subscribed_uris),
+    };
+
     let server = server_runtime::create_server(McpServerOptions {
         server_details,
         transport,
@@ -1040,6 +1155,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         task_store: Some(task_store),
         client_task_store: None,
         message_observer: None,
+    });
+
+    // Spawn watch-change notification fanout.
+    // Listens for WatchEvent::Changed and pushes notifications/resources/updated
+    // to the client for any subscribed URI.
+    let mut event_rx = watch_manager.subscribe();
+    let subscribed_clone = Arc::clone(&subscribed_uris);
+    let server_arc = Arc::clone(&server);
+    tokio::spawn(async move {
+        loop {
+            match event_rx.recv().await {
+                Ok(nab::watch::WatchEvent::Changed { id, .. }) => {
+                    let uri = format!("nab://watch/{id}");
+                    let is_subscribed = {
+                        subscribed_clone
+                            .lock()
+                            .expect("subscription lock")
+                            .contains(&uri)
+                    };
+                    if is_subscribed {
+                        let params = ResourceUpdatedNotificationParams { uri: uri.clone(), meta: None };
+                        if let Err(e) = server_arc.notify_resource_updated(params).await {
+                            tracing::warn!(%uri, error = %e, "Failed to push resource updated notification");
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(skipped = n, "Watch event receiver lagged");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                _ => {}
+            }
+        }
     });
 
     Ok(server.start().await?)

@@ -446,35 +446,35 @@ fn build_prompt_result_authenticated_fetch_uses_login_session_flow() {
     assert!(!tc.text.contains("--1password"), "text: {}", tc.text);
 }
 
-// ── all_resources ─────────────────────────────────────────────────────────────
+// ── static_resources ──────────────────────────────────────────────────────────
 
 #[test]
-fn all_resources_returns_two_resources() {
-    // GIVEN the static resource list
-    let resources = crate::all_resources();
-    // THEN exactly two resources are present
+fn static_resources_returns_two_resources() {
+    // GIVEN the static resource list (excludes dynamic watch resources)
+    let resources = crate::static_resources();
+    // THEN exactly two static resources are present
     assert_eq!(resources.len(), 2);
 }
 
 #[test]
-fn resources_have_expected_uris() {
-    let resources = crate::all_resources();
+fn static_resources_have_expected_uris() {
+    let resources = crate::static_resources();
     let uris: Vec<&str> = resources.iter().map(|r| r.uri.as_str()).collect();
     assert!(uris.contains(&"nab://guide/quickstart"));
     assert!(uris.contains(&"nab://status"));
 }
 
-// ── resource_content ──────────────────────────────────────────────────────────
+// ── static_resource_content ───────────────────────────────────────────────────
 
 #[test]
-fn resource_content_returns_none_for_unknown_uri() {
-    assert!(crate::resource_content("nab://unknown").is_none());
+fn static_resource_content_returns_none_for_unknown_uri() {
+    assert!(crate::static_resource_content("nab://unknown").is_none());
 }
 
 #[test]
 fn quickstart_resource_contains_key_sections() {
     // GIVEN the quickstart guide
-    let content = crate::resource_content("nab://guide/quickstart").unwrap();
+    let content = crate::static_resource_content("nab://guide/quickstart").unwrap();
     // THEN key sections are present
     assert!(content.contains("Basic Fetch"));
     assert!(content.contains("Batch Fetch"));
@@ -483,7 +483,7 @@ fn quickstart_resource_contains_key_sections() {
 
 #[test]
 fn quickstart_resource_describes_automatic_cookie_defaults() {
-    let content = crate::resource_content("nab://guide/quickstart").unwrap();
+    let content = crate::static_resource_content("nab://guide/quickstart").unwrap();
     assert!(content.contains("automatically try cookies from the default browser"));
     assert!(content.contains("cookies = \"none\""));
 }
@@ -491,7 +491,7 @@ fn quickstart_resource_describes_automatic_cookie_defaults() {
 #[test]
 fn status_resource_contains_version() {
     // GIVEN the status resource
-    let content = crate::resource_content("nab://status").unwrap();
+    let content = crate::static_resource_content("nab://status").unwrap();
     // THEN it includes the crate version
     assert!(content.contains(env!("CARGO_PKG_VERSION")));
     assert!(content.contains("running"));

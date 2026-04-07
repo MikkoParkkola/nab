@@ -60,6 +60,7 @@ pub mod stream;
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]
 pub mod util;
+pub mod watch;
 pub mod webmcp;
 pub mod websocket;
 
@@ -94,6 +95,7 @@ pub use webmcp::{
     DiscoveryResult, McpManifest, McpTool, extract_link_href, parse_manifest_bytes,
     resolve_manifest_url, well_known_url,
 };
+pub use watch::{AddOptions, Watch, WatchEvent, WatchId, WatchManager, WatchOptions};
 pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 
 /// Version of nab

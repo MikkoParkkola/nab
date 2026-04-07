@@ -16,6 +16,7 @@ pub mod spa;
 pub mod stream;
 pub mod submit;
 pub mod validate;
+pub mod watch;
 
 pub use analyze::{AnalyzeConfig, cmd_analyze};
 pub use annotate::{AnnotateConfig, cmd_annotate};
@@ -33,6 +34,10 @@ pub use spa::{SpaConfig, cmd_spa};
 pub use stream::{StreamCmdConfig, cmd_stream};
 pub use submit::{SubmitConfig, cmd_submit};
 pub use validate::cmd_validate;
+pub use watch::{
+    WatchAddConfig, WatchListConfig, WatchListFormat, WatchLogsConfig,
+    cmd_watch_add, cmd_watch_list, cmd_watch_logs, cmd_watch_remove,
+};
 
 /// Extract the host/domain from a URL, returning an empty string on failure.
 ///
