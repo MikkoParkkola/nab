@@ -17,6 +17,12 @@ pub struct AnalyzeConfig {
     pub api_key: Option<String>,
     /// Optional BCP-47 language hint (e.g. `"fi"`, `"en"`, `"zh"`).
     pub language: Option<String>,
+    /// When `true`, log a notice that active reading requires the MCP server.
+    ///
+    /// The CLI cannot perform active reading because there is no MCP client
+    /// to satisfy `sampling/createMessage`.  Setting this flag prints a helpful
+    /// message rather than silently doing nothing.
+    pub active_reading: bool,
 }
 
 /// Audio-only file extensions that bypass video frame extraction.
@@ -26,6 +32,14 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
     use nab::analyze::{AudioExtractor, TranscribeOptions, default_backend};
     // dgx and api_key are reserved for Phase 3/4 — suppress lint until then.
     let _ = (cfg.dgx, cfg.api_key.as_deref());
+
+    if cfg.active_reading {
+        eprintln!(
+            "Note: --active-reading is only available via the nab MCP server \
+             (nab-mcp). The CLI cannot perform sampling/createMessage calls. \
+             Proceeding with passive transcription."
+        );
+    }
 
     eprintln!("Analyzing: {}", cfg.video);
 

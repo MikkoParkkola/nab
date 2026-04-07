@@ -10,10 +10,12 @@
 //! `.aac`, `.ogg`) are passed directly without extraction.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use nab::analyze::{AudioExtractor, TranscribeOptions, default_backend};
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
+use rust_mcp_sdk::McpServer;
 use serde::{Deserialize, Serialize};
 
 // ─── Tool definition ──────────────────────────────────────────────────────────
@@ -38,8 +40,14 @@ Backend:
 - macOS Apple Silicon: FluidAudio (CoreML, Neural Engine, ~143× realtime)
 - Other platforms: returns backend unavailability error
 
+Active reading (active_reading=true):
+- Identifies papers, people, tools, and claims in the transcript via MCP sampling
+- Fetches and summarises each reference
+- Inlines numbered footnotes into the transcript segments
+- Requires the MCP client to support sampling/createMessage
+
 Returns: JSON-serialized TranscriptionResult with segments, language, RTFx,
-processing time, and optional speaker diarization.",
+processing time, optional speaker diarization, and optional footnotes.",
     read_only_hint = true,
     open_world_hint = false
 )]
@@ -74,16 +82,36 @@ pub struct AnalyzeTool {
     /// `"whisper-rs"` (Phase 3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+
+    /// Enable active reading — live reference lookup during transcription.
+    ///
+    /// When `true`, the host LLM is asked (via `sampling/createMessage`) to
+    /// identify references in the transcript chunks — papers, people, tools, and
+    /// claims — and each surviving reference is fetched and summarised as a
+    /// numbered footnote inlined into the transcript.
+    ///
+    /// Requires the MCP client to advertise `sampling` capability. Falls back
+    /// to passive transcription with a warning if sampling is unavailable.
+    #[serde(default)]
+    pub active_reading: bool,
 }
 
 impl AnalyzeTool {
-    pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
+    /// Run the analyze tool.
+    ///
+    /// `runtime` is passed through to the active-reading sampler when
+    /// `self.active_reading` is `true`. It is unused otherwise.
+    pub async fn run(
+        &self,
+        runtime: &Arc<dyn McpServer>,
+    ) -> Result<CallToolResult, CallToolError> {
         let input_path = PathBuf::from(&self.input);
 
         tracing::info!(
             input = %self.input,
             language = ?self.language,
             diarize = self.diarize,
+            active_reading = self.active_reading,
             "analyze start"
         );
 
@@ -119,7 +147,7 @@ impl AnalyzeTool {
             )));
         }
 
-        let result = backend
+        let mut result = backend
             .transcribe(&audio_path, opts)
             .await
             .map_err(|e| CallToolError::from_message(format!("transcription failed: {e}")))?;
@@ -130,6 +158,11 @@ impl AnalyzeTool {
             backend = %result.backend,
             "analyze complete"
         );
+
+        // ── Active reading pass ────────────────────────────────────────────────
+        if self.active_reading {
+            apply_active_reading(&mut result, runtime).await;
+        }
 
         // ── Clean up temp audio file ───────────────────────────────────────────
         if audio_path != input_path {
@@ -147,6 +180,55 @@ impl AnalyzeTool {
         let mut call_result = CallToolResult::text_content(vec![TextContent::from(json)]);
         call_result.structured_content = structured;
         Ok(call_result)
+    }
+}
+
+// ─── Active reading helper ────────────────────────────────────────────────────
+
+/// Run the active-reading pass on `result`.
+///
+/// Failures are logged as warnings; the transcript is returned unmodified on any
+/// error so the caller always has a usable (passive) result.
+async fn apply_active_reading(
+    result: &mut nab::analyze::TranscriptionResult,
+    runtime: &Arc<dyn McpServer>,
+) {
+    use crate::active_reading_mcp::{McpLlmSampler, NabUrlFetcher};
+    use nab::analyze::{ActiveReadingConfig, ActiveReader};
+
+    if !crate::sampling::is_supported(runtime) {
+        tracing::warn!(
+            "active reading requested but the MCP client does not support sampling; \
+             falling back to passive transcription"
+        );
+        return;
+    }
+
+    let sampler = McpLlmSampler::new(runtime.clone());
+    let client = match nab::AcceleratedClient::new() {
+        Ok(c) => Arc::new(c),
+        Err(e) => {
+            tracing::warn!("active reading: could not create HTTP client: {e}");
+            return;
+        }
+    };
+    let fetcher = NabUrlFetcher::new(client);
+
+    let mut reader = ActiveReader::new(&sampler, &fetcher, ActiveReadingConfig::default());
+
+    match reader.process(result).await {
+        Ok(output) => {
+            tracing::info!(
+                footnotes = output.footnotes.len(),
+                tokens_spent = output.metadata.tokens_spent,
+                "active reading complete"
+            );
+            result.footnotes = Some(output.footnotes);
+            result.active_reading = Some(output.metadata);
+        }
+        Err(e) => {
+            tracing::warn!("active reading failed: {e}; returning passive transcript");
+        }
     }
 }
 

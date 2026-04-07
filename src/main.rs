@@ -321,6 +321,13 @@ enum Commands {
         /// Claude API key for vision analysis (or `ANTHROPIC_API_KEY` env)
         #[arg(long)]
         api_key: Option<String>,
+
+        /// Enable active reading — identify and look up references in the transcript.
+        ///
+        /// Only available via the nab MCP server (nab-mcp); the CLI will print a
+        /// notice and continue with passive transcription.
+        #[arg(long)]
+        active_reading: bool,
     },
 
     /// Add overlays to video (subtitles, speaker labels, analysis)
@@ -736,6 +743,7 @@ async fn main() -> Result<()> {
                 output,
                 dgx,
                 api_key,
+                active_reading,
             } => {
                 let cfg = cmd::AnalyzeConfig {
                     video,
@@ -746,6 +754,7 @@ async fn main() -> Result<()> {
                     dgx,
                     api_key,
                     language: None,
+                    active_reading,
                 };
                 cmd::cmd_analyze(&cfg).await?;
             }

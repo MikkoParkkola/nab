@@ -19,6 +19,7 @@
 //! nab-mcp --http 0.0.0.0:8765 --http-allow-origin https://claude.ai
 //! ```
 
+pub mod active_reading_mcp;
 pub mod completion;
 pub mod elicitation;
 pub mod helpers;
@@ -867,7 +868,7 @@ impl ServerHandler for MicroFetchHandler {
             MicroFetchTools::FingerprintTool(t) => t.run(),
             MicroFetchTools::ValidateTool(t) => t.run().await,
             MicroFetchTools::BenchmarkTool(t) => t.run().await,
-            MicroFetchTools::AnalyzeTool(t) => t.run().await,
+            MicroFetchTools::AnalyzeTool(t) => t.run(&runtime).await,
             MicroFetchTools::WatchCreateTool(t) => t.run().await,
             MicroFetchTools::WatchListTool(t) => t.run().await,
             MicroFetchTools::WatchRemoveTool(t) => t.run().await,
@@ -1016,7 +1017,7 @@ impl ServerHandler for MicroFetchHandler {
         &self,
         params: CallToolRequestParams,
         task_creator: ServerTaskCreator,
-        _runtime: Arc<dyn McpServer>,
+        runtime: Arc<dyn McpServer>,
     ) -> Result<CreateTaskResult, CallToolError> {
         // Only tools that advertise task support may enter this path.
         if !matches!(params.name.as_str(), "fetch_batch" | "analyze") {
@@ -1041,7 +1042,7 @@ impl ServerHandler for MicroFetchHandler {
             .await;
 
         let task_id = task.task_id.clone();
-        let task_store = _runtime
+        let task_store = runtime
             .task_store()
             .ok_or_else(|| CallToolError::from_message("Task store not configured"))?;
 
@@ -1069,8 +1070,9 @@ impl ServerHandler for MicroFetchHandler {
                 });
             }
             MicroFetchTools::AnalyzeTool(analyze_tool) => {
+                let runtime_clone = runtime.clone();
                 tokio::spawn(async move {
-                    let (status, call_result) = match analyze_tool.run().await {
+                    let (status, call_result) = match analyze_tool.run(&runtime_clone).await {
                         Ok(r) => (TaskStatus::Completed, ResultFromServer::CallToolResult(r)),
                         Err(e) => {
                             let msg = e.to_string();

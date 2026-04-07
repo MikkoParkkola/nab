@@ -14,6 +14,7 @@
 //! the standalone `fluidaudiocli` binary via subprocess. When that binary is not
 //! installed, [`AsrBackend::is_available`] returns `false`.
 
+pub mod active_reading;
 pub mod asr_backend;
 pub mod diarize;
 pub mod extract;
@@ -30,9 +31,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // ── New trait-based API (Phase 1+) ────────────────────────────────────────────
+pub use active_reading::{
+    ActiveReadingConfig, ActiveReadingError, ActiveReadingMetadata, ActiveReadingOutput,
+    ActiveReader, LlmSampler, LookupResult, Reference, ReferenceKind, UrlFetcher,
+};
 pub use asr_backend::{
-    AsrBackend, SpeakerSegment as AsrSpeakerSegment, TranscribeOptions, TranscriptSegment as AsrTranscriptSegment,
-    TranscriptionResult, WordTiming as AsrWordTiming,
+    AsrBackend, SpeakerSegment as AsrSpeakerSegment, TranscribeOptions,
+    TranscriptSegment as AsrTranscriptSegment, TranscriptionResult, WordTiming as AsrWordTiming,
 };
 pub use fluidaudio_backend::FluidAudioBackend;
 

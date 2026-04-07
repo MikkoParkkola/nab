@@ -73,6 +73,9 @@ pub struct SpeakerSegment {
 ///
 /// The `segments` field carries the transcript; `speakers` is `Some` only when
 /// diarization was requested via [`TranscribeOptions::diarize`].
+///
+/// The `footnotes` and `active_reading` fields are populated when active reading
+/// is enabled (see `nab analyze --active-reading`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptionResult {
     /// Ordered transcript segments.
@@ -92,6 +95,15 @@ pub struct TranscriptionResult {
     /// Speaker turns; populated when `opts.diarize = true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speakers: Option<Vec<SpeakerSegment>>,
+    /// Inline reference footnotes; populated when `--active-reading` is enabled.
+    ///
+    /// Each entry is a formatted string like `"[1] Summary text — https://..."`.
+    /// Corresponding `[N]` markers are appended to the relevant segment text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footnotes: Option<Vec<String>>,
+    /// Active-reading pipeline metadata; populated when `--active-reading` is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_reading: Option<crate::analyze::active_reading::ActiveReadingMetadata>,
 }
 
 // ─── Options ──────────────────────────────────────────────────────────────────
@@ -244,6 +256,8 @@ mod tests {
             rtfx: 143.0,
             processing_time_seconds: 0.21,
             speakers: None,
+            footnotes: None,
+            active_reading: None,
         };
 
         // WHEN serialized

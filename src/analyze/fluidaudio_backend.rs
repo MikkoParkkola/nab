@@ -243,6 +243,8 @@ impl AsrBackend for FluidAudioBackend {
             rtfx,
             processing_time_seconds: asr_output.processing_time_seconds,
             speakers,
+            footnotes: None,
+            active_reading: None,
         })
     }
 }
