@@ -30,6 +30,7 @@ pub mod focus;
 pub mod html;
 pub mod image;
 pub mod link_extract;
+pub mod ocr;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 pub mod pdf_light;

@@ -175,6 +175,10 @@ which = "8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.5"         # macOS Keychain API (transitive via rustls, make direct)
+objc2 = "0.6"                      # Objective-C runtime bindings
+objc2-vision = { version = "0.3.2", features = ["VNRecognizeTextRequest", "VNRequest", "VNRequestHandler", "VNObservation", "VNTypes"] }
+objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSError", "NSString", "NSData", "NSDictionary"] }
+objc2-core-graphics = { version = "0.3.2", features = ["CGImage"] }
 
 [features]
 default = ["cli", "http3", "impersonate", "analyze"]
