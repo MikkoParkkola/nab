@@ -94,6 +94,18 @@ pub struct AnalyzeTool {
     /// to passive transcription with a warning if sampling is unavailable.
     #[serde(default)]
     pub active_reading: bool,
+
+    /// Include 256-dimensional speaker embeddings in diarization output.
+    ///
+    /// When `true` (and `diarize = true`), each entry in `speakers[]` gains an
+    /// `embedding` field containing the raw diarizer embedding vector. Use this
+    /// with the `match-speakers-with-hebb` prompt to resolve `SPEAKER_NN` labels
+    /// to real names via the hebb voiceprint database.
+    ///
+    /// Omitted by default — embeddings add ~1 KB of JSON per speaker turn and
+    /// are only needed for voiceprint workflows.
+    #[serde(default)]
+    pub include_embeddings: bool,
 }
 
 impl AnalyzeTool {
@@ -132,6 +144,7 @@ impl AnalyzeTool {
             word_timestamps: true,
             diarize: self.diarize,
             max_duration_seconds: None,
+            include_embeddings: self.include_embeddings,
         };
 
         // ── Dispatch to backend ────────────────────────────────────────────────

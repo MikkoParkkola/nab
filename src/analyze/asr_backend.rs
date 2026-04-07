@@ -67,6 +67,12 @@ pub struct SpeakerSegment {
     pub start: f64,
     /// Turn end time (seconds).
     pub end: f64,
+    /// 256-dimensional speaker embedding from the diarizer model.
+    ///
+    /// Present only when [`TranscribeOptions::include_embeddings`] is `true`.
+    /// Used for voiceprint matching via `hebb voice_match`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// Full transcription result returned by [`AsrBackend::transcribe`].
@@ -122,6 +128,13 @@ pub struct TranscribeOptions {
     /// Hard cap on audio duration to process. Audio beyond this point is
     /// silently ignored. `None` = no limit.
     pub max_duration_seconds: Option<u32>,
+    /// When `true`, deserialize and populate the 256-dimensional speaker
+    /// embedding in each [`SpeakerSegment`].
+    ///
+    /// Embeddings are omitted by default because they add ~1 KB of JSON per
+    /// speaker turn and are only needed for voiceprint matching workflows
+    /// (e.g. `match-speakers-with-hebb` MCP prompt).
+    pub include_embeddings: bool,
 }
 
 // ─── Trait ────────────────────────────────────────────────────────────────────
@@ -278,5 +291,56 @@ mod tests {
         assert!(!opts.word_timestamps);
         assert!(!opts.diarize);
         assert!(opts.max_duration_seconds.is_none());
+        assert!(!opts.include_embeddings, "include_embeddings must default to false");
+    }
+
+    /// `SpeakerSegment` with `embedding: None` omits the field in JSON.
+    #[test]
+    fn speaker_segment_omits_embedding_when_none() {
+        // GIVEN a speaker segment without embedding
+        let seg = SpeakerSegment {
+            speaker: "SPEAKER_00".to_string(),
+            start: 0.0,
+            end: 1.5,
+            embedding: None,
+        };
+        // WHEN serialized
+        let json = serde_json::to_string(&seg).expect("serialize");
+        // THEN the embedding field is absent
+        assert!(!json.contains("embedding"), "embedding must be absent when None: {json}");
+    }
+
+    /// `SpeakerSegment` with `embedding: Some(...)` serializes the vector.
+    #[test]
+    fn speaker_segment_includes_embedding_when_some() {
+        // GIVEN a speaker segment with a 256-float embedding
+        let emb: Vec<f32> = (0..256).map(|i| i as f32 / 256.0).collect();
+        let seg = SpeakerSegment {
+            speaker: "SPEAKER_01".to_string(),
+            start: 1.5,
+            end: 3.0,
+            embedding: Some(emb.clone()),
+        };
+        // WHEN serialized
+        let json = serde_json::to_string(&seg).expect("serialize");
+        // THEN embedding is present
+        assert!(json.contains("\"embedding\""), "embedding must be present: {json}");
+        // AND deserialization round-trips correctly
+        let decoded: SpeakerSegment = serde_json::from_str(&json).expect("deserialize");
+        let decoded_emb = decoded.embedding.expect("embedding present after roundtrip");
+        assert_eq!(decoded_emb.len(), 256);
+        assert!((decoded_emb[0] - emb[0]).abs() < f32::EPSILON);
+    }
+
+    /// `TranscribeOptions::include_embeddings` can be set to true.
+    #[test]
+    fn transcribe_options_include_embeddings_can_be_enabled() {
+        // GIVEN options with embeddings requested
+        let opts = TranscribeOptions {
+            include_embeddings: true,
+            ..Default::default()
+        };
+        // THEN the flag is set
+        assert!(opts.include_embeddings);
     }
 }

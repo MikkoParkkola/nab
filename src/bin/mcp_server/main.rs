@@ -584,6 +584,26 @@ fn all_prompts() -> Vec<Prompt> {
             icons: vec![],
             meta: None,
         },
+        Prompt {
+            name: "match-speakers-with-hebb".into(),
+            title: Some("Match Speakers with hebb Voiceprint DB".into()),
+            description: Some(
+                "Run speaker diarization with embeddings, then resolve SPEAKER_NN labels to real \
+                 names using the hebb voiceprint database. Elicits the user for unknown speakers \
+                 and stores new voiceprints for future recognition."
+                    .into(),
+            ),
+            arguments: vec![
+                prompt_arg("input", "Local audio or video file path to transcribe", true),
+                prompt_arg(
+                    "language",
+                    "BCP-47 language hint (optional, e.g. 'fi', 'en')",
+                    false,
+                ),
+            ],
+            icons: vec![],
+            meta: None,
+        },
     ]
 }
 
@@ -638,6 +658,28 @@ fn build_prompt_result(
                      Only set `cookies` when you need to override the browser choice or disable cookies with `cookies = \"none\"`."
                 )
             }
+        }
+        "match-speakers-with-hebb" => {
+            let input = args.get("input").map_or("<audio-or-video-file>", String::as_str);
+            let lang_hint = args
+                .get("language")
+                .map_or(String::new(), |l| format!(" language=\"{l}\""));
+            format!(
+                "## Speaker Resolution Workflow\n\n\
+                 **Step 1 — Transcribe with diarization and embeddings:**\n\
+                 Call `analyze` with `input=\"{input}\"{lang_hint} diarize=true include_embeddings=true`.\n\n\
+                 **Step 2 — Resolve each speaker turn:**\n\
+                 For each entry in the result's `speakers[]` array:\n\
+                 1. Call `hebb voice_match` with `embedding=<segment.embedding>` and `threshold=0.7`.\n\
+                 2. If a match is returned with `confidence > 0.7`, use `match.name` as the speaker label.\n\
+                 3. If no match, elicit the user: \"Who is SPEAKER_NN speaking from \
+                    <start>s to <end>s? (leave blank to skip)\"\n\
+                 4. If the user supplies a name, call `hebb voice_remember` with \
+                    `embedding=<segment.embedding>` and `name=<user_name>`.\n\n\
+                 **Step 3 — Produce the final transcript:**\n\
+                 Replace all `SPEAKER_NN` labels in `segments[].speaker` with the resolved names. \
+                 Present the final transcript with speaker-attributed lines."
+            )
         }
         _ => return None,
     };

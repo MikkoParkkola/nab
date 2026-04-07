@@ -319,11 +319,12 @@ fn login_annotation_is_non_destructive_write() {
 // ── all_prompts ───────────────────────────────────────────────────────────────
 
 #[test]
-fn all_prompts_returns_three_prompts() {
+fn all_prompts_returns_four_prompts() {
     // GIVEN the static prompt list
     let prompts = crate::all_prompts();
-    // THEN exactly three prompts are present
-    assert_eq!(prompts.len(), 3);
+    // THEN exactly four prompts are present (fetch-and-extract, multi-page-research,
+    // authenticated-fetch, match-speakers-with-hebb)
+    assert_eq!(prompts.len(), 4);
 }
 
 #[test]
@@ -333,6 +334,44 @@ fn prompts_have_expected_names() {
     assert!(names.contains(&"fetch-and-extract"));
     assert!(names.contains(&"multi-page-research"));
     assert!(names.contains(&"authenticated-fetch"));
+    assert!(names.contains(&"match-speakers-with-hebb"));
+}
+
+#[test]
+fn match_speakers_prompt_is_listed() {
+    // GIVEN the prompt list
+    let prompts = crate::all_prompts();
+    // WHEN searching for match-speakers-with-hebb
+    let p = prompts
+        .iter()
+        .find(|p| p.name == "match-speakers-with-hebb");
+    // THEN it exists with required `input` argument
+    let p = p.expect("match-speakers-with-hebb must be in all_prompts()");
+    let input_arg = p.arguments.iter().find(|a| a.name == "input");
+    assert!(input_arg.is_some(), "must have 'input' argument");
+    assert_eq!(
+        input_arg.unwrap().required,
+        Some(true),
+        "'input' must be required"
+    );
+}
+
+#[test]
+fn match_speakers_prompt_result_contains_workflow_steps() {
+    // GIVEN match-speakers-with-hebb with an input argument
+    let mut args = std::collections::BTreeMap::new();
+    args.insert("input".into(), "/tmp/meeting.wav".into());
+    // WHEN rendered
+    let result =
+        crate::build_prompt_result("match-speakers-with-hebb", &args).unwrap();
+    let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
+        panic!("expected TextContent");
+    };
+    // THEN workflow mentions diarization + embeddings
+    assert!(tc.text.contains("include_embeddings=true"), "text: {}", tc.text);
+    assert!(tc.text.contains("voice_match"), "text: {}", tc.text);
+    assert!(tc.text.contains("voice_remember"), "text: {}", tc.text);
+    assert!(tc.text.contains("/tmp/meeting.wav"), "text: {}", tc.text);
 }
 
 #[test]

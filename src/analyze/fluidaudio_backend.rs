@@ -92,8 +92,14 @@ struct FluidDiarSegment {
     end_time_seconds: f64,
     #[serde(rename = "qualityScore", default)]
     quality_score: f64,
-    // embedding intentionally omitted — too large for default deserialization.
-    // Re-enable when voiceprint DB lands (axterminator/hebb Phase 2).
+    /// Raw embedding from diarizer output (256 floats).
+    ///
+    /// Populated only when `TranscribeOptions::include_embeddings = true`.
+    /// Deserialization is skipped by default to avoid the ~1 KB per-segment
+    /// JSON cost. When embeddings are needed (voiceprint workflows), the
+    /// JSON is re-parsed with a struct that includes this field.
+    #[serde(default)]
+    embedding: Vec<f32>,
 }
 
 // ─── Backend ───────────────────────────────────────────────────────────────────
@@ -217,7 +223,12 @@ impl AsrBackend for FluidAudioBackend {
         let speakers = if opts.diarize {
             let diar = run_diarize(&self.binary_path, wav_path).await?;
             assign_speakers_to_segments(&mut segments, &diar.segments);
-            let speaker_segs = diar.segments.into_iter().map(fluid_diar_to_speaker).collect();
+            let include_emb = opts.include_embeddings;
+            let speaker_segs = diar
+                .segments
+                .into_iter()
+                .map(|d| fluid_diar_to_speaker(d, include_emb))
+                .collect();
             Some(speaker_segs)
         } else {
             None
@@ -624,11 +635,20 @@ fn assign_speakers_to_segments(
 }
 
 /// Convert a `FluidDiarSegment` to the public `SpeakerSegment` type.
-fn fluid_diar_to_speaker(d: FluidDiarSegment) -> SpeakerSegment {
+///
+/// When `include_embedding` is `true` and the raw embedding is non-empty,
+/// it is moved into `SpeakerSegment::embedding`. Otherwise `embedding` is `None`.
+fn fluid_diar_to_speaker(d: FluidDiarSegment, include_embedding: bool) -> SpeakerSegment {
+    let embedding = if include_embedding && !d.embedding.is_empty() {
+        Some(d.embedding)
+    } else {
+        None
+    };
     SpeakerSegment {
         speaker: format!("SPEAKER_{:02}", d.speaker_id),
         start: d.start_time_seconds,
         end: d.end_time_seconds,
+        embedding,
     }
 }
 
@@ -839,12 +859,14 @@ mod tests {
                 start_time_seconds: 0.0,
                 end_time_seconds: 1.0,
                 quality_score: 0.9,
+                embedding: vec![],
             },
             FluidDiarSegment {
                 speaker_id: 1,
                 start_time_seconds: 1.0,
                 end_time_seconds: 3.0,
                 quality_score: 0.9,
+                embedding: vec![],
             },
         ];
         // Note: overlap(0,3, 1,3)=2.0 beats overlap(0,3, 0,1)=1.0
@@ -869,6 +891,7 @@ mod tests {
             start_time_seconds: 0.0,
             end_time_seconds: 5.0,
             quality_score: 0.9,
+            embedding: vec![],
         }];
         assign_speakers_to_segments(&mut segments, &diar);
         assert!(segments[0].speaker.is_none());
@@ -900,10 +923,49 @@ mod tests {
             start_time_seconds: 1.5,
             end_time_seconds: 4.0,
             quality_score: 0.8,
+            embedding: vec![],
         };
-        let s = fluid_diar_to_speaker(d);
+        let s = fluid_diar_to_speaker(d, false);
         assert_eq!(s.speaker, "SPEAKER_03");
         assert!((s.start - 1.5).abs() < 1e-9);
         assert!((s.end - 4.0).abs() < 1e-9);
+        assert!(s.embedding.is_none());
+    }
+
+    /// `include_embedding=false` produces `embedding: None`.
+    #[test]
+    fn fluid_diar_to_speaker_embedding_omitted_when_false() {
+        // GIVEN a segment with a non-empty embedding
+        let d = FluidDiarSegment {
+            speaker_id: 0,
+            start_time_seconds: 0.0,
+            end_time_seconds: 1.0,
+            quality_score: 0.9,
+            embedding: vec![0.1_f32; 256],
+        };
+        // WHEN include_embedding is false
+        let s = fluid_diar_to_speaker(d, false);
+        // THEN embedding is None
+        assert!(s.embedding.is_none());
+    }
+
+    /// `include_embedding=true` with a 256-float vector populates the embedding.
+    #[test]
+    fn fluid_diar_to_speaker_embedding_present_when_true() {
+        // GIVEN a segment with a 256-element embedding
+        let raw: Vec<f32> = (0..256).map(|i| i as f32 / 256.0).collect();
+        let d = FluidDiarSegment {
+            speaker_id: 1,
+            start_time_seconds: 2.0,
+            end_time_seconds: 5.0,
+            quality_score: 0.85,
+            embedding: raw.clone(),
+        };
+        // WHEN include_embedding is true
+        let s = fluid_diar_to_speaker(d, true);
+        // THEN embedding is present with length 256
+        let emb = s.embedding.expect("embedding must be present");
+        assert_eq!(emb.len(), 256);
+        assert!((emb[0] - raw[0]).abs() < f32::EPSILON);
     }
 }

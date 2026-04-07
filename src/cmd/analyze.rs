@@ -96,6 +96,7 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
         word_timestamps: true,
         diarize: cfg.diarize,
         max_duration_seconds: None,
+        include_embeddings: false, // CLI does not expose embeddings; use MCP + match-speakers-with-hebb
     };
 
     let start = std::time::Instant::now();
