@@ -29,7 +29,7 @@ pub mod sherpa_onnx_backend;
 #[cfg(feature = "analyze-whisper")]
 pub mod whisper_rs_backend;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -46,14 +46,13 @@ pub use asr_backend::{
 };
 pub use fluidaudio_backend::FluidAudioBackend;
 
-// ── Legacy API (kept for one release; deprecated in favour of AsrBackend) ─────
+// ── Legacy API ────────────────────────────────────────────────────────────────
 pub use diarize::{Diarizer, SpeakerSegment};
 pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor};
 pub use fusion::{FusedSegment, FusionEngine};
 pub use report::{AnalysisReport, ReportFormat};
 pub use transcribe::{
-    ParakeetTranscriber, Transcriber, TranscriptSegment, TranscriptionBackend, VllmTranscriber,
-    WordTiming,
+    TranscriptSegment, TranscriptionBackend, VllmTranscriber, WordTiming,
 };
 pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
 
@@ -249,142 +248,9 @@ impl Default for PipelineConfig {
     }
 }
 
-/// Main analysis pipeline
-pub struct AnalysisPipeline {
-    config: PipelineConfig,
-    frame_extractor: FrameExtractor,
-    audio_extractor: AudioExtractor,
-    transcriber: Transcriber,
-    diarizer: Diarizer,
-    vision: VisionAnalyzer,
-    fusion: FusionEngine,
-}
-
-impl AnalysisPipeline {
-    /// Create new pipeline with default configuration
-    pub fn new() -> Result<Self> {
-        Self::with_config(PipelineConfig::default())
-    }
-
-    /// Create pipeline with custom configuration
-    pub fn with_config(config: PipelineConfig) -> Result<Self> {
-        // Ensure work directory exists
-        std::fs::create_dir_all(&config.work_dir)?;
-
-        Ok(Self {
-            frame_extractor: FrameExtractor::new(config.scene_threshold, config.max_frames),
-            audio_extractor: AudioExtractor::new(),
-            transcriber: Transcriber::new(&config.whisper_model, config.dgx_host.clone())?,
-            diarizer: Diarizer::new(config.dgx_host.clone())?,
-            vision: VisionAnalyzer::new(config.vision_backend.clone(), config.dgx_host.clone())?,
-            fusion: FusionEngine::new(),
-            config,
-        })
-    }
-
-    /// Run full analysis pipeline on a video file
-    pub async fn analyze(&self, video_path: impl AsRef<Path>) -> Result<AnalysisOutput> {
-        let video_path = video_path.as_ref();
-        tracing::info!("Starting analysis of: {}", video_path.display());
-
-        // 1. Extract frames and audio in parallel
-        let work_dir = &self.config.work_dir;
-        let frames_dir = work_dir.join("frames");
-        let audio_path = work_dir.join("audio.wav");
-
-        std::fs::create_dir_all(&frames_dir)?;
-
-        // Run extraction
-        let (frames, metadata) = self
-            .frame_extractor
-            .extract(video_path, &frames_dir)
-            .await?;
-        self.audio_extractor
-            .extract(video_path, &audio_path)
-            .await?;
-
-        tracing::info!("Extracted {} keyframes", frames.len());
-
-        // 2. Transcribe audio
-        let transcript = self.transcriber.transcribe(&audio_path).await?;
-        tracing::info!("Transcribed {} segments", transcript.len());
-
-        // 3. Speaker diarization (if enabled)
-        let speakers = if self.config.enable_diarization {
-            Some(self.diarizer.diarize(&audio_path).await?)
-        } else {
-            None
-        };
-
-        // 4. Visual analysis of keyframes
-        let visual_analyses = self.vision.analyze_frames(&frames).await?;
-        tracing::info!("Analyzed {} frames visually", visual_analyses.len());
-
-        // 5. Fuse all modalities
-        let segments =
-            self.fusion
-                .fuse(&transcript, speakers.as_deref(), &frames, &visual_analyses)?;
-
-        Ok(AnalysisOutput {
-            segments,
-            metadata: Some(metadata),
-        })
-    }
-
-    /// Run analysis with only audio (faster, no vision)
-    pub async fn analyze_audio_only(&self, video_path: impl AsRef<Path>) -> Result<AnalysisOutput> {
-        let video_path = video_path.as_ref();
-        let audio_path = self.config.work_dir.join("audio.wav");
-
-        // Extract audio
-        self.audio_extractor
-            .extract(video_path, &audio_path)
-            .await?;
-
-        // Transcribe
-        let transcript = self.transcriber.transcribe(&audio_path).await?;
-
-        // Diarize
-        let speakers = if self.config.enable_diarization {
-            Some(self.diarizer.diarize(&audio_path).await?)
-        } else {
-            None
-        };
-
-        // Convert to segments without visual
-        let segments = transcript
-            .iter()
-            .map(|t| {
-                let speaker = speakers.as_ref().and_then(|s| {
-                    s.iter()
-                        .find(|sp| sp.start <= t.start && sp.end >= t.end)
-                        .map(|sp| sp.speaker.clone())
-                });
-
-                AnalysisSegment {
-                    start: t.start,
-                    end: t.end,
-                    speaker,
-                    transcript: Some(t.text.clone()),
-                    emotion: None,
-                    visual: None,
-                    flags: vec![],
-                }
-            })
-            .collect();
-
-        Ok(AnalysisOutput {
-            segments,
-            metadata: None,
-        })
-    }
-}
-
-impl Default for AnalysisPipeline {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default pipeline")
-    }
-}
+// AnalysisPipeline was removed in chore(analyze): it held a `Transcriber` field
+// (deprecated 6fa7164). Compose FrameExtractor + AudioExtractor + AsrBackend +
+// Diarizer + VisionAnalyzer + FusionEngine directly.
 
 #[cfg(test)]
 mod tests {
