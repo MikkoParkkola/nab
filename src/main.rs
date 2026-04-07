@@ -699,6 +699,7 @@ async fn main() -> Result<()> {
                     output,
                     dgx,
                     api_key,
+                    language: None,
                 };
                 cmd::cmd_analyze(&cfg).await?;
             }

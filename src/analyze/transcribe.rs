@@ -77,6 +77,7 @@ const PARAKEET_BINARY_SEARCH_PATHS: &[&str] =
 /// # Ok(())
 /// # }
 /// ```
+#[deprecated(note = "use AsrBackend trait (FluidAudioBackend) instead")]
 #[derive(Debug, Clone)]
 pub struct ParakeetTranscriber {
     /// Path to the `parakeet.cpp` binary.
@@ -323,6 +324,7 @@ impl ParakeetTranscriber {
 }
 
 /// Whisper transcription engine
+#[deprecated(note = "use AsrBackend trait (FluidAudioBackend) instead")]
 pub struct Transcriber {
     model: String,
     dgx_host: Option<String>,
@@ -708,6 +710,7 @@ impl ApiErrorEnvelope {
 /// # Ok(())
 /// # }
 /// ```
+#[deprecated(note = "use AsrBackend trait (FluidAudioBackend) instead")]
 #[derive(Debug, Clone)]
 pub struct VllmTranscriber {
     base_url: String,

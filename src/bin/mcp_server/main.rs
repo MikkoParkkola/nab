@@ -44,8 +44,8 @@ use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 
 use structured::server_icons;
 use tools::{
-    AuthLookupTool, BenchmarkTool, FetchBatchTool, FetchTool, FingerprintTool, LoginTool,
-    SubmitTool, ValidateTool, get_client,
+    AnalyzeTool, AuthLookupTool, BenchmarkTool, FetchBatchTool, FetchTool, FingerprintTool,
+    LoginTool, SubmitTool, ValidateTool, get_client,
 };
 
 // Generate the tools enum
@@ -59,7 +59,8 @@ tool_box!(
         AuthLookupTool,
         FingerprintTool,
         ValidateTool,
-        BenchmarkTool
+        BenchmarkTool,
+        AnalyzeTool
     ]
 );
 
@@ -334,6 +335,125 @@ fn benchmark_output_schema() -> ToolOutputSchema {
     ToolOutputSchema::new(vec!["results".into()], Some(props), None)
 }
 
+/// Build the `outputSchema` for the `analyze` tool.
+///
+/// Returns the `TranscriptionResult` JSON shape:
+/// `{ segments, language, duration_seconds, model, backend, rtfx,
+///    processing_time_seconds, speakers? }`
+fn analyze_output_schema() -> ToolOutputSchema {
+    // ── segment item ──────────────────────────────────────────────────────────
+    let mut seg_props = serde_json::Map::new();
+    seg_props.insert("type".into(), "object".into());
+    {
+        let mut sp = serde_json::Map::new();
+        sp.insert(
+            "text".into(),
+            serde_json::Value::Object(string_prop("Transcribed text")),
+        );
+        sp.insert(
+            "start".into(),
+            serde_json::Value::Object(number_prop("Segment start time in seconds")),
+        );
+        sp.insert(
+            "end".into(),
+            serde_json::Value::Object(number_prop("Segment end time in seconds")),
+        );
+        sp.insert(
+            "confidence".into(),
+            serde_json::Value::Object(number_prop("Average word confidence [0.0, 1.0]")),
+        );
+        sp.insert(
+            "language".into(),
+            serde_json::Value::Object(string_prop("BCP-47 language tag (when detected)")),
+        );
+        sp.insert(
+            "speaker".into(),
+            serde_json::Value::Object(string_prop("Speaker label after diarization")),
+        );
+        seg_props.insert("properties".into(), serde_json::Value::Object(sp));
+    }
+    seg_props.insert(
+        "required".into(),
+        serde_json::json!(["text", "start", "end", "confidence"]),
+    );
+
+    // ── speaker turn item ─────────────────────────────────────────────────────
+    let mut spk_props = serde_json::Map::new();
+    spk_props.insert("type".into(), "object".into());
+    {
+        let mut sp = serde_json::Map::new();
+        sp.insert(
+            "speaker".into(),
+            serde_json::Value::Object(string_prop("Speaker label, e.g. SPEAKER_00")),
+        );
+        sp.insert(
+            "start".into(),
+            serde_json::Value::Object(number_prop("Turn start time in seconds")),
+        );
+        sp.insert(
+            "end".into(),
+            serde_json::Value::Object(number_prop("Turn end time in seconds")),
+        );
+        spk_props.insert("properties".into(), serde_json::Value::Object(sp));
+    }
+    spk_props.insert(
+        "required".into(),
+        serde_json::json!(["speaker", "start", "end"]),
+    );
+
+    // ── top-level properties ──────────────────────────────────────────────────
+    let mut props = BTreeMap::new();
+
+    let mut segs_schema = serde_json::Map::new();
+    segs_schema.insert("type".into(), "array".into());
+    segs_schema.insert("items".into(), serde_json::Value::Object(seg_props));
+    props.insert("segments".into(), segs_schema);
+
+    props.insert(
+        "language".into(),
+        string_prop("Dominant BCP-47 language of the recording"),
+    );
+    props.insert(
+        "duration_seconds".into(),
+        number_prop("Duration of processed audio in seconds"),
+    );
+    props.insert(
+        "model".into(),
+        string_prop("ASR model identifier, e.g. parakeet-tdt-0.6b-v3"),
+    );
+    props.insert(
+        "backend".into(),
+        string_prop("Backend identifier, e.g. fluidaudio"),
+    );
+    props.insert(
+        "rtfx".into(),
+        number_prop("Realtime factor (audio seconds / wall seconds)"),
+    );
+    props.insert(
+        "processing_time_seconds".into(),
+        number_prop("Wall-clock processing time in seconds"),
+    );
+
+    let mut speakers_schema = serde_json::Map::new();
+    speakers_schema.insert("type".into(), "array".into());
+    speakers_schema.insert("items".into(), serde_json::Value::Object(spk_props));
+    props.insert("speakers".into(), speakers_schema);
+
+    ToolOutputSchema::new(
+        vec![
+            "segments".into(),
+            "language".into(),
+            "duration_seconds".into(),
+            "model".into(),
+            "backend".into(),
+            "rtfx".into(),
+            "processing_time_seconds".into(),
+        ],
+        Some(props),
+        None,
+    )
+}
+
 // ─── Schema property helpers ──────────────────────────────────────────────────
 
 /// Build a JSON Schema property with a type and description.
@@ -371,16 +491,18 @@ fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
 /// - `idempotent_hint`: meaningful only when `read_only_hint == false`; true means
 ///   calling again with the same args has no additional effect
 fn tool_annotations(name: &str) -> ToolAnnotations {
-    let (read_only, destructive, idempotent) = match name {
-        "submit" => (false, true, false),
-        "login" => (false, false, false),
-        _ => (true, false, true), // fetch, fetch_batch, validate, fingerprint, auth_lookup, benchmark
+    let (read_only, destructive, idempotent, open_world) = match name {
+        "submit" => (false, true, false, Some(true)),
+        "login" => (false, false, false, Some(true)),
+        // analyze reads a local file; result is deterministic for the same input
+        "analyze" => (true, false, true, Some(false)),
+        _ => (true, false, true, None), // fetch, fetch_batch, validate, fingerprint, auth_lookup, benchmark
     };
     ToolAnnotations {
         read_only_hint: Some(read_only),
         destructive_hint: Some(destructive),
         idempotent_hint: Some(idempotent),
-        open_world_hint: None,
+        open_world_hint: open_world,
         title: None,
     }
 }
@@ -636,6 +758,7 @@ impl ServerHandler for MicroFetchHandler {
                 "fingerprint" => Some(fingerprint_output_schema()),
                 "validate" => Some(validate_output_schema()),
                 "benchmark" => Some(benchmark_output_schema()),
+                "analyze" => Some(analyze_output_schema()),
                 _ => None,
             };
 
@@ -646,6 +769,14 @@ impl ServerHandler for MicroFetchHandler {
             if tool.name == "fetch_batch" {
                 tool.execution = Some(ToolExecution {
                     task_support: Some(ToolExecutionTaskSupport::Optional),
+                });
+            }
+
+            // analyze requires task-augmented execution — long videos can take
+            // minutes to transcribe and must not block the MCP request loop.
+            if tool.name == "analyze" {
+                tool.execution = Some(ToolExecution {
+                    task_support: Some(ToolExecutionTaskSupport::Required),
                 });
             }
         }
@@ -674,6 +805,7 @@ impl ServerHandler for MicroFetchHandler {
             MicroFetchTools::FingerprintTool(t) => t.run(),
             MicroFetchTools::ValidateTool(t) => t.run().await,
             MicroFetchTools::BenchmarkTool(t) => t.run().await,
+            MicroFetchTools::AnalyzeTool(t) => t.run().await,
         }
     }
 
@@ -752,23 +884,20 @@ impl ServerHandler for MicroFetchHandler {
         task_creator: ServerTaskCreator,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<CreateTaskResult, CallToolError> {
-        if params.name != "fetch_batch" {
+        // Only tools that advertise task support may enter this path.
+        if !matches!(params.name.as_str(), "fetch_batch" | "analyze") {
             return Err(CallToolError::from_message(format!(
                 "Tool '{}' does not support task-augmented execution",
                 params.name
             )));
         }
 
-        // Deserialize the batch tool from params before creating the task,
-        // so we fail fast on bad input before spawning.
+        // Deserialize the tool from params before creating the task so we fail
+        // fast on bad input without spending a task slot.
         let tool = MicroFetchTools::try_from(params)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
-        let MicroFetchTools::FetchBatchTool(batch_tool) = tool else {
-            return Err(CallToolError::from_message("Expected fetch_batch tool"));
-        };
 
-        // Create the task synchronously — this returns the task metadata
-        // (task_id, status=pending, timestamps) that the client polls.
+        // Create the task synchronously — the client polls this task_id.
         let task = task_creator
             .create_task(CreateTaskOptions {
                 ttl: None,
@@ -782,26 +911,55 @@ impl ServerHandler for MicroFetchHandler {
             .task_store()
             .ok_or_else(|| CallToolError::from_message("Task store not configured"))?;
 
-        // Spawn the actual fetch work in the background.
+        // Spawn the actual work in the background.
         // When complete, store_task_result() signals completion and the
         // runtime pushes a notifications/task/status event to the client.
-        tokio::spawn(async move {
-            let (status, call_result) = match batch_tool.run().await {
-                Ok(r) => (TaskStatus::Completed, ResultFromServer::CallToolResult(r)),
-                Err(e) => {
-                    // Convert error to String before any await point to satisfy
-                    // the Send bound — CallToolError contains dyn StdError.
-                    let msg = e.to_string();
-                    (
-                        TaskStatus::Failed,
-                        ResultFromServer::CallToolResult(CallToolError::from_message(msg).into()),
-                    )
-                }
-            };
-            task_store
-                .store_task_result(&task_id, status, call_result, None)
-                .await;
-        });
+        match tool {
+            MicroFetchTools::FetchBatchTool(batch_tool) => {
+                tokio::spawn(async move {
+                    let (status, call_result) = match batch_tool.run().await {
+                        Ok(r) => (TaskStatus::Completed, ResultFromServer::CallToolResult(r)),
+                        Err(e) => {
+                            let msg = e.to_string();
+                            (
+                                TaskStatus::Failed,
+                                ResultFromServer::CallToolResult(
+                                    CallToolError::from_message(msg).into(),
+                                ),
+                            )
+                        }
+                    };
+                    task_store
+                        .store_task_result(&task_id, status, call_result, None)
+                        .await;
+                });
+            }
+            MicroFetchTools::AnalyzeTool(analyze_tool) => {
+                tokio::spawn(async move {
+                    let (status, call_result) = match analyze_tool.run().await {
+                        Ok(r) => (TaskStatus::Completed, ResultFromServer::CallToolResult(r)),
+                        Err(e) => {
+                            let msg = e.to_string();
+                            (
+                                TaskStatus::Failed,
+                                ResultFromServer::CallToolResult(
+                                    CallToolError::from_message(msg).into(),
+                                ),
+                            )
+                        }
+                    };
+                    task_store
+                        .store_task_result(&task_id, status, call_result, None)
+                        .await;
+                });
+            }
+            other => {
+                return Err(CallToolError::from_message(format!(
+                    "Unexpected tool variant in task-augmented path: {}",
+                    other.tool_name()
+                )));
+            }
+        }
 
         Ok(CreateTaskResult { task, meta: None })
     }

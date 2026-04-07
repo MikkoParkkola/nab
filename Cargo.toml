@@ -150,6 +150,7 @@ uuid = { version = "1", features = ["v4"] }
 # ARENA ALLOCATION (for HTTP response buffering)
 # ═══════════════════════════════════════════════════════════════════════════════
 bumpalo = { version = "3.16", features = ["collections"] }
+tempfile = "3"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CLI (for testing)
@@ -176,7 +177,12 @@ which = "8"
 security-framework = "3.5"         # macOS Keychain API (transitive via rustls, make direct)
 
 [features]
-default = ["cli", "http3", "impersonate"]
+default = ["cli", "http3", "impersonate", "analyze"]
+# Base ASR trait + audio extraction — no extra runtime deps.
+# FluidAudio is invoked via subprocess (`fluidaudiocli` binary), not as a Rust dep.
+# Install with: `nab models fetch fluidaudio` or build manually from
+# https://github.com/FluidInference/FluidAudio
+analyze = []
 cli = ["clap"]
 # HTTP/3 + QUIC - enabled by default for maximum performance
 # Disable with: cargo build --no-default-features --features cli
@@ -200,7 +206,6 @@ criterion = "0.8"
 tokio-test = "0.4"
 assert_cmd = "2"
 predicates = "3"
-tempfile = "3"
 # Used in WASM provider tests to compile WAT → WASM bytes without enabling
 # the full wasmtime `wat` feature in production builds.
 wat = { version = "1", optional = false }

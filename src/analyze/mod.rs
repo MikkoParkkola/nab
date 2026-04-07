@@ -2,22 +2,41 @@
 //!
 //! Performs synchronized audio+video analysis:
 //! - Frame extraction (keyframes via ffmpeg scene detection)
-//! - Audio extraction and transcription (Whisper)
-//! - Speaker diarization (pyannote)
+//! - Audio extraction and transcription (Whisper / FluidAudio / sherpa-onnx)
+//! - Speaker diarization (pyannote / FluidAudio VBx)
 //! - Visual analysis (local models or Claude Vision API)
 //! - Multimodal fusion with timestamp alignment
+//!
+//! # Backend selection
+//!
+//! Use [`default_backend`] to obtain the best available [`AsrBackend`] for the
+//! current platform. [`FluidAudioBackend`] is returned unconditionally; it calls
+//! the standalone `fluidaudiocli` binary via subprocess. When that binary is not
+//! installed, [`AsrBackend::is_available`] returns `false`.
 
+pub mod asr_backend;
 pub mod diarize;
 pub mod extract;
+pub mod fluidaudio_backend;
 pub mod fusion;
 pub mod report;
 pub mod transcribe;
 pub mod vision;
 
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+// ── New trait-based API (Phase 1+) ────────────────────────────────────────────
+pub use asr_backend::{
+    AsrBackend, SpeakerSegment as AsrSpeakerSegment, TranscribeOptions, TranscriptSegment as AsrTranscriptSegment,
+    TranscriptionResult, WordTiming as AsrWordTiming,
+};
+pub use fluidaudio_backend::FluidAudioBackend;
+
+// ── Legacy API (kept for one release; deprecated in favour of AsrBackend) ─────
 pub use diarize::{Diarizer, SpeakerSegment};
 pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor};
 pub use fusion::{FusedSegment, FusionEngine};
@@ -27,6 +46,29 @@ pub use transcribe::{
     WordTiming,
 };
 pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
+
+// ─── Backend factory ──────────────────────────────────────────────────────────
+
+/// Return the default [`AsrBackend`] for the current platform.
+///
+/// Returns a [`FluidAudioBackend`] that delegates to the `fluidaudiocli`
+/// subprocess. The backend is available on any platform where the binary is
+/// installed; call [`AsrBackend::is_available`] before transcribing.
+///
+/// Install the binary with `nab models fetch fluidaudio` (planned) or build
+/// from <https://github.com/FluidInference/FluidAudio>.
+///
+/// The returned `Arc<dyn AsrBackend>` is cheaply cloneable and safe to share
+/// across threads.
+#[must_use]
+pub fn default_backend() -> Arc<dyn AsrBackend> {
+    Arc::new(FluidAudioBackend::new().unwrap_or_else(|_| {
+        // Binary not found; return an instance that reports is_available=false.
+        // Callers that check is_available() before transcribing will get a clear
+        // MissingDependency error at use time rather than a panic here.
+        FluidAudioBackend::with_binary(std::path::PathBuf::from("fluidaudiocli"))
+    }))
+}
 
 /// Analysis pipeline errors
 #[derive(Error, Debug)]

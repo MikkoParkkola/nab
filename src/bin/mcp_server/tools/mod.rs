@@ -7,6 +7,7 @@
 //!
 //! | Module | Tool |
 //! |---|---|
+//! | [`analyze`] | `analyze` |
 //! | [`fetch`] | `fetch` |
 //! | [`fetch_batch`] | `fetch_batch` |
 //! | [`auth`] | `auth_lookup` |
@@ -17,6 +18,7 @@
 //! | [`login`] | `login` |
 //! | [`client`] | shared HTTP client + session store |
 
+pub(crate) mod analyze;
 pub(crate) mod auth;
 pub(crate) mod benchmark;
 pub(crate) mod client;
@@ -31,6 +33,7 @@ pub(crate) mod validate;
 //
 // Keep the same public surface that `main.rs` and `tests.rs` depend on.
 
+pub use analyze::AnalyzeTool;
 pub use auth::AuthLookupTool;
 pub use benchmark::BenchmarkTool;
 pub use client::get_client;

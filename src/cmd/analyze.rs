@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::AnalyzeOutputFormat;
 
@@ -11,105 +11,174 @@ pub struct AnalyzeConfig {
     pub diarize: bool,
     pub format: AnalyzeOutputFormat,
     pub output: Option<PathBuf>,
+    /// Reserved for Phase 3 DGX Spark offload support.
     pub dgx: bool,
+    /// Reserved for Phase 4 Claude Vision API integration.
     pub api_key: Option<String>,
+    /// Optional BCP-47 language hint (e.g. `"fi"`, `"en"`, `"zh"`).
+    pub language: Option<String>,
 }
 
+/// Audio-only file extensions that bypass video frame extraction.
+const AUDIO_EXTENSIONS: &[&str] = &[".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"];
+
 pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
-    use nab::analyze::{
-        AnalysisPipeline, PipelineConfig as AnalysisConfig, VisionBackend,
-        report::{AnalysisReport, ReportFormat},
-    };
+    use nab::analyze::{AudioExtractor, TranscribeOptions, default_backend};
+    // dgx and api_key are reserved for Phase 3/4 — suppress lint until then.
+    let _ = (cfg.dgx, cfg.api_key.as_deref());
 
-    eprintln!("🎬 Analyzing: {}", cfg.video);
+    eprintln!("Analyzing: {}", cfg.video);
 
-    // Auto-detect audio-only files by extension
+    // ── Auto-detect audio-only input ──────────────────────────────────────────
     let lower = cfg.video.to_lowercase();
-    let is_audio_file = [".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"]
-        .iter()
-        .any(|ext| lower.ends_with(ext));
-
+    let is_audio_file = AUDIO_EXTENSIONS.iter().any(|ext| lower.ends_with(ext));
     let audio_only = cfg.audio_only || is_audio_file;
 
     if is_audio_file {
-        eprintln!("   Detected audio-only file, skipping video analysis");
+        eprintln!("  Detected audio-only file");
     }
 
-    // Build configuration
-    let mut config = AnalysisConfig::default();
+    // ── Resolve audio path (extract if video) ─────────────────────────────────
+    let input_path = std::path::Path::new(&cfg.video);
+    let tmp_wav: Option<PathBuf>;
 
-    if cfg.dgx {
-        config.dgx_host = Some("spark".to_string());
-        eprintln!("   GPU: DGX Spark (nvfp4 quantization)");
-    }
-
-    config.enable_diarization = cfg.diarize;
-    if cfg.diarize {
-        eprintln!("   Diarization: enabled");
-    }
-
-    if audio_only {
-        eprintln!("   Mode: audio-only (transcription)");
-    } else if let Some(key) = &cfg.api_key {
-        config.vision_backend = VisionBackend::ClaudeApi {
-            api_key: key.clone(),
-        };
-        eprintln!("   Vision: Claude API");
-    } else if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        config.vision_backend = VisionBackend::ClaudeApi { api_key: key };
-        eprintln!("   Vision: Claude API (from ANTHROPIC_API_KEY)");
+    let audio_path = if audio_only {
+        tmp_wav = None;
+        input_path.to_path_buf()
     } else {
-        config.vision_backend = VisionBackend::Local;
-        eprintln!("   Vision: local models");
-    }
-
-    let pipeline = AnalysisPipeline::with_config(config)?;
-
-    let start = std::time::Instant::now();
-    let analysis = if audio_only {
-        pipeline.analyze_audio_only(&cfg.video).await?
-    } else {
-        pipeline.analyze(&cfg.video).await?
-    };
-    let elapsed = start.elapsed();
-
-    eprintln!(
-        "\n✅ Analysis complete: {} segments in {:.1}s",
-        analysis.segments.len(),
-        elapsed.as_secs_f64()
-    );
-
-    let report_format = match cfg.format {
-        AnalyzeOutputFormat::Json => ReportFormat::Json,
-        AnalyzeOutputFormat::Markdown => ReportFormat::Markdown,
-        AnalyzeOutputFormat::Srt => ReportFormat::Srt,
+        eprintln!("  Extracting audio track via ffmpeg...");
+        let dest = std::env::temp_dir().join(format!(
+            "nab_analyze_{}.wav",
+            std::process::id()
+        ));
+        AudioExtractor::new()
+            .extract(input_path, &dest)
+            .await
+            .context("ffmpeg audio extraction failed")?;
+        tmp_wav = Some(dest.clone());
+        dest
     };
 
-    let report = AnalysisReport::generate(&analysis, report_format)?;
+    // ── Select backend ────────────────────────────────────────────────────────
+    let backend = default_backend();
+    eprintln!("  Backend: {} (available={})", backend.name(), backend.is_available());
 
-    if let Some(path) = &cfg.output {
-        std::fs::write(path, &report)?;
-        eprintln!("📄 Saved to: {}", path.display());
-    } else {
-        println!("{report}");
-    }
-
-    if let Some(ref meta) = analysis.metadata {
-        eprintln!(
-            "\n📊 Video: {}x{} @ {:.1}fps, {:.1}s",
-            meta.width, meta.height, meta.fps, meta.duration
+    if !backend.is_available() {
+        anyhow::bail!(
+            "ASR backend '{}' is not available on this platform. \
+             Install fluidaudiocli with `nab models fetch fluidaudio` or build from \
+             https://github.com/FluidInference/FluidAudio",
+            backend.name()
         );
     }
 
-    let speakers: std::collections::HashSet<_> = analysis
-        .segments
-        .iter()
-        .filter_map(|s| s.speaker.as_ref())
-        .collect();
+    if cfg.diarize {
+        eprintln!("  Diarization: enabled");
+    }
 
-    if !speakers.is_empty() {
-        eprintln!("   Speakers: {}", speakers.len());
+    // ── Transcribe ────────────────────────────────────────────────────────────
+    let opts = TranscribeOptions {
+        language: cfg.language.clone(),
+        word_timestamps: true,
+        diarize: cfg.diarize,
+        max_duration_seconds: None,
+    };
+
+    let start = std::time::Instant::now();
+    let result = backend
+        .transcribe(&audio_path, opts)
+        .await
+        .context("transcription failed")?;
+    let elapsed = start.elapsed();
+
+    // ── Clean up temp file ────────────────────────────────────────────────────
+    if let Some(ref tmp) = tmp_wav {
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    eprintln!(
+        "\nComplete: {} segments in {:.1}s ({:.0}x realtime)",
+        result.segments.len(),
+        elapsed.as_secs_f64(),
+        result.rtfx,
+    );
+
+    if let Some(ref speakers) = result.speakers {
+        let unique: std::collections::HashSet<_> = speakers.iter().map(|s| &s.speaker).collect();
+        eprintln!("  Speakers: {}", unique.len());
+    }
+
+    // ── Format output ─────────────────────────────────────────────────────────
+    let formatted = match cfg.format {
+        AnalyzeOutputFormat::Json => {
+            serde_json::to_string_pretty(&result).context("JSON serialization failed")?
+        }
+        AnalyzeOutputFormat::Markdown => format_markdown(&result),
+        AnalyzeOutputFormat::Srt => format_srt(&result),
+    };
+
+    if let Some(ref path) = cfg.output {
+        std::fs::write(path, &formatted).with_context(|| format!("writing to {}", path.display()))?;
+        eprintln!("Saved to: {}", path.display());
+    } else {
+        println!("{formatted}");
     }
 
     Ok(())
+}
+
+// ─── Output formatters ────────────────────────────────────────────────────────
+
+/// Format `TranscriptionResult` as Markdown with speaker labels.
+fn format_markdown(result: &nab::analyze::TranscriptionResult) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "# Transcript\n\n**Language**: {} | **Model**: {} | **RTFx**: {:.0}x\n",
+        result.language, result.model, result.rtfx
+    );
+    for seg in &result.segments {
+        let speaker = seg
+            .speaker
+            .as_deref()
+            .unwrap_or("");
+        if speaker.is_empty() {
+            let _ = writeln!(out, "**[{:.1}s–{:.1}s]** {}\n", seg.start, seg.end, seg.text);
+        } else {
+            let _ = writeln!(
+                out,
+                "**[{:.1}s–{:.1}s] {}:** {}\n",
+                seg.start, seg.end, speaker, seg.text
+            );
+        }
+    }
+    out
+}
+
+/// Format `TranscriptionResult` as SRT subtitles.
+fn format_srt(result: &nab::analyze::TranscriptionResult) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    for (i, seg) in result.segments.iter().enumerate() {
+        let _ = writeln!(out, "{}", i + 1);
+        let _ = writeln!(
+            out,
+            "{} --> {}",
+            srt_timestamp(seg.start),
+            srt_timestamp(seg.end)
+        );
+        let _ = writeln!(out, "{}\n", seg.text);
+    }
+    out
+}
+
+/// Format a time value in seconds as an SRT timestamp (`HH:MM:SS,mmm`).
+fn srt_timestamp(secs: f64) -> String {
+    let total_ms = (secs * 1000.0).round() as u64;
+    let ms = total_ms % 1000;
+    let s = (total_ms / 1000) % 60;
+    let m = (total_ms / 60_000) % 60;
+    let h = total_ms / 3_600_000;
+    format!("{h:02}:{m:02}:{s:02},{ms:03}")
 }
