@@ -474,6 +474,16 @@ enum Commands {
         #[command(subcommand)]
         action: WatchAction,
     },
+
+    /// Manage locally-built inference model binaries (FluidAudio, Whisper, …)
+    ///
+    /// Clones, builds, and symlinks model binaries into a persistent location so
+    /// they survive reboots. Install location: `~/.local/share/nab/models/`
+    /// Binary symlinks: `~/.local/share/nab/bin/`
+    Models {
+        #[command(subcommand)]
+        action: ModelsAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -565,6 +575,29 @@ enum WatchAction {
         /// Watch ID
         id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ModelsAction {
+    /// Clone + build + symlink a model binary into a persistent location
+    ///
+    /// Supported: `fluidaudio` (macOS only). Phase 3: `whisper`, `sherpa-onnx`.
+    Fetch {
+        /// Model name: `fluidaudio`, `whisper`, `sherpa-onnx`
+        name: String,
+    },
+
+    /// List all managed models with install status and version
+    List,
+
+    /// Pull latest changes and rebuild an installed model
+    Update {
+        /// Model name (must already be installed)
+        name: String,
+    },
+
+    /// Verify every installed model binary runs without error
+    Verify,
 }
 
 #[tokio::main]
@@ -874,6 +907,20 @@ async fn main() -> Result<()> {
                 }
                 WatchAction::Logs { id } => {
                     cmd::cmd_watch_logs(&cmd::WatchLogsConfig { id }).await?;
+                }
+            },
+            Commands::Models { action } => match action {
+                ModelsAction::Fetch { name } => {
+                    cmd::cmd_models_fetch(&name).await?;
+                }
+                ModelsAction::List => {
+                    cmd::cmd_models_list().await?;
+                }
+                ModelsAction::Update { name } => {
+                    cmd::cmd_models_update(&name).await?;
+                }
+                ModelsAction::Verify => {
+                    cmd::cmd_models_verify().await?;
                 }
             },
         }

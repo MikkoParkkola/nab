@@ -9,6 +9,7 @@ pub mod fetch;
 pub mod fetch_batch;
 pub mod fingerprint;
 pub mod login;
+pub mod models;
 pub mod otp;
 pub mod output;
 pub mod provider;
@@ -19,6 +20,7 @@ pub mod validate;
 pub mod watch;
 
 pub use analyze::{AnalyzeConfig, cmd_analyze};
+pub use models::{cmd_models_fetch, cmd_models_list, cmd_models_update, cmd_models_verify};
 pub use annotate::{AnnotateConfig, cmd_annotate};
 pub use auth::cmd_auth;
 pub use bench::cmd_bench;
