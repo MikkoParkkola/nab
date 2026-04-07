@@ -6,346 +6,54 @@
 [![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
 [![Rust](https://img.shields.io/badge/Rust-1.93+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance)
-[![Tests](https://img.shields.io/badge/tests-1252+-brightgreen.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
 [![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
-[![MCP Servers](https://img.shields.io/badge/MCP_Tools-8-blue.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
-[![Capabilities](https://img.shields.io/badge/Capabilities-tools%20%7C%20elicitation%20%7C%20structured_output-informational.svg)](https://modelcontextprotocol.io)
 
-<a href="https://glama.ai/mcp/servers/MikkoParkkola/nab"><img width="380" height="200" src="https://glama.ai/mcp/servers/MikkoParkkola/nab/badge" alt="nab MCP server" /></a>
-
-**Fetch any URL as clean markdown — with your browser cookies, anti-bot evasion, and 25x fewer tokens than raw HTML.**
+Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 compliant. Rust. macOS arm64 first, cross-platform.
 
 ![demo](demo.gif)
 
-nab is a local, token-optimized HTTP client built for LLM pipelines. It converts web pages to clean markdown, injects your real browser session cookies for authenticated content, and spoofs browser fingerprints to bypass bot detection. No API keys. No cloud. Just fast, authenticated, LLM-ready output.
+nab is a single Rust binary that does three things very well: it **fetches** any URL as clean markdown (with your real browser cookies and anti-bot evasion), it **analyzes** any audio or video file with on-device multilingual ASR and speaker diarization, and it **watches** any URL for changes and pushes notifications when content moves. Everything runs locally. There are no API keys to set up by default. The output is shaped for LLM context windows.
 
-## Why nab?
-
-| Feature | nab | Firecrawl | Crawl4AI | Playwright | Jina Reader | curl |
-|---|---|---|---|---|---|---|
-| **Clean markdown output** | Built-in (25x savings) | Markdown | Markdown | Raw HTML | Markdown | Raw HTML |
-| **Browser cookie auth** | Auto-detect (6 browsers) | None | None | Requires login script | API key | Manual |
-| **Anti-bot evasion** | Fingerprint spoofing | Cloud proxy | Stealth plugin | Stealth plugin | Cloud-side | None |
-| **JS rendering** | QuickJS (1MB, local) | Cloud browser | Chromium (300MB+) | Chromium (300MB+) | Cloud-side | None |
-| **Speed (typical page)** | ~50ms | ~1-3s | ~2-5s | ~2-5s | ~500ms | ~100ms |
-| **Token output (typical)** | ~500 | ~1,500 | ~1,500 | ~12,500 | ~2,000 | ~12,500 |
-| **Runs locally** | Yes (single binary) | Cloud API | Yes (Python + Chrome) | Yes (Node + Chrome) | Cloud API | Yes |
-| **HTTP/3 (QUIC)** | Yes | No | No | No | N/A | Build-dependent |
-| **Site-specific APIs** | 11 built-in providers | None | None | None | None | None |
-| **1Password / Passkeys** | Native | None | None | None | None | None |
-| **Cost** | Free (local) | $0.004/page | Free (local) | Free (local) | Free tier / paid | Free (local) |
-| **Install size** | ~15MB binary | Cloud service | ~300MB+ | ~300MB+ | Cloud service | ~5MB |
-
-## Quick Start
+## Quick start
 
 ```bash
-# Install (pick one)
-brew install MikkoParkkola/tap/nab    # Homebrew
-cargo install nab                      # From crates.io
-cargo binstall nab                     # Pre-built binary
+brew install MikkoParkkola/tap/nab                            # install
+nab fetch https://news.ycombinator.com                        # fetch as markdown
+nab models fetch fluidaudio                                   # download ASR model
+nab analyze interview.mp4 --diarize                           # transcribe + identify speakers
+nab watch add https://status.openai.com --interval 5m         # subscribe to changes
 ```
-
-### Fetch a page as clean markdown
-
-```bash
-nab fetch https://example.com
-```
-
-### Access authenticated content with your browser cookies
-
-```bash
-# Auto-detects your default browser and injects session cookies
-nab fetch https://github.com/notifications --cookies brave
-```
-
-No login flows. No API keys. nab reads your existing browser cookies (Brave, Chrome, Firefox, Safari, Edge, Dia) and uses them for the request. You stay logged in — nab just borrows the session.
-
-### Bypass bot detection with fingerprint spoofing
-
-```bash
-# Realistic Chrome/Firefox/Safari profiles — not a headless browser signature
-nab fetch https://protected-site.com
-```
-
-nab ships with anti-fingerprinting by default: realistic TLS fingerprints, browser-accurate headers, and randomized profiles. Sites see a normal browser, not a scraping tool.
 
 ## Features
 
-- **11 Site Providers** — Specialized extractors for Twitter/X, Reddit, Hacker News, GitHub, Google Workspace, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, and Instagram. API-backed where possible for structured output.
-- **Google Workspace Extraction** — Fetch Google Docs, Sheets, and Slides as clean markdown using browser cookies. Extracts comments and suggested edits from OOXML (docx/xlsx/pptx).
-- **HTML-to-Markdown** — Automatic conversion with boilerplate removal. 25x token savings vs raw HTML.
-- **PDF Extraction** — PDF-to-markdown with heading and table detection (requires pdfium).
-- **Browser Cookie Auth** — Auto-detects your default browser (Brave, Chrome, Firefox, Safari, Edge, Dia) and injects session cookies. Zero config.
-- **1Password Integration** — Credential lookup, auto-login with CSRF handling, TOTP/MFA support.
-- **Passkey/WebAuthn** — Detects passkey flows, surfaces 1Password passkey metadata, and hands off final signing to the browser when needed.
-- **HTTP/3 (QUIC)** — 0-RTT connection resumption, HTTP/2 multiplexing, TLS 1.3.
-- **Anti-Fingerprinting** — Realistic Chrome/Firefox/Safari browser profiles to avoid bot detection.
-- **JS Engine (QuickJS)** — Lightweight embedded JavaScript for pages that need it, without a full browser.
-- **Compression** — Brotli, Zstd, Gzip, Deflate decompression built in.
-- **Query-Focused Extraction** — BM25-lite scoring extracts only the sections relevant to your query. Send `focus="authentication"` and get back just the auth docs, not the entire page.
-- **Token Budget** — Structure-aware truncation respects headings, code blocks, and tables. Never splits mid-block. Set `max_tokens=2000` to fit any context window.
-- **Prefetch Link Graph** — Extract same-site links from fetched pages, scored by relevance to your focus query. eTLD+1 filtering via Mozilla's public suffix list.
-- **Persistent Sessions** — Named sessions with automatic cookie persistence across requests. LRU eviction (32 slots), cookie seeding from browser jars.
-- **CSS Extractor Plugins** — Define custom extractors in `plugins.toml` using CSS selectors — no Rust code required.
-- **MCP Server** — `nab-mcp` binary for direct integration with Claude Code and other MCP clients.
-- **Batch Fetching** — Parallel URL fetching with connection pooling.
+| Command | What it does |
+|---------|--------------|
+| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, 11 site providers, query-focused extraction, token budget. |
+| `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
+| `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
+| `nab models fetch <name>` | Persistent install of inference model binaries. Currently `fluidaudio`. Whisper and sherpa-onnx land in Phase 3. |
+| `nab-mcp` | MCP 2025-11-25 server. stdio + Streamable HTTP. 11 tools, 3 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
+| `nab::content::ocr` | Apple Vision OCR engine. 15 languages. Apple Neural Engine accelerated. ~10-50 ms per image. macOS only. |
 
-## Site Providers
+## Installation
 
-nab detects URLs for these platforms and uses their APIs or structured data instead of scraping HTML:
-
-| Provider | URL Patterns | Method |
-|----------|-------------|--------|
-| Twitter/X | `x.com/*/status/*`, `twitter.com/*/status/*` | FxTwitter API |
-| Reddit | `reddit.com/r/*/comments/*` | JSON API |
-| Hacker News | `news.ycombinator.com/item?id=*` | Firebase API |
-| GitHub | `github.com/*/*/issues/*`, `*/pull/*` | REST API |
-| Google Workspace | `docs.google.com/document/d/*`, `*/spreadsheets/d/*`, `*/presentation/d/*` | Export API + OOXML |
-| YouTube | `youtube.com/watch?v=*`, `youtu.be/*` | oEmbed |
-| Wikipedia | `*.wikipedia.org/wiki/*` | REST API |
-| StackOverflow | `stackoverflow.com/questions/*` | API |
-| Mastodon | `*/users/*/statuses/*` | ActivityPub |
-| LinkedIn | `linkedin.com/posts/*` | oEmbed |
-| Instagram | `instagram.com/p/*`, `*/reel/*` | oEmbed |
-
-If no provider matches, nab falls back to standard HTML fetch + markdown conversion.
-
-## Usage
-
-```bash
-# Basic fetch (auto-cookies, markdown output)
-nab fetch https://example.com
-
-# Force specific browser cookies
-nab fetch https://github.com/notifications --cookies brave
-
-# With 1Password credentials
-nab fetch https://internal.company.com --1password
-
-# Google Docs (markdown with comments and suggested edits)
-nab fetch --cookies brave "https://docs.google.com/document/d/DOCID/edit"
-
-# Google Sheets (CSV rendered as markdown table)
-nab fetch --cookies brave "https://docs.google.com/spreadsheets/d/SHEETID/edit"
-
-# Google Slides (plain text with comments)
-nab fetch --cookies brave "https://docs.google.com/presentation/d/SLIDEID/edit"
-
-# Raw HTML output (skip markdown conversion)
-nab fetch https://example.com --raw-html
-
-# JSON output format
-nab fetch https://api.example.com --format json
-
-# Batch benchmark
-nab bench "https://example.com,https://httpbin.org/get" -i 10
-
-# Get OTP code from 1Password
-nab otp github.com
-
-# Generate browser fingerprint profiles
-nab fingerprint -c 5
-```
-
-## CLI Reference
-
-| Command | Description |
-|---------|-------------|
-| `nab fetch <url>` | Fetch a URL and convert to clean markdown |
-| `nab spa <url>` | Extract data from JavaScript-heavy SPA pages |
-| `nab submit <url>` | Submit a form with smart field extraction and CSRF handling |
-| `nab login <url>` | Auto-login to a website using 1Password credentials |
-| `nab stream <source> <id>` | Stream media from various providers (Yle, NRK, SVT, DR) |
-| `nab analyze <video>` | Analyze video with transcription and vision pipeline |
-| `nab annotate <video> <output>` | Add subtitles and overlays to video |
-| `nab bench <urls>` | Benchmark fetching with timing statistics |
-| `nab fingerprint` | Generate and display browser fingerprint profiles |
-| `nab auth <url>` | Test 1Password credential lookup for a URL |
-| `nab validate` | Run validation tests against real websites |
-| `nab otp <domain>` | Get OTP code from 1Password |
-| `nab cookies export <domain>` | Export browser cookies in Netscape format |
-
-Common flags for `fetch`:
-
-| Flag | Description |
-|------|-------------|
-| `--cookies <browser>` | Use cookies from browser: `auto`, `brave`, `chrome`, `firefox`, `safari`, `edge`, `none` |
-| `--1password` / `--op` | Use 1Password credentials for this URL |
-| `--proxy <url>` | HTTP or SOCKS5 proxy URL |
-| `--format <fmt>` | Output format: `full` (default), `compact`, `json` |
-| `--raw-html` | Output raw HTML instead of markdown |
-| `--links` | Extract links only |
-| `--diff` | Show what changed since the last fetch |
-| `--no-spa` | Disable SPA data extraction |
-| `--batch <file>` | Batch fetch URLs from file (one per line) |
-| `--parallel <n>` | Max concurrent requests for batch mode (default: 5) |
-| `-X <method>` | HTTP method: GET, POST, PUT, DELETE, PATCH |
-| `-d <data>` | Request body data (for POST/PUT/PATCH) |
-| `--add-header <h>` | Custom request header (repeatable) |
-| `-o <path>` | Save body to file |
-| `-v` | Enable verbose debug logging |
-
-## PDF Extraction
-
-nab converts PDF files to markdown with heading detection and table reconstruction. Requires [pdfium](https://pdfium.googlesource.com/pdfium/) (ships with Chromium, or install via Homebrew).
-
-```bash
-# Fetch a PDF and convert to markdown
-nab fetch https://example.com/report.pdf
-
-# Save PDF conversion to file
-nab fetch https://arxiv.org/pdf/2301.00001 -o paper.md
-```
-
-The PDF pipeline extracts character positions via pdfium, reconstructs text lines, detects tables through column alignment, and renders clean markdown. Target performance is ~10ms/page. Maximum input size is 50 MB.
-
-## Proxy Support
-
-nab supports HTTP and SOCKS5 proxies via the `--proxy` flag or environment variables.
-
-```bash
-# Explicit proxy
-nab fetch https://example.com --proxy socks5://127.0.0.1:1080
-nab fetch https://example.com --proxy http://proxy.company.com:8080
-
-# Environment variables (checked in this order)
-export HTTPS_PROXY=http://proxy:8080
-export HTTP_PROXY=http://proxy:8080
-export ALL_PROXY=socks5://proxy:1080
-```
-
-The `--proxy` flag takes precedence over environment variables. Both uppercase and lowercase variants (`HTTPS_PROXY` / `https_proxy`) are recognized.
-
-## Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `HTTPS_PROXY` / `https_proxy` | HTTPS proxy URL |
-| `HTTP_PROXY` / `http_proxy` | HTTP proxy URL |
-| `ALL_PROXY` / `all_proxy` | Proxy for all protocols |
-| `ANTHROPIC_API_KEY` | Claude API key for `analyze` command vision features |
-| `RUST_LOG` | Logging level (e.g., `nab=debug`) |
-| `PUSHOVER_USER` / `PUSHOVER_TOKEN` | Pushover notifications for MFA |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram notifications for MFA |
-
-## Configuration
-
-nab requires no configuration files. It uses smart defaults: auto-detected browser cookies, randomized fingerprints, and markdown output.
-
-**Optional plugin configuration** at `~/.config/nab/plugins.toml`:
-
-```toml
-# Binary plugin — external process (original format)
-[[plugins]]
-name = "my-provider"
-binary = "/usr/local/bin/nab-plugin-example"
-patterns = ["example\\.com/.*"]
-
-# CSS extractor — no external binary needed (new in v0.5)
-[[plugins]]
-name     = "internal-wiki"
-type     = "css"
-patterns = ["wiki\\.corp\\.com/.*"]
-
-[plugins.content]
-selector = "div.wiki-content"
-remove   = ["nav", ".sidebar"]
-
-[plugins.metadata]
-title     = "h1.page-title"
-author    = ".author-name"
-published = "time.published"
-```
-
-Binary plugins receive a URL as JSON on stdin and return markdown on stdout. CSS extractors run in-process using configurable selectors — no code required.
-
-**Persistent state** stored in `~/.nab/`:
-
-| Path | Purpose |
-|------|---------|
-| `~/.nab/snapshots/` | Content snapshots for `--diff` change detection |
-| `~/.nab/sessions/` | Saved login sessions |
-| `~/.nab/fingerprint_versions.json` | Cached browser versions (auto-updates every 14 days) |
-
-## MCP Server
-
-nab ships a native Rust MCP server (`nab-mcp`) for integration with Claude Code and other MCP clients.
-
-**Setup** -- add to your MCP client configuration:
-
-```json
-{
-  "mcpServers": {
-    "nab": {
-      "command": "nab-mcp"
-    }
-  }
-}
-```
-
-**Available tools:**
-
-| Tool | Description | Key Parameters |
-|------|-------------|------------|
-| `fetch` | Fetch URL and convert to markdown | `url`, `cookies`, `focus`, `max_tokens`, `session` |
-| `fetch_batch` | Fetch multiple URLs in parallel | `urls` (array) |
-| `submit` | Submit a web form with CSRF extraction | `url`, `fields`, `cookies`, `session` |
-| `login` | Auto-login via 1Password | `url`, `cookies`, `session` |
-| `auth_lookup` | Look up 1Password credentials | `url` |
-| `fingerprint` | Generate browser fingerprints | `count`, `browser` |
-| `validate` | Run validation test suite | — |
-| `benchmark` | Benchmark URL fetching | `urls`, `iterations` |
-
-The MCP server uses MCP protocol **2025-11-25** (latest) over stdio and shares a single `AcceleratedClient` across all tool calls for connection pooling.
-
-**Protocol features:**
-
-- **Tool annotations** — read-only, destructive, and open-world hints on all 8 tools
-- **Structured output** — `outputSchema` + `structured_content` on all 8 tools (machine-parseable JSON alongside human-readable text)
-- **URL elicitation** — OAuth/SSO login sends the user to the auth URL in-browser (Google, GitHub, Microsoft, Apple, and 9 more)
-- **Form elicitation** — interactive credential input and multi-select cookie source picker
-- **Task-augmented execution** — `fetch_batch` can run asynchronously with progress notifications
-- **Server icons** — globe SVG in light/dark themes
-
-## Benchmarks
-
-HTML-to-markdown conversion throughput (via `cargo bench`):
-
-| Payload | Throughput |
-|---------|-----------|
-| 1 KB HTML | 2.8 MB/s |
-| 10 KB HTML | 14.5 MB/s |
-| 50 KB HTML | 22.3 MB/s |
-| 200 KB HTML | 28.1 MB/s |
-
-Arena allocator vs `Vec<String>` for response buffering:
-
-| Benchmark | Arena (bumpalo) | Vec | Speedup |
-|-----------|----------------|-----|---------|
-| Realistic 10KB response | 4.2 us | 9.3 us | 2.2x |
-| 1MB large response | 380 us | 890 us | 2.3x |
-| 1000 small allocations | 12 us | 28 us | 2.3x |
-
-Run benchmarks yourself: `cargo bench`
-
-## Install
-
-### Homebrew (macOS/Linux)
+### Homebrew (macOS, recommended)
 
 ```bash
 brew tap MikkoParkkola/tap
 brew install nab
 ```
 
-### From crates.io (requires Rust 1.93+)
+### From crates.io
 
 ```bash
 cargo install nab
 ```
 
-### Pre-built binary (cargo-binstall)
+Requires Rust 1.93 or newer.
+
+### Pre-built binary
 
 ```bash
 cargo binstall nab
@@ -365,10 +73,271 @@ Or download directly from [GitHub Releases](https://github.com/MikkoParkkola/nab
 
 ```bash
 git clone https://github.com/MikkoParkkola/nab.git
-cd nab && cargo install --path .
+cd nab
+cargo install --path .
 ```
 
-## Library Usage
+## Usage
+
+### Fetch
+
+```bash
+# Basic fetch — auto-detects browser, returns markdown
+nab fetch https://example.com
+
+# Use cookies from a specific browser
+nab fetch https://github.com/notifications --cookies brave
+
+# 1Password auto-login (TOTP/MFA supported)
+nab fetch https://internal.company.com --1password
+
+# Google Workspace (Docs, Sheets, Slides) with comments
+nab fetch --cookies brave "https://docs.google.com/document/d/DOCID/edit"
+
+# Query-focused extraction — only sections relevant to "authentication"
+nab fetch https://docs.example.com --focus "authentication" --max-tokens 2000
+
+# Output JSON with confidence scores
+nab fetch https://example.com --format json
+
+# Batch fetch with parallelism
+nab fetch --batch urls.txt --parallel 8
+```
+
+Common flags for `fetch`:
+
+| Flag | Description |
+|------|-------------|
+| `--cookies <browser>` | `auto`, `brave`, `chrome`, `firefox`, `safari`, `edge`, `none` |
+| `--1password` / `--op` | 1Password credential lookup + auto-login |
+| `--proxy <url>` | HTTP or SOCKS5 proxy |
+| `--format <fmt>` | `full` (default), `compact`, `json` |
+| `--focus <query>` | BM25-lite query-focused extraction |
+| `--max-tokens <n>` | Structure-aware token budget |
+| `--raw-html` | Skip markdown conversion |
+| `--diff` | Show what changed since the last fetch |
+| `--session <name>` | Persistent named session with cookie store |
+| `-X <method>` `-d <data>` | HTTP method + body |
+| `-o <path>` | Write body to file |
+
+### Analyze
+
+`nab analyze` transcribes audio and video files locally. The default backend on macOS arm64 is FluidAudio, which runs Parakeet TDT v3 on the Apple Neural Engine.
+
+```bash
+# Download the ASR model (~600 MB, one-time)
+nab models fetch fluidaudio
+
+# Transcribe a video
+nab analyze interview.mp4
+
+# Add speaker diarization (PyAnnote community-1)
+nab analyze interview.mp4 --diarize
+
+# Force a language hint (BCP-47)
+nab analyze podcast.mp3 --language fi
+
+# Word-level timestamps
+nab analyze talk.mp4 --word-timestamps
+
+# Active reading: nab uses MCP sampling to look up references mentioned in the audio
+nab analyze interview.mp4 --active-reading
+
+# Expose speaker embeddings for matching against hebb's voiceprint database
+nab analyze interview.mp4 --diarize --include-embeddings
+
+# Output JSON
+nab analyze podcast.mp3 --format json
+```
+
+Real numbers from a 2 h 09 m English audio file (Karen Hao interview, MacBook Pro M-series):
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 59.6 s |
+| Realtime factor | 131x |
+| FluidAudio mean confidence | 97.18 % |
+| Audio extraction (ffmpeg) | ~650x realtime |
+
+| Backend | Platform | Languages | Diarization |
+|---------|----------|-----------|-------------|
+| `fluidaudio` (default on macOS arm64) | macOS arm64 | 25 EU languages, +zh/ja/ko/vi via Qwen3-ASR (opt-in) | PyAnnote community-1 |
+| `sherpa-onnx` (Phase 3) | Linux/x86, macOS, Windows | Parakeet ONNX, 25+ langs | sherpa-onnx pyannote-seg-3.0 |
+| `whisper-rs` (Phase 3) | Universal fallback | whisper-large-v3-turbo, 99 langs | none |
+
+### Watch
+
+`nab watch` turns any URL into a subscribable resource. MCP clients receive `notifications/resources/updated` when the content changes.
+
+```bash
+nab watch add https://news.ycombinator.com --interval 10m
+nab watch add https://example.com/pricing --interval 1h --selector "table.pricing"
+nab watch add https://api.openai.com/status --interval 5m --notify-on regression
+nab watch list
+nab watch logs <id>
+nab watch remove <id>
+```
+
+Per-watch options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval <duration>` | 1h | Polling interval (`5m`, `1h`, `24h`) |
+| `--selector <css>` | none | CSS selector to scope diff to one element |
+| `--notify-on <kind>` | `any` | `any`, `regression`, `semantic` |
+| `--diff <kind>` | `semantic` | `text`, `semantic`, `dom` |
+
+The poller uses conditional GETs (`If-None-Match`, `If-Modified-Since`), so 304 responses cost effectively nothing. Watches with five consecutive failures auto-mute. Adaptive backoff applies on 429 and 503.
+
+### Models
+
+```bash
+nab models list                           # show installed model versions
+nab models fetch fluidaudio               # download FluidAudio binary + Parakeet weights
+nab models update fluidaudio              # check for upstream updates
+nab models verify fluidaudio              # checksum + smoke test
+```
+
+Phase 3 will add `whisper` and `sherpa-onnx` subcommands.
+
+## MCP integration
+
+`nab-mcp` is a native Rust MCP server. It runs over stdio (default) or Streamable HTTP. It is fully compliant with MCP protocol version `2025-11-25`.
+
+### Claude Code / Claude Desktop
+
+Add to your MCP client configuration (`~/.config/claude/mcp.json` or equivalent):
+
+```json
+{
+  "mcpServers": {
+    "nab": {
+      "command": "nab-mcp"
+    }
+  }
+}
+```
+
+### Continue / Zed / Cursor / Windsurf
+
+Same shape — point `command` at the `nab-mcp` binary.
+
+### HTTP transport
+
+```bash
+nab-mcp --http 127.0.0.1:8765
+```
+
+Bind to localhost by default. Origin checks and `MCP-Protocol-Version` header validation are enforced per spec.
+
+### MCP capabilities
+
+| Capability | Status |
+|-----------|--------|
+| Tools | 11 tools with structured output schemas, annotations, validation errors |
+| Prompts | 3 prompts (`fetch-and-extract`, `multi-page-research`, `authenticated-fetch`, `match-speakers-with-hebb`) |
+| Resources | 2 static + N dynamic watch resources, all subscribable |
+| Logging | `notifications/message` with RFC 5424 levels |
+| Sampling | nab calls back to the host LLM for active reading, focus extraction, form auto-fill |
+| Roots | `roots/list` queried for workspace-scoped saves |
+| Elicitation | Form mode + URL mode for OAuth/SSO |
+| Argument completion | `completion/complete` for tool args |
+| Server icons | Light + dark SVG |
+| Transports | stdio + Streamable HTTP (resumable, session-scoped) |
+
+The 11 MCP tools:
+
+| Tool | Description |
+|------|-------------|
+| `fetch` | Fetch URL → markdown, with cookies, focus, token budget, session |
+| `fetch_batch` | Parallel multi-URL fetch with task-augmented async execution |
+| `submit` | Submit a form with CSRF + smart field extraction |
+| `login` | 1Password auto-login with TOTP support |
+| `auth_lookup` | Look up 1Password credentials for a URL |
+| `fingerprint` | Generate browser fingerprint profiles |
+| `validate` | Run the validation test suite |
+| `benchmark` | Time URL fetches with stats |
+| `analyze` | Transcribe and diarize audio/video |
+| `watch_create` | Create a URL watch and subscribe |
+| `watch_list` / `watch_remove` | Manage watches |
+
+## Site providers
+
+nab detects URLs for 11 platforms and uses their APIs or structured data instead of scraping HTML.
+
+| Provider | URL pattern | Method |
+|----------|-------------|--------|
+| Twitter / X | `x.com/*/status/*` | FxTwitter API |
+| Reddit | `reddit.com/r/*/comments/*` | JSON API |
+| Hacker News | `news.ycombinator.com/item?id=*` | Firebase API |
+| GitHub | `github.com/*/*/issues/*`, `*/pull/*` | REST API |
+| Google Workspace | Docs, Sheets, Slides | Export API + OOXML |
+| YouTube | `youtube.com/watch?v=*`, `youtu.be/*` | oEmbed |
+| Wikipedia | `*.wikipedia.org/wiki/*` | REST API |
+| StackOverflow | `stackoverflow.com/questions/*` | API |
+| Mastodon | `*/users/*/statuses/*` | ActivityPub |
+| LinkedIn | `linkedin.com/posts/*` | oEmbed |
+| Instagram | `instagram.com/p/*`, `*/reel/*` | oEmbed |
+
+If no provider matches, nab falls back to standard HTML fetch + markdown conversion.
+
+## Architecture
+
+nab is built around a small set of orthogonal subsystems: `cmd/` (CLI), `bin/mcp_server/` (MCP server), `content/` (HTML / PDF / OCR pipeline), `analyze/` (ASR + diarization + vision), `watch/` (URL monitoring + subscriptions), `auth/` (cookies + 1Password + WebAuthn), `site/` (per-site providers), and the shared `AcceleratedClient` (HTTP/3 + connection pool + fingerprint store).
+
+See:
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — full module map and data flow
+- [docs/sovereign-stack.md](docs/sovereign-stack.md) — how nab composes with hebb to form a local-first multimodal stack
+- [docs/getting-started.md](docs/getting-started.md) — new user onboarding
+
+### Design notes
+
+The `docs/design/` directory tracks recent design proposals:
+
+- [analyze-v2.md](docs/design/analyze-v2.md) — multilingual ASR + diarization + vision pipeline
+- [url-watch-resources.md](docs/design/url-watch-resources.md) — URL watch as MCP subscribable resources
+- [active-reading.md](docs/design/active-reading.md) — active reading via MCP sampling
+- [mcp-spec-closure.md](docs/design/mcp-spec-closure.md) — closing the last MCP 2025-11-25 spec gaps
+
+## Companion tools
+
+nab is half of a sovereign multimodal stack. The other half is [hebb](https://github.com/MikkoParkkola/hebb), a neuroscience-inspired memory MCP server. Composition examples:
+
+- `nab analyze --diarize --include-embeddings` → `hebb voice_match` → speakers labeled with names
+- `nab fetch URL` → `hebb kv_set` → personal sovereign web memory
+- `nab watch add URL` → `hebb kv_set` (on update) → time-series of changes to any web page
+
+See [docs/sovereign-stack.md](docs/sovereign-stack.md) for the full composition story.
+
+## Configuration
+
+nab requires no configuration files. It uses smart defaults: auto-detected browser cookies, randomized fingerprints, and markdown output.
+
+Persistent state lives in `~/.nab/`:
+
+| Path | Purpose |
+|------|---------|
+| `~/.nab/snapshots/` | Content snapshots for `--diff` change detection |
+| `~/.nab/sessions/` | Saved login sessions |
+| `~/.nab/fingerprint_versions.json` | Cached browser versions (auto-updates every 14 days) |
+| `~/.local/share/nab/watches/` | URL watch state |
+| `~/.local/share/nab/models/` | Installed inference model binaries |
+
+Optional plugin configuration at `~/.config/nab/plugins.toml`. See [docs/getting-started.md](docs/getting-started.md) for plugin examples.
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `HTTPS_PROXY` / `https_proxy` | HTTPS proxy URL |
+| `HTTP_PROXY` / `http_proxy` | HTTP proxy URL |
+| `ALL_PROXY` / `all_proxy` | Proxy for all protocols |
+| `RUST_LOG` | Logging level (e.g., `nab=debug`) |
+| `PUSHOVER_USER` / `PUSHOVER_TOKEN` | Pushover notifications for MFA |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram notifications for MFA |
+
+## Library usage
 
 ```rust
 use nab::AcceleratedClient;
@@ -384,22 +353,18 @@ async fn main() -> anyhow::Result<()> {
 
 ## Requirements
 
-- **Rust 1.93+** (for building from source)
-- **ffmpeg** (optional, for streaming/analyze commands): `brew install ffmpeg`
-- **1Password CLI** (optional): [Install guide](https://developer.1password.com/docs/cli/get-started/)
-
-## Architecture
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full internal architecture, module organization, data flow diagrams, and extension points.
+- **Rust 1.93+** for building from source
+- **ffmpeg** for `analyze` and `stream` commands: `brew install ffmpeg`
+- **1Password CLI** (optional, for credential integration): see [1Password docs](https://developer.1password.com/docs/cli/get-started/)
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style guidelines, testing instructions, and pull request process.
 
-## Responsible Use
+## Responsible use
 
-This tool includes browser cookie extraction and fingerprint spoofing capabilities. These features are intended for legitimate use cases such as accessing your own authenticated content and automated testing. Use responsibly and only on sites where you have authorization.
+This tool includes browser cookie extraction and fingerprint spoofing capabilities. They are intended for legitimate use cases — accessing your own authenticated content, automated testing, sites where you have authorization. Use responsibly.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).

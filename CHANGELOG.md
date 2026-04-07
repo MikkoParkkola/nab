@@ -5,7 +5,63 @@ All notable changes to nab will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v0.7.0 (WASM Marketplace)
+## [Unreleased]
+
+## [0.7.0] - 2026-04-07
+
+### Added
+
+#### Multilingual ASR pipeline (`nab analyze` v2)
+- **FluidAudio subprocess backend** — Parakeet TDT v3 on Apple Neural Engine, 131x realtime on a 2 h 09 m English clip, 97.18 % mean confidence ([`6fa7164`](https://github.com/MikkoParkkola/nab/commit/6fa7164))
+- **`AsrBackend` trait** — pluggable transcription backends with consistent `TranscriptionResult` shape (segments, language, duration, model, backend, rtfx)
+- **Word-level timestamps** with per-word confidence scores
+- **Speaker diarization** via FluidAudio + PyAnnote community-1
+- **Multilingual** — 25 EU languages first-class, optional Qwen3-ASR (CoreML beta) for Chinese, Japanese, Korean, Vietnamese
+- **`analyze` MCP tool** — full structured output schema, task-augmented async execution
+- **Speaker embedding export** — `--include-embeddings` surfaces 256-dim WeSpeaker vectors per speaker turn ([`aa2a250`](https://github.com/MikkoParkkola/nab/commit/aa2a250))
+- **`match-speakers-with-hebb` prompt** — guides MCP clients to match nab speaker embeddings against hebb's voiceprint database
+- **Active reading via MCP sampling** — `--active-reading` flag asks the host LLM to identify references in the transcript and inlines lookups as footnotes ([`ebc68b2`](https://github.com/MikkoParkkola/nab/commit/ebc68b2))
+
+#### URL watch (`nab watch`)
+- **Watch subsystem** — `nab watch add/list/remove/logs` with per-watch interval, CSS selector, diff kind, notify mode ([`52f950d`](https://github.com/MikkoParkkola/nab/commit/52f950d))
+- **MCP subscribable resources** — every watch is exposed as a `nab://watch/<id>` resource. MCP clients call `resources/subscribe` and receive `notifications/resources/updated` when content changes
+- **Conditional GETs** — `If-None-Match` and `If-Modified-Since` make 304 responses effectively free
+- **Semantic diff** — three diff kinds: text, semantic, DOM
+- **Adaptive backoff** on 429 / 503; auto-mute after 5 consecutive failures
+- **`watch_create`, `watch_list`, `watch_remove`** MCP tools
+
+#### Models management (`nab models`)
+- **`nab models fetch fluidaudio`** — persistent install of FluidAudio binary + Parakeet TDT v3 weights ([`8818317`](https://github.com/MikkoParkkola/nab/commit/8818317))
+- **`nab models list/update/verify`** — version tracking and integrity checks
+- Phase 3 will add `whisper` and `sherpa-onnx` subcommands
+
+#### Apple Vision OCR
+- **`nab::content::ocr`** — Apple Vision framework OCR engine via `objc2-vision` ([`63878b4`](https://github.com/MikkoParkkola/nab/commit/63878b4))
+- 15 languages, Apple Neural Engine accelerated, ~10-50 ms per image
+- macOS only — Linux and Windows fall back to Tesseract (Phase 3)
+
+#### MCP 2025-11-25 spec closure
+- **Streamable HTTP transport** — `nab-mcp --http <bind>` with origin checks, `MCP-Protocol-Version` header validation, session IDs, SSE resumability via `Last-Event-ID`, DELETE for session termination ([`4c0100a`](https://github.com/MikkoParkkola/nab/commit/4c0100a))
+- **Sampling helper** — nab calls back to the host LLM via `sampling/createMessage` for active reading, focus extraction, form auto-fill
+- **Roots helper** — `roots/list` queried for workspace-scoped saves; `nab fetch file://path` validated against advertised roots
+- **Structured logging** — `notifications/message` with RFC 5424 levels, replacing stderr-only `tracing`
+- **Argument completion** — `completion/complete` for tool arguments
+- **Elicitation form mode + URL mode** — interactive credential input; OAuth/SSO redirects for Google, GitHub, Microsoft, Apple, Facebook, and 8 more
+- 11 tools, 3 prompts (4 with `match-speakers-with-hebb`), 2+N resources
+
+### Changed
+- `nab analyze` migrated from monolithic transcribe path to `AsrBackend` trait architecture
+- MCP server now exposes 11 tools (was 8): added `analyze`, `watch_create`, `watch_list`, `watch_remove`
+- MCP `resources` capability now declares `subscribe: true`
+- All tools advertise structured output schemas, annotations, and validation errors
+
+### Deprecated
+- `ParakeetTranscriber`, `Transcriber`, `VllmTranscriber` — superseded by `AsrBackend` trait. Will be removed in 0.8.0.
+
+### Removed
+- Dead code path referencing nonexistent `parakeet.cpp` binary in old `analyze/transcribe.rs`
+
+## [Unreleased] — pre-0.7.0 (WASM Marketplace, deferred)
 
 ### Added
 - **WASM provider marketplace** — sandboxed third-party site extractors via wasmtime runtime (#19)
