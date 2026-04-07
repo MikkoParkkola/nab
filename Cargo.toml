@@ -133,6 +133,18 @@ pdfium-render = { version = "0.9", default-features = true, optional = true }
 chromiumoxide = { version = "0.9", optional = true, default-features = false, features = ["rustls", "zip8"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CROSS-PLATFORM ASR BACKENDS (optional — analyze-sherpa / analyze-whisper features)
+# ═══════════════════════════════════════════════════════════════════════════════
+# sherpa-onnx: Parakeet TDT v3 ONNX runtime, 26-language EU set, ~30× RTFx CPU
+# Install model: `nab models fetch sherpa-onnx`
+sherpa-onnx = { version = "1.12", optional = true }
+# whisper-rs: whisper-large-v3-turbo GGUF, 99-language universal fallback
+# Install model: `nab models fetch whisper`
+whisper-rs = { version = "0.16", optional = true }
+# WAV decoding — shared by both backends (also optional, activated alongside them)
+hound = { version = "3", optional = true }
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ERROR HANDLING & LOGGING
 # ═══════════════════════════════════════════════════════════════════════════════
 thiserror = "2"
@@ -200,6 +212,11 @@ browser = ["chromiumoxide"]
 # TLS fingerprint impersonation — bypasses anti-bot TLS fingerprinting
 # BoringSSL-backed Chrome/Safari/Firefox TLS profiles
 impersonate = ["rquest", "rquest-util"]
+# Cross-platform ASR backends (opt-in — not in default to keep the binary lean)
+# Requires downloading model weights via `nab models fetch sherpa-onnx`
+analyze-sherpa = ["analyze", "dep:sherpa-onnx", "dep:hound"]
+# Requires downloading model weights via `nab models fetch whisper`
+analyze-whisper = ["analyze", "dep:whisper-rs", "dep:hound"]
 # WASM provider marketplace — install third-party extractors as .wasm modules.
 # Disabled by default to keep the default binary lean; opt-in with:
 #   cargo build --features wasm-providers

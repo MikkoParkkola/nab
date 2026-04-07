@@ -24,6 +24,11 @@ pub mod report;
 pub mod transcribe;
 pub mod vision;
 
+#[cfg(feature = "analyze-sherpa")]
+pub mod sherpa_onnx_backend;
+#[cfg(feature = "analyze-whisper")]
+pub mod whisper_rs_backend;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -54,25 +59,63 @@ pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
 
 // ─── Backend factory ──────────────────────────────────────────────────────────
 
-/// Return the default [`AsrBackend`] for the current platform.
+/// Return the best available [`AsrBackend`] for the current platform.
 ///
-/// Returns a [`FluidAudioBackend`] that delegates to the `fluidaudiocli`
-/// subprocess. The backend is available on any platform where the binary is
-/// installed; call [`AsrBackend::is_available`] before transcribing.
+/// Selection order (first available wins):
 ///
-/// Install the binary with `nab models fetch fluidaudio` (planned) or build
-/// from <https://github.com/FluidInference/FluidAudio>.
+/// 1. **FluidAudio** (macOS aarch64 only) — ~150× RTFx on Apple Neural Engine.
+/// 2. **SherpaOnnx** (all platforms, `analyze-sherpa` feature) — ~30× RTFx CPU,
+///    requires model files at `~/.cache/nab/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/`.
+/// 3. **WhisperRs** (all platforms, `analyze-whisper` feature) — ~3–15× RTFx,
+///    99-language universal fallback, requires `~/.cache/nab/models/whisper-large-v3-turbo-q5_0.bin`.
+/// 4. **Stub** — returns an error on transcription. Indicates no backend is installed.
 ///
-/// The returned `Arc<dyn AsrBackend>` is cheaply cloneable and safe to share
-/// across threads.
+/// Install backends with:
+/// - `nab models fetch fluidaudio` (macOS Apple Silicon)
+/// - `nab models fetch sherpa-onnx` (all platforms, `--features analyze-sherpa`)
+/// - `nab models fetch whisper` (all platforms, `--features analyze-whisper`)
 #[must_use]
 pub fn default_backend() -> Arc<dyn AsrBackend> {
-    Arc::new(FluidAudioBackend::new().unwrap_or_else(|_| {
-        // Binary not found; return an instance that reports is_available=false.
-        // Callers that check is_available() before transcribing will get a clear
-        // MissingDependency error at use time rather than a panic here.
-        FluidAudioBackend::with_binary(std::path::PathBuf::from("fluidaudiocli"))
-    }))
+    // 1. FluidAudio — macOS Apple Silicon only.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        let fluid = FluidAudioBackend::new()
+            .unwrap_or_else(|_| FluidAudioBackend::with_binary(PathBuf::from("fluidaudiocli")));
+        if fluid.is_available() {
+            return Arc::new(fluid);
+        }
+    }
+
+    // 2. Sherpa-ONNX — cross-platform, opt-in via `analyze-sherpa` feature.
+    #[cfg(feature = "analyze-sherpa")]
+    {
+        let sherpa = sherpa_onnx_backend::SherpaOnnxBackend::new();
+        if sherpa.is_available() {
+            return Arc::new(sherpa);
+        }
+    }
+
+    // 3. Whisper-rs — universal fallback, opt-in via `analyze-whisper` feature.
+    #[cfg(feature = "analyze-whisper")]
+    {
+        let whisper = whisper_rs_backend::WhisperRsBackend::new();
+        if whisper.is_available() {
+            return Arc::new(whisper);
+        }
+    }
+
+    // 4. Stub — all backends unavailable (no models downloaded / features disabled).
+    // Return a FluidAudio instance that reports is_available=false; callers that
+    // check is_available() before transcribing will get a clear MissingDependency
+    // error at use time rather than a panic here.
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    {
+        Arc::new(FluidAudioBackend::with_binary(PathBuf::from("fluidaudiocli")))
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        Arc::new(FluidAudioBackend::with_binary(PathBuf::from("fluidaudiocli")))
+    }
 }
 
 /// Analysis pipeline errors

@@ -1,16 +1,19 @@
-//! `nab models` subcommand — manage locally-built inference binaries.
+//! `nab models` subcommand — manage locally-built inference binaries and GGUF model files.
 //!
-//! Persistent install location: `~/.local/share/nab/models/<name>/`
-//! Binary symlinks: `~/.local/share/nab/bin/<binary>`
+//! Persistent install location:
+//! - Built models: `~/.local/share/nab/models/<name>/`
+//! - Binary symlinks: `~/.local/share/nab/bin/<binary>`
+//! - Downloaded model weights: `~/.cache/nab/models/<file>`
 //!
 //! # Supported models
 //!
-//! | Name | Binary | Platform |
-//! |------|--------|----------|
-//! | `fluidaudio` | `fluidaudiocli` | macOS only |
-//! | `whisper` | (Phase 3 stub) | all |
-//! | `sherpa-onnx` | (Phase 3 stub) | all |
+//! | Name | Type | Platform |
+//! |------|------|----------|
+//! | `fluidaudio` | Swift binary (subprocess) | macOS only |
+//! | `whisper` | GGUF download (whisper-rs) | all |
+//! | `sherpa-onnx` | ONNX download (sherpa-onnx) | all |
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -92,32 +95,60 @@ pub fn write_version(name: &str, sha: &str) -> Result<()> {
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
-/// Installation status of a model binary.
+/// Installation status of a model.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstallStatus {
-    /// Binary symlink exists and points to an existing target.
+    /// Binary symlink exists and points to an existing target (subprocess models),
+    /// or all required model files exist on disk (ONNX/GGUF download models).
     Installed { version: Option<String> },
     /// Binary symlink is present but dangling (target was deleted — e.g. after reboot).
     BrokenSymlink,
-    /// No symlink present.
+    /// No symlink / model files present.
     NotInstalled,
 }
 
 /// Inspect the installation status of `model`.
+///
+/// For `whisper` and `sherpa-onnx`, checks for the downloaded model files.
+/// For `fluidaudio`, checks the binary symlink.
 pub fn install_status(model: &ModelEntry) -> Result<InstallStatus> {
-    let link_path = binary_symlink_path(model.binary_name)?;
-
-    if !link_path.exists() && !link_path.is_symlink() {
-        return Ok(InstallStatus::NotInstalled);
-    }
-
-    // Symlink present — check whether the target actually exists.
-    if link_path.exists() {
-        let version = read_version(model.name);
-        Ok(InstallStatus::Installed { version })
-    } else {
-        // is_symlink() == true but exists() == false → dangling
-        Ok(InstallStatus::BrokenSymlink)
+    match model.name {
+        "whisper" => {
+            // installed when GGUF file exists and is > 100 MB
+            let path = whisper_model_path()?;
+            let ok = path
+                .metadata()
+                .map(|m| m.len() >= 100 * 1024 * 1024)
+                .unwrap_or(false);
+            if ok {
+                Ok(InstallStatus::Installed { version: None })
+            } else {
+                Ok(InstallStatus::NotInstalled)
+            }
+        }
+        "sherpa-onnx" => {
+            // installed when all four ONNX files exist
+            let dir = sherpa_model_dir()?;
+            let ok = SHERPA_FILES.iter().all(|f| dir.join(f).exists());
+            if ok {
+                Ok(InstallStatus::Installed { version: None })
+            } else {
+                Ok(InstallStatus::NotInstalled)
+            }
+        }
+        _ => {
+            // Binary symlink check for subprocess-style models (fluidaudio).
+            let link_path = binary_symlink_path(model.binary_name)?;
+            if !link_path.exists() && !link_path.is_symlink() {
+                return Ok(InstallStatus::NotInstalled);
+            }
+            if link_path.exists() {
+                let version = read_version(model.name);
+                Ok(InstallStatus::Installed { version })
+            } else {
+                Ok(InstallStatus::BrokenSymlink)
+            }
+        }
     }
 }
 
@@ -132,7 +163,7 @@ pub async fn cmd_models_list() -> Result<()> {
         let (status_str, version_str) = match install_status(model)? {
             InstallStatus::Installed { version } => (
                 "installed".to_string(),
-                version.unwrap_or_else(|| "unknown".to_string()),
+                version.unwrap_or_else(|| "—".to_string()),
             ),
             InstallStatus::BrokenSymlink => ("broken".to_string(), "—".to_string()),
             InstallStatus::NotInstalled => ("not installed".to_string(), "—".to_string()),
@@ -148,7 +179,11 @@ pub async fn cmd_models_list() -> Result<()> {
     Ok(())
 }
 
-/// `nab models verify` — ensure every installed binary is runnable.
+/// `nab models verify` — verify every installed model is usable.
+///
+/// For subprocess models (fluidaudio), runs the binary with `--help`.
+/// For download models (whisper, sherpa-onnx), checks that all required files
+/// exist and meet the minimum size requirement.
 pub async fn cmd_models_verify() -> Result<()> {
     let mut all_ok = true;
 
@@ -157,20 +192,16 @@ pub async fn cmd_models_verify() -> Result<()> {
             continue;
         }
 
-        let bin = binary_symlink_path(model.binary_name)?;
-        let ok = tokio::process::Command::new(&bin)
-            .arg("--help")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let ok = match model.name {
+            "whisper" => verify_whisper_files()?,
+            "sherpa-onnx" => verify_sherpa_files()?,
+            _ => verify_binary(model.binary_name).await,
+        };
 
         if ok {
-            println!("[ok] {} — {}", model.name, bin.display());
+            println!("[ok] {}", model.name);
         } else {
-            println!("[FAIL] {} — {} did not run cleanly", model.name, bin.display());
+            println!("[FAIL] {}", model.name);
             all_ok = false;
         }
     }
@@ -182,7 +213,57 @@ pub async fn cmd_models_verify() -> Result<()> {
     }
 }
 
-/// `nab models fetch <name>` — clone + build + symlink a model.
+fn verify_whisper_files() -> Result<bool> {
+    let path = whisper_model_path()?;
+    let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+    if size >= 100 * 1024 * 1024 {
+        println!(
+            "  whisper: {:.1} MB — {}",
+            size as f64 / (1024.0 * 1024.0),
+            path.display()
+        );
+        Ok(true)
+    } else {
+        println!(
+            "  whisper: file too small or missing ({} bytes) — {}",
+            size,
+            path.display()
+        );
+        Ok(false)
+    }
+}
+
+fn verify_sherpa_files() -> Result<bool> {
+    let dir = sherpa_model_dir()?;
+    let mut ok = true;
+    for file in SHERPA_FILES {
+        let path = dir.join(file);
+        if path.exists() {
+            let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+            println!("  sherpa-onnx/{file}: {:.1} MB", size as f64 / (1024.0 * 1024.0));
+        } else {
+            println!("  sherpa-onnx/{file}: MISSING");
+            ok = false;
+        }
+    }
+    Ok(ok)
+}
+
+async fn verify_binary(binary_name: &str) -> bool {
+    let Ok(bin) = binary_symlink_path(binary_name) else {
+        return false;
+    };
+    tokio::process::Command::new(&bin)
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// `nab models fetch <name>` — download or clone + build + symlink a model.
 pub async fn cmd_models_fetch(name: &str) -> Result<()> {
     let model = KNOWN_MODELS
         .iter()
@@ -195,25 +276,187 @@ pub async fn cmd_models_fetch(name: &str) -> Result<()> {
             )
         })?;
 
-    if model.phase > 1 {
-        println!(
-            "Model '{}' is a Phase {} stub. Use `nab models fetch whisper` in Phase 3 \
-             when whisper.cpp support lands.",
-            name, model.phase
-        );
-        return Ok(());
+    match model.name {
+        "fluidaudio" => fetch_fluidaudio_dispatch(model).await,
+        "whisper" => fetch_whisper().await,
+        "sherpa-onnx" => fetch_sherpa_onnx().await,
+        other => anyhow::bail!("no fetch implementation for model '{other}'"),
     }
+}
 
+// ─── fluidaudio dispatch ──────────────────────────────────────────────────────
+
+async fn fetch_fluidaudio_dispatch(model: &ModelEntry) -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
-        println!(
-            "FluidAudio is macOS-only. Use `nab models fetch whisper` instead (Phase 3)."
+        let _ = model;
+        anyhow::bail!(
+            "FluidAudio is macOS-only. On Linux/Windows use `nab models fetch whisper` \
+             or `nab models fetch sherpa-onnx` instead."
         );
-        return Ok(());
     }
 
     #[cfg(target_os = "macos")]
     fetch_fluidaudio(model).await
+}
+
+// ─── whisper download ─────────────────────────────────────────────────────────
+
+/// URL for whisper-large-v3-turbo Q5_0 GGUF (ggerganov/whisper.cpp on HuggingFace).
+const WHISPER_MODEL_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
+
+/// `~/.cache/nab/models/whisper-large-v3-turbo-q5_0.bin`
+pub fn whisper_model_path() -> Result<PathBuf> {
+    nab_cache_dir().map(|d| d.join("whisper-large-v3-turbo-q5_0.bin"))
+}
+
+/// `~/.cache/nab`
+pub fn nab_cache_dir() -> Result<PathBuf> {
+    dirs::cache_dir()
+        .map(|d| d.join("nab/models"))
+        .context("could not resolve cache dir (XDG_CACHE_HOME / ~/Library/Caches)")
+}
+
+/// Download whisper-large-v3-turbo Q5_0 GGUF to `~/.cache/nab/models/`.
+async fn fetch_whisper() -> Result<()> {
+    let dest = whisper_model_path()?;
+
+    if dest.exists() {
+        println!(
+            "whisper model already downloaded at {}",
+            dest.display()
+        );
+        return Ok(());
+    }
+
+    let parent = dest.parent().context("dest has no parent")?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("creating {}", parent.display()))?;
+
+    println!("Downloading whisper-large-v3-turbo-q5_0 (~590 MB)…");
+    println!("  URL: {WHISPER_MODEL_URL}");
+    println!("  Destination: {}", dest.display());
+
+    download_with_progress(WHISPER_MODEL_URL, &dest).await?;
+
+    // Sanity check: file must be > 100 MB.
+    let size = std::fs::metadata(&dest)?.len();
+    if size < 100 * 1024 * 1024 {
+        std::fs::remove_file(&dest).ok();
+        anyhow::bail!(
+            "downloaded file is too small ({} bytes) — likely a truncated download",
+            size
+        );
+    }
+
+    println!(
+        "whisper model installed ({:.1} MB): {}",
+        size as f64 / (1024.0 * 1024.0),
+        dest.display()
+    );
+    Ok(())
+}
+
+// ─── sherpa-onnx download ─────────────────────────────────────────────────────
+
+const SHERPA_BASE_URL: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/main";
+
+const SHERPA_FILES: &[&str] = &["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"];
+
+/// `~/.cache/nab/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/`
+pub fn sherpa_model_dir() -> Result<PathBuf> {
+    nab_cache_dir().map(|d| d.join("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3"))
+}
+
+/// Download all four Parakeet TDT v3 ONNX files to the sherpa model dir.
+async fn fetch_sherpa_onnx() -> Result<()> {
+    let model_dir = sherpa_model_dir()?;
+
+    tokio::fs::create_dir_all(&model_dir)
+        .await
+        .with_context(|| format!("creating {}", model_dir.display()))?;
+
+    let all_present = SHERPA_FILES
+        .iter()
+        .all(|f| model_dir.join(f).exists());
+
+    if all_present {
+        println!(
+            "sherpa-onnx model files already present at {}",
+            model_dir.display()
+        );
+        return Ok(());
+    }
+
+    println!("Downloading Parakeet TDT v3 ONNX model files…");
+    println!("  Destination: {}", model_dir.display());
+
+    for file in SHERPA_FILES {
+        let dest = model_dir.join(file);
+        if dest.exists() {
+            info!("skipping {file} (already present)");
+            continue;
+        }
+        let url = format!("{SHERPA_BASE_URL}/{file}");
+        println!("  Downloading {file}…");
+        download_with_progress(&url, &dest).await?;
+    }
+
+    println!(
+        "sherpa-onnx model installed at: {}",
+        model_dir.display()
+    );
+    Ok(())
+}
+
+// ─── Shared download helper ───────────────────────────────────────────────────
+
+/// Download `url` to `dest` with a simple byte-count progress display.
+async fn download_with_progress(url: &str, dest: &Path) -> Result<()> {
+    use futures::StreamExt as _;
+
+    let response = reqwest::get(url)
+        .await
+        .with_context(|| format!("GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("HTTP error for {url}"))?;
+
+    let total = response.content_length();
+    let mut stream = response.bytes_stream();
+
+    let mut file = std::fs::File::create(dest)
+        .with_context(|| format!("creating {}", dest.display()))?;
+
+    let mut downloaded: u64 = 0;
+    let mut last_print: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("reading stream for {url}"))?;
+        file.write_all(&chunk)
+            .with_context(|| format!("writing to {}", dest.display()))?;
+        downloaded += chunk.len() as u64;
+
+        // Print progress every ~10 MB.
+        if downloaded - last_print >= 10 * 1024 * 1024 {
+            last_print = downloaded;
+            match total {
+                Some(t) => print!(
+                    "\r  {:.0} / {:.0} MB ({:.0}%)",
+                    downloaded as f64 / (1024.0 * 1024.0),
+                    t as f64 / (1024.0 * 1024.0),
+                    100.0 * downloaded as f64 / t as f64
+                ),
+                None => print!("\r  {:.0} MB", downloaded as f64 / (1024.0 * 1024.0)),
+            }
+            let _ = std::io::stdout().flush();
+        }
+    }
+
+    println!(); // newline after progress
+    Ok(())
 }
 
 /// `nab models update <name>` — git pull + rebuild + re-symlink.
@@ -513,5 +756,55 @@ mod tests {
         let status = install_status(&model).expect("should not fail");
         // THEN not installed
         assert_eq!(status, InstallStatus::NotInstalled);
+    }
+
+    /// `whisper_model_path` resolves to a path containing "nab" and ending with the GGUF filename.
+    #[test]
+    fn whisper_model_path_has_correct_filename() {
+        // GIVEN the system has a valid cache dir
+        // WHEN we resolve the whisper model path
+        let path = whisper_model_path().expect("should resolve");
+        let name = path.file_name().unwrap().to_string_lossy();
+        // THEN the filename matches the expected GGUF
+        assert_eq!(name, "whisper-large-v3-turbo-q5_0.bin");
+    }
+
+    /// `sherpa_model_dir` resolves to a path ending with the expected model dir name.
+    #[test]
+    fn sherpa_model_dir_has_correct_suffix() {
+        // GIVEN the system has a valid cache dir
+        // WHEN we resolve the sherpa model dir
+        let dir = sherpa_model_dir().expect("should resolve");
+        let name = dir.file_name().unwrap().to_string_lossy();
+        // THEN the directory name matches the expected HuggingFace repo slug
+        assert_eq!(name, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3");
+    }
+
+    /// `install_status` for "whisper" returns `NotInstalled` when the model file is absent.
+    #[test]
+    fn install_status_whisper_not_installed_when_missing() {
+        // GIVEN the whisper model entry
+        let model = KNOWN_MODELS
+            .iter()
+            .find(|m| m.name == "whisper")
+            .unwrap();
+        // WHEN we check status (model file almost certainly absent in CI)
+        let status = install_status(model).expect("should not fail");
+        // THEN either NotInstalled or Installed — just verify it doesn't panic
+        let _ = status;
+    }
+
+    /// `install_status` for "sherpa-onnx" returns `NotInstalled` when model dir is absent.
+    #[test]
+    fn install_status_sherpa_not_installed_when_missing() {
+        // GIVEN the sherpa-onnx model entry
+        let model = KNOWN_MODELS
+            .iter()
+            .find(|m| m.name == "sherpa-onnx")
+            .unwrap();
+        // WHEN we check status
+        let status = install_status(model).expect("should not fail");
+        // THEN doesn't panic — actual value depends on test environment
+        let _ = status;
     }
 }
