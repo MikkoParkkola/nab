@@ -211,13 +211,6 @@ impl FetchOcrEnricher {
 
 // ─── Image candidate extraction ───────────────────────────────────────────────
 
-/// An `<img>` candidate that needs OCR.
-#[derive(Debug)]
-struct ImgCandidate {
-    /// Resolved absolute URL.
-    url: String,
-}
-
 /// Parse `html` for `<img>` tags with thin or absent alt text, resolve their
 /// `src` attributes against `base_url`, and return candidates in document order.
 fn extract_image_candidates(html: &str, base_url: &str) -> Vec<String> {
