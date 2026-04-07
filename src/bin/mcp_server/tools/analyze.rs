@@ -9,6 +9,7 @@
 //! to the ASR backend.  Pure audio files (`.wav`, `.mp3`, `.flac`, `.m4a`,
 //! `.aac`, `.ogg`) are passed directly without extraction.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,6 +18,8 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
 use rust_mcp_sdk::McpServer;
 use serde::{Deserialize, Serialize};
+
+use crate::hebb_client::HebbClient;
 
 // ─── Tool definition ──────────────────────────────────────────────────────────
 
@@ -172,6 +175,22 @@ impl AnalyzeTool {
             "analyze complete"
         );
 
+        // ── hebb voice matching ────────────────────────────────────────────────
+        if self.diarize && self.include_embeddings {
+            if let Some(ref mut speakers) = result.speakers {
+                let speaker_map = match match_speakers_with_hebb(speakers).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!("hebb voice match skipped: {e}");
+                        HashMap::new()
+                    }
+                };
+                if !speaker_map.is_empty() {
+                    apply_speaker_names(&mut result.segments, &speaker_map);
+                }
+            }
+        }
+
         // ── Active reading pass ────────────────────────────────────────────────
         if self.active_reading {
             apply_active_reading(&mut result, runtime).await;
@@ -245,6 +264,70 @@ async fn apply_active_reading(
     }
 }
 
+// ─── hebb voice-match helper ─────────────────────────────────────────────────
+
+const VOICE_MATCH_THRESHOLD: f32 = 0.7;
+const VOICE_MATCH_LIMIT: u32 = 3;
+
+/// For each speaker segment that carries an embedding, query hebb's
+/// `voice_match` tool.  Returns a map of `speaker_label → resolved_name`
+/// for every speaker that matched at or above [`VOICE_MATCH_THRESHOLD`].
+///
+/// Silently returns an empty map when hebb is unavailable.
+async fn match_speakers_with_hebb(
+    speakers: &[nab::analyze::AsrSpeakerSegment],
+) -> anyhow::Result<HashMap<String, String>> {
+    if !HebbClient::is_available().await {
+        return Ok(HashMap::new());
+    }
+
+    let client_arc = HebbClient::global().await?;
+    let mut map = HashMap::new();
+
+    for seg in speakers {
+        let embedding = match &seg.embedding {
+            Some(e) if !e.is_empty() => e,
+            _ => continue,
+        };
+
+        let mut client = client_arc.lock().await;
+        match client
+            .voice_match(embedding, VOICE_MATCH_THRESHOLD, VOICE_MATCH_LIMIT)
+            .await
+        {
+            Ok(matches) => {
+                if let Some(best) = matches.into_iter().find(|m| m.similarity >= VOICE_MATCH_THRESHOLD)
+                {
+                    if let Some(name) = best.name {
+                        map.insert(seg.speaker.clone(), name);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(speaker = %seg.speaker, "voice_match failed: {e}");
+            }
+        }
+    }
+
+    Ok(map)
+}
+
+/// Replace `SPEAKER_NN` labels in transcript segments with resolved names
+/// from `speaker_map`.  Segments whose speaker label has no mapping are
+/// left unchanged.
+fn apply_speaker_names(
+    segments: &mut [nab::analyze::AsrTranscriptSegment],
+    speaker_map: &HashMap<String, String>,
+) {
+    for seg in segments {
+        if let Some(label) = &seg.speaker {
+            if let Some(name) = speaker_map.get(label) {
+                seg.speaker = Some(name.clone());
+            }
+        }
+    }
+}
+
 // ─── Audio extraction helper ──────────────────────────────────────────────────
 
 /// Audio file extensions that can be passed directly to the ASR backend.
@@ -287,4 +370,95 @@ async fn extract_audio_if_needed(input: &std::path::Path) -> Result<PathBuf, Cal
         .map_err(|e| CallToolError::from_message(format!("audio extraction failed: {e}")))?;
 
     Ok(tmp_path)
+}
+
+// ─── Unit tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use nab::analyze::{AsrSpeakerSegment, AsrTranscriptSegment};
+
+    use super::*;
+
+    fn make_segment(speaker: Option<&str>) -> AsrTranscriptSegment {
+        AsrTranscriptSegment {
+            text: "hello".to_string(),
+            start: 0.0,
+            end: 1.0,
+            confidence: 1.0,
+            language: None,
+            speaker: speaker.map(String::from),
+            words: None,
+        }
+    }
+
+    fn make_speaker(label: &str, embedding: Option<Vec<f32>>) -> AsrSpeakerSegment {
+        AsrSpeakerSegment {
+            speaker: label.to_string(),
+            start: 0.0,
+            end: 1.0,
+            embedding,
+        }
+    }
+
+    // ── apply_speaker_names ──────────────────────────────────────────────────
+
+    /// Segments with a mapped speaker label get the resolved name applied.
+    #[test]
+    fn apply_speaker_names_replaces_matched_label() {
+        // GIVEN a segment with SPEAKER_00 and a map resolving it to "Alice"
+        let mut segments = vec![make_segment(Some("SPEAKER_00"))];
+        let mut map = HashMap::new();
+        map.insert("SPEAKER_00".to_string(), "Alice".to_string());
+        // WHEN we apply the names
+        apply_speaker_names(&mut segments, &map);
+        // THEN the label is replaced
+        assert_eq!(segments[0].speaker.as_deref(), Some("Alice"));
+    }
+
+    /// Segments whose label is not in the map are left unchanged.
+    #[test]
+    fn apply_speaker_names_leaves_unmatched_label_unchanged() {
+        // GIVEN a segment with SPEAKER_01, a map with only SPEAKER_00
+        let mut segments = vec![make_segment(Some("SPEAKER_01"))];
+        let mut map = HashMap::new();
+        map.insert("SPEAKER_00".to_string(), "Alice".to_string());
+        // WHEN applied
+        apply_speaker_names(&mut segments, &map);
+        // THEN SPEAKER_01 is unchanged
+        assert_eq!(segments[0].speaker.as_deref(), Some("SPEAKER_01"));
+    }
+
+    /// Segments with no speaker label are unaffected.
+    #[test]
+    fn apply_speaker_names_skips_segments_without_speaker() {
+        // GIVEN a segment with no speaker label
+        let mut segments = vec![make_segment(None)];
+        let map: HashMap<String, String> = HashMap::new();
+        // WHEN applied
+        apply_speaker_names(&mut segments, &map);
+        // THEN the speaker remains None
+        assert!(segments[0].speaker.is_none());
+    }
+
+    // ── match_speakers_with_hebb (hebb unavailable) ──────────────────────────
+
+    /// When hebb is unavailable, `match_speakers_with_hebb` returns an empty map
+    /// without error so callers do not need to handle the unavailability case.
+    #[tokio::test]
+    async fn match_speakers_with_hebb_returns_empty_when_hebb_unavailable() {
+        // GIVEN hebb-mcp is not installed (CI environment)
+        // AND a speaker segment with an embedding
+        let speakers = vec![make_speaker("SPEAKER_00", Some(vec![0.1; 256]))];
+        // WHEN we check availability (cheap, no subprocess)
+        let available = HebbClient::is_available().await;
+        if available {
+            // Skip: hebb is actually installed — cannot test the fallback path.
+            return;
+        }
+        // THEN match returns Ok(empty map) — no crash, no error propagated
+        let result = match_speakers_with_hebb(&speakers).await;
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+        assert!(result.unwrap().is_empty());
+    }
 }
