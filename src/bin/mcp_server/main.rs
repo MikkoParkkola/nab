@@ -22,6 +22,7 @@
 pub mod active_reading_mcp;
 pub mod completion;
 pub mod elicitation;
+pub mod hebb_client;
 pub mod helpers;
 pub mod mcp_log;
 pub mod roots;
