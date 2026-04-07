@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Dead code path referencing nonexistent `parakeet.cpp` binary in old `analyze/transcribe.rs`
 
-## [Unreleased] — pre-0.7.0 (WASM Marketplace, deferred)
+## [Deferred] — WASM Marketplace + misc (not yet released)
 
 ### Added
 - **WASM provider marketplace** — sandboxed third-party site extractors via wasmtime runtime (#19)
