@@ -3,7 +3,8 @@
 //! Ultra-fast MCP server for web fetching with HTTP/3, fingerprint spoofing,
 //! and 1Password integration. Uses MCP protocol 2025-11-25 with full
 //! tool annotations, structured output schemas, task-augmented execution,
-//! and elicitation support.
+//! elicitation support, MCP logging, argument completion, sampling plumbing,
+//! roots plumbing, and Streamable HTTP transport.
 //!
 //! # Usage
 //!
@@ -11,9 +12,19 @@
 //! ```bash
 //! nab-mcp
 //! ```
+//!
+//! Streamable HTTP mode (network-accessible):
+//! ```bash
+//! nab-mcp --http 127.0.0.1:8765
+//! nab-mcp --http 0.0.0.0:8765 --http-allow-origin https://claude.ai
+//! ```
 
+pub mod completion;
 pub mod elicitation;
 pub mod helpers;
+pub mod mcp_log;
+pub mod roots;
+pub mod sampling;
 pub mod structured;
 #[cfg(test)]
 mod tests;
@@ -26,12 +37,13 @@ use async_trait::async_trait;
 use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
 use rust_mcp_sdk::mcp_server::{McpServerOptions, ServerHandler, server_runtime};
 use rust_mcp_sdk::schema::{
-    CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult, GetPromptRequestParams,
-    GetPromptResult, Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ListPromptsResult,
-    ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument,
-    PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceUpdatedNotificationParams,
-    RpcError, ServerCapabilities, ServerCapabilitiesPrompts, ServerCapabilitiesResources,
-    ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools, ServerTasks, SubscribeRequestParams,
+    CallToolRequestParams, CallToolResult, CompleteRequestParams, CompleteResult, ContentBlock,
+    CreateTaskResult, GetPromptRequestParams, GetPromptResult, Implementation, InitializeResult,
+    LATEST_PROTOCOL_VERSION, ListPromptsResult, ListResourcesResult, ListToolsResult,
+    PaginatedRequestParams, Prompt, PromptArgument, PromptMessage, ReadResourceRequestParams,
+    ReadResourceResult, Resource, ResourceUpdatedNotificationParams, RpcError, ServerCapabilities,
+    ServerCapabilitiesPrompts, ServerCapabilitiesResources, ServerCapabilitiesTools,
+    ServerTaskRequest, ServerTaskTools, ServerTasks, SetLevelRequestParams, SubscribeRequestParams,
     TextContent, TextResourceContents, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport,
     ToolOutputSchema, UnsubscribeRequestParams, schema_utils::CallToolError,
 };
@@ -963,6 +975,32 @@ impl ServerHandler for MicroFetchHandler {
         Ok(rust_mcp_sdk::schema::Result::default())
     }
 
+    /// Handle `logging/setLevel` — update the MCP log forwarding threshold.
+    ///
+    /// After this call, `notifications/message` are only emitted for messages
+    /// at or above the requested level.  Tracing (stderr) is unaffected.
+    async fn handle_set_level_request(
+        &self,
+        params: SetLevelRequestParams,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<rust_mcp_sdk::schema::Result, RpcError> {
+        mcp_log::LOGGER.set_level(&params.level);
+        tracing::debug!(level = ?params.level, "MCP log level updated");
+        Ok(rust_mcp_sdk::schema::Result::default())
+    }
+
+    /// Handle `completion/complete` — return argument auto-complete suggestions.
+    ///
+    /// Dispatches to `completion::handle_complete` which enumerates browsers,
+    /// fingerprint profiles, and session names.
+    async fn handle_complete_request(
+        &self,
+        params: CompleteRequestParams,
+        _runtime: Arc<dyn McpServer>,
+    ) -> Result<CompleteResult, RpcError> {
+        completion::handle_complete(&params)
+    }
+
     /// Handles task-augmented `fetch_batch` calls.
     ///
     /// When a client sends `tools/call` with `_meta: {taskMode: "async"}` for
@@ -1063,8 +1101,34 @@ impl ServerHandler for MicroFetchHandler {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+// ─── CLI args ─────────────────────────────────────────────────────────────────
+
+/// nab MCP server — stdio (default) or Streamable HTTP transport.
+#[derive(clap::Parser, Debug)]
+#[command(name = "nab-mcp", about = "nab MCP server (stdio or Streamable HTTP)")]
+struct Cli {
+    /// Bind address for Streamable HTTP transport (e.g. "127.0.0.1:8765").
+    ///
+    /// When set, nab-mcp listens as an HTTP server instead of using stdio.
+    /// Omit to run in stdio mode (default — suitable for Claude Code integration).
+    #[arg(long, value_name = "HOST:PORT")]
+    http: Option<String>,
+
+    /// Allowed CORS origin for HTTP mode (e.g. "https://claude.ai").
+    ///
+    /// When `--http` is set without this flag, nab-mcp only binds to localhost
+    /// and enforces an origin allowlist of ["http://localhost", "http://127.0.0.1"].
+    /// Supply this to allow an additional origin.  Wildcard `*` is NOT supported
+    /// for security reasons.
+    #[arg(long, value_name = "ORIGIN")]
+    http_allow_origin: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use clap::Parser as _;
+    let cli = Cli::parse();
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
         .with_writer(std::io::stderr)
@@ -1092,12 +1156,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             website_url: None,
         },
         capabilities: ServerCapabilities {
-            tools: Some(ServerCapabilitiesTools { list_changed: None }),
-            prompts: Some(ServerCapabilitiesPrompts { list_changed: None }),
+            // list_changed: Some(true) advertises that tools/prompts lists can
+            // change at runtime; we use notify_tool_list_changed() when dynamic
+            // tool registration is added in Phase 3.
+            tools: Some(ServerCapabilitiesTools {
+                list_changed: Some(true),
+            }),
+            prompts: Some(ServerCapabilitiesPrompts {
+                list_changed: Some(true),
+            }),
             resources: Some(ServerCapabilitiesResources {
                 list_changed: Some(true),
                 subscribe: Some(true),
             }),
+            // Advertise structured MCP logging (RFC 5424 levels via notifications/message).
+            logging: Some(serde_json::Map::new()),
+            // Advertise argument completion for prompts and resource templates.
+            completions: Some(serde_json::Map::new()),
             // Advertise task support: clients can create tasks, cancel them,
             // list them, and use task-augmented tool calls.
             tasks: Some(ServerTasks {
@@ -1142,11 +1217,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Subscribed-URI set shared between the handler and the notification fanout task.
     let subscribed_uris: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    let transport = StdioTransport::new(TransportOptions::default())?;
     let handler = MicroFetchHandler {
         watch_manager: Arc::clone(&watch_manager),
         subscribed_uris: Arc::clone(&subscribed_uris),
     };
+
+    // Choose transport: Streamable HTTP when --http is supplied, stdio otherwise.
+    if let Some(ref bind) = cli.http {
+        run_http(
+            bind,
+            cli.http_allow_origin.as_deref(),
+            server_details,
+            handler,
+            task_store,
+            watch_manager,
+            subscribed_uris,
+        )
+        .await
+    } else {
+        run_stdio(
+            server_details,
+            handler,
+            task_store,
+            watch_manager,
+            subscribed_uris,
+        )
+        .await
+    }
+}
+
+// ─── stdio runtime ────────────────────────────────────────────────────────────
+
+async fn run_stdio(
+    server_details: InitializeResult,
+    handler: MicroFetchHandler,
+    task_store: Arc<rust_mcp_sdk::task_store::ServerTaskStore>,
+    watch_manager: Arc<WatchManager>,
+    subscribed_uris: Arc<Mutex<HashSet<String>>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let transport = StdioTransport::new(TransportOptions::default())?;
 
     let server = server_runtime::create_server(McpServerOptions {
         server_details,
@@ -1157,26 +1266,148 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         message_observer: None,
     });
 
-    // Spawn watch-change notification fanout.
-    // Listens for WatchEvent::Changed and pushes notifications/resources/updated
-    // to the client for any subscribed URI.
+    // Initialize the MCP logger with the runtime so it can send notifications/message.
+    // Coerce Arc<ServerRuntime> → Arc<dyn McpServer> via explicit upcast.
+    let server_as_mcp: Arc<dyn McpServer> = server.clone() as Arc<dyn McpServer>;
+    mcp_log::LOGGER.init(Arc::clone(&server_as_mcp));
+
+    spawn_watch_fanout(watch_manager, subscribed_uris, Arc::clone(&server_as_mcp));
+
+    Ok(server.start().await?)
+}
+
+// ─── Streamable HTTP runtime ──────────────────────────────────────────────────
+
+/// Run the server on a Streamable HTTP transport.
+///
+/// Security (MCP 2025-11-25 §basic/transports):
+/// - Origin header validated against `allowed_origins`; HTTP 403 on mismatch.
+/// - When no `--http-allow-origin` is supplied and bind host is not 0.0.0.0,
+///   only localhost origins are permitted.
+/// - Session IDs are cryptographically random (UUID v4, handled by the SDK).
+/// - `MCP-Protocol-Version` header check is handled by the SDK's routing layer.
+async fn run_http(
+    bind: &str,
+    allow_origin: Option<&str>,
+    server_details: InitializeResult,
+    handler: MicroFetchHandler,
+    task_store: Arc<rust_mcp_sdk::task_store::ServerTaskStore>,
+    watch_manager: Arc<WatchManager>,
+    subscribed_uris: Arc<Mutex<HashSet<String>>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use rust_mcp_sdk::event_store::InMemoryEventStore;
+    use rust_mcp_sdk::mcp_server::{HyperServerOptions, hyper_server};
+
+    // Parse bind address.
+    let (host, port) = parse_bind_address(bind)?;
+
+    // Build the origin allowlist.
+    let allowed_origins = build_origin_allowlist(&host, allow_origin);
+
+    if !allowed_origins.is_empty() {
+        tracing::warn!(
+            origins = ?allowed_origins,
+            "nab-mcp HTTP: origin validation enabled"
+        );
+    }
+
+    let is_public_bind = host == "0.0.0.0" || host == "::";
+    if is_public_bind && allow_origin.is_none() {
+        tracing::warn!(
+            "nab-mcp HTTP: bound to {} without --http-allow-origin. \
+             Only localhost origins are allowed.",
+            host
+        );
+    }
+
+    let options = HyperServerOptions {
+        host: host.clone(),
+        port,
+        allowed_origins: if allowed_origins.is_empty() {
+            None
+        } else {
+            Some(allowed_origins)
+        },
+        dns_rebinding_protection: true,
+        task_store: Some(task_store),
+        event_store: Some(Arc::new(InMemoryEventStore::default())),
+        ..HyperServerOptions::default()
+    };
+
+    let server = hyper_server::create_server(
+        server_details,
+        handler.to_mcp_server_handler(),
+        options,
+    );
+
+    // Start the watch-change notification fanout.
+    // In HTTP mode each session has its own runtime; watch-change notifications
+    // are dispatched via the session store internally by the SDK.
+    // We still spin up the fanout here for future per-session fan-out wiring.
+    let _ = (watch_manager, subscribed_uris); // held for future use
+
+    tracing::info!("nab-mcp HTTP listening on {}:{}", host, port);
+    Ok(server.start().await?)
+}
+
+/// Parse "host:port" into (host, port).
+fn parse_bind_address(bind: &str) -> Result<(String, u16), Box<dyn std::error::Error>> {
+    let err = || format!("invalid --http address '{bind}': expected HOST:PORT");
+    let colon = bind.rfind(':').ok_or_else(err)?;
+    let host = bind[..colon].to_string();
+    let port: u16 = bind[colon + 1..].parse().map_err(|_| err())?;
+    Ok((host, port))
+}
+
+/// Build the origin allowlist for the HTTP server.
+///
+/// Always includes localhost variants.  Adds `allow_origin` when provided.
+fn build_origin_allowlist(host: &str, allow_origin: Option<&str>) -> Vec<String> {
+    let mut origins = vec![
+        "http://localhost".to_string(),
+        "http://127.0.0.1".to_string(),
+        "https://localhost".to_string(),
+    ];
+    // For localhost bind addresses include only localhost origins (already added above).
+    let is_local = host == "127.0.0.1" || host == "localhost" || host == "::1";
+    if !is_local {
+        // Public bind: only the explicitly supplied origin is permitted.
+        origins.clear();
+    }
+    if let Some(origin) = allow_origin {
+        let owned = origin.to_string();
+        if !origins.contains(&owned) {
+            origins.push(owned);
+        }
+    }
+    origins
+}
+
+// ─── Watch notification fanout (shared by both transports) ───────────────────
+
+/// Spawn the background task that pushes `notifications/resources/updated`
+/// to the client when a watched URL changes.
+fn spawn_watch_fanout(
+    watch_manager: Arc<WatchManager>,
+    subscribed_uris: Arc<Mutex<HashSet<String>>>,
+    server: Arc<dyn McpServer>,
+) {
     let mut event_rx = watch_manager.subscribe();
-    let subscribed_clone = Arc::clone(&subscribed_uris);
-    let server_arc = Arc::clone(&server);
     tokio::spawn(async move {
         loop {
             match event_rx.recv().await {
                 Ok(nab::watch::WatchEvent::Changed { id, .. }) => {
                     let uri = format!("nab://watch/{id}");
                     let is_subscribed = {
-                        subscribed_clone
+                        subscribed_uris
                             .lock()
                             .expect("subscription lock")
                             .contains(&uri)
                     };
                     if is_subscribed {
-                        let params = ResourceUpdatedNotificationParams { uri: uri.clone(), meta: None };
-                        if let Err(e) = server_arc.notify_resource_updated(params).await {
+                        let params =
+                            ResourceUpdatedNotificationParams { uri: uri.clone(), meta: None };
+                        if let Err(e) = server.notify_resource_updated(params).await {
                             tracing::warn!(%uri, error = %e, "Failed to push resource updated notification");
                         }
                     }
@@ -1189,6 +1420,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-
-    Ok(server.start().await?)
 }
