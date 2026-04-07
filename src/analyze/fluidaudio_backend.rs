@@ -84,7 +84,7 @@ struct FluidProcessOutput {
 
 #[derive(Debug, Deserialize)]
 struct FluidDiarSegment {
-    #[serde(rename = "speakerId")]
+    #[serde(rename = "speakerId", deserialize_with = "deserialize_speaker_id")]
     speaker_id: i32,
     #[serde(rename = "startTimeSeconds")]
     start_time_seconds: f64,
@@ -100,6 +100,48 @@ struct FluidDiarSegment {
     /// JSON is re-parsed with a struct that includes this field.
     #[serde(default)]
     embedding: Vec<f32>,
+}
+
+/// Deserialize `speakerId` from either a JSON integer (older fluidaudiocli
+/// versions) or a JSON string (newer versions as of April 2026).
+///
+/// Older FluidAudio emitted `"speakerId": 1`; v0.13+ changed to `"speakerId": "1"`.
+/// Accepting both keeps nab compatible across upgrades.
+fn deserialize_speaker_id<'de, D>(deserializer: D) -> std::result::Result<i32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{Error, Visitor};
+    use std::fmt;
+
+    struct SpeakerIdVisitor;
+
+    impl<'de> Visitor<'de> for SpeakerIdVisitor {
+        type Value = i32;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an integer or a string containing an integer")
+        }
+
+        fn visit_i64<E: Error>(self, v: i64) -> std::result::Result<i32, E> {
+            i32::try_from(v).map_err(|_| E::custom(format!("speakerId {v} out of i32 range")))
+        }
+
+        fn visit_u64<E: Error>(self, v: u64) -> std::result::Result<i32, E> {
+            i32::try_from(v).map_err(|_| E::custom(format!("speakerId {v} out of i32 range")))
+        }
+
+        fn visit_str<E: Error>(self, v: &str) -> std::result::Result<i32, E> {
+            v.parse::<i32>()
+                .map_err(|_| E::custom(format!("speakerId string {v:?} is not an integer")))
+        }
+
+        fn visit_string<E: Error>(self, v: String) -> std::result::Result<i32, E> {
+            self.visit_str(&v)
+        }
+    }
+
+    deserializer.deserialize_any(SpeakerIdVisitor)
 }
 
 // ─── Backend ───────────────────────────────────────────────────────────────────
@@ -766,6 +808,48 @@ mod tests {
         assert_eq!(out.segments[0].speaker_id, 1);
         assert!((out.segments[0].start_time_seconds - 10.0).abs() < 1e-9);
         assert!((out.segments[0].quality_score - 0.85).abs() < 1e-9);
+    }
+
+    /// Regression: FluidAudio v0.13+ emits `speakerId` as a JSON string like
+    /// `"1"` instead of an integer. Both forms must deserialize cleanly.
+    ///
+    /// This bug was found during the live end-to-end smoke test of
+    /// `nab analyze --diarize` and fixed by a custom Visitor that accepts
+    /// i64/u64/str/String.
+    #[test]
+    fn parse_process_output_with_string_speaker_id() {
+        let json = r#"{
+            "audioFile": "/tmp/audio.wav",
+            "durationSeconds": 30,
+            "processingTimeSeconds": 0.214,
+            "segments": [
+                {"speakerId": "1", "startTimeSeconds": 10.0, "endTimeSeconds": 15.91,
+                 "qualityScore": 0.85},
+                {"speakerId": "2", "startTimeSeconds": 16.5, "endTimeSeconds": 19.9,
+                 "qualityScore": 0.91}
+            ]
+        }"#;
+        let out: FluidProcessOutput = serde_json::from_str(json).expect("parse");
+        assert_eq!(out.segments.len(), 2);
+        assert_eq!(out.segments[0].speaker_id, 1);
+        assert_eq!(out.segments[1].speaker_id, 2);
+    }
+
+    /// Both integer and string `speakerId` in a mixed JSON blob should parse.
+    #[test]
+    fn parse_process_output_with_mixed_speaker_id_types() {
+        let json = r#"{
+            "audioFile": "/tmp/audio.wav",
+            "durationSeconds": 30,
+            "processingTimeSeconds": 0.214,
+            "segments": [
+                {"speakerId": 1, "startTimeSeconds": 0.0, "endTimeSeconds": 5.0},
+                {"speakerId": "2", "startTimeSeconds": 5.0, "endTimeSeconds": 10.0}
+            ]
+        }"#;
+        let out: FluidProcessOutput = serde_json::from_str(json).expect("parse");
+        assert_eq!(out.segments[0].speaker_id, 1);
+        assert_eq!(out.segments[1].speaker_id, 2);
     }
 
     // ── compute_duration ──────────────────────────────────────────────────────
