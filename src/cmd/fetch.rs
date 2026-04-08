@@ -51,6 +51,10 @@ pub struct FetchConfig {
     pub no_save: bool,
     /// When `true`, skip OCR-enriching images in the fetched HTML.
     pub no_ocr: bool,
+    /// When `true`, do not auto-transcribe media URLs; fall back to normal HTML fetch.
+    pub no_transcribe: bool,
+    /// Optional BCP-47 language hint for transcription (e.g. `"fi"`, `"en-US"`).
+    pub language: Option<String>,
 }
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
@@ -68,6 +72,34 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     let cookie_header = super::resolve_cookie_header(&cfg.cookies, &domain);
     if !cookie_header.is_empty() && matches!(cfg.format, OutputFormat::Full) {
         write_stdout_line(&format!("🍪 Loading cookies for {domain}"))?;
+    }
+
+    // ── Media URL auto-transcription ──────────────────────────────────────
+    if !cfg.no_transcribe && !cfg.raw_html && nab::content::media::is_media_url(&cfg.url) {
+        tracing::info!(url = %cfg.url, "detected media URL — transcribing");
+        match nab::content::media::fetch_media_as_markdown(
+            &cfg.url,
+            cfg.language.as_deref(),
+            false,
+        )
+        .await
+        {
+            Ok(result) => {
+                if !cfg.no_save {
+                    save_to_hebb(&cfg.url, &result.markdown, "").await;
+                }
+                output_body(
+                    &result.markdown,
+                    cfg.output_file.as_deref(),
+                    cfg.links,
+                    cfg.max_body,
+                )?;
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!("media transcription failed ({e:#}), falling back to normal fetch");
+            }
+        }
     }
 
     let site_router = nab::site::SiteRouter::new();

@@ -164,6 +164,19 @@ enum Commands {
         /// Do not OCR images in the fetched HTML (default: OCR when Apple Vision is available)
         #[arg(long)]
         no_ocr: bool,
+
+        /// Do not auto-transcribe media URLs (YouTube, SoundCloud, direct .mp3/.mp4, etc.)
+        ///
+        /// By default, when nab detects a media URL it downloads the audio via yt-dlp,
+        /// transcribes it via FluidAudio/sherpa-onnx, and returns the transcript as markdown.
+        /// Pass this flag to disable that behaviour and fetch the page as plain HTML instead.
+        #[arg(long)]
+        no_transcribe: bool,
+
+        /// BCP-47 language hint for transcription (e.g. "fi", "en-US", "de").
+        /// Defaults to auto-detection when omitted.
+        #[arg(long)]
+        language: Option<String>,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -659,6 +672,8 @@ async fn main() -> Result<()> {
                 diff,
                 no_save,
                 no_ocr,
+                no_transcribe,
+                language,
                 ..
             } => {
                 let cfg = cmd::FetchConfig {
@@ -685,6 +700,8 @@ async fn main() -> Result<()> {
                     show_diff: diff,
                     no_save,
                     no_ocr,
+                    no_transcribe,
+                    language,
                     html_options: nab::content::html::HtmlConversionOptions {
                         allow_spa_extraction: !no_spa,
                         allow_jina_fallback: !no_fallback,
