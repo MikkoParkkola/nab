@@ -360,6 +360,7 @@ fn benchmark_output_schema() -> ToolOutputSchema {
 /// Returns the `TranscriptionResult` JSON shape:
 /// `{ segments, language, duration_seconds, model, backend, rtfx,
 ///    processing_time_seconds, speakers? }`
+#[allow(clippy::too_many_lines)]
 fn analyze_output_schema() -> ToolOutputSchema {
     // ── segment item ──────────────────────────────────────────────────────────
     let mut seg_props = serde_json::Map::new();
@@ -513,15 +514,11 @@ fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
 fn tool_annotations(name: &str) -> ToolAnnotations {
     let (read_only, destructive, idempotent, open_world) = match name {
         "submit" => (false, true, false, Some(true)),
-        "login" => (false, false, false, Some(true)),
+        "login" | "watch_create" => (false, false, false, Some(true)),
         // analyze reads a local file; result is deterministic for the same input
         "analyze" => (true, false, true, Some(false)),
-        // watch_create registers a new watch (state change, non-destructive)
-        "watch_create" => (false, false, false, Some(true)),
         // watch_remove deletes a watch (state change, destructive)
         "watch_remove" => (false, true, true, None),
-        // watch_list is read-only
-        "watch_list" => (true, false, true, None),
         _ => (true, false, true, None), // fetch, fetch_batch, validate, fingerprint, auth_lookup, benchmark
     };
     ToolAnnotations {
@@ -661,7 +658,9 @@ fn build_prompt_result(
             }
         }
         "match-speakers-with-hebb" => {
-            let input = args.get("input").map_or("<audio-or-video-file>", String::as_str);
+            let input = args
+                .get("input")
+                .map_or("<audio-or-video-file>", String::as_str);
             let lang_hint = args
                 .get("language")
                 .map_or(String::new(), |l| format!(" language=\"{l}\""));
@@ -966,8 +965,7 @@ impl ServerHandler for MicroFetchHandler {
                 .render_resource(&id.to_owned())
                 .await
                 .ok_or_else(|| {
-                    RpcError::method_not_found()
-                        .with_message(format!("Watch '{}' not found", id))
+                    RpcError::method_not_found().with_message(format!("Watch '{id}' not found"))
                 })?
         } else {
             static_resource_content(&params.uri).ok_or_else(|| {
@@ -1028,7 +1026,7 @@ impl ServerHandler for MicroFetchHandler {
         params: SetLevelRequestParams,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<rust_mcp_sdk::schema::Result, RpcError> {
-        mcp_log::LOGGER.set_level(&params.level);
+        mcp_log::LOGGER.set_level(params.level);
         tracing::debug!(level = ?params.level, "MCP log level updated");
         Ok(rust_mcp_sdk::schema::Result::default())
     }
@@ -1042,7 +1040,7 @@ impl ServerHandler for MicroFetchHandler {
         params: CompleteRequestParams,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<CompleteResult, RpcError> {
-        completion::handle_complete(&params)
+        Ok(completion::handle_complete(&params))
     }
 
     /// Handles task-augmented `fetch_batch` calls.
@@ -1159,10 +1157,11 @@ struct Cli {
     #[arg(long, value_name = "HOST:PORT")]
     http: Option<String>,
 
-    /// Allowed CORS origin for HTTP mode (e.g. "https://claude.ai").
+    /// Allowed CORS origin for HTTP mode (e.g. `<https://claude.ai>`).
     ///
     /// When `--http` is set without this flag, nab-mcp only binds to localhost
-    /// and enforces an origin allowlist of ["http://localhost", "http://127.0.0.1"].
+    /// and enforces an origin allowlist of <http://localhost> and
+    /// <http://127.0.0.1>.
     /// Supply this to allow an additional origin.  Wildcard `*` is NOT supported
     /// for security reasons.
     #[arg(long, value_name = "ORIGIN")]
@@ -1248,10 +1247,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Initialize the WatchManager (loads persisted watches from disk).
-    let watch_manager = Arc::new(
-        WatchManager::new_default()
-            .expect("Failed to initialize WatchManager"),
-    );
+    let watch_manager =
+        Arc::new(WatchManager::new_default().expect("Failed to initialize WatchManager"));
 
     // Register the shared singleton so MCP watch tools can access it.
     init_watch_manager(Arc::clone(&watch_manager));
@@ -1316,7 +1313,7 @@ async fn run_stdio(
     let server_as_mcp: Arc<dyn McpServer> = server.clone() as Arc<dyn McpServer>;
     mcp_log::LOGGER.init(Arc::clone(&server_as_mcp));
 
-    spawn_watch_fanout(watch_manager, subscribed_uris, Arc::clone(&server_as_mcp));
+    spawn_watch_fanout(&watch_manager, subscribed_uris, Arc::clone(&server_as_mcp));
 
     Ok(server.start().await?)
 }
@@ -1379,11 +1376,8 @@ async fn run_http(
         ..HyperServerOptions::default()
     };
 
-    let server = hyper_server::create_server(
-        server_details,
-        handler.to_mcp_server_handler(),
-        options,
-    );
+    let server =
+        hyper_server::create_server(server_details, handler.to_mcp_server_handler(), options);
 
     // Start the watch-change notification fanout.
     // In HTTP mode each session has its own runtime; watch-change notifications
@@ -1433,7 +1427,7 @@ fn build_origin_allowlist(host: &str, allow_origin: Option<&str>) -> Vec<String>
 /// Spawn the background task that pushes `notifications/resources/updated`
 /// to the client when a watched URL changes.
 fn spawn_watch_fanout(
-    watch_manager: Arc<WatchManager>,
+    watch_manager: &Arc<WatchManager>,
     subscribed_uris: Arc<Mutex<HashSet<String>>>,
     server: Arc<dyn McpServer>,
 ) {
@@ -1450,8 +1444,10 @@ fn spawn_watch_fanout(
                             .contains(&uri)
                     };
                     if is_subscribed {
-                        let params =
-                            ResourceUpdatedNotificationParams { uri: uri.clone(), meta: None };
+                        let params = ResourceUpdatedNotificationParams {
+                            uri: uri.clone(),
+                            meta: None,
+                        };
                         if let Err(e) = server.notify_resource_updated(params).await {
                             tracing::warn!(%uri, error = %e, "Failed to push resource updated notification");
                         }

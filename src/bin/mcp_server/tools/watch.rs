@@ -1,7 +1,7 @@
 //! Watch management MCP tools: `watch_create`, `watch_list`, `watch_remove`.
 
-use std::sync::OnceLock;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
@@ -16,9 +16,7 @@ static WATCH_MANAGER: OnceLock<Arc<WatchManager>> = OnceLock::new();
 
 /// Initialize the shared `WatchManager`.  Must be called once from `main()`.
 pub fn init_watch_manager(mgr: Arc<WatchManager>) {
-    WATCH_MANAGER
-        .set(mgr)
-        .ok(); // Ignore on re-init (tests may call this multiple times)
+    WATCH_MANAGER.set(mgr).ok(); // Ignore on re-init (tests may call this multiple times)
 }
 
 /// Return the shared `WatchManager`, panicking if not yet initialized.
@@ -59,13 +57,11 @@ pub struct WatchCreateTool {
 
 impl WatchCreateTool {
     pub async fn run(self) -> Result<CallToolResult, CallToolError> {
-        let interval_secs = parse_interval(self.interval.as_deref()).map_err(|e| {
-            CallToolError::from_message(format!("Invalid interval: {e}"))
-        })?;
+        let interval_secs = parse_interval(self.interval.as_deref())
+            .map_err(|e| CallToolError::from_message(format!("Invalid interval: {e}")))?;
 
-        let diff_kind = parse_diff_kind(self.diff_kind.as_deref()).map_err(|e| {
-            CallToolError::from_message(format!("Invalid diff_kind: {e}"))
-        })?;
+        let diff_kind = parse_diff_kind(self.diff_kind.as_deref())
+            .map_err(|e| CallToolError::from_message(format!("Invalid diff_kind: {e}")))?;
 
         let opts = AddOptions {
             selector: self.selector.clone(),
@@ -77,9 +73,10 @@ impl WatchCreateTool {
         };
 
         let mgr = get_watch_manager();
-        let id = mgr.add(&self.url, opts).await.map_err(|e| {
-            CallToolError::from_message(format!("Failed to create watch: {e}"))
-        })?;
+        let id = mgr
+            .add(&self.url, opts)
+            .await
+            .map_err(|e| CallToolError::from_message(format!("Failed to create watch: {e}")))?;
 
         let text = format!(
             "Watch created.\n\n\
@@ -136,16 +133,26 @@ impl WatchListTool {
                 id = w.id,
                 url = w.url,
                 interval = w.interval_secs,
-                muted = if w.interval_secs == 0 { " **(muted)**" } else { "" },
-                last_check = w.last_check_at
-                    .map_or_else(|| "never".into(), |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
-                last_change = w.last_change_at
-                    .map_or_else(|| "never".into(), |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+                muted = if w.interval_secs == 0 {
+                    " **(muted)**"
+                } else {
+                    ""
+                },
+                last_check = w.last_check_at.map_or_else(
+                    || "never".into(),
+                    |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                ),
+                last_change = w.last_change_at.map_or_else(
+                    || "never".into(),
+                    |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                ),
                 snaps = w.snapshots.len(),
             ));
         }
 
-        Ok(CallToolResult::text_content(vec![TextContent::from(lines.join("\n"))]))
+        Ok(CallToolResult::text_content(vec![TextContent::from(
+            lines.join("\n"),
+        )]))
     }
 }
 
@@ -186,7 +193,9 @@ fn parse_interval(s: Option<&str>) -> Result<u64, String> {
     };
 
     if let Some(rest) = s.strip_suffix('s') {
-        return rest.parse::<u64>().map_err(|_| format!("bad seconds value: '{rest}'"));
+        return rest
+            .parse::<u64>()
+            .map_err(|_| format!("bad seconds value: '{rest}'"));
     }
     if let Some(rest) = s.strip_suffix('m') {
         return rest
@@ -201,7 +210,8 @@ fn parse_interval(s: Option<&str>) -> Result<u64, String> {
             .map_err(|_| format!("bad hours value: '{rest}'"));
     }
     // Plain integer — treat as seconds
-    s.parse::<u64>().map_err(|_| format!("unrecognised duration: '{s}'"))
+    s.parse::<u64>()
+        .map_err(|_| format!("unrecognised duration: '{s}'"))
 }
 
 /// Parse a diff kind string into `DiffKind`.
@@ -211,7 +221,9 @@ fn parse_diff_kind(s: Option<&str>) -> Result<nab::watch::DiffKind, String> {
         "text" | "" => Ok(DiffKind::Text),
         "semantic" => Ok(DiffKind::Semantic),
         "dom" => Ok(DiffKind::Dom),
-        other => Err(format!("unknown diff_kind '{other}'; use text | semantic | dom")),
+        other => Err(format!(
+            "unknown diff_kind '{other}'; use text | semantic | dom"
+        )),
     }
 }
 
@@ -253,13 +265,19 @@ mod tests {
     fn parse_diff_kind_defaults_to_text() {
         use nab::watch::DiffKind;
         assert!(matches!(parse_diff_kind(None).unwrap(), DiffKind::Text));
-        assert!(matches!(parse_diff_kind(Some("text")).unwrap(), DiffKind::Text));
+        assert!(matches!(
+            parse_diff_kind(Some("text")).unwrap(),
+            DiffKind::Text
+        ));
     }
 
     #[test]
     fn parse_diff_kind_semantic() {
         use nab::watch::DiffKind;
-        assert!(matches!(parse_diff_kind(Some("semantic")).unwrap(), DiffKind::Semantic));
+        assert!(matches!(
+            parse_diff_kind(Some("semantic")).unwrap(),
+            DiffKind::Semantic
+        ));
     }
 
     #[test]

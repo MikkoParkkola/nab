@@ -3,6 +3,7 @@
 //! Each watch is stored as `<storage_dir>/<id>.json`.
 //! Snapshot body bytes are stored content-addressed at `<snapshot_dir>/<sha256>`.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -78,15 +79,18 @@ pub fn load_snapshot_body(snapshot_dir: &Path, sha256: &str) -> Option<Vec<u8>> 
 /// Garbage-collect snapshot files that are no longer referenced by any watch.
 ///
 /// Called after a watch is removed or its snapshot list is pruned.
-pub fn gc_snapshots(snapshot_dir: &Path, referenced: &std::collections::HashSet<String>) {
+pub fn gc_snapshots<S: std::hash::BuildHasher>(
+    snapshot_dir: &Path,
+    referenced: &HashSet<String, S>,
+) {
     let Ok(entries) = fs::read_dir(snapshot_dir) else {
         return;
     };
     for entry in entries.flatten() {
-        if let Some(name) = entry.file_name().to_str() {
-            if !referenced.contains(name) {
-                let _ = fs::remove_file(entry.path()); // best-effort
-            }
+        if let Some(name) = entry.file_name().to_str()
+            && !referenced.contains(name)
+        {
+            let _ = fs::remove_file(entry.path()); // best-effort
         }
     }
 }
@@ -107,8 +111,7 @@ pub fn prune_snapshots(snapshots: &mut Vec<WatchSnapshot>, max: usize) -> Vec<St
 
 fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, data)
-        .with_context(|| format!("write tmp file {}", tmp.display()))?;
+    fs::write(&tmp, data).with_context(|| format!("write tmp file {}", tmp.display()))?;
     fs::rename(&tmp, path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))
 }
@@ -116,7 +119,7 @@ fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::watch::types::{WatchOptions, AddOptions};
+    use crate::watch::types::WatchOptions;
     use chrono::Utc;
     use tempfile::TempDir;
 
@@ -171,7 +174,11 @@ mod tests {
         // GIVEN
         let dir = tmp();
         for i in 0..3usize {
-            save_watch(dir.path(), &make_watch(&format!("watch{i:05}"), &format!("https://{i}.com"))).unwrap();
+            save_watch(
+                dir.path(),
+                &make_watch(&format!("watch{i:05}"), &format!("https://{i}.com")),
+            )
+            .unwrap();
         }
         // WHEN
         let watches = load_all_watches(dir.path());

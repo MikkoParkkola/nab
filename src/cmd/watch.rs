@@ -81,12 +81,13 @@ pub async fn cmd_watch_list(cfg: &WatchListConfig) -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<10} {:<50} {:>10}  {}", "ID", "URL", "INTERVAL", "LAST CHECK");
+    println!("{:<10} {:<50} {:>10}  LAST CHECK", "ID", "URL", "INTERVAL");
     println!("{}", "-".repeat(80));
     for w in &watches {
-        let last_check = w
-            .last_check_at
-            .map_or_else(|| "never".into(), |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        let last_check = w.last_check_at.map_or_else(
+            || "never".into(),
+            |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        );
         let interval = if w.interval_secs == 0 {
             "muted".into()
         } else {
@@ -126,7 +127,7 @@ pub async fn cmd_watch_logs(cfg: &WatchLogsConfig) -> Result<()> {
         println!("No snapshots yet.");
         return Ok(());
     }
-    println!("{:<20} {:>10}  {}", "CAPTURED AT", "SIZE", "SHA256");
+    println!("{:<20} {:>10}  SHA256", "CAPTURED AT", "SIZE");
     println!("{}", "-".repeat(60));
     for snap in &watch.snapshots {
         println!(
@@ -147,15 +148,24 @@ fn parse_interval(s: Option<&str>) -> Result<u64, String> {
         Some(s) => s.trim(),
     };
     if let Some(rest) = s.strip_suffix('s') {
-        return rest.parse::<u64>().map_err(|_| format!("bad seconds: '{rest}'"));
+        return rest
+            .parse::<u64>()
+            .map_err(|_| format!("bad seconds: '{rest}'"));
     }
     if let Some(rest) = s.strip_suffix('m') {
-        return rest.parse::<u64>().map(|v| v * 60).map_err(|_| format!("bad minutes: '{rest}'"));
+        return rest
+            .parse::<u64>()
+            .map(|v| v * 60)
+            .map_err(|_| format!("bad minutes: '{rest}'"));
     }
     if let Some(rest) = s.strip_suffix('h') {
-        return rest.parse::<u64>().map(|v| v * 3600).map_err(|_| format!("bad hours: '{rest}'"));
+        return rest
+            .parse::<u64>()
+            .map(|v| v * 3600)
+            .map_err(|_| format!("bad hours: '{rest}'"));
     }
-    s.parse::<u64>().map_err(|_| format!("unrecognised duration: '{s}'"))
+    s.parse::<u64>()
+        .map_err(|_| format!("unrecognised duration: '{s}'"))
 }
 
 fn parse_diff_kind(s: Option<&str>) -> Result<nab::watch::DiffKind, String> {

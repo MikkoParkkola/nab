@@ -70,7 +70,7 @@ pub async fn poll_batch(
 /// Poll a single watch URL.
 ///
 /// Handles:
-/// - Conditional GET (ETag / If-Modified-Since)
+/// - Conditional `GET` (`ETag` / `If-Modified-Since`)
 /// - 304 Not Modified → check counted, no change event
 /// - 429 / 503 → adaptive backoff (doubles interval, cap at 24h)
 /// - 200 with identical hash → no event
@@ -93,7 +93,7 @@ pub async fn poll_one(
             body,
             etag,
             last_modified,
-        }) => handle_body(watch, body, etag, last_modified, storage_dir, snapshot_dir),
+        }) => handle_body(watch, &body, etag, last_modified, storage_dir, snapshot_dir),
     }
 }
 
@@ -102,7 +102,9 @@ pub async fn poll_one(
 #[derive(Debug)]
 enum FetchOutcome {
     NotModified,
-    Backoff { status: u16 },
+    Backoff {
+        status: u16,
+    },
     Body {
         body: bytes::Bytes,
         etag: Option<String>,
@@ -163,7 +165,11 @@ fn header_str(
 
 // ─── Outcome handlers ─────────────────────────────────────────────────────────
 
-fn handle_fetch_error(mut watch: Watch, error: String, storage_dir: &std::path::Path) -> PollResult {
+fn handle_fetch_error(
+    mut watch: Watch,
+    error: String,
+    storage_dir: &std::path::Path,
+) -> PollResult {
     watch.consecutive_errors += 1;
     watch.last_check_at = Some(Utc::now());
 
@@ -237,7 +243,7 @@ fn handle_backoff(mut watch: Watch, status: u16, storage_dir: &std::path::Path) 
 
 fn handle_body(
     mut watch: Watch,
-    body: bytes::Bytes,
+    body: &bytes::Bytes,
     etag: Option<String>,
     last_modified: Option<String>,
     storage_dir: &std::path::Path,
@@ -250,7 +256,7 @@ fn handle_body(
     watch.last_last_modified = last_modified;
 
     let content = extract_content(
-        &String::from_utf8_lossy(&body),
+        &String::from_utf8_lossy(body),
         watch.selector.as_deref(),
         &watch.options.diff_kind,
     );
@@ -263,9 +269,7 @@ fn handle_body(
         let old_content = watch
             .snapshots
             .first()
-            .and_then(|s| {
-                super::storage::load_snapshot_body(snapshot_dir, &s.sha256)
-            })
+            .and_then(|s| super::storage::load_snapshot_body(snapshot_dir, &s.sha256))
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .unwrap_or_default();
 
@@ -395,7 +399,10 @@ mod tests {
         // WHEN: 304
         let result = handle_not_modified(watch, storage.path());
         // THEN: no change event
-        assert!(matches!(result.event, WatchEvent::Checked { changed: false, .. }));
+        assert!(matches!(
+            result.event,
+            WatchEvent::Checked { changed: false, .. }
+        ));
         assert!(result.updated_watch.last_check_at.is_some());
     }
 }

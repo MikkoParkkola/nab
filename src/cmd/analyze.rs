@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use crate::AnalyzeOutputFormat;
 
 /// Configuration for the `nab analyze` command.
+#[allow(clippy::struct_excessive_bools)]
 pub struct AnalyzeConfig {
     pub video: String,
     pub audio_only: bool,
@@ -61,10 +62,7 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
         input_path.to_path_buf()
     } else {
         eprintln!("  Extracting audio track via ffmpeg...");
-        let dest = std::env::temp_dir().join(format!(
-            "nab_analyze_{}.wav",
-            std::process::id()
-        ));
+        let dest = std::env::temp_dir().join(format!("nab_analyze_{}.wav", std::process::id()));
         AudioExtractor::new()
             .extract(input_path, &dest)
             .await
@@ -75,7 +73,11 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
 
     // ── Select backend ────────────────────────────────────────────────────────
     let backend = default_backend();
-    eprintln!("  Backend: {} (available={})", backend.name(), backend.is_available());
+    eprintln!(
+        "  Backend: {} (available={})",
+        backend.name(),
+        backend.is_available()
+    );
 
     if !backend.is_available() {
         anyhow::bail!(
@@ -133,7 +135,8 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
     };
 
     if let Some(ref path) = cfg.output {
-        std::fs::write(path, &formatted).with_context(|| format!("writing to {}", path.display()))?;
+        std::fs::write(path, &formatted)
+            .with_context(|| format!("writing to {}", path.display()))?;
         eprintln!("Saved to: {}", path.display());
     } else {
         println!("{formatted}");
@@ -154,12 +157,13 @@ fn format_markdown(result: &nab::analyze::TranscriptionResult) -> String {
         result.language, result.model, result.rtfx
     );
     for seg in &result.segments {
-        let speaker = seg
-            .speaker
-            .as_deref()
-            .unwrap_or("");
+        let speaker = seg.speaker.as_deref().unwrap_or("");
         if speaker.is_empty() {
-            let _ = writeln!(out, "**[{:.1}s–{:.1}s]** {}\n", seg.start, seg.end, seg.text);
+            let _ = writeln!(
+                out,
+                "**[{:.1}s–{:.1}s]** {}\n",
+                seg.start, seg.end, seg.text
+            );
         } else {
             let _ = writeln!(
                 out,
@@ -190,7 +194,8 @@ fn format_srt(result: &nab::analyze::TranscriptionResult) -> String {
 
 /// Format a time value in seconds as an SRT timestamp (`HH:MM:SS,mmm`).
 fn srt_timestamp(secs: f64) -> String {
-    let total_ms = (secs * 1000.0).round() as u64;
+    let total_ms = std::time::Duration::try_from_secs_f64(secs.max(0.0))
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
     let ms = total_ms % 1000;
     let s = (total_ms / 1000) % 60;
     let m = (total_ms / 60_000) % 60;

@@ -20,7 +20,6 @@ pub mod validate;
 pub mod watch;
 
 pub use analyze::{AnalyzeConfig, cmd_analyze};
-pub use models::{cmd_models_fetch, cmd_models_list, cmd_models_update, cmd_models_verify};
 pub use annotate::{AnnotateConfig, cmd_annotate};
 pub use auth::cmd_auth;
 pub use bench::cmd_bench;
@@ -30,6 +29,7 @@ pub use export_rules::{cmd_export_rules, cmd_list_rules};
 pub use fetch::{FetchConfig, cmd_fetch};
 pub use fingerprint::cmd_fingerprint;
 pub use login::{LoginConfig, cmd_login};
+pub use models::{cmd_models_fetch, cmd_models_list, cmd_models_update, cmd_models_verify};
 pub use otp::cmd_otp;
 pub use provider::{cmd_provider_install, cmd_provider_list, cmd_provider_remove};
 pub use spa::{SpaConfig, cmd_spa};
@@ -37,8 +37,8 @@ pub use stream::{StreamCmdConfig, cmd_stream};
 pub use submit::{SubmitConfig, cmd_submit};
 pub use validate::cmd_validate;
 pub use watch::{
-    WatchAddConfig, WatchListConfig, WatchListFormat, WatchLogsConfig,
-    cmd_watch_add, cmd_watch_list, cmd_watch_logs, cmd_watch_remove,
+    WatchAddConfig, WatchListConfig, WatchListFormat, WatchLogsConfig, cmd_watch_add,
+    cmd_watch_list, cmd_watch_logs, cmd_watch_remove,
 };
 
 /// Extract the host/domain from a URL, returning an empty string on failure.

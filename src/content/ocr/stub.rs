@@ -1,7 +1,7 @@
 //! Stub OCR engine for non-macOS platforms.
 //!
 //! Returns a human-readable "not available" message. Phase 3 will add
-//! PaddleOCR and Tesseract backends that work cross-platform.
+//! `PaddleOCR` and `Tesseract` backends that work cross-platform.
 
 use async_trait::async_trait;
 
@@ -10,7 +10,7 @@ use super::{OcrEngine, OcrError, OcrResult};
 // ─── Languages ────────────────────────────────────────────────────────────────
 
 /// Stub supports no languages — callers should check `is_available()` first.
-const STUB_LANGUAGES: &[&str] = &[];
+const STUB_LANGUAGES: [&str; 0] = [];
 
 // ─── Stub engine ─────────────────────────────────────────────────────────────
 
@@ -22,12 +22,12 @@ pub struct StubEngine;
 
 #[async_trait]
 impl OcrEngine for StubEngine {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stub"
     }
 
-    fn supported_languages(&self) -> &[&str] {
-        STUB_LANGUAGES
+    fn supported_languages(&self) -> &'static [&'static str] {
+        &STUB_LANGUAGES
     }
 
     fn is_available(&self) -> bool {

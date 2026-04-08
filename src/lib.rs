@@ -91,11 +91,11 @@ pub use ssrf::{
     is_denied_ipv6, validate_ip, validate_redirect_target, validate_url,
 };
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};
+pub use watch::{AddOptions, Watch, WatchEvent, WatchId, WatchManager, WatchOptions};
 pub use webmcp::{
     DiscoveryResult, McpManifest, McpTool, extract_link_href, parse_manifest_bytes,
     resolve_manifest_url, well_known_url,
 };
-pub use watch::{AddOptions, Watch, WatchEvent, WatchId, WatchManager, WatchOptions};
 pub use websocket::{JsonRpcWebSocket, WebSocket, WebSocketMessage};
 
 /// Version of nab

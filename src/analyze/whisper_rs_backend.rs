@@ -153,7 +153,12 @@ impl WhisperRsBackend {
                 None
             };
 
-            raw.push(RawSegment { text, start, end, words });
+            raw.push(RawSegment {
+                text,
+                start,
+                end,
+                words,
+            });
         }
 
         Ok(raw)
@@ -215,10 +220,11 @@ impl AsrBackend for WhisperRsBackend {
         let word_timestamps = opts.word_timestamps;
 
         // WAV decoding is CPU-bound — run on a blocking thread.
-        let (samples, audio_duration) =
-            tokio::task::spawn_blocking(move || load_audio_samples_f32(&audio_path_owned, max_duration))
-                .await
-                .map_err(|e| AnalysisError::Whisper(format!("audio decode task panicked: {e}")))??;
+        let (samples, audio_duration) = tokio::task::spawn_blocking(move || {
+            load_audio_samples_f32(&audio_path_owned, max_duration)
+        })
+        .await
+        .map_err(|e| AnalysisError::Whisper(format!("audio decode task panicked: {e}")))??;
 
         tracing::debug!(
             backend = "whisper-rs",
@@ -296,10 +302,7 @@ fn build_context(model_path: &Path) -> Result<WhisperContext> {
 ///
 /// Resamples to 16 kHz when the source sample rate differs. Truncates to
 /// `max_duration_seconds` when set.
-fn load_audio_samples_f32(
-    audio_path: &Path,
-    max_duration: Option<u32>,
-) -> Result<(Vec<f32>, f64)> {
+fn load_audio_samples_f32(audio_path: &Path, max_duration: Option<u32>) -> Result<(Vec<f32>, f64)> {
     let mut reader = hound::WavReader::open(audio_path).map_err(|e| {
         AnalysisError::Ffmpeg(format!(
             "failed to open WAV '{}': {e}",
@@ -312,8 +315,7 @@ fn load_audio_samples_f32(
     let channels = spec.channels as usize;
     let target_sample_rate: u32 = 16_000;
 
-    let max_src_samples =
-        max_duration.map(|d| d as usize * src_sample_rate as usize * channels);
+    let max_src_samples = max_duration.map(|d| d as usize * src_sample_rate as usize * channels);
 
     let raw: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => reader
@@ -530,8 +532,18 @@ mod tests {
     fn avg_confidence_averages_correctly() {
         // GIVEN words with known confidences
         let words = vec![
-            WordTiming { word: "a".into(), start: 0.0, end: 0.1, confidence: 0.8 },
-            WordTiming { word: "b".into(), start: 0.1, end: 0.2, confidence: 0.6 },
+            WordTiming {
+                word: "a".into(),
+                start: 0.0,
+                end: 0.1,
+                confidence: 0.8,
+            },
+            WordTiming {
+                word: "b".into(),
+                start: 0.1,
+                end: 0.2,
+                confidence: 0.6,
+            },
         ];
         // WHEN averaged
         let avg = avg_confidence(&words).unwrap();
@@ -544,9 +556,24 @@ mod tests {
     fn raw_segments_to_transcript_skips_empty() {
         // GIVEN segments including one empty text
         let raw = vec![
-            RawSegment { text: "Hello".into(), start: 0.0, end: 1.0, words: None },
-            RawSegment { text: "".into(), start: 1.0, end: 1.5, words: None },
-            RawSegment { text: "World".into(), start: 1.5, end: 2.0, words: None },
+            RawSegment {
+                text: "Hello".into(),
+                start: 0.0,
+                end: 1.0,
+                words: None,
+            },
+            RawSegment {
+                text: "".into(),
+                start: 1.0,
+                end: 1.5,
+                words: None,
+            },
+            RawSegment {
+                text: "World".into(),
+                start: 1.5,
+                end: 2.0,
+                words: None,
+            },
         ];
         // WHEN converted
         let segs = raw_segments_to_transcript(raw, "en");

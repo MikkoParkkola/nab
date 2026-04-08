@@ -1,8 +1,8 @@
 //! Media URL detection and transcription for `nab fetch`.
 //!
 //! When `nab fetch` encounters a URL that resolves to audio or video content,
-//! this module extracts the audio via yt-dlp and transcribes it via the
-//! analyze pipeline (FluidAudio on macOS arm64, sherpa-onnx or whisper-rs
+//! this module extracts the audio via `yt-dlp` and transcribes it via the
+//! analyze pipeline (`FluidAudio` on macOS arm64, `sherpa-onnx` or `whisper-rs`
 //! fallback elsewhere).
 //!
 //! The output is LLM-friendly markdown with a metadata header and
@@ -17,13 +17,15 @@
 //! assert!(!is_media_url("https://example.com/article"));
 //! ```
 
+use std::fmt::Write as _;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::analyze::{AsrBackend, TranscribeOptions, TranscriptionResult, default_backend};
+use crate::analyze::{TranscribeOptions, TranscriptionResult, default_backend};
 
 // ─── URL detection ─────────────────────────────────────────────────────────────
 
@@ -98,28 +100,28 @@ pub struct MediaFetchResult {
     pub markdown: String,
     /// Metadata extracted from the media source before transcription.
     pub metadata: MediaMetadata,
-    /// Raw transcription result including all segments, RTFx, model info, etc.
+    /// Raw transcription result including all segments, `RTFx`, model info, etc.
     pub transcription: TranscriptionResult,
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────────
 
-/// Extract audio from `url` via yt-dlp, transcribe it, and return markdown.
+/// Extract audio from `url` via `yt-dlp`, transcribe it, and return markdown.
 ///
 /// # Arguments
 ///
-/// * `url` — Any URL accepted by yt-dlp (YouTube, SoundCloud, Vimeo, direct
+/// * `url` — Any URL accepted by `yt-dlp` (`YouTube`, `SoundCloud`, `Vimeo`, direct
 ///   `.mp3`/`.mp4`/etc. links, podcast RSS episodes, …).
 /// * `language` — Optional BCP-47 language hint (e.g. `"fi"`, `"en-US"`).
 ///   Pass `None` to let the model auto-detect the language.
 /// * `diarize` — When `true`, also run speaker diarization and annotate each
-///   segment with a speaker label (requires FluidAudio diarizer).
+///   segment with a speaker label (requires `FluidAudio` diarizer).
 ///
 /// # Errors
 ///
 /// Returns an error when:
 /// - `yt-dlp` is not installed or cannot extract audio from the URL.
-/// - `ffmpeg` is not installed or conversion to 16 kHz mono WAV fails.
+/// - `ffmpeg` is not installed or conversion to 16 kHz mono `WAV` fails.
 /// - No ASR backend is available (run `nab models fetch fluidaudio` first).
 /// - The ASR backend's `transcribe` call fails.
 pub async fn fetch_media_as_markdown(
@@ -209,9 +211,21 @@ async fn extract_metadata(url: &str) -> MediaMetadata {
     };
 
     let mut lines = stdout.lines();
-    let title = lines.next().map(str::trim).filter(|s| !s.is_empty() && *s != "NA").map(String::from);
-    let uploader = lines.next().map(str::trim).filter(|s| !s.is_empty() && *s != "NA").map(String::from);
-    let duration_string = lines.next().map(str::trim).filter(|s| !s.is_empty() && *s != "NA").map(String::from);
+    let title = lines
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "NA")
+        .map(String::from);
+    let uploader = lines
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "NA")
+        .map(String::from);
+    let duration_string = lines
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "NA")
+        .map(String::from);
 
     MediaMetadata {
         title,
@@ -224,8 +238,8 @@ async fn extract_metadata(url: &str) -> MediaMetadata {
 /// Download audio from `url` to `wav_path` (16 kHz mono WAV).
 ///
 /// Tries `yt-dlp` first with browser cookies for sites that require auth
-/// (YouTube PO token, Spotify, etc.). Falls back to `uvx --from "yt-dlp[default]"
-/// yt-dlp` when the system yt-dlp binary is absent.
+/// (`YouTube` `PO` token, `Spotify`, etc.). Falls back to
+/// `uvx --from "yt-dlp[default]" yt-dlp` when the system `yt-dlp` binary is absent.
 async fn download_audio(url: &str, wav_path: &Path) -> Result<()> {
     let temp_base = wav_path
         .parent()
@@ -330,7 +344,7 @@ async fn convert_to_wav(input: &Path, output: &Path) -> Result<()> {
 ///
 /// Produces:
 /// - A `# Title` heading (URL as fallback).
-/// - A metadata block: source URL, uploader, duration, model, RTFx, language.
+/// - A metadata block: source URL, uploader, duration, model, `RTFx`, language.
 /// - A `## Transcript` section with `**[M:SS]** segment text` lines.
 /// - Speaker labels (`**[M:SS] SPEAKER_00**`) when diarization was run.
 #[must_use]
@@ -341,22 +355,21 @@ pub fn format_transcript_markdown(
     let mut out = String::with_capacity(result.segments.len() * 120 + 512);
 
     // ── Header ──────────────────────────────────────────────────────────────
-    let heading = metadata
-        .title
-        .as_deref()
-        .unwrap_or(metadata.url.as_str());
-    out.push_str(&format!("# {heading}\n\n"));
-
-    out.push_str(&format!("**Source**: {}\n", metadata.url));
+    let heading = metadata.title.as_deref().unwrap_or(metadata.url.as_str());
+    let _ = writeln!(out, "# {heading}\n");
+    let _ = writeln!(out, "**Source**: {}", metadata.url);
     if let Some(ref uploader) = metadata.uploader {
-        out.push_str(&format!("**Uploader**: {uploader}\n"));
+        let _ = writeln!(out, "**Uploader**: {uploader}");
     }
     if let Some(ref dur) = metadata.duration_string {
-        out.push_str(&format!("**Duration**: {dur}\n"));
+        let _ = writeln!(out, "**Duration**: {dur}");
     }
-    out.push_str(&format!("**Model**: {} | **RTFx**: {:.0}×\n", result.model, result.rtfx));
-    out.push_str(&format!("**Language**: {}\n", result.language));
-
+    let _ = writeln!(
+        out,
+        "**Model**: {} | **RTFx**: {:.0}×",
+        result.model, result.rtfx
+    );
+    let _ = writeln!(out, "**Language**: {}", result.language);
     out.push_str("\n---\n\n## Transcript\n\n");
 
     // ── Segments ────────────────────────────────────────────────────────────
@@ -367,8 +380,12 @@ pub fn format_transcript_markdown(
             continue;
         }
         match seg.speaker.as_deref() {
-            Some(speaker) => out.push_str(&format!("**[{timestamp}] {speaker}** {text}\n\n")),
-            None => out.push_str(&format!("**[{timestamp}]** {text}\n\n")),
+            Some(speaker) => {
+                let _ = writeln!(out, "**[{timestamp}] {speaker}** {text}\n");
+            }
+            None => {
+                let _ = writeln!(out, "**[{timestamp}]** {text}\n");
+            }
         }
     }
 
@@ -379,7 +396,7 @@ pub fn format_transcript_markdown(
 
 /// Convert `seconds` (f64) to `M:SS` or `H:MM:SS` timestamp string.
 fn format_seconds(seconds: f64) -> String {
-    let total = seconds as u64;
+    let total = Duration::try_from_secs_f64(seconds.max(0.0)).map_or(0, |d| d.as_secs());
     let h = total / 3600;
     let m = (total % 3600) / 60;
     let s = total % 60;
@@ -499,7 +516,10 @@ mod tests {
 
         // THEN the title appears as a heading
         assert!(md.contains("# My Podcast Episode"), "got:\n{md}");
-        assert!(md.contains("**Source**: https://example.com/ep1.mp3"), "got:\n{md}");
+        assert!(
+            md.contains("**Source**: https://example.com/ep1.mp3"),
+            "got:\n{md}"
+        );
         assert!(md.contains("**Uploader**: Test Channel"), "got:\n{md}");
         assert!(md.contains("**Duration**: 2:00"), "got:\n{md}");
     }

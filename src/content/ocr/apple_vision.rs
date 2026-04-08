@@ -8,20 +8,19 @@
 //! For Phase 1 the engine is implemented via direct objc2 bindings. The
 //! Vision framework is always available on macOS 13+.
 //!
-//! # Supported languages (VNRecognizeTextRequestRevision3)
+//! # Supported languages (`VNRecognizeTextRequestRevision3`)
 //!
-//! en, fr, it, de, es, pt, zh-Hans, zh-Hant, ja, ko, ru, uk, th, vi, ar.
+//! `en`, `fr`, `it`, `de`, `es`, `pt`, `zh-Hans`, `zh-Hant`, `ja`, `ko`,
+//! `ru`, `uk`, `th`, `vi`, `ar`.
 //!
-//! Finnish (fi) and Swedish (sv) are NOT supported by Apple Vision OCR.
-//! Use Tesseract or PaddleOCR (Phase 3) for these languages.
+//! Finnish (`fi`) and Swedish (`sv`) are not supported by Apple Vision OCR.
+//! Use `Tesseract` or `PaddleOCR` (Phase 3) for these languages.
 
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSString, NSUInteger};
-use objc2_vision::{
-    VNImageRequestHandler, VNRecognizeTextRequest, VNRequestTextRecognitionLevel,
-};
+use objc2_vision::{VNImageRequestHandler, VNRecognizeTextRequest, VNRequestTextRecognitionLevel};
 
 use async_trait::async_trait;
 
@@ -29,14 +28,13 @@ use super::{OcrEngine, OcrError, OcrRegion, OcrResult};
 
 // ─── Language constants ───────────────────────────────────────────────────────
 
-/// Languages supported by VNRecognizeTextRequestRevision3.
+/// Languages supported by `VNRecognizeTextRequestRevision3`.
 ///
 /// Excludes fi and sv — Vision's OCR does not support these.
 /// (Parakeet ASR supports them but OCR is a separate pipeline.)
 const SUPPORTED_LANGUAGES: &[&str] = &[
-    "en", "fr", "it", "de", "es", "pt",
-    "zh-Hans", "zh-Hant", "ja", "ko",
-    "ru", "uk", "th", "vi", "ar",
+    "en", "fr", "it", "de", "es", "pt", "zh-Hans", "zh-Hant", "ja", "ko", "ru", "uk", "th", "vi",
+    "ar",
 ];
 
 // ─── Engine struct ────────────────────────────────────────────────────────────
@@ -46,7 +44,7 @@ const SUPPORTED_LANGUAGES: &[&str] = &[
 /// All state is stateless — `VNImageRequestHandler` is created per-call so
 /// the engine can be freely shared across async tasks via `Arc<dyn OcrEngine>`.
 ///
-/// Requires macOS 13+ (VNRecognizeTextRequestRevision3).
+/// Requires macOS 13+ (`VNRecognizeTextRequestRevision3`).
 pub struct AppleVisionEngine;
 
 impl AppleVisionEngine {
@@ -69,11 +67,11 @@ impl Default for AppleVisionEngine {
 
 #[async_trait]
 impl OcrEngine for AppleVisionEngine {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "apple_vision"
     }
 
-    fn supported_languages(&self) -> &[&str] {
+    fn supported_languages(&self) -> &'static [&'static str] {
         SUPPORTED_LANGUAGES
     }
 
@@ -106,23 +104,20 @@ impl OcrEngine for AppleVisionEngine {
 ///   type in Objective-C and the cast stays within the same memory layout.
 fn run_vision_ocr(image_bytes: &[u8]) -> Result<OcrResult, OcrError> {
     // SAFETY: NSData::from_vec does not alias or mutate after construction.
-    let ns_data: Retained<NSData> = unsafe { NSData::from_vec(image_bytes.to_vec()) };
+    let ns_data: Retained<NSData> = NSData::from_vec(image_bytes.to_vec());
 
     // SAFETY: NSDictionary::new returns an empty, valid dictionary.
     let options: Retained<NSDictionary<objc2_vision::VNImageOption, AnyObject>> =
-        unsafe { NSDictionary::new() };
+        NSDictionary::new();
 
     // Build the request before the handler so any config errors surface early.
     let request = build_text_request();
 
-    // SAFETY: initWithData:options: is a thread-safe VNImageRequestHandler initializer.
-    let handler = unsafe {
-        VNImageRequestHandler::initWithData_options(
-            VNImageRequestHandler::alloc(),
-            &ns_data,
-            &options,
-        )
-    };
+    let handler = VNImageRequestHandler::initWithData_options(
+        VNImageRequestHandler::alloc(),
+        &ns_data,
+        &options,
+    );
 
     // Build a single-element NSArray<VNRecognizeTextRequest> for performRequests:error:.
     // SAFETY: The array is created from a well-formed Retained<VNRecognizeTextRequest>.
@@ -132,18 +127,17 @@ fn run_vision_ocr(image_bytes: &[u8]) -> Result<OcrResult, OcrError> {
     // SAFETY: VNRequest is the superclass of VNRecognizeTextRequest; the
     // reinterpret is safe because NSArray is covariant and the underlying
     // Objective-C type system allows this upcast.
-    let vn_req_array = unsafe {
-        &*(std::ptr::from_ref::<NSArray<VNRecognizeTextRequest>>(req_array.as_ref())
-            as *const NSArray<objc2_vision::VNRequest>)
+    let vn_req_array: &NSArray<objc2_vision::VNRequest> = unsafe {
+        &*std::ptr::from_ref::<NSArray<VNRecognizeTextRequest>>(req_array.as_ref())
+            .cast::<NSArray<objc2_vision::VNRequest>>()
     };
 
-    // SAFETY: performRequests:error: is safe when requests are well-formed.
-    if let Err(err) = unsafe { handler.performRequests_error(vn_req_array) } {
-        let msg = unsafe { err.localizedDescription().to_string() };
+    if let Err(err) = handler.performRequests_error(vn_req_array) {
+        let msg = err.localizedDescription().to_string();
         return Err(OcrError::Framework(msg));
     }
 
-    extract_results(&request)
+    Ok(extract_results(&request))
 }
 
 /// Build a `VNRecognizeTextRequest` configured for high-accuracy recognition.
@@ -156,26 +150,25 @@ fn build_text_request() -> Retained<VNRecognizeTextRequest> {
 }
 
 /// Extract an [`OcrResult`] from a completed `VNRecognizeTextRequest`.
-fn extract_results(request: &VNRecognizeTextRequest) -> Result<OcrResult, OcrError> {
-    // SAFETY: results() is safe to call after performRequests:error: completes.
-    let observations = unsafe { request.results() };
+fn extract_results(request: &VNRecognizeTextRequest) -> OcrResult {
+    let observations = request.results();
 
     let observations = match observations {
         Some(obs) if !obs.is_empty() => obs,
         _ => {
-            return Ok(OcrResult {
+            return OcrResult {
                 text: String::new(),
                 language: None,
                 confidence: 0.0,
                 regions: vec![],
-            });
+            };
         }
     };
 
     let mut regions = Vec::with_capacity(observations.len());
     let mut total_confidence = 0.0_f32;
 
-    for obs in observations.iter() {
+    for obs in &observations {
         // topCandidates(1) returns the best recognition for this observation.
         let candidates = obs.topCandidates(1 as NSUInteger);
         let Some(candidate) = candidates.iter().next() else {
@@ -219,12 +212,12 @@ fn extract_results(request: &VNRecognizeTextRequest) -> Result<OcrResult, OcrErr
         .collect::<Vec<_>>()
         .join("\n");
 
-    Ok(OcrResult {
+    OcrResult {
         text: full_text,
         language: None, // Vision does not expose per-call language detection result
         confidence: avg_confidence,
         regions,
-    })
+    }
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────

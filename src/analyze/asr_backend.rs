@@ -154,13 +154,13 @@ pub struct TranscribeOptions {
 #[async_trait]
 pub trait AsrBackend: Send + Sync {
     /// Short identifier string (e.g. `"fluidaudio"`, `"sherpa-onnx"`).
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// BCP-47 language codes this backend natively supports.
     ///
     /// Return `&["*"]` to signal that the backend accepts any language (e.g.
     /// Whisper large-v3).
-    fn supported_languages(&self) -> &[&str];
+    fn supported_languages(&self) -> &'static [&'static str];
 
     /// Returns `true` if the backend libraries and binaries are present at
     /// runtime. Does **not** check whether model weights are downloaded.
@@ -169,8 +169,9 @@ pub trait AsrBackend: Send + Sync {
     /// Transcribe the audio file at `audio_path`.
     ///
     /// `audio_path` must be a 16 kHz mono WAV file, or a supported audio
-    /// format (MP3, FLAC, M4A). Non-WAV formats are accepted by FluidAudio and
-    /// sherpa-onnx; callers should prefer WAV to avoid transcoding latency.
+    /// format (`MP3`, `FLAC`, `M4A`). Non-`WAV` formats are accepted by
+    /// `FluidAudio` and `sherpa-onnx`; callers should prefer `WAV` to avoid
+    /// transcoding latency.
     async fn transcribe(
         &self,
         audio_path: &Path,
@@ -291,7 +292,10 @@ mod tests {
         assert!(!opts.word_timestamps);
         assert!(!opts.diarize);
         assert!(opts.max_duration_seconds.is_none());
-        assert!(!opts.include_embeddings, "include_embeddings must default to false");
+        assert!(
+            !opts.include_embeddings,
+            "include_embeddings must default to false"
+        );
     }
 
     /// `SpeakerSegment` with `embedding: None` omits the field in JSON.
@@ -307,7 +311,10 @@ mod tests {
         // WHEN serialized
         let json = serde_json::to_string(&seg).expect("serialize");
         // THEN the embedding field is absent
-        assert!(!json.contains("embedding"), "embedding must be absent when None: {json}");
+        assert!(
+            !json.contains("embedding"),
+            "embedding must be absent when None: {json}"
+        );
     }
 
     /// `SpeakerSegment` with `embedding: Some(...)` serializes the vector.
@@ -324,10 +331,15 @@ mod tests {
         // WHEN serialized
         let json = serde_json::to_string(&seg).expect("serialize");
         // THEN embedding is present
-        assert!(json.contains("\"embedding\""), "embedding must be present: {json}");
+        assert!(
+            json.contains("\"embedding\""),
+            "embedding must be present: {json}"
+        );
         // AND deserialization round-trips correctly
         let decoded: SpeakerSegment = serde_json::from_str(&json).expect("deserialize");
-        let decoded_emb = decoded.embedding.expect("embedding present after roundtrip");
+        let decoded_emb = decoded
+            .embedding
+            .expect("embedding present after roundtrip");
         assert_eq!(decoded_emb.len(), 256);
         assert!((decoded_emb[0] - emb[0]).abs() < f32::EPSILON);
     }

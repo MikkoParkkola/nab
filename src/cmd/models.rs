@@ -80,10 +80,27 @@ pub fn version_file_path(name: &str) -> Result<PathBuf> {
     Ok(model_install_dir(name)?.join("VERSION"))
 }
 
+const BYTES_PER_MIB: u64 = 1024 * 1024;
+
+fn format_mebibytes(bytes: u64) -> String {
+    let tenths = bytes.saturating_mul(10) / BYTES_PER_MIB;
+    format!("{}.{}", tenths / 10, tenths % 10)
+}
+
+fn format_percent(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        0
+    } else {
+        numerator.saturating_mul(100) / denominator
+    }
+}
+
 /// Read the pinned git SHA from the VERSION file. Returns `None` when absent.
 pub fn read_version(name: &str) -> Option<String> {
     let path = version_file_path(name).ok()?;
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Write a git SHA to the VERSION file.
@@ -156,7 +173,7 @@ pub fn install_status(model: &ModelEntry) -> Result<InstallStatus> {
 
 /// `nab models list` — print installed models with status.
 pub async fn cmd_models_list() -> Result<()> {
-    println!("{:<16} {:<10} {:<12} {}", "MODEL", "PHASE", "STATUS", "VERSION");
+    println!("{:<16} {:<10} {:<12} VERSION", "MODEL", "PHASE", "STATUS");
     println!("{}", "-".repeat(60));
 
     for model in KNOWN_MODELS {
@@ -218,8 +235,8 @@ fn verify_whisper_files() -> Result<bool> {
     let size = path.metadata().map(|m| m.len()).unwrap_or(0);
     if size >= 100 * 1024 * 1024 {
         println!(
-            "  whisper: {:.1} MB — {}",
-            size as f64 / (1024.0 * 1024.0),
+            "  whisper: {} MB — {}",
+            format_mebibytes(size),
             path.display()
         );
         Ok(true)
@@ -240,7 +257,7 @@ fn verify_sherpa_files() -> Result<bool> {
         let path = dir.join(file);
         if path.exists() {
             let size = path.metadata().map(|m| m.len()).unwrap_or(0);
-            println!("  sherpa-onnx/{file}: {:.1} MB", size as f64 / (1024.0 * 1024.0));
+            println!("  sherpa-onnx/{file}: {} MB", format_mebibytes(size));
         } else {
             println!("  sherpa-onnx/{file}: MISSING");
             ok = false;
@@ -272,7 +289,11 @@ pub async fn cmd_models_fetch(name: &str) -> Result<()> {
             format!(
                 "unknown model '{}'. Known models: {}",
                 name,
-                KNOWN_MODELS.iter().map(|m| m.name).collect::<Vec<_>>().join(", ")
+                KNOWN_MODELS
+                    .iter()
+                    .map(|m| m.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         })?;
 
@@ -302,7 +323,8 @@ async fn fetch_fluidaudio_dispatch(model: &ModelEntry) -> Result<()> {
 
 // ─── whisper download ─────────────────────────────────────────────────────────
 
-/// URL for whisper-large-v3-turbo Q5_0 GGUF (ggerganov/whisper.cpp on HuggingFace).
+/// URL for `whisper-large-v3-turbo Q5_0 GGUF`
+/// (`ggerganov/whisper.cpp` on Hugging Face).
 const WHISPER_MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
 
@@ -318,15 +340,12 @@ pub fn nab_cache_dir() -> Result<PathBuf> {
         .context("could not resolve cache dir (XDG_CACHE_HOME / ~/Library/Caches)")
 }
 
-/// Download whisper-large-v3-turbo Q5_0 GGUF to `~/.cache/nab/models/`.
+/// Download `whisper-large-v3-turbo Q5_0 GGUF` to `~/.cache/nab/models/`.
 async fn fetch_whisper() -> Result<()> {
     let dest = whisper_model_path()?;
 
     if dest.exists() {
-        println!(
-            "whisper model already downloaded at {}",
-            dest.display()
-        );
+        println!("whisper model already downloaded at {}", dest.display());
         return Ok(());
     }
 
@@ -345,15 +364,12 @@ async fn fetch_whisper() -> Result<()> {
     let size = std::fs::metadata(&dest)?.len();
     if size < 100 * 1024 * 1024 {
         std::fs::remove_file(&dest).ok();
-        anyhow::bail!(
-            "downloaded file is too small ({} bytes) — likely a truncated download",
-            size
-        );
+        anyhow::bail!("downloaded file is too small ({size} bytes) — likely a truncated download");
     }
 
     println!(
-        "whisper model installed ({:.1} MB): {}",
-        size as f64 / (1024.0 * 1024.0),
+        "whisper model installed ({} MB): {}",
+        format_mebibytes(size),
         dest.display()
     );
     Ok(())
@@ -379,9 +395,7 @@ async fn fetch_sherpa_onnx() -> Result<()> {
         .await
         .with_context(|| format!("creating {}", model_dir.display()))?;
 
-    let all_present = SHERPA_FILES
-        .iter()
-        .all(|f| model_dir.join(f).exists());
+    let all_present = SHERPA_FILES.iter().all(|f| model_dir.join(f).exists());
 
     if all_present {
         println!(
@@ -405,10 +419,7 @@ async fn fetch_sherpa_onnx() -> Result<()> {
         download_with_progress(&url, &dest).await?;
     }
 
-    println!(
-        "sherpa-onnx model installed at: {}",
-        model_dir.display()
-    );
+    println!("sherpa-onnx model installed at: {}", model_dir.display());
     Ok(())
 }
 
@@ -427,8 +438,8 @@ async fn download_with_progress(url: &str, dest: &Path) -> Result<()> {
     let total = response.content_length();
     let mut stream = response.bytes_stream();
 
-    let mut file = std::fs::File::create(dest)
-        .with_context(|| format!("creating {}", dest.display()))?;
+    let mut file =
+        std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
 
     let mut downloaded: u64 = 0;
     let mut last_print: u64 = 0;
@@ -437,19 +448,19 @@ async fn download_with_progress(url: &str, dest: &Path) -> Result<()> {
         let chunk = chunk.with_context(|| format!("reading stream for {url}"))?;
         file.write_all(&chunk)
             .with_context(|| format!("writing to {}", dest.display()))?;
-        downloaded += chunk.len() as u64;
+        downloaded += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
 
         // Print progress every ~10 MB.
         if downloaded - last_print >= 10 * 1024 * 1024 {
             last_print = downloaded;
             match total {
                 Some(t) => print!(
-                    "\r  {:.0} / {:.0} MB ({:.0}%)",
-                    downloaded as f64 / (1024.0 * 1024.0),
-                    t as f64 / (1024.0 * 1024.0),
-                    100.0 * downloaded as f64 / t as f64
+                    "\r  {} / {} MB ({}%)",
+                    format_mebibytes(downloaded),
+                    format_mebibytes(t),
+                    format_percent(downloaded, t)
                 ),
-                None => print!("\r  {:.0} MB", downloaded as f64 / (1024.0 * 1024.0)),
+                None => print!("\r  {} MB", format_mebibytes(downloaded)),
             }
             let _ = std::io::stdout().flush();
         }
@@ -468,11 +479,7 @@ pub async fn cmd_models_update(name: &str) -> Result<()> {
 
     let install_dir = model_install_dir(model.name)?;
     if !install_dir.exists() {
-        anyhow::bail!(
-            "Model '{}' is not installed. Run `nab models fetch {}` first.",
-            name,
-            name
-        );
+        anyhow::bail!("Model '{name}' is not installed. Run `nab models fetch {name}` first.");
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -507,9 +514,12 @@ async fn fetch_fluidaudio(model: &ModelEntry) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
 
-        run_subprocess("git", &["clone", model.repo_url, &install_dir.to_string_lossy()])
-            .await
-            .context("git clone failed")?;
+        run_subprocess(
+            "git",
+            &["clone", model.repo_url, &install_dir.to_string_lossy()],
+        )
+        .await
+        .context("git clone failed")?;
     }
 
     build_and_symlink(model, &install_dir).await
@@ -519,22 +529,17 @@ async fn fetch_fluidaudio(model: &ModelEntry) -> Result<()> {
 async fn build_and_symlink(model: &ModelEntry, install_dir: &Path) -> Result<()> {
     info!("Building FluidAudio (swift build -c release) — this may take a few minutes…");
 
-    run_subprocess_in_dir(
-        "swift",
-        &["build", "-c", "release"],
-        install_dir,
-    )
-    .await
-    .context("swift build failed")?;
+    run_subprocess_in_dir("swift", &["build", "-c", "release"], install_dir)
+        .await
+        .context("swift build failed")?;
 
-    let built_binary = find_swift_binary(install_dir, model.binary_name)
-        .with_context(|| {
-            format!(
-                "could not find '{}' after swift build in {}",
-                model.binary_name,
-                install_dir.display()
-            )
-        })?;
+    let built_binary = find_swift_binary(install_dir, model.binary_name).with_context(|| {
+        format!(
+            "could not find '{}' after swift build in {}",
+            model.binary_name,
+            install_dir.display()
+        )
+    })?;
 
     debug!("built binary at {}", built_binary.display());
 
@@ -576,7 +581,11 @@ fn find_swift_binary(install_dir: &Path, binary_name: &str) -> Option<PathBuf> {
         .join(arch_dir)
         .join("release")
         .join(binary_name);
-    if candidate.exists() { Some(candidate) } else { None }
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 // ─── Subprocess helpers ───────────────────────────────────────────────────────
@@ -611,7 +620,10 @@ async fn run_subprocess_in_dir(program: &str, args: &[&str], dir: &Path) -> Resu
     if status.success() {
         Ok(())
     } else {
-        anyhow::bail!("'{program}' exited with status {status} in {}", dir.display());
+        anyhow::bail!(
+            "'{program}' exited with status {status} in {}",
+            dir.display()
+        );
     }
 }
 
@@ -675,7 +687,10 @@ mod tests {
         let s = dir.to_string_lossy();
         // THEN path ends with models/fluidaudio
         assert!(s.contains("models"), "expected 'models' in: {s}");
-        assert!(s.ends_with("fluidaudio"), "expected 'fluidaudio' suffix: {s}");
+        assert!(
+            s.ends_with("fluidaudio"),
+            "expected 'fluidaudio' suffix: {s}"
+        );
     }
 
     /// `binary_symlink_path` places the binary symlink under `bin/<name>`.
@@ -686,7 +701,10 @@ mod tests {
         let s = path.to_string_lossy();
         // THEN path ends with bin/fluidaudiocli
         assert!(s.contains("bin"), "expected 'bin' in: {s}");
-        assert!(s.ends_with("fluidaudiocli"), "expected binary name suffix: {s}");
+        assert!(
+            s.ends_with("fluidaudiocli"),
+            "expected binary name suffix: {s}"
+        );
     }
 
     /// `version_file_path` returns a path ending with VERSION inside the model dir.
@@ -696,7 +714,10 @@ mod tests {
         let vpath = version_file_path("fluidaudio").expect("should resolve");
         let mpath = model_install_dir("fluidaudio").expect("should resolve");
         // THEN VERSION file is a child of the model install dir
-        assert!(vpath.starts_with(&mpath), "VERSION must be inside model dir");
+        assert!(
+            vpath.starts_with(&mpath),
+            "VERSION must be inside model dir"
+        );
         assert_eq!(vpath.file_name().unwrap(), "VERSION");
     }
 
@@ -784,10 +805,7 @@ mod tests {
     #[test]
     fn install_status_whisper_not_installed_when_missing() {
         // GIVEN the whisper model entry
-        let model = KNOWN_MODELS
-            .iter()
-            .find(|m| m.name == "whisper")
-            .unwrap();
+        let model = KNOWN_MODELS.iter().find(|m| m.name == "whisper").unwrap();
         // WHEN we check status (model file almost certainly absent in CI)
         let status = install_status(model).expect("should not fail");
         // THEN either NotInstalled or Installed — just verify it doesn't panic

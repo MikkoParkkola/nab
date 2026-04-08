@@ -23,8 +23,8 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use rust_mcp_sdk::schema::LoggingMessageNotificationParams;
 use rust_mcp_sdk::McpServer;
+use rust_mcp_sdk::schema::LoggingMessageNotificationParams;
 
 // ─── Level mapping ────────────────────────────────────────────────────────────
 
@@ -44,7 +44,7 @@ pub(crate) mod level {
 }
 
 /// Convert a `LoggingLevel` variant to the numeric severity used internally.
-fn logging_level_to_u8(level: &rust_mcp_sdk::schema::LoggingLevel) -> u8 {
+fn logging_level_to_u8(level: rust_mcp_sdk::schema::LoggingLevel) -> u8 {
     use rust_mcp_sdk::schema::LoggingLevel;
     match level {
         LoggingLevel::Emergency => level::EMERGENCY,
@@ -94,8 +94,9 @@ impl McpLogger {
         }
     }
 
-    /// Inject the MCP runtime.  Must be called exactly once after `server_runtime::create_server`.
-    /// Subsequent calls are silently ignored (OnceLock semantics).
+    /// Inject the MCP runtime. Must be called exactly once after
+    /// `server_runtime::create_server`.
+    /// Subsequent calls are silently ignored (`OnceLock` semantics).
     pub(crate) fn init(&self, runtime: Arc<dyn McpServer>) {
         let _ = self.runtime.set(runtime);
     }
@@ -103,14 +104,15 @@ impl McpLogger {
     /// Update the minimum level forwarded to the MCP client.
     ///
     /// Called from `handle_set_level_request`.
-    pub(crate) fn set_level(&self, level: &rust_mcp_sdk::schema::LoggingLevel) {
+    pub(crate) fn set_level(&self, level: rust_mcp_sdk::schema::LoggingLevel) {
         self.min_level
             .store(logging_level_to_u8(level), Ordering::Relaxed);
-    }
-
-    /// Return the current minimum level as a `LoggingLevel`.
-    pub(crate) fn current_level(&self) -> rust_mcp_sdk::schema::LoggingLevel {
-        u8_to_logging_level(self.min_level.load(Ordering::Relaxed))
+        self.log(
+            level::NOTICE,
+            "mcp",
+            &format!("logging level set to {level:?}"),
+            None,
+        );
     }
 
     /// Emit a log event.
@@ -174,65 +176,6 @@ impl McpLogger {
 /// Global `McpLogger` instance — initialized once at startup.
 pub(crate) static LOGGER: McpLogger = McpLogger::new();
 
-// ─── Convenience macros ───────────────────────────────────────────────────────
-
-/// Emit a DEBUG-level MCP log + tracing event.
-macro_rules! mcp_debug {
-    ($logger:expr, $msg:expr) => {
-        $crate::mcp_log::LOGGER.log($crate::mcp_log::level::DEBUG, $logger, $msg, None)
-    };
-    ($logger:expr, $msg:expr, $data:expr) => {
-        $crate::mcp_log::LOGGER.log(
-            $crate::mcp_log::level::DEBUG,
-            $logger,
-            $msg,
-            Some($data),
-        )
-    };
-}
-
-/// Emit an INFO-level MCP log + tracing event.
-macro_rules! mcp_info {
-    ($logger:expr, $msg:expr) => {
-        $crate::mcp_log::LOGGER.log($crate::mcp_log::level::INFO, $logger, $msg, None)
-    };
-    ($logger:expr, $msg:expr, $data:expr) => {
-        $crate::mcp_log::LOGGER.log($crate::mcp_log::level::INFO, $logger, $msg, Some($data))
-    };
-}
-
-/// Emit a WARNING-level MCP log + tracing event.
-macro_rules! mcp_warn {
-    ($logger:expr, $msg:expr) => {
-        $crate::mcp_log::LOGGER.log($crate::mcp_log::level::WARNING, $logger, $msg, None)
-    };
-    ($logger:expr, $msg:expr, $data:expr) => {
-        $crate::mcp_log::LOGGER.log(
-            $crate::mcp_log::level::WARNING,
-            $logger,
-            $msg,
-            Some($data),
-        )
-    };
-}
-
-/// Emit an ERROR-level MCP log + tracing event.
-macro_rules! mcp_error {
-    ($logger:expr, $msg:expr) => {
-        $crate::mcp_log::LOGGER.log($crate::mcp_log::level::ERROR, $logger, $msg, None)
-    };
-    ($logger:expr, $msg:expr, $data:expr) => {
-        $crate::mcp_log::LOGGER.log(
-            $crate::mcp_log::level::ERROR,
-            $logger,
-            $msg,
-            Some($data),
-        )
-    };
-}
-
-pub(crate) use {mcp_debug, mcp_error, mcp_info, mcp_warn};
-
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -249,31 +192,31 @@ mod tests {
     fn set_level_warning_rejects_info() {
         // GIVEN a logger with min level = warning
         let logger = fresh_logger();
-        logger.set_level(&rust_mcp_sdk::schema::LoggingLevel::Warning);
+        logger.set_level(rust_mcp_sdk::schema::LoggingLevel::Warning);
         // WHEN we check if INFO (severity 6) passes
         let min = logger.min_level.load(Ordering::Relaxed);
         // THEN INFO severity (6) > warning threshold (4) → filtered out
-        assert!(level::INFO > min, "INFO should be filtered when min=warning");
+        assert!(
+            level::INFO > min,
+            "INFO should be filtered when min=warning"
+        );
     }
 
     #[test]
     fn set_level_info_passes_warning() {
         // GIVEN a logger with min level = info (default)
         let logger = fresh_logger();
-        logger.set_level(&rust_mcp_sdk::schema::LoggingLevel::Info);
+        logger.set_level(rust_mcp_sdk::schema::LoggingLevel::Info);
         let min = logger.min_level.load(Ordering::Relaxed);
         // THEN WARNING severity (4) <= info threshold (6) → passes through
-        assert!(
-            level::WARNING <= min,
-            "WARNING should pass when min=info"
-        );
+        assert!(level::WARNING <= min, "WARNING should pass when min=info");
     }
 
     #[test]
     fn set_level_debug_passes_all() {
         // GIVEN a logger at debug level (most permissive)
         let logger = fresh_logger();
-        logger.set_level(&rust_mcp_sdk::schema::LoggingLevel::Debug);
+        logger.set_level(rust_mcp_sdk::schema::LoggingLevel::Debug);
         let min = logger.min_level.load(Ordering::Relaxed);
         // THEN emergency (0) <= debug (7) → all levels pass
         assert!(level::EMERGENCY <= min);
@@ -298,11 +241,11 @@ mod tests {
         ];
         for variant in &variants {
             // WHEN converted to u8 and back
-            let numeric = logging_level_to_u8(variant);
+            let numeric = logging_level_to_u8(*variant);
             let restored = u8_to_logging_level(numeric);
             // THEN the restored value matches the original numeric
             assert_eq!(
-                logging_level_to_u8(&restored),
+                logging_level_to_u8(restored),
                 numeric,
                 "round-trip failed for {variant:?}"
             );
@@ -315,14 +258,14 @@ mod tests {
     fn current_level_reflects_set_level() {
         // GIVEN a logger whose level is updated
         let logger = fresh_logger();
-        logger.set_level(&rust_mcp_sdk::schema::LoggingLevel::Error);
+        logger.set_level(rust_mcp_sdk::schema::LoggingLevel::Error);
         // WHEN queried
-        let lvl = logger.current_level();
+        let lvl = u8_to_logging_level(logger.min_level.load(Ordering::Relaxed));
         // THEN it matches
         assert_eq!(
-            logging_level_to_u8(&lvl),
+            logging_level_to_u8(lvl),
             level::ERROR,
-            "current_level() should reflect the last set_level call"
+            "stored level should reflect the last set_level call"
         );
     }
 

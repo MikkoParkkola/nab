@@ -362,13 +362,16 @@ fn match_speakers_prompt_result_contains_workflow_steps() {
     let mut args = std::collections::BTreeMap::new();
     args.insert("input".into(), "/tmp/meeting.wav".into());
     // WHEN rendered
-    let result =
-        crate::build_prompt_result("match-speakers-with-hebb", &args).unwrap();
+    let result = crate::build_prompt_result("match-speakers-with-hebb", &args).unwrap();
     let rust_mcp_sdk::schema::ContentBlock::TextContent(tc) = &result.messages[0].content else {
         panic!("expected TextContent");
     };
     // THEN workflow mentions diarization + embeddings
-    assert!(tc.text.contains("include_embeddings=true"), "text: {}", tc.text);
+    assert!(
+        tc.text.contains("include_embeddings=true"),
+        "text: {}",
+        tc.text
+    );
     assert!(tc.text.contains("voice_match"), "text: {}", tc.text);
     assert!(tc.text.contains("voice_remember"), "text: {}", tc.text);
     assert!(tc.text.contains("/tmp/meeting.wav"), "text: {}", tc.text);

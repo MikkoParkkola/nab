@@ -77,12 +77,8 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // ── Media URL auto-transcription ──────────────────────────────────────
     if !cfg.no_transcribe && !cfg.raw_html && nab::content::media::is_media_url(&cfg.url) {
         tracing::info!(url = %cfg.url, "detected media URL — transcribing");
-        match nab::content::media::fetch_media_as_markdown(
-            &cfg.url,
-            cfg.language.as_deref(),
-            false,
-        )
-        .await
+        match nab::content::media::fetch_media_as_markdown(&cfg.url, cfg.language.as_deref(), false)
+            .await
         {
             Ok(result) => {
                 if !cfg.no_save {
@@ -681,7 +677,12 @@ fn thin_content_message(diagnostic: ThinContentDiagnostic) -> String {
 ///
 /// Returns the original markdown unchanged when the OCR engine is unavailable
 /// or when no thin-alt images are found.  Per-image errors are silently skipped.
-async fn enrich_with_ocr(markdown: &str, html: &str, url: &str, client: &AcceleratedClient) -> String {
+async fn enrich_with_ocr(
+    markdown: &str,
+    html: &str,
+    url: &str,
+    client: &AcceleratedClient,
+) -> String {
     let enricher = match FetchOcrEnricher::new() {
         Ok(e) if e.is_available() => e,
         _ => return markdown.to_string(),
@@ -718,9 +719,7 @@ fn hebb_is_available() -> bool {
     if which::which("hebb-mcp").is_ok() {
         return true;
     }
-    dirs::data_local_dir()
-        .map(|d| d.join("hebb/bin/hebb-mcp").exists())
-        .unwrap_or(false)
+    dirs::data_local_dir().is_some_and(|d| d.join("hebb/bin/hebb-mcp").exists())
 }
 
 /// Spawn `hebb-mcp` for a single `kv_set` call then let the process exit.
@@ -740,7 +739,9 @@ async fn hebb_kv_set_oneshot(
     let binary = if let Ok(p) = which::which("hebb-mcp") {
         p
     } else if let Some(managed) = dirs::data_local_dir().map(|d| d.join("hebb/bin/hebb-mcp")) {
-        if managed.exists() { managed } else {
+        if managed.exists() {
+            managed
+        } else {
             return Err(anyhow::anyhow!("hebb-mcp not found"));
         }
     } else {

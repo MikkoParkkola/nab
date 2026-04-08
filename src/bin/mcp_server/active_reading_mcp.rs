@@ -12,10 +12,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use nab::AcceleratedClient;
 use nab::analyze::active_reading::{
     ActiveReadingError, LlmSampler, Reference, ReferenceKind, Result, UrlFetcher,
 };
-use nab::AcceleratedClient;
 use rust_mcp_sdk::McpServer;
 use serde::Deserialize;
 use tracing::debug;
@@ -121,6 +121,18 @@ fn trim_content(content: &str) -> &str {
 
 // ─── Response parsing ─────────────────────────────────────────────────────────
 
+#[derive(Deserialize)]
+struct ParseReferencesResponse {
+    refs: Vec<ParseReferencesRawRef>,
+}
+
+#[derive(Deserialize)]
+struct ParseReferencesRawRef {
+    kind: String,
+    query: String,
+    confidence: f32,
+}
+
 /// Parse the LLM response into a list of [`Reference`] values.
 ///
 /// Handles markdown code fences that some models wrap their JSON in.
@@ -130,19 +142,7 @@ pub(crate) fn parse_references_response(
 ) -> Result<Vec<Reference>> {
     let cleaned = strip_code_fences(text);
 
-    #[derive(Deserialize)]
-    struct Response {
-        refs: Vec<RawRef>,
-    }
-
-    #[derive(Deserialize)]
-    struct RawRef {
-        kind: String,
-        query: String,
-        confidence: f32,
-    }
-
-    let parsed: Response = serde_json::from_str(cleaned)
+    let parsed: ParseReferencesResponse = serde_json::from_str(cleaned)
         .map_err(|e| ActiveReadingError::InvalidResponse(format!("JSON parse: {e}")))?;
 
     Ok(parsed
@@ -188,8 +188,7 @@ mod tests {
     #[test]
     fn parse_references_response_handles_bare_json() {
         // GIVEN a bare JSON response
-        let text =
-            r#"{"refs": [{"kind": "paper", "query": "Dijkstra 1968", "confidence": 0.95}]}"#;
+        let text = r#"{"refs": [{"kind": "paper", "query": "Dijkstra 1968", "confidence": 0.95}]}"#;
 
         // WHEN parsed
         let refs = parse_references_response(text, 3).unwrap();
@@ -221,8 +220,7 @@ mod tests {
     #[test]
     fn parse_references_response_handles_plain_fences() {
         // GIVEN a response with plain code fences
-        let text =
-            "```\n{\"refs\": [{\"kind\": \"tool\", \"query\": \"ripgrep\", \"confidence\": 0.85}]}\n```";
+        let text = "```\n{\"refs\": [{\"kind\": \"tool\", \"query\": \"ripgrep\", \"confidence\": 0.85}]}\n```";
 
         // WHEN parsed
         let refs = parse_references_response(text, 1).unwrap();
@@ -242,7 +240,10 @@ mod tests {
         let result = parse_references_response(text, 0);
 
         // THEN it's an InvalidResponse error
-        assert!(matches!(result, Err(ActiveReadingError::InvalidResponse(_))));
+        assert!(matches!(
+            result,
+            Err(ActiveReadingError::InvalidResponse(_))
+        ));
     }
 
     /// An empty refs array is valid and returns an empty vec.

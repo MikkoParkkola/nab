@@ -13,12 +13,9 @@
 //! [`AsrBackend`]: super::AsrBackend
 //! [`FluidAudioBackend`]: super::FluidAudioBackend
 
+use super::{AnalysisError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::process::Stdio;
-use tokio::process::Command;
-
-use super::{AnalysisError, Result};
 
 /// Transcript segment with timestamps
 #[derive(Debug, Clone, Serialize, Deserialize)]

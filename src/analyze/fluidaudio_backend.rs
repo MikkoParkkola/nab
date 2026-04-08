@@ -1,4 +1,4 @@
-//! FluidAudio subprocess backend
+//! `FluidAudio` subprocess backend
 //!
 //! Wraps the standalone `fluidaudiocli` binary (Swift, MIT license, MIT-licensed
 //! models) from <https://github.com/FluidInference/FluidAudio>. We shell out via
@@ -6,10 +6,10 @@
 //! has upstream Swift compilation bugs as of 2026-04-07.
 //!
 //! Subprocess gives us:
-//! - Zero Rust deps (no fluidaudio-rs)
+//! - Zero Rust deps (no `fluidaudio-rs`)
 //! - Build works on every platform (binary is just missing at runtime on Linux)
-//! - Same pattern as ffmpeg/yt-dlp (existing nab subprocess pattern)
-//! - Decoupled FluidAudio updates (just rebuild the CLI, no Cargo changes)
+//! - Same pattern as `ffmpeg`/`yt-dlp` (existing nab subprocess pattern)
+//! - Decoupled `FluidAudio` updates (just rebuild the CLI, no Cargo changes)
 //!
 //! ## Binary discovery
 //! Searches in this order:
@@ -20,7 +20,7 @@
 //!
 //! ## Supported features
 //! - `transcribe` → Parakeet TDT v3 (25 EU languages, ~150× realtime)
-//! - `process` → offline diarization (PyAnnote community-1 model, ~120× realtime)
+//! - `process` → offline diarization (`PyAnnote` community-1 model, ~120× realtime)
 //! - `qwen3-transcribe` → Qwen3-ASR (zh/ja/ko/vi + 25 EU langs, ~30–50× realtime)
 
 use std::path::{Path, PathBuf};
@@ -44,8 +44,8 @@ const QWEN3_LANGUAGES: &[&str] = &["zh", "ja", "ko", "vi"];
 
 /// Languages natively supported by Parakeet TDT v3.
 const PARAKEET_LANGUAGES: &[&str] = &[
-    "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "cs", "sk", "ro", "hu", "fi",
-    "sv", "da", "nb", "no", "el", "bg", "hr", "sl", "lt", "lv", "et", "mt",
+    "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "cs", "sk", "ro", "hu", "fi", "sv",
+    "da", "nb", "no", "el", "bg", "hr", "sl", "lt", "lv", "et", "mt",
 ];
 
 // ─── Internal JSON types ───────────────────────────────────────────────────────
@@ -75,9 +75,9 @@ struct FluidWordTiming {
 #[derive(Debug, Deserialize)]
 struct FluidProcessOutput {
     #[serde(rename = "durationSeconds", default)]
-    duration_seconds: f64,
+    _duration_seconds: f64,
     #[serde(rename = "processingTimeSeconds")]
-    processing_time_seconds: f64,
+    _processing_time_seconds: f64,
     #[serde(default)]
     segments: Vec<FluidDiarSegment>,
 }
@@ -91,7 +91,7 @@ struct FluidDiarSegment {
     #[serde(rename = "endTimeSeconds")]
     end_time_seconds: f64,
     #[serde(rename = "qualityScore", default)]
-    quality_score: f64,
+    _quality_score: f64,
     /// Raw embedding from diarizer output (256 floats).
     ///
     /// Populated only when `TranscribeOptions::include_embeddings = true`.
@@ -105,7 +105,7 @@ struct FluidDiarSegment {
 /// Deserialize `speakerId` from either a JSON integer (older fluidaudiocli
 /// versions) or a JSON string (newer versions as of April 2026).
 ///
-/// Older FluidAudio emitted `"speakerId": 1`; v0.13+ changed to `"speakerId": "1"`.
+/// Older `FluidAudio` emitted `"speakerId": 1`; `v0.13+` changed to `"speakerId": "1"`.
 /// Accepting both keeps nab compatible across upgrades.
 fn deserialize_speaker_id<'de, D>(deserializer: D) -> std::result::Result<i32, D::Error>
 where
@@ -116,7 +116,7 @@ where
 
     struct SpeakerIdVisitor;
 
-    impl<'de> Visitor<'de> for SpeakerIdVisitor {
+    impl Visitor<'_> for SpeakerIdVisitor {
         type Value = i32;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -191,9 +191,7 @@ fn detect_binary() -> Option<PathBuf> {
             .unwrap_or_default(),
         PathBuf::from("/opt/homebrew/bin/fluidaudiocli"),
         // Dev build fallback — present during local FluidAudio development
-        PathBuf::from(
-            "/private/tmp/FluidAudio/.build/arm64-apple-macosx/release/fluidaudiocli",
-        ),
+        PathBuf::from("/private/tmp/FluidAudio/.build/arm64-apple-macosx/release/fluidaudiocli"),
     ];
 
     candidates.into_iter().find(|p| p.exists())
@@ -203,11 +201,11 @@ fn detect_binary() -> Option<PathBuf> {
 
 #[async_trait]
 impl AsrBackend for FluidAudioBackend {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fluidaudio"
     }
 
-    fn supported_languages(&self) -> &[&str] {
+    fn supported_languages(&self) -> &'static [&'static str] {
         // All Parakeet + Qwen3 languages combined.
         // "*" not returned — we route per-language explicitly.
         PARAKEET_LANGUAGES
@@ -231,14 +229,13 @@ impl AsrBackend for FluidAudioBackend {
 
         // Convert to 16 kHz mono WAV when needed.
         let wav_guard: Option<NamedTempFile> = maybe_convert_to_wav(audio_path).await?;
-        let wav_path: &Path = wav_guard
-            .as_ref()
-            .map_or(audio_path, |g| g.path());
+        let wav_path: &Path = wav_guard.as_ref().map_or(audio_path, |g| g.path());
 
         // Decide subcommand.
-        let use_qwen3 = opts.language.as_deref().is_some_and(|lang| {
-            QWEN3_LANGUAGES.contains(&lang)
-        });
+        let use_qwen3 = opts
+            .language
+            .as_deref()
+            .is_some_and(|lang| QWEN3_LANGUAGES.contains(&lang));
 
         let asr_output = run_transcribe(&self.binary_path, wav_path, &opts, use_qwen3).await?;
 
@@ -255,7 +252,7 @@ impl AsrBackend for FluidAudioBackend {
         // Build transcript segments from word timings + text.
         let mut segments = build_transcript_segments(
             &asr_output.text,
-            asr_output.word_timings,
+            &asr_output.word_timings,
             asr_output.confidence,
             opts.language.as_deref(),
             opts.word_timestamps,
@@ -331,9 +328,12 @@ async fn maybe_convert_to_wav(audio_path: &Path) -> Result<Option<NamedTempFile>
             "-i",
             &audio_path.to_string_lossy(),
             "-vn",
-            "-acodec", "pcm_s16le",
-            "-ar", "16000",
-            "-ac", "1",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
             &tmp_path.to_string_lossy(),
             "-y",
         ])
@@ -362,7 +362,11 @@ async fn run_transcribe(
     let out_tmp = NamedTempFile::with_suffix(".json").map_err(AnalysisError::Io)?;
     let out_path = out_tmp.path().to_path_buf();
 
-    let subcommand = if use_qwen3 { "qwen3-transcribe" } else { "transcribe" };
+    let subcommand = if use_qwen3 {
+        "qwen3-transcribe"
+    } else {
+        "transcribe"
+    };
 
     let mut cmd = Command::new(binary);
     cmd.arg(subcommand)
@@ -431,7 +435,7 @@ async fn run_diarize(binary: &Path, wav_path: &Path) -> Result<FluidProcessOutpu
 
 /// Compute audio duration from the last word timing's end time.
 ///
-/// FluidAudio batch mode always reports `durationSeconds = 0`; we derive it
+/// `FluidAudio` batch mode always reports `durationSeconds = 0`; we derive it
 /// from word timings instead.
 fn compute_duration(word_timings: &[FluidWordTiming]) -> f64 {
     word_timings.last().map_or(0.0, |w| w.end_time)
@@ -502,9 +506,9 @@ fn segment_text_into_sentences(text: &str) -> Vec<&str> {
 /// Words are assigned to sentences in order: each sentence gets the next N words
 /// whose combined text matches the sentence prefix. When word timings are absent,
 /// returns a single segment spanning the full duration.
-fn assign_words_to_segments<'a>(
-    sentences: &[&'a str],
-    word_timings: Vec<FluidWordTiming>,
+fn assign_words_to_segments(
+    sentences: &[&str],
+    word_timings: &[FluidWordTiming],
     overall_confidence: f32,
     language: Option<&str>,
     include_words: bool,
@@ -646,7 +650,7 @@ fn add_segment_from_words(
 /// Build a `Vec<TranscriptSegment>` from the full text and word timings.
 fn build_transcript_segments(
     text: &str,
-    word_timings: Vec<FluidWordTiming>,
+    word_timings: &[FluidWordTiming],
     confidence: f32,
     language: Option<&str>,
     include_words: bool,
@@ -658,19 +662,25 @@ fn build_transcript_segments(
         return vec![];
     }
 
-    assign_words_to_segments(&sentences, word_timings, confidence, language, include_words)
+    assign_words_to_segments(
+        &sentences,
+        word_timings,
+        confidence,
+        language,
+        include_words,
+    )
 }
 
 /// Assign speaker labels to transcript segments via maximum temporal overlap.
-fn assign_speakers_to_segments(
-    segments: &mut Vec<TranscriptSegment>,
-    diar: &[FluidDiarSegment],
-) {
+fn assign_speakers_to_segments(segments: &mut [TranscriptSegment], diar: &[FluidDiarSegment]) {
     for seg in segments.iter_mut() {
-        let best = diar.iter().filter_map(|d| {
-            overlap(seg.start, seg.end, d.start_time_seconds, d.end_time_seconds)
-                .map(|ov| (ov, d))
-        }).max_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let best = diar
+            .iter()
+            .filter_map(|d| {
+                overlap(seg.start, seg.end, d.start_time_seconds, d.end_time_seconds)
+                    .map(|ov| (ov, d))
+            })
+            .max_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         seg.speaker = best.map(|(_, d)| format!("SPEAKER_{:02}", d.speaker_id));
     }
@@ -751,10 +761,7 @@ mod tests {
         let backend = FluidAudioBackend::with_binary(PathBuf::from("/dev/null"));
         let langs = backend.supported_languages();
         for required in &["en", "fi", "de", "fr", "es"] {
-            assert!(
-                langs.contains(required),
-                "missing language: {required}"
-            );
+            assert!(langs.contains(required), "missing language: {required}");
         }
     }
 
@@ -803,11 +810,11 @@ mod tests {
             ]
         }"#;
         let out: FluidProcessOutput = serde_json::from_str(json).expect("parse");
-        assert!((out.duration_seconds - 30.0).abs() < 1e-9);
+        assert!((out._duration_seconds - 30.0).abs() < 1e-9);
         assert_eq!(out.segments.len(), 1);
         assert_eq!(out.segments[0].speaker_id, 1);
         assert!((out.segments[0].start_time_seconds - 10.0).abs() < 1e-9);
-        assert!((out.segments[0].quality_score - 0.85).abs() < 1e-9);
+        assert!((out.segments[0]._quality_score - 0.85).abs() < 1e-9);
     }
 
     /// Regression: FluidAudio v0.13+ emits `speakerId` as a JSON string like
@@ -864,8 +871,18 @@ mod tests {
     #[test]
     fn compute_duration_returns_last_end_time() {
         let words = vec![
-            FluidWordTiming { word: "a".into(), start_time: 0.0, end_time: 0.5, confidence: 1.0 },
-            FluidWordTiming { word: "b".into(), start_time: 0.6, end_time: 7792.3, confidence: 1.0 },
+            FluidWordTiming {
+                word: "a".into(),
+                start_time: 0.0,
+                end_time: 0.5,
+                confidence: 1.0,
+            },
+            FluidWordTiming {
+                word: "b".into(),
+                start_time: 0.6,
+                end_time: 7792.3,
+                confidence: 1.0,
+            },
         ];
         assert!((compute_duration(&words) - 7792.3).abs() < 1e-6);
     }
@@ -942,14 +959,14 @@ mod tests {
                 speaker_id: 0,
                 start_time_seconds: 0.0,
                 end_time_seconds: 1.0,
-                quality_score: 0.9,
+                _quality_score: 0.9,
                 embedding: vec![],
             },
             FluidDiarSegment {
                 speaker_id: 1,
                 start_time_seconds: 1.0,
                 end_time_seconds: 3.0,
-                quality_score: 0.9,
+                _quality_score: 0.9,
                 embedding: vec![],
             },
         ];
@@ -974,7 +991,7 @@ mod tests {
             speaker_id: 0,
             start_time_seconds: 0.0,
             end_time_seconds: 5.0,
-            quality_score: 0.9,
+            _quality_score: 0.9,
             embedding: vec![],
         }];
         assign_speakers_to_segments(&mut segments, &diar);
@@ -1006,7 +1023,7 @@ mod tests {
             speaker_id: 3,
             start_time_seconds: 1.5,
             end_time_seconds: 4.0,
-            quality_score: 0.8,
+            _quality_score: 0.8,
             embedding: vec![],
         };
         let s = fluid_diar_to_speaker(d, false);
@@ -1024,7 +1041,7 @@ mod tests {
             speaker_id: 0,
             start_time_seconds: 0.0,
             end_time_seconds: 1.0,
-            quality_score: 0.9,
+            _quality_score: 0.9,
             embedding: vec![0.1_f32; 256],
         };
         // WHEN include_embedding is false
@@ -1042,7 +1059,7 @@ mod tests {
             speaker_id: 1,
             start_time_seconds: 2.0,
             end_time_seconds: 5.0,
-            quality_score: 0.85,
+            _quality_score: 0.85,
             embedding: raw.clone(),
         };
         // WHEN include_embedding is true

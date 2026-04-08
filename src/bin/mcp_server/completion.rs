@@ -13,13 +13,15 @@
 //! | `url` (prompts) | Empty for now — populated in a future phase                |
 
 use rust_mcp_sdk::schema::{
-    CompleteRequestParams, CompleteRequestRef, CompleteResult, CompleteResultCompletion, RpcError,
+    CompleteRequestParams, CompleteRequestRef, CompleteResult, CompleteResultCompletion,
 };
 
 // ─── Known values ─────────────────────────────────────────────────────────────
 
 /// All browser names nab knows how to pull cookies from.
-const ALL_BROWSERS: &[&str] = &["brave", "chrome", "firefox", "safari", "edge", "auto", "none"];
+const ALL_BROWSERS: &[&str] = &[
+    "brave", "chrome", "firefox", "safari", "edge", "auto", "none",
+];
 
 /// Fingerprint profile names (keep in sync with `nab::fingerprint`).
 const FINGERPRINT_PROFILES: &[&str] = &[
@@ -40,17 +42,17 @@ const FINGERPRINT_PROFILES: &[&str] = &[
 /// Returns suggestions for prompt arguments and resource template parameters.
 /// An empty `CompleteResult` is always valid per spec — unknown arguments
 /// return zero suggestions rather than an error.
-pub(crate) fn handle_complete(
-    params: &CompleteRequestParams,
-) -> Result<CompleteResult, RpcError> {
+pub(crate) fn handle_complete(params: &CompleteRequestParams) -> CompleteResult {
     let suggestions = match &params.ref_ {
-        CompleteRequestRef::PromptReference(prompt_ref) => {
-            complete_prompt_arg(&prompt_ref.name, &params.argument.name, &params.argument.value)
-        }
+        CompleteRequestRef::PromptReference(prompt_ref) => complete_prompt_arg(
+            &prompt_ref.name,
+            &params.argument.name,
+            &params.argument.value,
+        ),
         CompleteRequestRef::ResourceTemplateReference(_) => vec![],
     };
 
-    Ok(build_complete_result(suggestions))
+    build_complete_result(suggestions)
 }
 
 // ─── Prompt argument completion ───────────────────────────────────────────────
@@ -80,9 +82,8 @@ fn filter_prefix(candidates: &[&str], prefix: &str) -> Vec<String> {
 ///
 /// Returns an empty list on any I/O error rather than propagating.
 fn complete_session_names(prefix: &str) -> Vec<String> {
-    let session_dir = match nab::get_session_dir() {
-        Ok(p) => p,
-        Err(_) => return vec![],
+    let Ok(session_dir) = nab::get_session_dir() else {
+        return vec![];
     };
 
     let Ok(entries) = std::fs::read_dir(&session_dir) else {
@@ -206,17 +207,15 @@ mod tests {
                 name: "cookies".to_string(),
                 value: String::new(),
             },
-            ref_: CompleteRequestRef::PromptReference(
-                rust_mcp_sdk::schema::PromptReference::new(
-                    "fetch-and-extract".to_string(),
-                    None,
-                ),
-            ),
+            ref_: CompleteRequestRef::PromptReference(rust_mcp_sdk::schema::PromptReference::new(
+                "fetch-and-extract".to_string(),
+                None,
+            )),
             context: None,
             meta: None,
         };
         // WHEN handled
-        let result = handle_complete(&params).expect("completion should not fail");
+        let result = handle_complete(&params);
         // THEN browser names are returned
         assert!(!result.completion.values.is_empty());
         assert!(result.completion.values.contains(&"brave".to_string()));
@@ -240,7 +239,7 @@ mod tests {
             meta: None,
         };
         // WHEN handled
-        let result = handle_complete(&params).expect("completion should not fail");
+        let result = handle_complete(&params);
         // THEN empty result (no error)
         assert!(result.completion.values.is_empty());
     }

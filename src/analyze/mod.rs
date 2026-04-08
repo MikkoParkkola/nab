@@ -37,8 +37,8 @@ use thiserror::Error;
 
 // ── New trait-based API (Phase 1+) ────────────────────────────────────────────
 pub use active_reading::{
-    ActiveReadingConfig, ActiveReadingError, ActiveReadingMetadata, ActiveReadingOutput,
-    ActiveReader, LlmSampler, LookupResult, Reference, ReferenceKind, UrlFetcher,
+    ActiveReader, ActiveReadingConfig, ActiveReadingError, ActiveReadingMetadata,
+    ActiveReadingOutput, LlmSampler, LookupResult, Reference, ReferenceKind, UrlFetcher,
 };
 pub use asr_backend::{
     AsrBackend, SpeakerSegment as AsrSpeakerSegment, TranscribeOptions,
@@ -51,9 +51,7 @@ pub use diarize::{Diarizer, SpeakerSegment};
 pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor};
 pub use fusion::{FusedSegment, FusionEngine};
 pub use report::{AnalysisReport, ReportFormat};
-pub use transcribe::{
-    TranscriptSegment, TranscriptionBackend, VllmTranscriber, WordTiming,
-};
+pub use transcribe::{TranscriptSegment, TranscriptionBackend, VllmTranscriber, WordTiming};
 pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
 
 // ─── Backend factory ──────────────────────────────────────────────────────────
@@ -62,12 +60,12 @@ pub use vision::{VisionAnalyzer, VisionBackend, VisualAnalysis};
 ///
 /// Selection order (first available wins):
 ///
-/// 1. **FluidAudio** (macOS aarch64 only) — ~150× RTFx on Apple Neural Engine.
-/// 2. **SherpaOnnx** (all platforms, `analyze-sherpa` feature) — ~30× RTFx CPU,
+/// 1. **`FluidAudio`** (macOS aarch64 only) — ~150× `RTFx` on Apple Neural Engine.
+/// 2. **`SherpaOnnx`** (all platforms, `analyze-sherpa` feature) — ~30× `RTFx` `CPU`,
 ///    requires model files at `~/.cache/nab/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/`.
-/// 3. **WhisperRs** (all platforms, `analyze-whisper` feature) — ~3–15× RTFx,
+/// 3. **`WhisperRs`** (all platforms, `analyze-whisper` feature) — ~3–15× `RTFx`,
 ///    99-language universal fallback, requires `~/.cache/nab/models/whisper-large-v3-turbo-q5_0.bin`.
-/// 4. **Stub** — returns an error on transcription. Indicates no backend is installed.
+/// 4. **`Stub`** — returns an error on transcription. Indicates no backend is installed.
 ///
 /// Install backends with:
 /// - `nab models fetch fluidaudio` (macOS Apple Silicon)
@@ -109,11 +107,15 @@ pub fn default_backend() -> Arc<dyn AsrBackend> {
     // error at use time rather than a panic here.
     #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     {
-        Arc::new(FluidAudioBackend::with_binary(PathBuf::from("fluidaudiocli")))
+        Arc::new(FluidAudioBackend::with_binary(PathBuf::from(
+            "fluidaudiocli",
+        )))
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        Arc::new(FluidAudioBackend::with_binary(PathBuf::from("fluidaudiocli")))
+        Arc::new(FluidAudioBackend::with_binary(PathBuf::from(
+            "fluidaudiocli",
+        )))
     }
 }
 

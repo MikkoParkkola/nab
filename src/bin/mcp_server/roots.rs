@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Roots helper — server-side plumbing to query `roots/list`.
 //!
 //! "Roots" is a CLIENT capability per MCP 2025-11-25: the client advertises
@@ -24,8 +26,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rust_mcp_sdk::schema::Root;
 use rust_mcp_sdk::McpServer;
+use rust_mcp_sdk::schema::Root;
 use tokio::sync::RwLock;
 
 // ─── Public helpers ───────────────────────────────────────────────────────────

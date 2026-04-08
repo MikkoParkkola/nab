@@ -5,7 +5,7 @@
 //!
 //! | Platform | Implementation | Notes |
 //! |----------|---------------|-------|
-//! | macOS | [`AppleVisionEngine`] | VNRecognizeTextRequest revision 3, CoreML |
+//! | macOS | [`AppleVisionEngine`] | `VNRecognizeTextRequest` revision 3, `CoreML` |
 //! | Linux/Windows | [`StubEngine`] | Returns "not available" message |
 //!
 //! # Example
@@ -99,13 +99,13 @@ pub struct OcrResult {
 #[async_trait]
 pub trait OcrEngine: Send + Sync {
     /// Short identifier string for this engine (e.g. `"apple_vision"`).
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// BCP-47 language codes this engine natively recognizes.
     ///
     /// Returns `&["*"]` when the engine supports any language via automatic
     /// detection (same convention as [`crate::analyze::asr_backend::AsrBackend`]).
-    fn supported_languages(&self) -> &[&str];
+    fn supported_languages(&self) -> &'static [&'static str];
 
     /// Returns `true` when the engine libraries and models are present at
     /// runtime. Does **not** perform a test recognition.

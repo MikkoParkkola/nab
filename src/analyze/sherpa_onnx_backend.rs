@@ -24,21 +24,17 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use sherpa_onnx::{
-    OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig,
-};
+use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig};
 
-use super::asr_backend::{
-    AsrBackend, TranscribeOptions, TranscriptSegment, TranscriptionResult,
-};
+use super::asr_backend::{AsrBackend, TranscribeOptions, TranscriptSegment, TranscriptionResult};
 use super::{AnalysisError, Result};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /// Languages natively supported by Parakeet TDT v3 ONNX (25 EU + RU/UK).
 const SHERPA_LANGUAGES: &[&str] = &[
-    "en", "fi", "sv", "no", "da", "de", "fr", "es", "it", "pt", "nl", "pl", "cs", "ro", "hu",
-    "bg", "el", "hr", "sk", "sl", "lt", "lv", "et", "mt", "ru", "uk",
+    "en", "fi", "sv", "no", "da", "de", "fr", "es", "it", "pt", "nl", "pl", "cs", "ro", "hu", "bg",
+    "el", "hr", "sk", "sl", "lt", "lv", "et", "mt", "ru", "uk",
 ];
 
 /// Required model file names in the model directory.
@@ -177,10 +173,11 @@ impl AsrBackend for SherpaOnnxBackend {
         let word_timestamps = opts.word_timestamps;
 
         // Decode audio on a blocking thread — WAV decoding is CPU-bound.
-        let (samples, sample_rate, audio_duration) =
-            tokio::task::spawn_blocking(move || load_audio_samples(&audio_path_owned, max_duration))
-                .await
-                .map_err(|e| AnalysisError::Whisper(format!("audio decode task panicked: {e}")))??;
+        let (samples, sample_rate, audio_duration) = tokio::task::spawn_blocking(move || {
+            load_audio_samples(&audio_path_owned, max_duration)
+        })
+        .await
+        .map_err(|e| AnalysisError::Whisper(format!("audio decode task panicked: {e}")))??;
 
         tracing::debug!(
             backend = "sherpa-onnx",
@@ -201,8 +198,12 @@ impl AsrBackend for SherpaOnnxBackend {
         };
 
         let detected_language = language.unwrap_or_else(|| "en".to_string());
-        let segments =
-            text_to_segments(&raw_text, audio_duration, &detected_language, word_timestamps);
+        let segments = text_to_segments(
+            &raw_text,
+            audio_duration,
+            &detected_language,
+            word_timestamps,
+        );
 
         tracing::info!(
             backend = "sherpa-onnx",

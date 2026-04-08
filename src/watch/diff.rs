@@ -37,9 +37,7 @@ fn extract_selector(html: &str, selector: &str) -> Option<String> {
     use scraper::{Html, Selector};
     let doc = Html::parse_document(html);
     let sel = Selector::parse(selector).ok()?;
-    doc.select(&sel)
-        .next()
-        .map(|el| el.html())
+    doc.select(&sel).next().map(|el| el.html())
 }
 
 // ─── Diff summary ─────────────────────────────────────────────────────────────

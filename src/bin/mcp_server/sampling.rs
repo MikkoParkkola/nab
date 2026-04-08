@@ -23,11 +23,11 @@
 
 use std::sync::Arc;
 
+use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::schema::{
     CreateMessageContent, CreateMessageRequestParams, ModelPreferences, Role, SamplingMessage,
     SamplingMessageContent, TextContent,
 };
-use rust_mcp_sdk::McpServer;
 
 // ─── Public helpers ───────────────────────────────────────────────────────────
 
@@ -104,8 +104,8 @@ mod tests {
     use super::*;
 
     use rust_mcp_sdk::error::SdkResult;
-    use rust_mcp_sdk::schema::{ClientSampling, InitializeRequestParams};
     use rust_mcp_sdk::schema::schema_utils::{ClientMessage, MessageFromServer, ServerMessage};
+    use rust_mcp_sdk::schema::{ClientSampling, InitializeRequestParams};
     use rust_mcp_sdk::task_store::{ClientTaskStore, ServerTaskStore};
     use rust_mcp_sdk::{McpServer, SessionId};
     use std::time::Duration;

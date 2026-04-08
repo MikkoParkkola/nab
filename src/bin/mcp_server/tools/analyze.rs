@@ -1,7 +1,7 @@
 //! `analyze` MCP tool — transcribe audio/video with multilingual SOTA ASR.
 //!
 //! Delegates to [`nab::analyze::default_backend`] which selects:
-//! - FluidAudio (Parakeet TDT v3, CoreML, 143× RTFx) on macOS Apple Silicon
+//! - `FluidAudio` (`Parakeet TDT v3`, `CoreML`, 143× `RTFx`) on macOS Apple Silicon
 //! - A stub returning `MissingDependency` on all other platforms
 //!
 //! For video files the audio track is first extracted with `ffmpeg` via
@@ -14,9 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use nab::analyze::{AudioExtractor, TranscribeOptions, default_backend};
+use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
-use rust_mcp_sdk::McpServer;
 use serde::{Deserialize, Serialize};
 
 use crate::hebb_client::HebbClient;
@@ -72,7 +72,7 @@ pub struct AnalyzeTool {
 
     /// Enable speaker diarization.
     ///
-    /// When `true`, the FluidAudio VBx diarizer runs after transcription and
+    /// When `true`, the `FluidAudio` `VBx` diarizer runs after transcription and
     /// assigns a speaker label (e.g. `"SPEAKER_00"`) to each segment.
     /// Adds ~20–50 ms of processing on typical recordings.
     #[serde(default)]
@@ -116,10 +116,7 @@ impl AnalyzeTool {
     ///
     /// `runtime` is passed through to the active-reading sampler when
     /// `self.active_reading` is `true`. It is unused otherwise.
-    pub async fn run(
-        &self,
-        runtime: &Arc<dyn McpServer>,
-    ) -> Result<CallToolResult, CallToolError> {
+    pub async fn run(&self, runtime: &Arc<dyn McpServer>) -> Result<CallToolResult, CallToolError> {
         let input_path = PathBuf::from(&self.input);
 
         tracing::info!(
@@ -176,18 +173,19 @@ impl AnalyzeTool {
         );
 
         // ── hebb voice matching ────────────────────────────────────────────────
-        if self.diarize && self.include_embeddings {
-            if let Some(ref mut speakers) = result.speakers {
-                let speaker_map = match match_speakers_with_hebb(speakers).await {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::warn!("hebb voice match skipped: {e}");
-                        HashMap::new()
-                    }
-                };
-                if !speaker_map.is_empty() {
-                    apply_speaker_names(&mut result.segments, &speaker_map);
+        if self.diarize
+            && self.include_embeddings
+            && let Some(ref mut speakers) = result.speakers
+        {
+            let speaker_map = match match_speakers_with_hebb(speakers).await {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!("hebb voice match skipped: {e}");
+                    HashMap::new()
                 }
+            };
+            if !speaker_map.is_empty() {
+                apply_speaker_names(&mut result.segments, &speaker_map);
             }
         }
 
@@ -226,7 +224,7 @@ async fn apply_active_reading(
     runtime: &Arc<dyn McpServer>,
 ) {
     use crate::active_reading_mcp::{McpLlmSampler, NabUrlFetcher};
-    use nab::analyze::{ActiveReadingConfig, ActiveReader};
+    use nab::analyze::{ActiveReader, ActiveReadingConfig};
 
     if !crate::sampling::is_supported(runtime) {
         tracing::warn!(
@@ -277,7 +275,7 @@ const VOICE_MATCH_LIMIT: u32 = 3;
 async fn match_speakers_with_hebb(
     speakers: &[nab::analyze::AsrSpeakerSegment],
 ) -> anyhow::Result<HashMap<String, String>> {
-    if !HebbClient::is_available().await {
+    if !HebbClient::is_available() {
         return Ok(HashMap::new());
     }
 
@@ -296,11 +294,12 @@ async fn match_speakers_with_hebb(
             .await
         {
             Ok(matches) => {
-                if let Some(best) = matches.into_iter().find(|m| m.similarity >= VOICE_MATCH_THRESHOLD)
+                if let Some(best) = matches
+                    .into_iter()
+                    .find(|m| m.similarity >= VOICE_MATCH_THRESHOLD)
+                    && let Some(name) = best.name
                 {
-                    if let Some(name) = best.name {
-                        map.insert(seg.speaker.clone(), name);
-                    }
+                    map.insert(seg.speaker.clone(), name);
                 }
             }
             Err(e) => {
@@ -320,10 +319,10 @@ fn apply_speaker_names(
     speaker_map: &HashMap<String, String>,
 ) {
     for seg in segments {
-        if let Some(label) = &seg.speaker {
-            if let Some(name) = speaker_map.get(label) {
-                seg.speaker = Some(name.clone());
-            }
+        if let Some(label) = &seg.speaker
+            && let Some(name) = speaker_map.get(label)
+        {
+            seg.speaker = Some(name.clone());
         }
     }
 }
@@ -353,10 +352,7 @@ async fn extract_audio_if_needed(input: &std::path::Path) -> Result<PathBuf, Cal
         return Ok(input.to_path_buf());
     }
 
-    let tmp_path = std::env::temp_dir().join(format!(
-        "nab_analyze_{}.wav",
-        std::process::id()
-    ));
+    let tmp_path = std::env::temp_dir().join(format!("nab_analyze_{}.wav", std::process::id()));
 
     tracing::info!(
         video = %input.display(),
@@ -451,7 +447,7 @@ mod tests {
         // AND a speaker segment with an embedding
         let speakers = vec![make_speaker("SPEAKER_00", Some(vec![0.1; 256]))];
         // WHEN we check availability (cheap, no subprocess)
-        let available = HebbClient::is_available().await;
+        let available = HebbClient::is_available();
         if available {
             // Skip: hebb is actually installed — cannot test the fallback path.
             return;

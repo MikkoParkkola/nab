@@ -27,7 +27,7 @@ pub struct Watch {
     pub last_check_at: Option<DateTime<Utc>>,
     /// When content last differed from the previous snapshot.
     pub last_change_at: Option<DateTime<Utc>>,
-    /// ETag from the last 200/304 response (for conditional GET).
+    /// `ETag` from the last `200`/`304` response (for conditional `GET`).
     pub last_etag: Option<String>,
     /// Last-Modified from the last 200/304 response (for conditional GET).
     pub last_last_modified: Option<String>,
@@ -50,10 +50,9 @@ impl Watch {
         match self.last_check_at {
             None => true,
             Some(last) => {
-                let elapsed = Utc::now()
-                    .signed_duration_since(last)
-                    .num_seconds()
-                    .max(0) as u64;
+                let elapsed =
+                    u64::try_from(Utc::now().signed_duration_since(last).num_seconds().max(0))
+                        .unwrap_or(0);
                 elapsed >= self.interval_secs
             }
         }
@@ -187,9 +186,7 @@ mod tests {
     use chrono::Utc;
 
     fn make_watch(interval_secs: u64, last_check_secs_ago: Option<i64>) -> Watch {
-        let last_check_at = last_check_secs_ago.map(|s| {
-            Utc::now() - chrono::Duration::seconds(s)
-        });
+        let last_check_at = last_check_secs_ago.map(|s| Utc::now() - chrono::Duration::seconds(s));
         Watch {
             id: "test0001".into(),
             url: "https://example.com".into(),

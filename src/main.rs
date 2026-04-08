@@ -165,10 +165,12 @@ enum Commands {
         #[arg(long)]
         no_ocr: bool,
 
-        /// Do not auto-transcribe media URLs (YouTube, SoundCloud, direct .mp3/.mp4, etc.)
+        /// Do not auto-transcribe media URLs (`YouTube`, `SoundCloud`, direct
+        /// `.mp3`/`.mp4`, etc.)
         ///
-        /// By default, when nab detects a media URL it downloads the audio via yt-dlp,
-        /// transcribes it via FluidAudio/sherpa-onnx, and returns the transcript as markdown.
+        /// By default, when nab detects a media URL it downloads the audio via
+        /// `yt-dlp`, transcribes it via `FluidAudio`/`sherpa-onnx`, and returns
+        /// the transcript as markdown.
         /// Pass this flag to disable that behaviour and fetch the page as plain HTML instead.
         #[arg(long)]
         no_transcribe: bool,
@@ -496,7 +498,7 @@ enum Commands {
         action: WatchAction,
     },
 
-    /// Manage locally-built inference model binaries (FluidAudio, Whisper, …)
+    /// Manage locally-built inference model binaries (`FluidAudio`, `Whisper`, …)
     ///
     /// Clones, builds, and symlinks model binaries into a persistent location so
     /// they survive reboots. Install location: `~/.local/share/nab/models/`

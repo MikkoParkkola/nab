@@ -49,6 +49,7 @@ const CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 ///
 /// # async fn example() -> anyhow::Result<()> {
 /// let enricher = FetchOcrEnricher::new()?;
+/// let client = reqwest::Client::new();
 /// if enricher.is_available() {
 ///     let ocr_map = enricher
 ///         .enrich_images("<img src='/a.png'>", "https://example.com", &client)
@@ -258,10 +259,7 @@ fn resolve_url(src: &str, base: Option<&url::Url>) -> Option<String> {
 /// Handles the common markdown image patterns:
 /// - `![alt](url)` — inserts ` [Image: text]` after the closing `)`
 /// - `![alt](url "title")` — same
-fn annotate_markdown_images(
-    markdown: &str,
-    ocr_results: &HashMap<String, String>,
-) -> String {
+fn annotate_markdown_images(markdown: &str, ocr_results: &HashMap<String, String>) -> String {
     // We process the markdown character by character to reliably find
     // image spans without a full parser dependency.  The pattern we look
     // for is: `![` ... `](` <url> [optional "title"] `)`.
@@ -272,18 +270,20 @@ fn annotate_markdown_images(
 
     while i < n {
         // Look for `![`
-        if i + 1 < n && chars[i] == '!' && chars[i + 1] == '[' {
-            if let Some((end, url)) = parse_markdown_image(&chars, i) {
-                // Write the original image syntax verbatim.
-                output.push_str(&markdown[char_byte_offset(&chars, i)..char_byte_offset(&chars, end)]);
-                // Append annotation if we have OCR text for this URL.
-                if let Some(text) = ocr_results.get(&url) {
-                    let clean = text.replace('\n', " ");
-                    output.push_str(&format!(" [Image: {clean}]"));
-                }
-                i = end;
-                continue;
+        if i + 1 < n
+            && chars[i] == '!'
+            && chars[i + 1] == '['
+            && let Some((end, url)) = parse_markdown_image(&chars, i)
+        {
+            // Write the original image syntax verbatim.
+            output.push_str(&markdown[char_byte_offset(&chars, i)..char_byte_offset(&chars, end)]);
+            // Append annotation if we have OCR text for this URL.
+            if let Some(text) = ocr_results.get(&url) {
+                let clean = text.replace('\n', " ");
+                let _ = write!(output, " [Image: {clean}]");
             }
+            i = end;
+            continue;
         }
         output.push(chars[i]);
         i += 1;
@@ -465,7 +465,10 @@ mod tests {
         let enricher = FetchOcrEnricher::with_max(10);
         let result = enricher.annotate_markdown(markdown, &ocr);
         // THEN newline is replaced with space
-        assert!(result.contains("[Image: Line one Line two]"), "got: {result}");
+        assert!(
+            result.contains("[Image: Line one Line two]"),
+            "got: {result}"
+        );
     }
 
     // ── cache helpers ────────────────────────────────────────────────────────
@@ -486,7 +489,10 @@ mod tests {
         // WHEN read
         let result = read_cache(&path);
         // THEN None (stale)
-        assert!(result.is_none(), "expected None for stale cache, got: {result:?}");
+        assert!(
+            result.is_none(),
+            "expected None for stale cache, got: {result:?}"
+        );
     }
 
     /// Fresh cache files are returned.
@@ -505,3 +511,4 @@ mod tests {
         assert_eq!(result.as_deref(), Some("recognized text"));
     }
 }
+use std::fmt::Write as _;

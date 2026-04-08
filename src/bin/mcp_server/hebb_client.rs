@@ -74,8 +74,7 @@ impl HebbClient {
     ///
     /// Returns `Err` when the binary cannot be found or the handshake fails.
     async fn spawn() -> Result<Self> {
-        let binary = locate_hebb_binary()
-            .ok_or_else(|| anyhow!("hebb-mcp not found in PATH"))?;
+        let binary = locate_hebb_binary().ok_or_else(|| anyhow!("hebb-mcp not found in PATH"))?;
 
         let mut child = tokio::process::Command::new(&binary)
             .stdin(Stdio::piped())
@@ -101,11 +100,14 @@ impl HebbClient {
     /// Send `initialize` + `initialized` to complete the MCP handshake.
     async fn handshake(&mut self) -> Result<()> {
         let init_response = self
-            .send_request("initialize", json!({
-                "protocolVersion": "2025-11-25",
-                "capabilities": { "sampling": {} },
-                "clientInfo": { "name": "nab-mcp", "version": env!("CARGO_PKG_VERSION") }
-            }))
+            .send_request(
+                "initialize",
+                json!({
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": { "sampling": {} },
+                    "clientInfo": { "name": "nab-mcp", "version": env!("CARGO_PKG_VERSION") }
+                }),
+            )
             .await
             .context("MCP initialize handshake failed")?;
 
@@ -149,7 +151,7 @@ impl HebbClient {
     ///
     /// Does **not** spawn a subprocess — useful as a cheap pre-check before
     /// paying the async initialization cost.
-    pub async fn is_available() -> bool {
+    pub fn is_available() -> bool {
         locate_hebb_binary().is_some()
     }
 
@@ -193,8 +195,7 @@ impl HebbClient {
 
     /// Serialize `value` as a single JSON line and write it to hebb's stdin.
     async fn write_line(&mut self, value: &Value) -> Result<()> {
-        let line = serde_json::to_string(value)
-            .context("failed to serialize JSON-RPC message")?;
+        let line = serde_json::to_string(value).context("failed to serialize JSON-RPC message")?;
         self.stdin
             .write_all(format!("{line}\n").as_bytes())
             .await
@@ -236,7 +237,10 @@ impl HebbClient {
     /// - The response cannot be parsed
     pub async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<Value> {
         let response = self
-            .send_request("tools/call", json!({ "name": name, "arguments": arguments }))
+            .send_request(
+                "tools/call",
+                json!({ "name": name, "arguments": arguments }),
+            )
             .await
             .with_context(|| format!("tools/call '{name}' failed"))?;
 
@@ -249,7 +253,11 @@ impl HebbClient {
             .ok_or_else(|| anyhow!("hebb response missing 'result' field"))?;
 
         // MCP CallToolResult: check isError first.
-        if result.get("isError").and_then(Value::as_bool).unwrap_or(false) {
+        if result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             let msg = extract_first_text_content(result)
                 .unwrap_or_else(|| format!("tool '{name}' returned isError=true"));
             bail!("{msg}");
@@ -288,11 +296,14 @@ impl HebbClient {
         let embedding_values: Vec<Value> = embedding.iter().map(|&f| json!(f)).collect();
 
         let result = self
-            .call_tool("voice_match", json!({
-                "embedding": embedding_values,
-                "threshold": threshold,
-                "limit": limit,
-            }))
+            .call_tool(
+                "voice_match",
+                json!({
+                    "embedding": embedding_values,
+                    "threshold": threshold,
+                    "limit": limit,
+                }),
+            )
             .await?;
 
         parse_voice_matches(&result)
@@ -420,14 +431,29 @@ fn parse_voice_matches(result: &Value) -> Result<Vec<VoiceMatch>> {
                     .ok_or_else(|| anyhow!("voice_match entry missing 'voice_id'"))?
                     .to_string(),
                 name: m.get("name").and_then(Value::as_str).map(String::from),
-                similarity: m
-                    .get("similarity")
-                    .and_then(Value::as_f64)
-                    .ok_or_else(|| anyhow!("voice_match entry missing 'similarity'"))?
-                    as f32,
+                similarity: parse_similarity_f32(m)?,
             })
         })
         .collect()
+}
+
+#[allow(clippy::cast_precision_loss)] // Hebb similarities are bounded scores; f32 is the public type here.
+fn parse_similarity_f32(match_value: &Value) -> Result<f32> {
+    let similarity = match_value
+        .get("similarity")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow!("voice_match entry missing 'similarity'"))?;
+
+    if !similarity.is_finite()
+        || similarity < f64::from(f32::MIN)
+        || similarity > f64::from(f32::MAX)
+    {
+        bail!("voice_match similarity out of f32 range");
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    let similarity = similarity as f32;
+    Ok(similarity)
 }
 
 /// Return `true` when an error looks like a "key not found" response.
@@ -453,7 +479,7 @@ mod tests {
     async fn is_available_returns_bool_without_panic() {
         // GIVEN the current environment (hebb-mcp may or may not be installed)
         // WHEN we check availability
-        let result = HebbClient::is_available().await;
+        let result = HebbClient::is_available();
         // THEN we get a bool without panicking
         let _ = result; // value depends on environment
     }
@@ -545,11 +571,7 @@ mod tests {
             (anyhow!("internal server error"), false),
         ];
         for (err, expected) in cases {
-            assert_eq!(
-                is_not_found_error(&err),
-                expected,
-                "mismatch for: {err}"
-            );
+            assert_eq!(is_not_found_error(&err), expected, "mismatch for: {err}");
         }
     }
 }

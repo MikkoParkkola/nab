@@ -38,7 +38,9 @@ use chrono::Utc;
 use tokio::sync::{RwLock, broadcast};
 use tracing::info;
 
-pub use types::{AddOptions, DiffKind, NotifyOn, Watch, WatchEvent, WatchId, WatchOptions, WatchSnapshot};
+pub use types::{
+    AddOptions, DiffKind, NotifyOn, Watch, WatchEvent, WatchId, WatchOptions, WatchSnapshot,
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -92,15 +94,15 @@ impl WatchManager {
             event_tx,
         };
 
-        manager.load_from_disk()?;
+        manager.load_from_disk();
         Ok(manager)
     }
 
     /// Load all persisted watches from disk into the in-memory table.
-    fn load_from_disk(&self) -> Result<()> {
+    fn load_from_disk(&self) {
         // Storage dir may not exist yet — that's fine.
         if !self.storage_dir.exists() {
-            return Ok(());
+            return;
         }
         let watches = storage::load_all_watches(&self.storage_dir);
         let mut table = self.watches.try_write().expect("no contention at init");
@@ -108,7 +110,6 @@ impl WatchManager {
             table.insert(w.id.clone(), w);
         }
         info!("Loaded {} watches from disk", table.len());
-        Ok(())
     }
 
     // ─── Public API ───────────────────────────────────────────────────────────
@@ -129,7 +130,8 @@ impl WatchManager {
         info!(%id, %url, "Adding watch");
 
         // Initial fetch to seed the first snapshot.
-        let (etag, last_modified, snapshot) = initial_fetch(url, opts.selector.as_deref(), &opts.options).await?;
+        let (etag, last_modified, snapshot) =
+            initial_fetch(url, opts.selector.as_deref(), &opts.options).await?;
 
         let now = Utc::now();
         let watch = Watch {
@@ -149,14 +151,14 @@ impl WatchManager {
 
         // Save snapshot body.
         if let Some(snap) = watch.snapshots.first() {
-            let content = load_initial_content(url, watch.selector.as_deref(), &watch.options).await;
+            let content =
+                load_initial_content(url, watch.selector.as_deref(), &watch.options).await;
             if let Ok(c) = content {
                 let _ = storage::save_snapshot_body(&self.snapshot_dir, &snap.sha256, c.as_bytes());
             }
         }
 
-        storage::save_watch(&self.storage_dir, &watch)
-            .context("persist new watch")?;
+        storage::save_watch(&self.storage_dir, &watch).context("persist new watch")?;
 
         {
             let mut table = self.watches.write().await;
@@ -174,11 +176,12 @@ impl WatchManager {
     pub async fn remove(&self, id: &WatchId) -> Result<()> {
         let watch = {
             let mut table = self.watches.write().await;
-            table.remove(id).ok_or_else(|| anyhow::anyhow!("watch '{id}' not found"))?
+            table
+                .remove(id)
+                .ok_or_else(|| anyhow::anyhow!("watch '{id}' not found"))?
         };
 
-        storage::delete_watch(&self.storage_dir, id)
-            .context("delete watch file")?;
+        storage::delete_watch(&self.storage_dir, id).context("delete watch file")?;
 
         // GC snapshot files no longer referenced by any watch.
         let still_referenced = self.all_snapshot_hashes().await;
@@ -223,12 +226,17 @@ impl WatchManager {
              \n---\n\n{}",
             watch.id,
             watch.url,
-            watch.last_check_at
-                .map_or_else(|| "never".into(), |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
-            watch.last_change_at
-                .map_or_else(|| "never".into(), |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+            watch.last_check_at.map_or_else(
+                || "never".into(),
+                |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            ),
+            watch.last_change_at.map_or_else(
+                || "never".into(),
+                |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            ),
             watch.interval_secs,
-            watch.selector
+            watch
+                .selector
                 .as_deref()
                 .map(|s| format!("**Selector**: `{s}`\n"))
                 .unwrap_or_default(),
@@ -350,18 +358,17 @@ async fn initial_fetch(
     Ok((etag, last_modified, Some(snap)))
 }
 
-async fn load_initial_content(url: &str, selector: Option<&str>, options: &WatchOptions) -> Result<String> {
+async fn load_initial_content(
+    url: &str,
+    selector: Option<&str>,
+    options: &WatchOptions,
+) -> Result<String> {
     let client = reqwest::Client::builder()
         .user_agent(poller::WATCH_USER_AGENT)
         .timeout(Duration::from_secs(30))
         .build()?;
 
-    let body = client
-        .get(url)
-        .send()
-        .await?
-        .bytes()
-        .await?;
+    let body = client.get(url).send().await?.bytes().await?;
 
     Ok(diff::extract_content(
         &String::from_utf8_lossy(&body),

@@ -241,10 +241,7 @@ impl<'a> ActiveReader<'a> {
 
     /// Pre-seed the reader with a previously built cache.
     #[must_use]
-    pub fn with_cache(
-        mut self,
-        cache: HashMap<(ReferenceKind, String), LookupResult>,
-    ) -> Self {
+    pub fn with_cache(mut self, cache: HashMap<(ReferenceKind, String), LookupResult>) -> Self {
         self.cache = cache;
         self
     }
@@ -265,7 +262,10 @@ impl<'a> ActiveReader<'a> {
         let mut refs_per_segment: HashMap<usize, usize> = HashMap::new();
 
         if transcript.segments.is_empty() {
-            return Ok(ActiveReadingOutput { footnotes, metadata });
+            return Ok(ActiveReadingOutput {
+                footnotes,
+                metadata,
+            });
         }
 
         let chunks = self.chunk_segments(&transcript.segments);
@@ -285,14 +285,14 @@ impl<'a> ActiveReader<'a> {
                 }
             };
             // Rough token estimate: ~2 tokens per word in prompt + response.
-            metadata.tokens_spent =
-                metadata.tokens_spent.saturating_add(estimate_tokens(chunk_text));
+            metadata.tokens_spent = metadata
+                .tokens_spent
+                .saturating_add(estimate_tokens(chunk_text));
 
             metadata.references_identified += refs.len();
             debug!(
                 count = refs.len(),
-                offset,
-                "active reading: references identified in chunk"
+                offset, "active reading: references identified in chunk"
             );
 
             for reference in refs {
@@ -308,8 +308,9 @@ impl<'a> ActiveReader<'a> {
                     }
                 };
 
-                metadata.tokens_spent =
-                    metadata.tokens_spent.saturating_add(estimate_tokens(&lookup.summary));
+                metadata.tokens_spent = metadata
+                    .tokens_spent
+                    .saturating_add(estimate_tokens(&lookup.summary));
                 metadata.references_followed += 1;
 
                 let fn_num = footnotes.len() + 1;
@@ -319,10 +320,7 @@ impl<'a> ActiveReader<'a> {
                     let _ = write!(seg.text, "[{fn_num}]");
                 }
 
-                footnotes.push(format!(
-                    "[{fn_num}] {} — {}",
-                    lookup.summary, lookup.url
-                ));
+                footnotes.push(format!("[{fn_num}] {} — {}", lookup.summary, lookup.url));
 
                 *refs_per_segment.entry(reference.segment_idx).or_insert(0) += 1;
             }
@@ -337,7 +335,10 @@ impl<'a> ActiveReader<'a> {
             "active reading complete"
         );
 
-        Ok(ActiveReadingOutput { footnotes, metadata })
+        Ok(ActiveReadingOutput {
+            footnotes,
+            metadata,
+        })
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
@@ -347,10 +348,7 @@ impl<'a> ActiveReader<'a> {
     /// Returns `Vec<(starting_segment_idx, chunk_text)>`.
     // `&self` is kept so callers can access config-driven chunk sizes in the future.
     #[allow(clippy::unused_self)]
-    pub(crate) fn chunk_segments(
-        &self,
-        segments: &[TranscriptSegment],
-    ) -> Vec<(usize, String)> {
+    pub(crate) fn chunk_segments(&self, segments: &[TranscriptSegment]) -> Vec<(usize, String)> {
         let mut chunks: Vec<(usize, String)> = Vec::new();
         let mut current = String::new();
         let mut chunk_start_idx: usize = 0;
@@ -460,7 +458,10 @@ impl<'a> ActiveReader<'a> {
         if !self.config.allowed_kinds.contains(&reference.kind) {
             return false;
         }
-        let count = refs_per_segment.get(&reference.segment_idx).copied().unwrap_or(0);
+        let count = refs_per_segment
+            .get(&reference.segment_idx)
+            .copied()
+            .unwrap_or(0);
         if count >= self.config.max_refs_per_segment {
             return false;
         }
@@ -508,9 +509,6 @@ mod tests {
             *self.identify_calls.lock().unwrap()
         }
 
-        fn summarize_call_count(&self) -> usize {
-            *self.summarize_calls.lock().unwrap()
-        }
     }
 
     #[async_trait]
@@ -540,24 +538,6 @@ mod tests {
         ) -> Result<String> {
             *self.summarize_calls.lock().unwrap() += 1;
             Ok(self.summary.clone())
-        }
-    }
-
-    /// Mock sampler that always fails `identify_references`.
-    struct FailingSampler;
-
-    #[async_trait]
-    impl LlmSampler for FailingSampler {
-        async fn identify_references(
-            &self,
-            _chunk: &str,
-            _offset: usize,
-        ) -> Result<Vec<Reference>> {
-            Err(ActiveReadingError::SamplingFailed("mock failure".into()))
-        }
-
-        async fn summarize(&self, _c: &str, _q: &str, _t: u32) -> Result<String> {
-            Err(ActiveReadingError::SamplingFailed("mock failure".into()))
         }
     }
 
@@ -665,9 +645,8 @@ mod tests {
     fn chunk_segments_respects_word_count() {
         // GIVEN segments that together exceed the chunk size
         let long_word = "word ".repeat(200); // 1000 chars each
-        let segs: Vec<TranscriptSegment> = (0..10)
-            .map(|_| make_segment(long_word.trim()))
-            .collect();
+        let segs: Vec<TranscriptSegment> =
+            (0..10).map(|_| make_segment(long_word.trim())).collect();
         let config = ActiveReadingConfig::default();
         let sampler = MockSampler::new(vec![], "");
         let fetcher = MockFetcher::new("");
@@ -677,7 +656,11 @@ mod tests {
         let chunks = reader.chunk_segments(&segs);
 
         // THEN multiple chunks are produced
-        assert!(chunks.len() >= 2, "expected ≥2 chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "expected ≥2 chunks, got {}",
+            chunks.len()
+        );
         // Each chunk must be non-empty
         for (_, text) in &chunks {
             assert!(!text.is_empty());
@@ -694,7 +677,10 @@ mod tests {
         let url = ActiveReader::url_for_reference(&r).unwrap();
 
         // THEN it points to Google Scholar
-        assert!(url.starts_with("https://scholar.google.com/scholar?q="), "got {url}");
+        assert!(
+            url.starts_with("https://scholar.google.com/scholar?q="),
+            "got {url}"
+        );
         assert!(url.contains("Dijkstra"));
     }
 
@@ -794,14 +780,12 @@ mod tests {
     #[tokio::test]
     async fn process_uses_cache_on_repeat() {
         // GIVEN two identical references in two chunks (simulated via two segments)
-        let refs = vec![
-            Reference {
-                kind: ReferenceKind::Paper,
-                query: "same paper".to_string(),
-                confidence: 0.9,
-                segment_idx: 0,
-            },
-        ];
+        let refs = vec![Reference {
+            kind: ReferenceKind::Paper,
+            query: "same paper".to_string(),
+            confidence: 0.9,
+            segment_idx: 0,
+        }];
         let sampler = MockSampler::new(refs, "cached summary");
         let fetcher = MockFetcher::new("content");
         let mut reader = ActiveReader::new(&sampler, &fetcher, ActiveReadingConfig::default());
@@ -819,7 +803,11 @@ mod tests {
         let second = reader.lookup_reference(&ref1).await.unwrap();
 
         // THEN the fetcher is called only once (second is a cache hit)
-        assert_eq!(fetcher.call_count(), 1, "fetcher should be called once; cache should serve second");
+        assert_eq!(
+            fetcher.call_count(),
+            1,
+            "fetcher should be called once; cache should serve second"
+        );
         assert_eq!(second.summary, "cached summary");
     }
 
@@ -866,7 +854,9 @@ mod tests {
         config.token_budget = 1; // exhausted immediately after the first chunk
         let mut reader = ActiveReader::new(&sampler, &fetcher, config);
         // 20 segments, each ~100 chars — multiple chunks
-        let texts: Vec<&str> = (0..20).map(|_| "This is a sentence that mentions Dijkstra.").collect();
+        let texts: Vec<&str> = (0..20)
+            .map(|_| "This is a sentence that mentions Dijkstra.")
+            .collect();
         let mut transcript = make_transcript(&texts);
 
         // WHEN processed
@@ -893,7 +883,7 @@ mod tests {
         }];
         let sampler = MockSampler::new(refs, "summary");
         let fetcher = MockFetcher::new("content");
-        let mut config = ActiveReadingConfig::default();
+        let config = ActiveReadingConfig::default();
         // Default config does not include Number
         let mut reader = ActiveReader::new(&sampler, &fetcher, config);
         let mut transcript = make_transcript(&["The value is 3.14."]);
