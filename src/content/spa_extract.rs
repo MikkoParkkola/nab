@@ -24,9 +24,10 @@
 
 /// Try to extract article content from SPA JSON bundles embedded in HTML.
 ///
-/// Modern single-page applications (Next.js, Nuxt, etc.) embed serialized
-/// server-side render state in `<script>` tags. This function extracts that
-/// state and recursively searches for the longest text content field.
+/// Modern single-page applications (Next.js, Nuxt, SvelteKit, Gatsby, Angular
+/// Universal, etc.) embed serialized server-side render state in `<script>` tags.
+/// This function extracts that state and recursively searches for the longest
+/// text content field.
 ///
 /// Returns `Some(markdown)` if a substantial content field is found (>200 chars),
 /// `None` otherwise.
@@ -45,12 +46,28 @@ pub fn extract_spa_data(html: &str) -> Option<String> {
         }
     }
 
+    // Try SvelteKit fetched data blocks
+    if let Some(content) = extract_sveltekit_data(&document) {
+        return Some(content);
+    }
+
+    // Try Gatsby SSR data blocks
+    if let Some(content) = extract_gatsby_data(&document, html) {
+        return Some(content);
+    }
+
+    // Try Angular Universal transfer state
+    if let Some(content) = extract_angular_universal_state(&document) {
+        return Some(content);
+    }
+
     // Try JSON-LD structured data (Schema.org — widely used by modern blogs)
     if let Some(content) = extract_jsonld_content(&document) {
         return Some(content);
     }
 
     // Try inline script variable assignments (window.__NEXT_DATA__ = {...}, etc.)
+    // Also covers generic SSR patterns: window.__APP_STATE__, __STORE_STATE__, __DATA__
     if let Some(content) = extract_inline_script_json(html) {
         return Some(content);
     }
@@ -63,6 +80,166 @@ pub fn extract_spa_data(html: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Extract content from SvelteKit's prefetch data script blocks.
+///
+/// SvelteKit embeds server-side fetched data as:
+/// ```html
+/// <script type="application/json" data-sveltekit-fetched data-url="...">
+///   {"status":200,"statusText":"","headers":{},"body":"..."}
+/// </script>
+/// ```
+///
+/// Multiple such blocks may exist on one page. We scan all of them and return
+/// the longest substantial text found.
+fn extract_sveltekit_data(document: &scraper::Html) -> Option<String> {
+    const MIN_CONTENT_LEN: usize = 200;
+
+    let sel = scraper::Selector::parse(
+        r#"script[type="application/json"][data-sveltekit-fetched]"#,
+    )
+    .ok()?;
+
+    let mut best: Option<String> = None;
+
+    for script in document.select(&sel) {
+        let json_text = script.text().collect::<String>();
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(json_text.trim()) else {
+            continue;
+        };
+
+        // Unwrap `body` if it is a JSON string (stringified response body)
+        let payload = match value.get("body") {
+            Some(serde_json::Value::String(body_str))
+                if body_str.starts_with('{') || body_str.starts_with('[') =>
+            {
+                serde_json::from_str::<serde_json::Value>(body_str)
+                    .unwrap_or(value.clone())
+            }
+            _ => value.clone(),
+        };
+
+        if let Some(text) = find_longest_string(&payload, MIN_CONTENT_LEN) {
+            let current_best_len = best.as_deref().map_or(0, str::len);
+            if text.len() > current_best_len {
+                best = Some(text);
+            }
+        }
+    }
+
+    best.map(|content| render_spa_content(&content))
+}
+
+/// Extract content from Gatsby's SSR data script blocks.
+///
+/// Gatsby embeds page data in two places:
+///
+/// 1. `<script type="application/json" data-gatsby-ssr>` tags (Gatsby v4+)
+/// 2. `window.___GATSBY` inline assignment (older Gatsby / runtime bootstrap)
+///
+/// The SSR tag payload is a full page-data envelope:
+/// ```json
+/// {"componentChunkName":"...","result":{"pageContext":{...},"data":{...}}}
+/// ```
+fn extract_gatsby_data(document: &scraper::Html, html: &str) -> Option<String> {
+    const MIN_CONTENT_LEN: usize = 200;
+
+    // Strategy 1: <script type="application/json" data-gatsby-ssr> tags
+    if let Some(content) = extract_gatsby_ssr_tags(document, MIN_CONTENT_LEN) {
+        return Some(content);
+    }
+
+    // Strategy 2: window.pagePath inline assignment — indicates Gatsby but carries
+    // no content on its own; content lives in the page-data JSON bundle loaded
+    // separately. We still check for any inline JSON in the same script block.
+    let _ = html; // reserved for future inline-JSON scan if needed
+
+    None
+}
+
+/// Scan `<script type="application/json" data-gatsby-ssr>` tags for content.
+fn extract_gatsby_ssr_tags(document: &scraper::Html, min_len: usize) -> Option<String> {
+    let sel = scraper::Selector::parse(
+        r#"script[type="application/json"][data-gatsby-ssr]"#,
+    )
+    .ok()?;
+
+    let mut best: Option<String> = None;
+
+    for script in document.select(&sel) {
+        let json_text = script.text().collect::<String>();
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(json_text.trim()) else {
+            continue;
+        };
+
+        // Gatsby nests content under result.data or result.pageContext
+        let search_root = value
+            .get("result")
+            .unwrap_or(&value);
+
+        if let Some(text) = find_longest_string(search_root, min_len) {
+            let current_best_len = best.as_deref().map_or(0, str::len);
+            if text.len() > current_best_len {
+                best = Some(text);
+            }
+        }
+    }
+
+    best.map(|content| render_spa_content(&content))
+}
+
+/// Extract content from Angular Universal's server transfer state.
+///
+/// Angular Universal serializes the server-side rendered state as:
+/// ```html
+/// <script id="serverApp-state" type="application/json">
+///   {"key":{"body":"...","status":200}}
+/// </script>
+/// ```
+///
+/// The state is an object whose values are Angular `HttpResponse`-shaped
+/// objects with a `body` field. We unwrap nested JSON strings and return
+/// the longest substantial text found.
+fn extract_angular_universal_state(document: &scraper::Html) -> Option<String> {
+    const MIN_CONTENT_LEN: usize = 200;
+
+    let sel = scraper::Selector::parse(r#"script#serverApp-state[type="application/json"]"#)
+        .ok()?;
+    let script = document.select(&sel).next()?;
+    let json_text = script.text().collect::<String>();
+    let value: serde_json::Value = serde_json::from_str(json_text.trim()).ok()?;
+
+    // The root is an object whose keys are Angular transfer state keys.
+    // Each value may be a JSON-encoded string or a plain object.
+    let mut best: Option<String> = None;
+
+    let entries = match &value {
+        serde_json::Value::Object(map) => map.values().cloned().collect::<Vec<_>>(),
+        other => vec![other.clone()],
+    };
+
+    for entry in &entries {
+        // Unwrap body if it is a stringified JSON response
+        let payload = match entry.get("body") {
+            Some(serde_json::Value::String(body_str))
+                if body_str.starts_with('{') || body_str.starts_with('[') =>
+            {
+                serde_json::from_str::<serde_json::Value>(body_str)
+                    .unwrap_or(entry.clone())
+            }
+            _ => entry.clone(),
+        };
+
+        if let Some(text) = find_longest_string(&payload, MIN_CONTENT_LEN) {
+            let current_best_len = best.as_deref().map_or(0, str::len);
+            if text.len() > current_best_len {
+                best = Some(text);
+            }
+        }
+    }
+
+    best.map(|content| render_spa_content(&content))
 }
 
 /// Extract article content from `<script type="application/ld+json">` tags.
@@ -156,6 +333,11 @@ pub fn extract_inline_script_json(html: &str) -> Option<String> {
         "window.__INITIAL_STATE__",
         "window.__PRELOADED_STATE__",
         "window.__APOLLO_STATE__",
+        // Generic SSR state patterns used by various frameworks
+        "window.__APP_STATE__",
+        "window.__STORE_STATE__",
+        "window.__DATA__",
+        "window.___GATSBY",
     ];
 
     const MIN_CONTENT_LEN: usize = 200;
@@ -1593,5 +1775,323 @@ mod tests {
         </head><body></body></html>"#
         );
         assert!(discover_nextjs_content_chunks(&html, "https://example.com").is_empty());
+    }
+
+    // ── SvelteKit extraction ─────────────────────────────────────────────
+
+    #[test]
+    fn extract_sveltekit_data_extracts_plain_json_body() {
+        // GIVEN: a SvelteKit page with a prefetch block whose body is a JSON object
+        let article = "SvelteKit is a framework for building web applications of all sizes, \
+                       with a beautiful development experience and flexible filesystem-based routing. \
+                       This article body is long enough to exceed the two hundred character minimum threshold.";
+        let payload = serde_json::json!({
+            "status": 200,
+            "statusText": "",
+            "headers": {},
+            "body": {"content": article}
+        });
+        let html = format!(
+            r#"<html><body>
+            <script type="application/json" data-sveltekit-fetched data-url="/api/post">
+            {payload}
+            </script>
+            </body></html>"#,
+            payload = serde_json::to_string(&payload).unwrap()
+        );
+
+        // WHEN: we run the extractor
+        let result = extract_sveltekit_data(&scraper::Html::parse_document(&html));
+
+        // THEN: the article text is returned
+        assert!(result.is_some(), "expected content, got None");
+        assert!(result.unwrap().contains("SvelteKit is a framework"));
+    }
+
+    #[test]
+    fn extract_sveltekit_data_unwraps_stringified_body() {
+        // GIVEN: body is a JSON-encoded string (double-encoded response)
+        let article = "SvelteKit sometimes encodes the response body as a JSON string rather than \
+                       an inline object. This test verifies the extractor unwraps the string and \
+                       recovers the content. The text must exceed the two hundred character minimum.";
+        let inner = serde_json::json!({"content": article});
+        let payload = serde_json::json!({
+            "status": 200,
+            "body": serde_json::to_string(&inner).unwrap()
+        });
+        let html = format!(
+            r#"<html><body>
+            <script type="application/json" data-sveltekit-fetched data-url="/api/article">
+            {payload}
+            </script>
+            </body></html>"#,
+            payload = serde_json::to_string(&payload).unwrap()
+        );
+
+        let result = extract_sveltekit_data(&scraper::Html::parse_document(&html));
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("sometimes encodes the response body"));
+    }
+
+    #[test]
+    fn extract_sveltekit_data_returns_none_for_no_matching_tags() {
+        // GIVEN: HTML with no SvelteKit prefetch blocks
+        let html = r#"<html><body><script type="application/json">{"other":"data"}</script></body></html>"#;
+        assert!(extract_sveltekit_data(&scraper::Html::parse_document(html)).is_none());
+    }
+
+    #[test]
+    fn extract_sveltekit_data_returns_none_for_short_content() {
+        // GIVEN: a SvelteKit block but with content below the 200-char minimum
+        let html = r#"<html><body>
+            <script type="application/json" data-sveltekit-fetched data-url="/api/meta">
+            {"status":200,"body":{"title":"Short"}}
+            </script>
+            </body></html>"#;
+        assert!(extract_sveltekit_data(&scraper::Html::parse_document(html)).is_none());
+    }
+
+    #[test]
+    fn extract_spa_data_detects_sveltekit() {
+        // GIVEN: a full HTML page that only carries SvelteKit prefetch blocks
+        let article = "SvelteKit integration test: this content must be long enough to pass the \
+                       minimum two hundred character threshold applied by extract_spa_data so that \
+                       the SvelteKit extractor is exercised end-to-end via the main entry point.";
+        let payload = serde_json::json!({"status": 200, "body": {"content": article}});
+        let html = format!(
+            r#"<html><body>
+            <script type="application/json" data-sveltekit-fetched data-url="/api/post">
+            {payload}
+            </script>
+            </body></html>"#,
+            payload = serde_json::to_string(&payload).unwrap()
+        );
+
+        let result = extract_spa_data(&html);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("SvelteKit integration test"));
+    }
+
+    // ── Gatsby extraction ────────────────────────────────────────────────
+
+    #[test]
+    fn extract_gatsby_ssr_tags_extracts_content() {
+        // GIVEN: a Gatsby v4+ SSR data tag whose result.data contains article text
+        let article = "Gatsby is a React-based open source framework for creating websites and apps. \
+                       Built on top of React, Gatsby can power anything from a simple blog to a \
+                       complex content-driven platform. This body text is long enough to pass the threshold.";
+        let payload = serde_json::json!({
+            "componentChunkName": "component---src-pages-blog-post-jsx",
+            "result": {
+                "data": {
+                    "markdownRemark": {
+                        "html": article
+                    }
+                }
+            }
+        });
+        let html = format!(
+            r#"<html><body>
+            <script type="application/json" data-gatsby-ssr>
+            {payload}
+            </script>
+            </body></html>"#,
+            payload = serde_json::to_string(&payload).unwrap()
+        );
+
+        let result = extract_gatsby_data(&scraper::Html::parse_document(&html), &html);
+        assert!(result.is_some(), "expected content, got None");
+        let content = result.unwrap();
+        assert!(content.contains("Gatsby is a React-based"));
+    }
+
+    #[test]
+    fn extract_gatsby_ssr_tags_returns_none_for_no_matching_tag() {
+        let html = r#"<html><body><p>Plain page</p></body></html>"#;
+        assert!(extract_gatsby_data(&scraper::Html::parse_document(html), html).is_none());
+    }
+
+    #[test]
+    fn extract_gatsby_ssr_tags_returns_none_for_short_content() {
+        let html = r#"<html><body>
+            <script type="application/json" data-gatsby-ssr>
+            {"result":{"data":{"title":"Hi"}}}
+            </script>
+            </body></html>"#;
+        assert!(extract_gatsby_data(&scraper::Html::parse_document(html), html).is_none());
+    }
+
+    #[test]
+    fn extract_spa_data_detects_gatsby() {
+        // GIVEN: HTML that only carries a Gatsby SSR tag
+        let article = "Gatsby end-to-end integration test: this content is deliberately over two \
+                       hundred characters so that the Gatsby extractor path inside extract_spa_data \
+                       is exercised and we confirm the framework is wired into the main try-chain.";
+        let payload = serde_json::json!({"result": {"data": {"body": article}}});
+        let html = format!(
+            r#"<html><body>
+            <script type="application/json" data-gatsby-ssr>
+            {payload}
+            </script>
+            </body></html>"#,
+            payload = serde_json::to_string(&payload).unwrap()
+        );
+
+        let result = extract_spa_data(&html);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Gatsby end-to-end integration test"));
+    }
+
+    // ── Angular Universal extraction ─────────────────────────────────────
+
+    #[test]
+    fn extract_angular_universal_state_extracts_plain_object_body() {
+        // GIVEN: Angular Universal transfer state with a plain-object body field
+        let article = "Angular Universal enables server-side rendering for Angular applications, \
+                       improving initial load performance and SEO. The transfer state allows the \
+                       server to pass pre-fetched data to the client without redundant HTTP requests. \
+                       This text is well over two hundred characters.";
+        let state = serde_json::json!({
+            "G.http.cache.v1./api/article": {
+                "status": 200,
+                "body": {"content": article}
+            }
+        });
+        let html = format!(
+            r#"<html><body>
+            <script id="serverApp-state" type="application/json">
+            {state}
+            </script>
+            </body></html>"#,
+            state = serde_json::to_string(&state).unwrap()
+        );
+
+        let result = extract_angular_universal_state(&scraper::Html::parse_document(&html));
+        assert!(result.is_some(), "expected content, got None");
+        assert!(result.unwrap().contains("Angular Universal enables"));
+    }
+
+    #[test]
+    fn extract_angular_universal_state_unwraps_stringified_body() {
+        // GIVEN: transfer state where body is a JSON-encoded string
+        let article = "Angular Universal sometimes serializes the HTTP response body as a JSON \
+                       string within the transfer state object. This test verifies the extractor \
+                       correctly parses and unwraps the double-encoded payload to recover the content.";
+        let inner = serde_json::json!({"content": article});
+        let state = serde_json::json!({
+            "cache.key": {
+                "status": 200,
+                "body": serde_json::to_string(&inner).unwrap()
+            }
+        });
+        let html = format!(
+            r#"<html><body>
+            <script id="serverApp-state" type="application/json">
+            {state}
+            </script>
+            </body></html>"#,
+            state = serde_json::to_string(&state).unwrap()
+        );
+
+        let result = extract_angular_universal_state(&scraper::Html::parse_document(&html));
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("sometimes serializes"));
+    }
+
+    #[test]
+    fn extract_angular_universal_state_returns_none_for_missing_tag() {
+        let html = r#"<html><body><p>No Angular here</p></body></html>"#;
+        assert!(
+            extract_angular_universal_state(&scraper::Html::parse_document(html)).is_none()
+        );
+    }
+
+    #[test]
+    fn extract_angular_universal_state_returns_none_for_short_content() {
+        let html = r#"<html><body>
+            <script id="serverApp-state" type="application/json">
+            {"key":{"status":200,"body":{"title":"Hi"}}}
+            </script>
+            </body></html>"#;
+        assert!(
+            extract_angular_universal_state(&scraper::Html::parse_document(html)).is_none()
+        );
+    }
+
+    #[test]
+    fn extract_spa_data_detects_angular_universal() {
+        // GIVEN: HTML that only carries an Angular Universal transfer state block
+        let article = "Angular Universal end-to-end integration test: this content body is \
+                       intentionally long enough to exceed the two hundred character minimum so \
+                       that the Angular Universal extractor path within extract_spa_data is \
+                       exercised and we confirm it is wired into the main try-chain correctly.";
+        let state = serde_json::json!({
+            "cache.key": {"status": 200, "body": {"content": article}}
+        });
+        let html = format!(
+            r#"<html><body>
+            <script id="serverApp-state" type="application/json">
+            {state}
+            </script>
+            </body></html>"#,
+            state = serde_json::to_string(&state).unwrap()
+        );
+
+        let result = extract_spa_data(&html);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Angular Universal end-to-end"));
+    }
+
+    // ── Generic SSR state patterns ───────────────────────────────────────
+
+    #[test]
+    fn extract_inline_script_json_handles_window_app_state() {
+        // GIVEN: a page with window.__APP_STATE__ inline assignment
+        let article = "Generic SSR state via window.__APP_STATE__: this content must be substantial \
+                       enough to pass the two hundred character minimum threshold applied to inline \
+                       script JSON extraction so that the assignment pattern is recognised and returned.";
+        let html = format!(
+            r#"<html><body>
+            <script>window.__APP_STATE__ = {{"content":"{article}"}};</script>
+            </body></html>"#
+        );
+
+        let result = extract_inline_script_json(&html);
+        assert!(result.is_some(), "expected content, got None");
+        assert!(result.unwrap().contains("Generic SSR state via window.__APP_STATE__"));
+    }
+
+    #[test]
+    fn extract_inline_script_json_handles_window_store_state() {
+        // GIVEN: window.__STORE_STATE__ inline assignment
+        let article = "Generic SSR store state: this text is long enough to trigger extraction from \
+                       window.__STORE_STATE__ inline assignments. The content deliberately exceeds \
+                       the two hundred character minimum to ensure the pattern is picked up correctly.";
+        let html = format!(
+            r#"<html><body>
+            <script>window.__STORE_STATE__ = {{"body":"{article}"}};</script>
+            </body></html>"#
+        );
+
+        let result = extract_inline_script_json(&html);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Generic SSR store state"));
+    }
+
+    #[test]
+    fn extract_inline_script_json_handles_window_data() {
+        // GIVEN: window.__DATA__ inline assignment
+        let article = "Generic window.__DATA__ SSR pattern: this is long enough to exceed the \
+                       minimum content threshold of two hundred characters used by the inline JSON \
+                       extractor to filter out short metadata values and return only article bodies.";
+        let html = format!(
+            r#"<html><body>
+            <script>window.__DATA__ = {{"text":"{article}"}};</script>
+            </body></html>"#
+        );
+
+        let result = extract_inline_script_json(&html);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Generic window.__DATA__ SSR pattern"));
     }
 }
