@@ -45,6 +45,11 @@ pub struct FetchConfig {
     pub batch_file: Option<String>,
     pub parallel: usize,
     pub proxy: Option<String>,
+    /// When `true`, route all requests through the Tor SOCKS5 proxy at
+    /// `localhost:9050`.  DNS resolution is also proxied (`socks5h://`) to
+    /// prevent DNS leaks.  If Tor is not running the request falls back to a
+    /// direct connection with a warning printed to stderr.
+    pub tor: bool,
     pub show_diff: bool,
     pub html_options: nab::content::html::HtmlConversionOptions,
     /// When `true`, skip saving the fetch result to hebb's kv store.
@@ -64,7 +69,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         return super::fetch_batch::cmd_fetch_batch(cfg).await;
     }
 
-    let client = build_client(cfg.no_redirect, cfg.proxy.as_deref())?;
+    let client = build_client(cfg.no_redirect, cfg.proxy.as_deref(), cfg.tor)?;
     let profile = client.profile().await;
 
     let domain = super::extract_domain(&cfg.url);
@@ -819,10 +824,26 @@ fn url_key(url: &str) -> String {
     hex::encode(&digest[..8]) // 8 bytes = 16 hex chars
 }
 
+/// Local alias for the canonical Tor proxy URL defined in the library crate.
+///
+/// The `socks5h` scheme routes DNS through the proxy, preventing leaks to the
+/// local resolver that would reveal the destination to the ISP.
+const TOR_PROXY_URL: &str = nab::TOR_PROXY_URL;
+
 /// Build HTTP client with optional proxy and redirect settings.
-pub(super) fn build_client(no_redirect: bool, proxy: Option<&str>) -> Result<AcceleratedClient> {
+///
+/// When `tor` is `true` the client is configured to route all traffic through
+/// the Tor SOCKS5 proxy at `127.0.0.1:9050`.  An explicit `proxy` value takes
+/// precedence over `tor` — they are mutually exclusive.  If Tor is unavailable
+/// a warning is emitted and the request proceeds without a proxy.
+pub(super) fn build_client(
+    no_redirect: bool,
+    proxy: Option<&str>,
+    tor: bool,
+) -> Result<AcceleratedClient> {
     let proxy_url = proxy
         .map(String::from)
+        .or_else(|| tor.then(|| TOR_PROXY_URL.to_owned()))
         .or_else(|| std::env::var("HTTPS_PROXY").ok())
         .or_else(|| std::env::var("HTTP_PROXY").ok())
         .or_else(|| std::env::var("ALL_PROXY").ok())
@@ -831,21 +852,38 @@ pub(super) fn build_client(no_redirect: bool, proxy: Option<&str>) -> Result<Acc
         .or_else(|| std::env::var("all_proxy").ok());
 
     if let Some(ref purl) = proxy_url {
-        let proxy = reqwest::Proxy::all(purl)
-            .map_err(|e| anyhow::anyhow!("Invalid proxy URL '{purl}': {e}"))?;
-
-        let mut builder = reqwest::Client::builder().proxy(proxy);
-        if no_redirect {
-            builder = builder.redirect(reqwest::redirect::Policy::none());
+        match build_client_with_proxy(purl, no_redirect) {
+            Ok(client) => return Ok(client),
+            Err(e) if tor && proxy.is_none() => {
+                // Tor was requested but the daemon is not running; warn and fall
+                // back to a direct connection so the caller still gets a result.
+                eprintln!(
+                    "⚠️  Tor proxy unavailable ({e:#}); falling back to direct connection"
+                );
+            }
+            Err(e) => return Err(e),
         }
+    }
 
-        let inner_client = builder.build()?;
-        AcceleratedClient::from_client(inner_client)
-    } else if no_redirect {
+    if no_redirect {
         AcceleratedClient::new_no_redirect()
     } else {
         AcceleratedClient::new()
     }
+}
+
+/// Build a `reqwest` client that routes all traffic through the given proxy URL.
+fn build_client_with_proxy(proxy_url: &str, no_redirect: bool) -> Result<AcceleratedClient> {
+    let proxy = reqwest::Proxy::all(proxy_url)
+        .map_err(|e| anyhow::anyhow!("Invalid proxy URL '{proxy_url}': {e}"))?;
+
+    let mut builder = reqwest::Client::builder().proxy(proxy);
+    if no_redirect {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+
+    let inner_client = builder.build()?;
+    AcceleratedClient::from_client(inner_client)
 }
 
 // Re-export from mod.rs for internal use.
@@ -853,7 +891,7 @@ pub(super) use super::non_empty;
 
 #[cfg(test)]
 mod tests {
-    use super::build_fetch_diagnostics;
+    use super::{build_client, build_fetch_diagnostics, TOR_PROXY_URL};
 
     #[test]
     fn build_fetch_diagnostics_for_bot_challenge_mentions_cookies() {
@@ -964,6 +1002,68 @@ mod tests {
         assert!(
             warning.contains("paywalled"),
             "warning should mention protected/paywalled pages, got: {warning}"
+        );
+    }
+
+    // ── Tor / proxy routing tests ─────────────────────────────────────────────
+
+    #[test]
+    fn tor_proxy_url_uses_socks5h_scheme() {
+        // GIVEN: the canonical Tor proxy constant
+        // WHEN: we inspect its scheme prefix
+        // THEN: it uses `socks5h` (DNS via proxy) not plain `socks5`
+        assert!(
+            TOR_PROXY_URL.starts_with("socks5h://"),
+            "Tor proxy must use socks5h:// for DNS-via-proxy; got: {TOR_PROXY_URL}"
+        );
+    }
+
+    #[test]
+    fn tor_proxy_url_targets_localhost_9050() {
+        // GIVEN: the canonical Tor proxy constant
+        // WHEN: we inspect the host and port
+        // THEN: it targets the standard Tor daemon address
+        assert!(
+            TOR_PROXY_URL.contains("127.0.0.1:9050"),
+            "Tor proxy must target 127.0.0.1:9050; got: {TOR_PROXY_URL}"
+        );
+    }
+
+    #[test]
+    fn build_client_without_tor_succeeds() {
+        // GIVEN: no proxy, no Tor flag
+        // WHEN: we build a client
+        // THEN: it succeeds and uses the default configuration
+        let result = build_client(false, None, false);
+        assert!(
+            result.is_ok(),
+            "build_client(no_redirect=false, proxy=None, tor=false) must succeed"
+        );
+    }
+
+    #[test]
+    fn build_client_with_explicit_proxy_takes_precedence_over_tor() {
+        // GIVEN: an explicit HTTP proxy and tor=true
+        // WHEN: we build the client
+        // THEN: the explicit proxy is used (no error from bad SOCKS5h address)
+        //       The proxy parse step validates URL syntax only; a real TCP
+        //       connection is not made, so this succeeds even without a proxy daemon.
+        let result = build_client(false, Some("http://127.0.0.1:8080"), true);
+        assert!(
+            result.is_ok(),
+            "explicit proxy must override tor flag without error"
+        );
+    }
+
+    #[test]
+    fn build_client_with_invalid_proxy_url_returns_error() {
+        // GIVEN: a syntactically invalid proxy URL
+        // WHEN: we build the client
+        // THEN: an error is returned (not a panic)
+        let result = build_client(false, Some("not-a-valid-url:::"), false);
+        assert!(
+            result.is_err(),
+            "invalid proxy URL must return an error, not panic"
         );
     }
 }

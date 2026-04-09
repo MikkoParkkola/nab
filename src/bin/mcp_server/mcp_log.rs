@@ -218,9 +218,8 @@ mod tests {
         let logger = fresh_logger();
         logger.set_level(rust_mcp_sdk::schema::LoggingLevel::Debug);
         let min = logger.min_level.load(Ordering::Relaxed);
-        // THEN emergency (0) <= debug (7) → all levels pass
-        assert!(level::EMERGENCY <= min);
-        assert!(level::DEBUG <= min);
+        // THEN min should be debug (7) — most permissive
+        assert_eq!(min, level::DEBUG);
     }
 
     // ── level round-trip ─────────────────────────────────────────────────────

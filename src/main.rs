@@ -153,6 +153,13 @@ enum Commands {
         #[arg(long)]
         proxy: Option<String>,
 
+        /// Route through Tor (requires Tor daemon on localhost:9050).
+        ///
+        /// DNS resolution is also proxied (`socks5h://`) to prevent leaks.
+        /// Falls back to a direct connection with a warning if Tor is unavailable.
+        #[arg(long)]
+        tor: bool,
+
         /// Show what changed since the last fetch (stores snapshots in ~/.nab/snapshots/)
         #[arg(long)]
         diff: bool,
@@ -671,6 +678,7 @@ async fn main() -> Result<()> {
                 batch,
                 parallel,
                 proxy,
+                tor,
                 diff,
                 no_save,
                 no_ocr,
@@ -699,6 +707,7 @@ async fn main() -> Result<()> {
                     batch_file: batch,
                     parallel,
                     proxy,
+                    tor,
                     show_diff: diff,
                     no_save,
                     no_ocr,

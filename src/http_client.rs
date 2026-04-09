@@ -24,6 +24,12 @@ use url::Url;
 use crate::fingerprint::{BrowserProfile, random_profile};
 use crate::ssrf::{self, DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS};
 
+/// SOCKS5h proxy URL for the Tor anonymity network.
+///
+/// The `socks5h` scheme routes DNS through the proxy, preventing leaks to the
+/// local resolver that would reveal the destination to the ISP.
+pub const TOR_PROXY_URL: &str = "socks5h://127.0.0.1:9050";
+
 /// HTTP client with all acceleration features
 pub struct AcceleratedClient {
     client: Client,
@@ -158,6 +164,35 @@ impl AcceleratedClient {
     /// Create client from an existing `reqwest::Client` (for custom configurations like proxies)
     pub fn from_client(client: Client) -> Result<Self> {
         Self::from_client_with_profile(client, random_profile())
+    }
+
+    /// Create a client that routes all traffic through the Tor SOCKS5 proxy.
+    ///
+    /// Uses `socks5h://127.0.0.1:9050` (the `h` suffix means DNS resolution
+    /// happens through the proxy, preventing DNS leaks to the local resolver).
+    ///
+    /// Returns an error if the SOCKS5 proxy URL cannot be parsed.  A connection
+    /// refused at fetch time is handled by the caller.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use nab::AcceleratedClient;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let client = AcceleratedClient::with_tor_proxy()?;
+    ///     let html = client.fetch_text("https://check.torproject.org").await?;
+    ///     println!("{html}");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn with_tor_proxy() -> Result<Self> {
+        let proxy = reqwest::Proxy::all(TOR_PROXY_URL)?;
+        let inner = Client::builder()
+            .proxy(proxy)
+            .build()?;
+        Self::from_client(inner)
     }
 
     fn from_client_with_profile(client: Client, profile: BrowserProfile) -> Result<Self> {

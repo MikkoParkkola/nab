@@ -37,6 +37,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "blocking",          # Blocking client for auto-update initialization
     "json",              # JSON support for API responses
     "multipart",         # Multipart form data (audio upload to vLLM/OpenAI ASR endpoints)
+    "socks",             # SOCKS5 proxy support (required for Tor routing)
 ] }
 
 # HTTP/3 + QUIC (0-RTT connection resumption)

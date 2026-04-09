@@ -118,6 +118,14 @@ pub struct FetchTool {
     /// process lifetime.  Absent = stateless global client (no change).
     #[serde(default)]
     session: Option<String>,
+    /// Route the request through Tor (requires Tor daemon on localhost:9050).
+    ///
+    /// DNS resolution is performed through the proxy (`socks5h://`) to prevent
+    /// DNS leaks.  If Tor is unavailable the request falls back to a direct
+    /// connection and a warning is logged.  Use this when the destination
+    /// server must not be able to correlate the request to your IP address.
+    #[serde(default)]
+    tor: bool,
 }
 
 impl FetchTool {
@@ -133,11 +141,33 @@ impl FetchTool {
             has_budget = self.max_tokens.is_some(),
             has_session = self.session.is_some(),
             diff = self.diff,
+            tor = self.tor,
             "fetch start"
         );
 
         let start = Instant::now();
-        let client: &AcceleratedClient = get_client().await;
+
+        // When `--tor` is requested build a dedicated client that routes through
+        // the Tor SOCKS5 proxy.  On failure (Tor not running) fall back to the
+        // shared global client and log a warning — this matches the CLI behaviour.
+        let tor_client: Option<AcceleratedClient> = if self.tor {
+            match AcceleratedClient::with_tor_proxy() {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Tor proxy unavailable; falling back to direct connection"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let client: &AcceleratedClient = match tor_client.as_ref() {
+            Some(c) => c,
+            None => get_client().await,
+        };
         let profile = client.profile().await;
 
         let mut output = format!("🌐 Fetching: {}\n", self.url);

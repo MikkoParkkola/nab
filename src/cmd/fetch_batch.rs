@@ -57,6 +57,7 @@ pub async fn cmd_fetch_batch(cfg: &FetchConfig) -> Result<()> {
         data: cfg.data.clone(),
         custom_headers: cfg.custom_headers.clone(),
         proxy: cfg.proxy.clone(),
+        tor: cfg.tor,
         no_redirect: cfg.no_redirect,
         auto_referer: cfg.auto_referer,
         raw_html: cfg.raw_html,
@@ -108,6 +109,7 @@ struct BatchRequestParams {
     data: Option<String>,
     custom_headers: Vec<String>,
     proxy: Option<String>,
+    tor: bool,
     no_redirect: bool,
     auto_referer: bool,
     raw_html: bool,
@@ -117,7 +119,7 @@ struct BatchRequestParams {
 async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_json::Value {
     let start = Instant::now();
 
-    let client = match build_client(params.no_redirect, params.proxy.as_deref()) {
+    let client = match build_client(params.no_redirect, params.proxy.as_deref(), params.tor) {
         Ok(c) => c,
         Err(e) => return serde_json::json!({"url": url, "error": e.to_string()}),
     };

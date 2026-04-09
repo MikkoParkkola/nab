@@ -131,7 +131,7 @@ async fn fetch_one(url: &str, cookies: &str, char_budget: usize) -> FetchedSourc
 ///
 /// Returns `(title, markdown_body)`.
 async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
-    let client = build_client(false, None)?;
+    let client = build_client(false, None, false)?;
 
     let domain = super::extract_domain(url);
 
