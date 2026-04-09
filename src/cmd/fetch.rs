@@ -857,9 +857,7 @@ pub(super) fn build_client(
             Err(e) if tor && proxy.is_none() => {
                 // Tor was requested but the daemon is not running; warn and fall
                 // back to a direct connection so the caller still gets a result.
-                eprintln!(
-                    "⚠️  Tor proxy unavailable ({e:#}); falling back to direct connection"
-                );
+                eprintln!("⚠️  Tor proxy unavailable ({e:#}); falling back to direct connection");
             }
             Err(e) => return Err(e),
         }
@@ -891,7 +889,7 @@ pub(super) use super::non_empty;
 
 #[cfg(test)]
 mod tests {
-    use super::{build_client, build_fetch_diagnostics, TOR_PROXY_URL};
+    use super::{TOR_PROXY_URL, build_client, build_fetch_diagnostics};
 
     #[test]
     fn build_fetch_diagnostics_for_bot_challenge_mentions_cookies() {

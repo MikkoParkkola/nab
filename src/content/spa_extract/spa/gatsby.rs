@@ -30,8 +30,8 @@ pub(crate) fn extract_gatsby_data(document: &scraper::Html, html: &str) -> Optio
 
 /// Scan `<script type="application/json" data-gatsby-ssr>` tags for content.
 fn extract_gatsby_ssr_tags(document: &scraper::Html, min_len: usize) -> Option<String> {
-    let sel = scraper::Selector::parse(r#"script[type="application/json"][data-gatsby-ssr]"#)
-        .ok()?;
+    let sel =
+        scraper::Selector::parse(r#"script[type="application/json"][data-gatsby-ssr]"#).ok()?;
 
     let mut best: Option<String> = None;
 

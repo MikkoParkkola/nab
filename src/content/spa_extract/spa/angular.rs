@@ -115,9 +115,7 @@ mod tests {
     #[test]
     fn extract_angular_universal_state_returns_none_for_missing_tag() {
         let html = r"<html><body><p>No Angular here</p></body></html>";
-        assert!(
-            extract_angular_universal_state(&scraper::Html::parse_document(html)).is_none()
-        );
+        assert!(extract_angular_universal_state(&scraper::Html::parse_document(html)).is_none());
     }
 
     #[test]
@@ -127,8 +125,6 @@ mod tests {
             {"key":{"status":200,"body":{"title":"Hi"}}}
             </script>
             </body></html>"#;
-        assert!(
-            extract_angular_universal_state(&scraper::Html::parse_document(html)).is_none()
-        );
+        assert!(extract_angular_universal_state(&scraper::Html::parse_document(html)).is_none());
     }
 }

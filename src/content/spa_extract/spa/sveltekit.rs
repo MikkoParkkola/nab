@@ -16,10 +16,9 @@ use super::helpers::{find_longest_string, render_spa_content};
 pub(crate) fn extract_sveltekit_data(document: &scraper::Html) -> Option<String> {
     const MIN_CONTENT_LEN: usize = 200;
 
-    let sel = scraper::Selector::parse(
-        r#"script[type="application/json"][data-sveltekit-fetched]"#,
-    )
-    .ok()?;
+    let sel =
+        scraper::Selector::parse(r#"script[type="application/json"][data-sveltekit-fetched]"#)
+            .ok()?;
 
     let mut best: Option<String> = None;
 
@@ -105,14 +104,17 @@ mod tests {
 
         let result = extract_sveltekit_data(&scraper::Html::parse_document(&html));
         assert!(result.is_some());
-        assert!(result.unwrap().contains("sometimes encodes the response body"));
+        assert!(
+            result
+                .unwrap()
+                .contains("sometimes encodes the response body")
+        );
     }
 
     #[test]
     fn extract_sveltekit_data_returns_none_for_no_matching_tags() {
         // GIVEN: HTML with no SvelteKit prefetch blocks
-        let html =
-            r#"<html><body><script type="application/json">{"other":"data"}</script></body></html>"#;
+        let html = r#"<html><body><script type="application/json">{"other":"data"}</script></body></html>"#;
         assert!(extract_sveltekit_data(&scraper::Html::parse_document(html)).is_none());
     }
 

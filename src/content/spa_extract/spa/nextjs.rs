@@ -4,8 +4,7 @@ use super::helpers::{find_content_by_key, find_longest_string, render_spa_conten
 
 // Re-export webpack chunk functions so callers can use `nextjs::discover_*`.
 pub use super::webpack::{
-    discover_nextjs_content_chunks, resolve_content_chunk_urls,
-    resolve_content_chunk_urls_for_slug,
+    discover_nextjs_content_chunks, resolve_content_chunk_urls, resolve_content_chunk_urls_for_slug,
 };
 
 // ── Core extraction ─────────────────────────────────────────────────────────
@@ -32,10 +31,30 @@ pub(crate) fn try_extract_script_json(
 ///    developer blog that use proprietary key names (`bodyText`, `richContent`, etc.).
 pub fn extract_nextjs_content(data: &serde_json::Value) -> Option<String> {
     const CONTENT_KEYS: &[&str] = &[
-        "body", "bodyText", "bodyHtml", "body_html", "html", "content", "contentHtml",
-        "content_html", "richContent", "richText", "articleBody", "article_body", "article",
-        "post", "postBody", "postContent", "markdown", "source", "text", "fullText",
-        "full_text", "excerpt", "description", "summary",
+        "body",
+        "bodyText",
+        "bodyHtml",
+        "body_html",
+        "html",
+        "content",
+        "contentHtml",
+        "content_html",
+        "richContent",
+        "richText",
+        "articleBody",
+        "article_body",
+        "article",
+        "post",
+        "postBody",
+        "postContent",
+        "markdown",
+        "source",
+        "text",
+        "fullText",
+        "full_text",
+        "excerpt",
+        "description",
+        "summary",
     ];
     const MIN_CONTENT_LEN: usize = 200;
 

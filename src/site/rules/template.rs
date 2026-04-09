@@ -77,11 +77,7 @@ fn render_line<S: BuildHasher>(
     // We check against the original placeholders, not arbitrary `{...}` in content.
     let has_unresolved = template_placeholders.iter().any(|p| result.contains(p));
 
-    if has_unresolved {
-        None
-    } else {
-        Some(result)
-    }
+    if has_unresolved { None } else { Some(result) }
 }
 
 /// Extract all `{...}` placeholder strings from a template line.
@@ -91,15 +87,14 @@ fn collect_placeholders(line: &str) -> Vec<String> {
     let bytes = line.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'{' {
-            if let Some(rel) = bytes[i + 1..].iter().position(|&b| b == b'}') {
-                if rel > 0 {
-                    let placeholder = &line[i..=i + 1 + rel];
-                    placeholders.push(placeholder.to_string());
-                    i += 2 + rel;
-                    continue;
-                }
-            }
+        if bytes[i] == b'{'
+            && let Some(rel) = bytes[i + 1..].iter().position(|&b| b == b'}')
+            && rel > 0
+        {
+            let placeholder = &line[i..=i + 1 + rel];
+            placeholders.push(placeholder.to_string());
+            i += 2 + rel;
+            continue;
         }
         i += 1;
     }
@@ -247,6 +242,7 @@ pub fn format_number(value: &str) -> String {
 /// A placeholder is `{` followed by one or more non-`}` characters followed
 /// by `}`.  This ignores literal `{}` (empty braces) and braces inside code
 /// blocks because those don't appear in our templates.
+#[cfg(test)]
 fn has_unresolved_placeholder(s: &str) -> bool {
     let bytes = s.as_bytes();
     let mut i = 0;

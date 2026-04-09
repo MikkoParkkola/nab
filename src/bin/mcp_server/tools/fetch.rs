@@ -70,6 +70,7 @@ Returns: Markdown-converted body with timing info (or diff when diff: true).",
     open_world_hint = true
 )]
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct FetchTool {
     url: String,
     #[serde(default)]

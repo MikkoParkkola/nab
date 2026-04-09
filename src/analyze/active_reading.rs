@@ -508,7 +508,6 @@ mod tests {
         fn identify_call_count(&self) -> usize {
             *self.identify_calls.lock().unwrap()
         }
-
     }
 
     #[async_trait]

@@ -253,8 +253,8 @@ pub fn unwrap_api_response_bodies(value: &serde_json::Value, texts: &mut Vec<Str
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::helpers::strip_html_comment_wrapper;
+    use super::*;
 
     #[test]
     fn strip_html_comment_wrapper_removes_wrapper() {
@@ -425,8 +425,7 @@ mod tests {
             </body></html>"#
         );
 
-        let content =
-            extract_inline_script_json(&html).expect("content from generic assignment");
+        let content = extract_inline_script_json(&html).expect("content from generic assignment");
         assert!(content.contains("substantial article body"));
     }
 
@@ -444,9 +443,11 @@ mod tests {
 
         let result = extract_inline_script_json(&html);
         assert!(result.is_some(), "expected content, got None");
-        assert!(result
-            .unwrap()
-            .contains("Generic SSR state via window.__APP_STATE__"));
+        assert!(
+            result
+                .unwrap()
+                .contains("Generic SSR state via window.__APP_STATE__")
+        );
     }
 
     #[test]
@@ -480,6 +481,10 @@ mod tests {
 
         let result = extract_inline_script_json(&html);
         assert!(result.is_some());
-        assert!(result.unwrap().contains("Generic window.__DATA__ SSR pattern"));
+        assert!(
+            result
+                .unwrap()
+                .contains("Generic window.__DATA__ SSR pattern")
+        );
     }
 }

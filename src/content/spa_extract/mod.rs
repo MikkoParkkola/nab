@@ -26,7 +26,9 @@ mod spa;
 
 // Re-export the public API — callers use `content::spa_extract::*`.
 pub use spa::helpers::{find_content_by_key, find_longest_string};
-pub use spa::inline::{extract_balanced_json, extract_inline_script_json, unwrap_api_response_bodies};
+pub use spa::inline::{
+    extract_balanced_json, extract_inline_script_json, unwrap_api_response_bodies,
+};
 pub use spa::jsonld::extract_jsonld_content;
 pub use spa::nextjs::{
     discover_nextjs_content_chunks, extract_jsx_text_content, extract_nextjs_content,
@@ -46,9 +48,7 @@ pub fn extract_spa_data(html: &str) -> Option<String> {
     let document = scraper::Html::parse_document(html);
 
     // Try __NEXT_DATA__ (Next.js) — highest priority, most structured
-    if let Some(content) =
-        spa::nextjs::try_extract_script_json(&document, "script#__NEXT_DATA__")
-    {
+    if let Some(content) = spa::nextjs::try_extract_script_json(&document, "script#__NEXT_DATA__") {
         return Some(content);
     }
 
@@ -135,7 +135,11 @@ mod tests {
 
         let result = extract_spa_data(&html);
         assert!(result.is_some());
-        assert!(result.unwrap().contains("Gatsby end-to-end integration test"));
+        assert!(
+            result
+                .unwrap()
+                .contains("Gatsby end-to-end integration test")
+        );
     }
 
     #[test]

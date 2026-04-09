@@ -24,7 +24,7 @@ use url::Url;
 use crate::fingerprint::{BrowserProfile, random_profile};
 use crate::ssrf::{self, DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS};
 
-/// SOCKS5h proxy URL for the Tor anonymity network.
+/// `SOCKS5h` proxy URL for the Tor anonymity network.
 ///
 /// The `socks5h` scheme routes DNS through the proxy, preventing leaks to the
 /// local resolver that would reveal the destination to the ISP.
@@ -189,9 +189,7 @@ impl AcceleratedClient {
     /// ```
     pub fn with_tor_proxy() -> Result<Self> {
         let proxy = reqwest::Proxy::all(TOR_PROXY_URL)?;
-        let inner = Client::builder()
-            .proxy(proxy)
-            .build()?;
+        let inner = Client::builder().proxy(proxy).build()?;
         Self::from_client(inner)
     }
 

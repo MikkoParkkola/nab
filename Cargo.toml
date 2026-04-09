@@ -168,7 +168,7 @@ tempfile = "3"
 # ═══════════════════════════════════════════════════════════════════════════════
 # CLI (for testing)
 # ═══════════════════════════════════════════════════════════════════════════════
-clap = { version = "4", features = ["derive"], optional = true }
+clap = { version = "4", features = ["derive"] }
 http = "1.4.0"
 dirs = "6.0.0"
 rust-mcp-sdk = { version = "0.9", default-features = false, features = ["server", "macros", "stdio", "streamable-http", "hyper-server"] }
@@ -200,7 +200,7 @@ default = ["cli", "http3", "impersonate", "analyze"]
 # Install with: `nab models fetch fluidaudio` or build manually from
 # https://github.com/FluidInference/FluidAudio
 analyze = []
-cli = ["clap"]
+cli = []
 # HTTP/3 + QUIC - enabled by default for maximum performance
 # Disable with: cargo build --no-default-features --features cli
 http3 = ["quinn", "h3", "h3-quinn"]
