@@ -55,6 +55,11 @@ fn render_line<S: BuildHasher>(
     fields: &HashMap<String, String, S>,
     original_url: &str,
 ) -> Option<String> {
+    // Collect template placeholders BEFORE substitution so we can check
+    // only those — not curly braces that appear inside substituted content
+    // (e.g., code examples containing `{variable}`).
+    let template_placeholders = collect_placeholders(line);
+
     let mut result = line.to_string();
 
     // Substitute filtered placeholders first (more specific before generic).
@@ -68,12 +73,37 @@ fn render_line<S: BuildHasher>(
         result = result.replace(&format!("{{{name}}}"), value);
     }
 
-    // If any {…} placeholder remains, omit this line.
-    if has_unresolved_placeholder(&result) {
+    // If any ORIGINAL template placeholder remains unresolved, omit this line.
+    // We check against the original placeholders, not arbitrary `{...}` in content.
+    let has_unresolved = template_placeholders.iter().any(|p| result.contains(p));
+
+    if has_unresolved {
         None
     } else {
         Some(result)
     }
+}
+
+/// Extract all `{...}` placeholder strings from a template line.
+/// Returns them as-is (e.g., `"{field}"`, `"{field|number}"`).
+fn collect_placeholders(line: &str) -> Vec<String> {
+    let mut placeholders = Vec::new();
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if let Some(rel) = bytes[i + 1..].iter().position(|&b| b == b'}') {
+                if rel > 0 {
+                    let placeholder = &line[i..=i + 1 + rel];
+                    placeholders.push(placeholder.to_string());
+                    i += 2 + rel;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    placeholders
 }
 
 /// Replace `{field|number}` and `{field|strip_html}` placeholders.

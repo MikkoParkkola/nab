@@ -185,10 +185,18 @@ impl ApiRuleProvider {
                     if arr.is_empty() {
                         return None;
                     }
-                    arr.join(", ")
+                    // Use paragraph breaks for content/body fields (articles, long-form);
+                    // comma-join for short list fields (tags, categories).
+                    let sep = if name.contains("content") || name.contains("body") {
+                        "\n\n"
+                    } else {
+                        ", "
+                    };
+                    arr.join(sep)
                 } else {
                     json_path::extract(json, path)?
                 };
+                // Field extraction succeeded — tracing::debug! for production logging.
                 Some((name.clone(), value))
             })
             .collect()
