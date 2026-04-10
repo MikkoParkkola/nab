@@ -105,6 +105,8 @@ pub trait OcrEngine: Send + Sync {
     ///
     /// Returns `&["*"]` when the engine supports any language via automatic
     /// detection (same convention as [`crate::analyze::asr_backend::AsrBackend`]).
+    /// Placeholder engines that are not available on the current platform may
+    /// return an empty slice.
     fn supported_languages(&self) -> &'static [&'static str];
 
     /// Returns `true` when the engine libraries and models are present at
@@ -166,13 +168,15 @@ mod tests {
         assert!(!engine.name().is_empty());
     }
 
-    /// `default_engine()` returns an engine that lists supported languages.
+    /// Available default engines list supported languages.
     #[test]
-    fn default_engine_lists_supported_languages() {
+    fn available_default_engine_lists_supported_languages() {
         // GIVEN the default engine
         let engine = default_engine();
-        // THEN at least one language is listed
-        assert!(!engine.supported_languages().is_empty());
+        // THEN usable engines advertise their supported languages
+        if engine.is_available() {
+            assert!(!engine.supported_languages().is_empty());
+        }
     }
 
     /// On macOS, `default_engine()` returns an engine named "apple_vision".
