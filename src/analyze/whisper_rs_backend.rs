@@ -175,12 +175,12 @@ impl Default for WhisperRsBackend {
 
 #[async_trait]
 impl AsrBackend for WhisperRsBackend {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "whisper-rs"
     }
 
     /// Returns `&["*"]` — whisper-large-v3-turbo supports 99 languages.
-    fn supported_languages(&self) -> &[&str] {
+    fn supported_languages(&self) -> &'static [&'static str] {
         &["*"]
     }
 

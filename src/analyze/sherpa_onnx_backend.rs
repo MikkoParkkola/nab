@@ -130,11 +130,11 @@ unsafe impl Sync for SherpaOnnxBackend {}
 
 #[async_trait]
 impl AsrBackend for SherpaOnnxBackend {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "sherpa-onnx"
     }
 
-    fn supported_languages(&self) -> &[&str] {
+    fn supported_languages(&self) -> &'static [&'static str] {
         SHERPA_LANGUAGES
     }
 

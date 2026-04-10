@@ -17,7 +17,10 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tracing::{debug, info, warn};
+use tracing::info;
+
+#[cfg(target_os = "macos")]
+use tracing::{debug, warn};
 
 // ─── Model registry ──────────────────────────────────────────────────────────
 
@@ -104,6 +107,7 @@ pub fn read_version(name: &str) -> Option<String> {
 }
 
 /// Write a git SHA to the VERSION file.
+#[cfg(target_os = "macos")]
 pub fn write_version(name: &str, sha: &str) -> Result<()> {
     let path = version_file_path(name)?;
     std::fs::write(&path, format!("{sha}\n"))
@@ -307,17 +311,16 @@ pub async fn cmd_models_fetch(name: &str) -> Result<()> {
 
 // ─── fluidaudio dispatch ──────────────────────────────────────────────────────
 
-async fn fetch_fluidaudio_dispatch(model: &ModelEntry) -> Result<()> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = model;
-        anyhow::bail!(
-            "FluidAudio is macOS-only. On Linux/Windows use `nab models fetch whisper` \
-             or `nab models fetch sherpa-onnx` instead."
-        );
-    }
+#[cfg(not(target_os = "macos"))]
+fn fetch_fluidaudio_dispatch(_model: &ModelEntry) -> std::future::Ready<Result<()>> {
+    std::future::ready(Err(anyhow::anyhow!(
+        "FluidAudio is macOS-only. On Linux/Windows use `nab models fetch whisper` \
+         or `nab models fetch sherpa-onnx` instead."
+    )))
+}
 
-    #[cfg(target_os = "macos")]
+#[cfg(target_os = "macos")]
+async fn fetch_fluidaudio_dispatch(model: &ModelEntry) -> Result<()> {
     fetch_fluidaudio(model).await
 }
 
@@ -592,6 +595,7 @@ fn find_swift_binary(install_dir: &Path, binary_name: &str) -> Option<PathBuf> {
 
 /// Run a subprocess, streaming its stderr to tracing and returning an error on
 /// non-zero exit.
+#[cfg(target_os = "macos")]
 async fn run_subprocess(program: &str, args: &[&str]) -> Result<()> {
     debug!(cmd = program, ?args, "spawning subprocess");
     let status = tokio::process::Command::new(program)
@@ -608,6 +612,7 @@ async fn run_subprocess(program: &str, args: &[&str]) -> Result<()> {
 }
 
 /// Run a subprocess inside a working directory.
+#[cfg(target_os = "macos")]
 async fn run_subprocess_in_dir(program: &str, args: &[&str], dir: &Path) -> Result<()> {
     debug!(cmd = program, ?args, cwd = %dir.display(), "spawning subprocess");
     let status = tokio::process::Command::new(program)
@@ -628,6 +633,7 @@ async fn run_subprocess_in_dir(program: &str, args: &[&str], dir: &Path) -> Resu
 }
 
 /// Ensure `~/.local/share/nab/bin/` exists.
+#[cfg(target_os = "macos")]
 async fn ensure_bin_dir_exists() -> Result<()> {
     let bin_dir = nab_data_dir()?.join("bin");
     tokio::fs::create_dir_all(&bin_dir)
@@ -636,6 +642,7 @@ async fn ensure_bin_dir_exists() -> Result<()> {
 }
 
 /// Create (or replace) a symlink at `link` pointing to `target`.
+#[cfg(target_os = "macos")]
 fn create_symlink(target: &Path, link: &Path) -> Result<()> {
     // Remove stale symlink/file if present.
     if link.exists() || link.is_symlink() {
@@ -647,6 +654,7 @@ fn create_symlink(target: &Path, link: &Path) -> Result<()> {
 }
 
 /// Read the current HEAD git SHA in `repo_dir`.
+#[cfg(target_os = "macos")]
 async fn git_sha(repo_dir: &Path) -> Result<String> {
     let out = tokio::process::Command::new("git")
         .args(["-C", &repo_dir.to_string_lossy(), "rev-parse", "HEAD"])
