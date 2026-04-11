@@ -77,6 +77,30 @@ cd nab
 cargo install --path .
 ```
 
+## MCP Configuration
+
+Add to your MCP client config (Claude Desktop, Cursor, Windsurf, etc.):
+
+```json
+{
+  "mcpServers": {
+    "nab": {
+      "command": "nab-mcp"
+    }
+  }
+}
+```
+
+Or use the auto-installer:
+
+```bash
+nab mcp install                        # Claude Desktop (default)
+nab mcp install --client claude-code   # Claude Code
+nab mcp install --client cursor        # Cursor
+```
+
+See [MCP integration](#mcp-integration) below for the full list of tools, capabilities, and HTTP transport.
+
 ## Usage
 
 ### Fetch
