@@ -179,7 +179,7 @@ mod tests {
         }
     }
 
-    /// On macOS, `default_engine()` returns an engine named "apple_vision".
+    /// On macOS, `default_engine()` returns an engine named `"apple_vision"`.
     #[test]
     #[cfg(target_os = "macos")]
     fn default_engine_is_apple_vision_on_macos() {

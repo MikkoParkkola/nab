@@ -2,20 +2,20 @@
 //!
 //! Runs Parakeet TDT v3 ONNX models via the sherpa-onnx C++ runtime with
 //! official Rust bindings. Works on:
-//! - Linux x86_64 (CPU + CUDA)
+//! - Linux `x86_64` (CPU + CUDA)
 //! - Linux arm64
 //! - Windows
 //! - macOS Intel
-//! - macOS Apple Silicon (as a fallback when FluidAudio is unavailable)
+//! - macOS Apple Silicon (as a fallback when `FluidAudio` is unavailable)
 //!
 //! ## Model installation
 //!
 //! Models live at `~/.cache/nab/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/`.
 //! Use `nab models fetch sherpa-onnx` to download automatically.
 //!
-//! ## Limitations vs FluidAudio
+//! ## Limitations vs `FluidAudio`
 //!
-//! - Slower: ~30× realtime on CPU vs FluidAudio's ~150× on Apple Neural Engine
+//! - Slower: ~30× realtime on CPU vs `FluidAudio`'s ~150× on Apple Neural Engine
 //! - No offline diarization bundled (use pyannote ONNX separately, Phase 4)
 //! - No Qwen3-ASR opt-in (Phase 4)
 
@@ -277,7 +277,7 @@ fn build_recognizer(model_dir: &Path) -> Result<OfflineRecognizer> {
 /// Return a reasonable thread count for ONNX inference (half of logical CPUs, min 1).
 fn num_cpus() -> i32 {
     let n = std::thread::available_parallelism()
-        .map(|n| n.get())
+        .map(std::num::NonZero::get)
         .unwrap_or(2);
     ((n / 2).max(1)) as i32
 }
@@ -351,7 +351,7 @@ fn text_to_segments(
         return vec![];
     }
 
-    let total_chars: usize = sentences.iter().map(|s| s.len()).sum();
+    let total_chars: usize = sentences.iter().map(String::len).sum();
     let total_chars = total_chars.max(1);
 
     let mut time_cursor = 0.0_f64;

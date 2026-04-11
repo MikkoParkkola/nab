@@ -757,7 +757,7 @@ mod tests {
         assert_eq!(read_back, Some(sha.to_string()));
     }
 
-    /// All KNOWN_MODELS have non-empty names and repo URLs.
+    /// All `KNOWN_MODELS` have non-empty names and repo URLs.
     #[test]
     fn known_models_are_well_formed() {
         for m in KNOWN_MODELS {

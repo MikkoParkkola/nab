@@ -73,6 +73,7 @@ struct FluidWordTiming {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(clippy::used_underscore_binding)]
 struct FluidProcessOutput {
     #[serde(rename = "durationSeconds", default)]
     _duration_seconds: f64,
@@ -83,6 +84,7 @@ struct FluidProcessOutput {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(clippy::used_underscore_binding)]
 struct FluidDiarSegment {
     #[serde(rename = "speakerId", deserialize_with = "deserialize_speaker_id")]
     speaker_id: i32,
@@ -817,7 +819,7 @@ mod tests {
         assert!((out.segments[0]._quality_score - 0.85).abs() < 1e-9);
     }
 
-    /// Regression: FluidAudio v0.13+ emits `speakerId` as a JSON string like
+    /// Regression: `FluidAudio` v0.13+ emits `speakerId` as a JSON string like
     /// `"1"` instead of an integer. Both forms must deserialize cleanly.
     ///
     /// This bug was found during the live end-to-end smoke test of
@@ -909,7 +911,7 @@ mod tests {
     #[test]
     fn sentence_split_three_sentences_mixed_punctuation() {
         let result = segment_text_into_sentences("Hello. Are you there? Yes I am.");
-        assert_eq!(result.len(), 3, "got: {:?}", result);
+        assert_eq!(result.len(), 3, "got: {result:?}");
     }
 
     /// Empty string returns empty vec.

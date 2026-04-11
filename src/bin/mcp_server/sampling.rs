@@ -128,11 +128,13 @@ mod tests {
         }
         fn client_info(&self) -> Option<InitializeRequestParams> {
             if self.supports_sampling {
-                let mut caps = rust_mcp_sdk::schema::ClientCapabilities::default();
-                caps.sampling = Some(ClientSampling {
-                    context: None,
-                    tools: None,
-                });
+                let caps = rust_mcp_sdk::schema::ClientCapabilities {
+                    sampling: Some(ClientSampling {
+                        context: None,
+                        tools: None,
+                    }),
+                    ..Default::default()
+                };
                 Some(InitializeRequestParams {
                     client_info: rust_mcp_sdk::schema::Implementation {
                         name: "test".into(),

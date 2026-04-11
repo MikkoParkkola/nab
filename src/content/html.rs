@@ -1246,15 +1246,13 @@ mod tests {
         // Must contain the conclusion paragraph (the part html2md truncates)
         assert!(
             md.contains("high level PRDs without coupling"),
-            "Missing conclusion paragraph in markdown output ({} chars): {}",
+            "Missing conclusion paragraph in markdown output ({} chars): {md}",
             md.len(),
-            md
         );
         // Must contain list items
         assert!(
             md.contains("Ralph loop"),
-            "Missing list content in markdown output: {}",
-            md
+            "Missing list content in markdown output: {md}",
         );
     }
 
@@ -1286,15 +1284,13 @@ mod tests {
         // Must contain the conclusion paragraph
         assert!(
             md.contains("high level PRDs without coupling"),
-            "Missing conclusion paragraph in markdown output ({} chars): {}",
+            "Missing conclusion paragraph in markdown output ({} chars): {md}",
             md.len(),
-            md
         );
         // Must contain list item content
         assert!(
             md.contains("Ralph loop") || md.contains("ralph loop"),
-            "Missing list content in markdown output: {}",
-            md
+            "Missing list content in markdown output: {md}",
         );
         // Should be substantial
         assert!(

@@ -30,7 +30,10 @@ pub use export_rules::{cmd_export_rules, cmd_list_rules};
 pub use fetch::{FetchConfig, cmd_fetch};
 pub use fingerprint::cmd_fingerprint;
 pub use login::{LoginConfig, cmd_login};
-pub use mcp::{InstallConfig as McpInstallConfig, ServeConfig as McpServeConfig, cmd_mcp_install, cmd_mcp_serve};
+pub use mcp::{
+    InstallConfig as McpInstallConfig, ServeConfig as McpServeConfig, cmd_mcp_install,
+    cmd_mcp_serve,
+};
 pub use models::{cmd_models_fetch, cmd_models_list, cmd_models_update, cmd_models_verify};
 pub use otp::cmd_otp;
 pub use provider::{cmd_provider_install, cmd_provider_list, cmd_provider_remove};

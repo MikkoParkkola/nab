@@ -29,6 +29,8 @@ pub struct Table {
 impl Table {
     /// Render this table as a GitHub-flavored markdown table.
     pub fn to_markdown(&self) -> String {
+        use std::fmt::Write;
+
         if self.rows.is_empty() {
             return String::new();
         }
@@ -44,8 +46,8 @@ impl Table {
         md.push('|');
         let header = &self.rows[0];
         for col in 0..col_count {
-            let cell = header.get(col).map(String::as_str).unwrap_or("");
-            md.push_str(&format!(" {cell} |"));
+            let cell = header.get(col).map_or("", String::as_str);
+            let _ = write!(md, " {cell} |");
         }
         md.push('\n');
 
@@ -60,8 +62,8 @@ impl Table {
         for row in self.rows.iter().skip(1) {
             md.push('|');
             for col in 0..col_count {
-                let cell = row.get(col).map(String::as_str).unwrap_or("");
-                md.push_str(&format!(" {cell} |"));
+                let cell = row.get(col).map_or("", String::as_str);
+                let _ = write!(md, " {cell} |");
             }
             md.push('\n');
         }
@@ -129,7 +131,7 @@ pub fn detect_tables(lines: &[TextLine]) -> Vec<Table> {
                         .fold(f32::INFINITY, f32::min),
                     x_max: table_lines
                         .iter()
-                        .map(|l| l.chars.last().map(|c| c.x + c.width).unwrap_or(l.x))
+                        .map(|l| l.chars.last().map_or(l.x, |c| c.x + c.width))
                         .fold(f32::NEG_INFINITY, f32::max),
                     y_min: table_lines
                         .iter()
@@ -253,7 +255,7 @@ mod tests {
 
         TextLine {
             text: full_text,
-            x: chars.first().map(|c| c.x).unwrap_or(10.0),
+            x: chars.first().map_or(10.0, |c| c.x),
             y,
             chars,
             page,

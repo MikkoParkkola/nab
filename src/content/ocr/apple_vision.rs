@@ -226,7 +226,7 @@ fn extract_results(request: &VNRecognizeTextRequest) -> OcrResult {
 mod tests {
     use super::*;
 
-    /// `AppleVisionEngine::name()` returns "apple_vision".
+    /// `AppleVisionEngine::name()` returns `"apple_vision"`.
     #[test]
     fn name_is_apple_vision() {
         let engine = AppleVisionEngine::new();

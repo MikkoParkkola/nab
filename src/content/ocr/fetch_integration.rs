@@ -17,6 +17,7 @@
 //! skipped (their alt text is left as-is).
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -400,7 +401,7 @@ mod tests {
         assert!(candidates[0].contains("chart.png"));
     }
 
-    /// max_per_page limits the number of candidates processed.
+    /// `max_per_page` limits the number of candidates processed.
     #[test]
     fn enrich_images_respects_max_per_page() {
         // GIVEN HTML with 5 thin-alt images and max_per_page=3
@@ -511,4 +512,3 @@ mod tests {
         assert_eq!(result.as_deref(), Some("recognized text"));
     }
 }
-use std::fmt::Write as _;

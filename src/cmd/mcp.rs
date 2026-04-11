@@ -81,12 +81,12 @@ pub struct InstallConfig {
 /// to `$PATH` lookup.
 fn nab_mcp_binary() -> Result<String> {
     // 1. Sibling of the current executable.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let sibling = dir.join("nab-mcp");
-            if sibling.is_file() {
-                return Ok(sibling.display().to_string());
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let sibling = dir.join("nab-mcp");
+        if sibling.is_file() {
+            return Ok(sibling.display().to_string());
         }
     }
 
@@ -181,12 +181,9 @@ pub fn cmd_mcp_install(cfg: &InstallConfig) -> Result<()> {
 
     println!("Installed nab as MCP server for {}.", client.display_name());
     println!("  config: {}", config_path.display());
-    println!("  binary: {}", binary);
+    println!("  binary: {binary}");
     println!();
-    println!(
-        "Restart {} to pick up the change.",
-        client.display_name()
-    );
+    println!("Restart {} to pick up the change.", client.display_name());
     Ok(())
 }
 

@@ -568,21 +568,25 @@ mod tests {
 
     /// Minimal WAT module: writes hardcoded JSON at offset 256 and returns 256.
     fn minimal_wasm_bytes() -> Vec<u8> {
+        use std::fmt::Write;
+
         let json = br#"{"title":"Test Title","content":"Hello World","author":"Alice","date":"2026-01-01"}"#;
         assert!(json.len() < 200, "JSON too long for test WAT module");
 
         let mut stores = String::new();
         for (i, &b) in json.iter().enumerate() {
-            stores.push_str(&format!(
+            let _ = write!(
+                stores,
                 "i32.const {}\ni32.const {}\ni32.store8\n",
                 256 + i,
                 b
-            ));
+            );
         }
-        stores.push_str(&format!(
+        let _ = write!(
+            stores,
             "i32.const {}\ni32.const 0\ni32.store8\n",
             256 + json.len()
-        ));
+        );
 
         let wat = format!(
             r#"(module
@@ -922,6 +926,6 @@ mod tests {
         // The best we can do without a real Component is test the from_bytes
         // error paths above; the async path is tested via WasmProvider above.
         // This placeholder documents the limitation.
-        let _ = (); // intentional no-op — see comment above
+        // intentional no-op — see comment above
     }
 }

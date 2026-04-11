@@ -1,3 +1,14 @@
+// Cast-precision and float-comparison lints are noise in audio/PDF processing
+// code where exact precision is irrelevant and the casts are intentional.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::float_cmp
+)]
+
 //! `nab` - Ultra-minimal browser engine
 //!
 //! # Features

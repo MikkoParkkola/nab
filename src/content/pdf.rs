@@ -60,10 +60,10 @@ impl PdfHandler {
 
         for path in &search_paths {
             let lib_path = format!("{path}/libpdfium.dylib");
-            if std::path::Path::new(&lib_path).exists() {
-                if let Ok(bindings) = Pdfium::bind_to_library(&lib_path) {
-                    return Ok(Pdfium::new(bindings));
-                }
+            if std::path::Path::new(&lib_path).exists()
+                && let Ok(bindings) = Pdfium::bind_to_library(&lib_path)
+            {
+                return Ok(Pdfium::new(bindings));
             }
         }
 
@@ -73,10 +73,10 @@ impl PdfHandler {
             .output()
         {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if std::path::Path::new(&path).exists() {
-                if let Ok(bindings) = Pdfium::bind_to_library(&path) {
-                    return Ok(Pdfium::new(bindings));
-                }
+            if std::path::Path::new(&path).exists()
+                && let Ok(bindings) = Pdfium::bind_to_library(&path)
+            {
+                return Ok(Pdfium::new(bindings));
             }
         }
 
@@ -125,6 +125,7 @@ impl PdfHandler {
     /// Extract all characters with their bounding rectangles from the document.
     ///
     /// Used for table detection which needs positional data.
+    #[allow(dead_code)]
     fn extract_chars(bytes: &[u8]) -> Result<(Vec<PdfChar>, usize)> {
         let pdfium = Self::load_pdfium()?;
         let doc = match pdfium.load_pdf_from_byte_slice(bytes, None) {
@@ -164,6 +165,7 @@ impl PdfHandler {
     /// 1. Sort by page, then Y descending (top-to-bottom), then X ascending.
     /// 2. Group characters with Y within `line_tolerance` into the same line.
     /// 3. Insert spaces at horizontal gaps wider than `space_threshold`.
+    #[allow(dead_code)]
     fn reconstruct_lines(chars: &[PdfChar]) -> Vec<TextLine> {
         if chars.is_empty() {
             return Vec::new();
@@ -204,6 +206,7 @@ impl PdfHandler {
     /// Uses adaptive space detection: the threshold scales with character width
     /// to avoid inserting spurious spaces in PDFs with tight glyph spacing
     /// (common in LaTeX-generated documents).
+    #[allow(dead_code)]
     fn build_line(chars: &[PdfChar]) -> TextLine {
         let mut text = String::new();
         let avg_char_width = chars.iter().map(|c| c.width).sum::<f32>() / chars.len() as f32;
@@ -238,7 +241,9 @@ impl PdfHandler {
     /// Applies heading heuristics based on font size:
     /// - Height > 16pt + short line → `## heading`
     /// - Height > 13pt + short line → `### heading`
+    #[allow(dead_code)]
     fn render_markdown(lines: &[TextLine], tables: &[Table]) -> String {
+        use std::fmt::Write;
         let mut output = String::new();
         let mut table_rendered = vec![false; tables.len()];
 
@@ -271,9 +276,9 @@ impl PdfHandler {
                 line.chars.iter().map(|c| c.height).sum::<f32>() / line.chars.len() as f32;
 
             if avg_height > 16.0 && trimmed.len() < 100 {
-                output.push_str(&format!("## {trimmed}\n\n"));
+                let _ = write!(output, "## {trimmed}\n\n");
             } else if avg_height > 13.0 && trimmed.len() < 120 {
-                output.push_str(&format!("### {trimmed}\n\n"));
+                let _ = write!(output, "### {trimmed}\n\n");
             } else {
                 output.push_str(trimmed);
                 output.push('\n');

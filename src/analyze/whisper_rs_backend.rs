@@ -1,16 +1,16 @@
 //! Whisper.cpp ASR backend via `whisper-rs` Rust bindings.
 //!
-//! Uses whisper-large-v3-turbo (GGUF Q5_0, ~590 MB) for universal language
+//! Uses `whisper-large-v3-turbo` (GGUF `Q5_0`, ~590 MB) for universal language
 //! coverage. This is the **fallback backend** for languages outside Parakeet
 //! TDT v3's 26-language set (e.g. Arabic, Hindi, Turkish, Japanese, Chinese).
 //!
 //! ## Realtime factors (approximate)
 //!
-//! | Hardware               | RTFx  |
-//! |------------------------|-------|
-//! | macOS Metal (M-series) | ~6×   |
-//! | Linux CPU x86_64       | ~3×   |
-//! | Linux CUDA RTX 4090    | ~15×  |
+//! | Hardware               | `RTFx`  |
+//! |------------------------|---------|
+//! | macOS Metal (M-series) | ~6×     |
+//! | Linux CPU `x86_64`     | ~3×     |
+//! | Linux CUDA RTX 4090    | ~15×    |
 //!
 //! ## Model installation
 //!
@@ -110,7 +110,7 @@ impl WhisperRsBackend {
 
         // Build a FullParams with the language stored in an owned String so its
         // lifetime is tied to this stack frame — satisfying `FullParams<'a, '_>`.
-        let lang_owned: Option<String> = language_hint.map(|s| s.to_string());
+        let lang_owned: Option<String> = language_hint.map(str::to_string);
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_print_special(false);
@@ -563,7 +563,7 @@ mod tests {
                 words: None,
             },
             RawSegment {
-                text: "".into(),
+                text: String::new(),
                 start: 1.0,
                 end: 1.5,
                 words: None,

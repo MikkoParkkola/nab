@@ -38,7 +38,9 @@ use nab::content::{ContentHandler, ContentRouter};
 /// contain valid PDF content-stream operators (BT … ET blocks).
 ///
 /// Returns the raw bytes of the complete PDF.
+#[allow(clippy::write_with_newline)] // PDF format requires exact \n bytes
 fn build_pdf(pages: &[(&str, f32)]) -> Vec<u8> {
+    use std::fmt::Write;
     // We pre-allocate objects:
     //   1 = Catalog
     //   2 = Pages
@@ -65,7 +67,7 @@ fn build_pdf(pages: &[(&str, f32)]) -> Vec<u8> {
 
     // Object 1 — Catalog
     offsets.push(pdf.len());
-    let obj1 = format!("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n");
+    let obj1 = "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n".to_string();
     pdf.extend_from_slice(obj1.as_bytes());
 
     // Object 2 — Pages
@@ -108,16 +110,17 @@ fn build_pdf(pages: &[(&str, f32)]) -> Vec<u8> {
     // xref table
     let xref_offset = pdf.len();
     let total_objects = font_obj + 1; // 0-based: object 0 is the free-list entry
-    body.push_str(&format!("xref\n0 {total_objects}\n"));
+    let _ = write!(body, "xref\n0 {total_objects}\n");
     body.push_str("0000000000 65535 f \n"); // object 0 (free)
     // xref entries for objects 1..total_objects-1 in order
     // offsets[k] is the offset of object (k+1)
     for off in &offsets {
-        body.push_str(&format!("{off:010} 00000 n \n"));
+        let _ = write!(body, "{off:010} 00000 n \n");
     }
-    body.push_str(&format!(
+    let _ = write!(
+        body,
         "trailer << /Size {total_objects} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
-    ));
+    );
     pdf.extend_from_slice(body.as_bytes());
     pdf
 }
@@ -235,6 +238,7 @@ fn pdf_handler_supported_types_returns_application_pdf() {
 }
 
 #[test]
+#[allow(clippy::default_constructed_unit_structs)]
 fn pdf_handler_new_and_default_are_equivalent() {
     // GIVEN: PdfHandler can be constructed two ways
     // WHEN: we check supported types on both
@@ -605,9 +609,10 @@ fn pdf_handler_is_send_and_sync() {
 }
 
 #[test]
+#[allow(clippy::default_constructed_unit_structs)]
 fn pdf_handler_default_trait_is_available() {
     // GIVEN: PdfHandler derives Default
     // WHEN: Default::default() is called
     // THEN: it produces the same unit struct as PdfHandler::new()
-    let _h: PdfHandler = Default::default();
+    let _h = PdfHandler::default();
 }

@@ -522,6 +522,7 @@ mod tests {
         }
 
         fn into_bytes(self) -> Vec<u8> {
+            use std::fmt::Write;
             let mut response = format!("{}\r\n", self.status_line);
             let mut has_content_length = false;
 
@@ -529,11 +530,11 @@ mod tests {
                 if name.eq_ignore_ascii_case("content-length") {
                     has_content_length = true;
                 }
-                response.push_str(&format!("{name}: {value}\r\n"));
+                let _ = write!(response, "{name}: {value}\r\n");
             }
 
             if !has_content_length {
-                response.push_str(&format!("Content-Length: {}\r\n", self.body.len()));
+                let _ = write!(response, "Content-Length: {}\r\n", self.body.len());
             }
             response.push_str("Connection: close\r\n\r\n");
 

@@ -759,8 +759,10 @@ mod tests {
             .collect();
         let sampler = MockSampler::new(refs, "summary");
         let fetcher = MockFetcher::new("content");
-        let mut config = ActiveReadingConfig::default();
-        config.max_refs_per_segment = 2;
+        let config = ActiveReadingConfig {
+            max_refs_per_segment: 2,
+            ..ActiveReadingConfig::default()
+        };
         let mut reader = ActiveReader::new(&sampler, &fetcher, config);
         let mut transcript = make_transcript(&["Segment zero."]);
 
@@ -790,7 +792,7 @@ mod tests {
         let mut reader = ActiveReader::new(&sampler, &fetcher, ActiveReadingConfig::default());
         // Two segments — the mock sampler attaches the ref to the first segment of each chunk.
         // With tiny segments a second chunk is unlikely, so we directly call lookup twice.
-        let ref1 = Reference {
+        let paper_ref = Reference {
             kind: ReferenceKind::Paper,
             query: "same paper".to_string(),
             confidence: 0.9,
@@ -798,8 +800,8 @@ mod tests {
         };
 
         // WHEN the same reference is looked up twice
-        let _first = reader.lookup_reference(&ref1).await.unwrap();
-        let second = reader.lookup_reference(&ref1).await.unwrap();
+        let _first = reader.lookup_reference(&paper_ref).await.unwrap();
+        let second = reader.lookup_reference(&paper_ref).await.unwrap();
 
         // THEN the fetcher is called only once (second is a cache hit)
         assert_eq!(
@@ -849,8 +851,10 @@ mod tests {
         let refs = vec![high_confidence_paper_ref()];
         let sampler = MockSampler::new(refs, "summary");
         let fetcher = MockFetcher::new("content");
-        let mut config = ActiveReadingConfig::default();
-        config.token_budget = 1; // exhausted immediately after the first chunk
+        let config = ActiveReadingConfig {
+            token_budget: 1, // exhausted immediately after the first chunk
+            ..ActiveReadingConfig::default()
+        };
         let mut reader = ActiveReader::new(&sampler, &fetcher, config);
         // 20 segments, each ~100 chars — multiple chunks
         let texts: Vec<&str> = (0..20)

@@ -333,7 +333,7 @@ mod tests {
             http_only: true,
         };
 
-        let debug_str = format!("{:?}", cookie);
+        let debug_str = format!("{cookie:?}");
         assert!(debug_str.contains("test"));
         assert!(debug_str.contains("value"));
     }

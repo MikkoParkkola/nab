@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn parse_empty_object_returns_defaults() {
         // GIVEN: entirely empty JSON object
-        let json = r#"{}"#;
+        let json = r"{}";
         // WHEN
         let manifest = McpManifest::from_json(json).unwrap();
         // THEN: all defaults apply

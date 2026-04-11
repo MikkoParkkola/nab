@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(refs[0].query, "Geoffrey Hinton");
     }
 
-    /// JSON wrapped in plain ``` fences parses correctly.
+    /// JSON wrapped in plain ```` ``` ```` fences parses correctly.
     #[test]
     fn parse_references_response_handles_plain_fences() {
         // GIVEN a response with plain code fences
