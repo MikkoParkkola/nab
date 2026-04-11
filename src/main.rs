@@ -514,6 +514,62 @@ enum Commands {
         #[command(subcommand)]
         action: ModelsAction,
     },
+
+    /// MCP server management (serve, install)
+    ///
+    /// `nab mcp` starts the MCP server on stdio (same as `nab-mcp`).
+    /// `nab mcp install` auto-configures your AI client to use nab.
+    Mcp {
+        #[command(subcommand)]
+        action: Option<McpAction>,
+
+        /// Bind address for Streamable HTTP transport (e.g. "127.0.0.1:8765").
+        /// Omit to run in stdio mode (default).
+        #[arg(long, value_name = "HOST:PORT")]
+        http: Option<String>,
+
+        /// Allowed CORS origin for HTTP mode.
+        #[arg(long, value_name = "ORIGIN")]
+        http_allow_origin: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpAction {
+    /// Start the MCP server on stdio (default) or Streamable HTTP
+    Serve {
+        /// Bind address for Streamable HTTP transport (e.g. "127.0.0.1:8765").
+        #[arg(long, value_name = "HOST:PORT")]
+        http: Option<String>,
+
+        /// Allowed CORS origin for HTTP mode.
+        #[arg(long, value_name = "ORIGIN")]
+        http_allow_origin: Option<String>,
+    },
+
+    /// Install nab as an MCP server in your AI client's config
+    ///
+    /// No JSON editing, no file-path hunting. Run this command and restart
+    /// your client.
+    ///
+    ///   nab mcp install                        # Claude Desktop (default)
+    ///   nab mcp install --client cursor         # Cursor
+    ///   nab mcp install --client claude-code    # Claude Code
+    ///   nab mcp install --client windsurf       # Windsurf
+    ///   nab mcp install --dry-run               # show what would change
+    Install {
+        /// MCP client to configure: claude-desktop, cursor, claude-code, windsurf
+        #[arg(long, default_value = "claude-desktop")]
+        client: String,
+
+        /// Overwrite existing nab entry without asking
+        #[arg(long)]
+        force: bool,
+
+        /// Print the planned change without writing the file
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -961,6 +1017,39 @@ async fn main() -> Result<()> {
                 }
                 ModelsAction::Verify => {
                     cmd::cmd_models_verify().await?;
+                }
+            },
+            Commands::Mcp {
+                action,
+                http,
+                http_allow_origin,
+            } => match action {
+                Some(McpAction::Install {
+                    client,
+                    force,
+                    dry_run,
+                }) => {
+                    cmd::cmd_mcp_install(&cmd::McpInstallConfig {
+                        client,
+                        force,
+                        dry_run,
+                    })?;
+                }
+                Some(McpAction::Serve {
+                    http: sub_http,
+                    http_allow_origin: sub_origin,
+                }) => {
+                    cmd::cmd_mcp_serve(&cmd::McpServeConfig {
+                        http: sub_http,
+                        http_allow_origin: sub_origin,
+                    })?;
+                }
+                // `nab mcp` with no subcommand → serve (default behavior)
+                None => {
+                    cmd::cmd_mcp_serve(&cmd::McpServeConfig {
+                        http,
+                        http_allow_origin,
+                    })?;
                 }
             },
         }

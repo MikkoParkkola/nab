@@ -204,7 +204,19 @@ Phase 3 will add `whisper` and `sherpa-onnx` subcommands.
 
 `nab-mcp` is a native Rust MCP server. It runs over stdio (default) or Streamable HTTP. It is fully compliant with MCP protocol version `2025-11-25`.
 
-### Claude Code / Claude Desktop
+### Quick setup (recommended)
+
+```bash
+nab mcp install                        # Claude Desktop (default)
+nab mcp install --client claude-code   # Claude Code
+nab mcp install --client cursor        # Cursor
+nab mcp install --client windsurf      # Windsurf
+nab mcp install --dry-run              # preview what would change
+```
+
+This auto-detects the `nab-mcp` binary path, backs up your existing config, and adds the `nab` entry. Restart your client after installing.
+
+### Manual setup
 
 Add to your MCP client configuration (`~/.config/claude/mcp.json` or equivalent):
 
@@ -218,13 +230,11 @@ Add to your MCP client configuration (`~/.config/claude/mcp.json` or equivalent)
 }
 ```
 
-### Continue / Zed / Cursor / Windsurf
-
-Same shape — point `command` at the `nab-mcp` binary.
-
 ### HTTP transport
 
 ```bash
+nab mcp serve --http 127.0.0.1:8765
+# or directly:
 nab-mcp --http 127.0.0.1:8765
 ```
 
