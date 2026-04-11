@@ -57,13 +57,23 @@ pub async fn cmd_submit(cfg: &SubmitConfig) -> Result<()> {
     println!("Submitting to: {action_url}");
 
     let form_data = form.encode_urlencoded();
-    let response = client
-        .inner()
-        .post(&action_url)
-        .header("Content-Type", form.content_type())
-        .body(form_data)
-        .send()
-        .await?;
+    let request = match form.method.as_str() {
+        "GET" => {
+            // For GET forms, append fields as query parameters
+            let get_url = if action_url.contains('?') {
+                format!("{action_url}&{form_data}")
+            } else {
+                format!("{action_url}?{form_data}")
+            };
+            client.inner().get(&get_url)
+        }
+        _ => client
+            .inner()
+            .post(&action_url)
+            .header("Content-Type", form.content_type())
+            .body(form_data),
+    };
+    let response = request.send().await?;
 
     output_response(response, cfg.show_headers).await?;
 
