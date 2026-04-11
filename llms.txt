@@ -1,0 +1,72 @@
+# nab
+
+> Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 compliant. Rust.
+
+nab is a single Rust binary that fetches any URL as clean markdown (with real browser cookies and anti-bot evasion), transcribes audio/video with on-device multilingual ASR, and watches URLs for changes. Everything runs locally. No API keys required. Output is shaped for LLM context windows.
+
+## Install
+
+brew install MikkoParkkola/tap/nab
+
+## MCP Server Setup (for AI assistants)
+
+```bash
+nab mcp install                        # Claude Desktop (default)
+nab mcp install --client claude-code   # Claude Code
+nab mcp install --client cursor        # Cursor
+nab mcp install --client windsurf      # Windsurf
+nab mcp install --dry-run              # preview changes
+```
+
+Manual: add `{"mcpServers":{"nab":{"command":"nab-mcp"}}}` to your client config.
+
+Command: nab-mcp
+Transport: stdio (default) or Streamable HTTP (--http HOST:PORT)
+
+## MCP Tools (12)
+
+- fetch(url, [cookies, focus, max_tokens, session, raw_html, diff, proxy, tor]) — Fetch URL as markdown
+- fetch_batch(urls, [cookies, parallel]) — Parallel multi-URL fetch with task-augmented async
+- submit(url, fields, [csrf_from, cookies]) — Submit form with CSRF + smart field extraction
+- login(url, [use_1password, save_session, cookies]) — 1Password auto-login with TOTP
+- auth_lookup(url) — Look up 1Password credentials for a URL
+- fingerprint([count]) — Generate browser fingerprint profiles
+- validate() — Run validation test suite
+- benchmark(urls, [iterations]) — Time URL fetches with stats
+- analyze(video, [audio_only, diarize, format, language, active_reading]) — Transcribe + diarize audio/video
+- watch_create(url, [interval, selector, diff_kind]) — Create URL watch subscription
+- watch_list() — List active watches
+- watch_remove(id) — Remove a watch
+
+## MCP Prompts
+
+- fetch-and-extract(url, focus) — Guided URL extraction
+- multi-page-research(urls) — Multi-page research workflow
+- authenticated-fetch(url) — Auth-aware fetch with 1Password
+
+## CLI (14 commands)
+
+nab fetch https://example.com                          # fetch as markdown
+nab fetch URL --cookies brave                          # use browser cookies
+nab fetch URL --1password                              # auto-login via 1Password
+nab fetch URL --focus "pricing" --max-tokens 2000      # query-focused extraction
+nab fetch --batch urls.txt --parallel 8                # batch fetch
+nab spa URL                                            # extract SPA/JS data
+nab analyze interview.mp4 --diarize                    # transcribe + speakers
+nab watch add https://status.openai.com --interval 5m  # monitor for changes
+nab stream yle PROGRAM_ID                              # stream media
+nab submit URL --field "name=value"                    # submit forms
+nab context URL1 URL2 URL3 --max-tokens 8000           # combine URLs for LLM
+nab mcp                                                # start MCP server (stdio)
+nab mcp install                                        # auto-configure AI client
+nab mcp install --client cursor --dry-run              # preview config changes
+
+## Site Providers (11)
+
+Twitter/X, Reddit, Hacker News, GitHub, Google Workspace (Docs/Sheets/Slides), YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, Instagram.
+
+## Detailed docs
+
+- Full README: https://github.com/MikkoParkkola/nab/blob/main/README.md
+- Architecture: https://github.com/MikkoParkkola/nab/blob/main/docs/ARCHITECTURE.md
+- Getting started: https://github.com/MikkoParkkola/nab/blob/main/docs/getting-started.md
