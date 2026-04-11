@@ -14,21 +14,52 @@
 //! the first 32 bytes of every decrypted plaintext are `SHA-256(host_key)`.
 //! These bytes must be stripped to recover the actual cookie value.
 //! See: <https://issues.chromium.org/issues/40185252>
+//!
+//! # Security Notice — Post-Quantum Cryptography (PQC)
+//!
+//! **This entire module implements a read-only compatibility shim for Chromium's
+//! on-disk cookie format. nab does not choose these algorithms — Chromium does.**
+//!
+//! The algorithms used here are NOT post-quantum safe:
+//! - `PBKDF2-HMAC-SHA1` — classical KDF, no quantum resistance
+//! - `AES-128-CBC` — 128-bit key provides only ~64 bits of security against
+//!   Grover's algorithm on a large-scale quantum computer
+//! - Static IV (`0x20 * 16`) — hardcoded by Chromium; CBC with a fixed IV is
+//!   additionally vulnerable to chosen-plaintext attacks
+//!
+//! **These weaknesses cannot be fixed here.** The format is owned by the Chromium
+//! project. Any PQC upgrade must originate in Chromium's `os_crypt` component.
+//! Track upstream progress at: <https://issues.chromium.org/issues/40185252>
+//!
+//! nab itself stores no credentials and performs no nab-native encryption, so
+//! there are no nab-owned cryptographic surfaces to harden.
 
 use anyhow::{Context, Result};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// LEGACY: Chromium compatibility constants — these values are dictated by the Chromium
+// on-disk cookie format and CANNOT be changed by nab.
+// AES-128-CBC + PBKDF2-SHA1 are NOT post-quantum safe. See module-level doc for details.
+
 /// PBKDF2 salt used by Chromium for cookie key derivation.
+// LEGACY: Chromium compatibility — "saltysalt" is hard-coded in Chromium's os_crypt_mac.mm.
 pub(super) const CHROME_PBKDF2_SALT: &[u8] = b"saltysalt";
 /// PBKDF2 iteration count (1003 for macOS Chromium builds).
+// LEGACY: Chromium compatibility — 1003 iterations of PBKDF2-HMAC-SHA1 is NOT
+// post-quantum safe and is well below NIST SP 800-132 recommendations (≥210,000 for SHA-256).
 pub(super) const CHROME_PBKDF2_ITERATIONS: u32 = 1003;
 /// Derived key length in bytes (AES-128 = 16 bytes).
+// LEGACY: Chromium compatibility — AES-128 provides only ~64 bits of post-quantum security
+// (Grover's algorithm). AES-256 would be required for PQC readiness.
 pub(super) const CHROME_KEY_LEN: usize = 16;
 /// Prefix on every v10 encrypted cookie value (ASCII "v10").
 pub(super) const V10_PREFIX: &[u8; 3] = b"v10";
 /// AES-CBC IV: 16 **space** bytes (0x20). Chromium hard-codes this — NOT zero bytes.
 /// Reference: `chromium/components/os_crypt/os_crypt_mac.mm`, `OSCryptImpl::DecryptString`.
+// LEGACY: Chromium compatibility — a static, non-random IV is a known weakness of CBC mode.
+// This makes the scheme additionally vulnerable to chosen-plaintext attacks beyond the
+// baseline PQC concerns. Fixing this requires a Chromium format change.
 pub(super) const AES_CBC_IV: [u8; 16] = [b' '; 16];
 /// Domain-integrity prefix length added in DB schema v24+.
 /// First 32 bytes of every decrypted value are `SHA-256(host_key)`.
@@ -42,6 +73,17 @@ pub(super) const SCHEMA_VERSION_WITH_DOMAIN_TAG: u32 = 24;
 ///
 /// This is the exact derivation used by all Chromium-based browsers on macOS:
 /// `PBKDF2(password, salt="saltysalt", iterations=1003, key_len=16, prf=HMAC-SHA1)`
+///
+/// # Security Notice — Post-Quantum Cryptography (PQC)
+///
+/// **LEGACY: Chromium compatibility — AES-128-CBC is NOT post-quantum safe.**
+///
+/// This function implements the key derivation step of Chromium's cookie encryption
+/// scheme. The parameters — PBKDF2-HMAC-SHA1, 1003 iterations, 16-byte key — are
+/// fixed by the Chromium on-disk format and cannot be changed here.
+///
+/// For PQC-safe key derivation in new nab-native code, use Argon2id with a 256-bit
+/// output key, or PBKDF2-HMAC-SHA256 with ≥210,000 iterations (NIST SP 800-132).
 pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
     use hmac::{Hmac, KeyInit, Mac};
     use sha1::Sha1;
@@ -105,10 +147,24 @@ pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
 ///
 /// Pass `has_domain_tag = true` for schema v24+ databases.
 ///
+/// # Security Notice — Post-Quantum Cryptography (PQC)
+///
+/// **LEGACY: Chromium compatibility — AES-128-CBC is NOT post-quantum safe.**
+///
+/// This function decrypts cookies using Chromium's on-disk format. The algorithm
+/// (AES-128-CBC, static IV, PKCS7 padding) is owned by the Chromium project.
+/// nab cannot change these without breaking cookie extraction entirely.
+///
+/// Do NOT use this function or copy its algorithm for any nab-native data storage.
+/// For nab-native encryption, use AES-256-GCM with a random 96-bit nonce.
+///
 /// # Errors
 /// Returns an error if the blob is too short, the prefix is wrong, AES
 /// decryption/unpadding fails, or the result is not valid UTF-8.
 pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8], has_domain_tag: bool) -> Result<String> {
+    // LEGACY: Chromium compatibility — AES-128-CBC is NOT post-quantum safe.
+    // This cipher + IV combination is fixed by the Chromium on-disk cookie format.
+    // Reference: chromium/components/os_crypt/os_crypt_mac.mm OSCryptImpl::DecryptString
     use aes::Aes128;
     use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
     type Aes128CbcDec = cbc::Decryptor<Aes128>;
