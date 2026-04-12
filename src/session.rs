@@ -37,7 +37,7 @@
 use std::fs;
 use std::io::Write;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(test)]
@@ -310,39 +310,53 @@ fn ensure_private_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn read_master_secret_file(key_path: &Path) -> Result<[u8; SESSION_KEY_LEN]> {
+    let secret =
+        fs::read(key_path).with_context(|| format!("Failed to read '{}'", key_path.display()))?;
+    anyhow::ensure!(
+        secret.len() == SESSION_KEY_LEN,
+        "Session master key at '{}' must be {} bytes, got {}",
+        key_path.display(),
+        SESSION_KEY_LEN,
+        secret.len()
+    );
+    ensure_private_file(key_path)?;
+    let mut out = [0u8; SESSION_KEY_LEN];
+    out.copy_from_slice(&secret);
+    Ok(out)
+}
+
 fn load_or_create_master_secret_in(state_dir: &Path) -> Result<[u8; SESSION_KEY_LEN]> {
     ensure_private_dir(state_dir)?;
     let key_path = session_key_path(state_dir);
 
     if key_path.exists() {
-        let secret = fs::read(&key_path)
-            .with_context(|| format!("Failed to read '{}'", key_path.display()))?;
-        anyhow::ensure!(
-            secret.len() == SESSION_KEY_LEN,
-            "Session master key at '{}' must be {} bytes, got {}",
-            key_path.display(),
-            SESSION_KEY_LEN,
-            secret.len()
-        );
-        ensure_private_file(&key_path)?;
-        let mut out = [0u8; SESSION_KEY_LEN];
-        out.copy_from_slice(&secret);
-        return Ok(out);
+        return read_master_secret_file(&key_path);
     }
 
     let mut secret = [0u8; SESSION_KEY_LEN];
     OsRng.fill_bytes(&mut secret);
 
-    let mut tmp = NamedTempFile::new_in(state_dir)
-        .with_context(|| format!("Failed to create temp file in '{}'", state_dir.display()))?;
-    tmp.write_all(&secret)?;
-    tmp.flush()?;
-    ensure_private_file(tmp.path())?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(&key_path)
-        .with_context(|| format!("Failed to persist '{}'", key_path.display()))?;
-    ensure_private_file(&key_path)?;
-    Ok(secret)
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    match options.open(&key_path) {
+        Ok(mut file) => {
+            file.write_all(&secret)?;
+            file.flush()?;
+            file.sync_all()?;
+            ensure_private_file(&key_path)?;
+            Ok(secret)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            read_master_secret_file(&key_path)
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("Failed to create '{}'", key_path.display()))
+        }
+    }
 }
 
 fn derive_session_key(master_secret: &[u8], salt: &[u8]) -> Result<[u8; SESSION_KEY_LEN]> {
