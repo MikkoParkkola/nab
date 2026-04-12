@@ -33,7 +33,7 @@ mod tests;
 pub mod tools;
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
@@ -841,6 +841,18 @@ pub struct MicroFetchHandler {
     subscribed_uris: Arc<Mutex<HashSet<String>>>,
 }
 
+fn lock_subscribed_uris(
+    subscribed_uris: &Arc<Mutex<HashSet<String>>>,
+) -> MutexGuard<'_, HashSet<String>> {
+    match subscribed_uris.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!("subscription lock poisoned; recovering active subscriptions");
+            poisoned.into_inner()
+        }
+    }
+}
+
 #[async_trait]
 impl ServerHandler for MicroFetchHandler {
     async fn handle_list_tools_request(
@@ -994,10 +1006,7 @@ impl ServerHandler for MicroFetchHandler {
     ) -> Result<rust_mcp_sdk::schema::Result, RpcError> {
         let uri = &params.uri;
         if uri.starts_with("nab://watch/") {
-            self.subscribed_uris
-                .lock()
-                .expect("subscription lock")
-                .insert(uri.clone());
+            lock_subscribed_uris(&self.subscribed_uris).insert(uri.clone());
             tracing::info!(%uri, "Client subscribed to watch resource");
         }
         Ok(rust_mcp_sdk::schema::Result::default())
@@ -1009,10 +1018,7 @@ impl ServerHandler for MicroFetchHandler {
         _runtime: Arc<dyn McpServer>,
     ) -> Result<rust_mcp_sdk::schema::Result, RpcError> {
         let uri = &params.uri;
-        self.subscribed_uris
-            .lock()
-            .expect("subscription lock")
-            .remove(uri);
+        lock_subscribed_uris(&self.subscribed_uris).remove(uri);
         tracing::info!(%uri, "Client unsubscribed from watch resource");
         Ok(rust_mcp_sdk::schema::Result::default())
     }
@@ -1437,12 +1443,7 @@ fn spawn_watch_fanout(
             match event_rx.recv().await {
                 Ok(nab::watch::WatchEvent::Changed { id, .. }) => {
                     let uri = format!("nab://watch/{id}");
-                    let is_subscribed = {
-                        subscribed_uris
-                            .lock()
-                            .expect("subscription lock")
-                            .contains(&uri)
-                    };
+                    let is_subscribed = { lock_subscribed_uris(&subscribed_uris).contains(&uri) };
                     if is_subscribed {
                         let params = ResourceUpdatedNotificationParams {
                             uri: uri.clone(),

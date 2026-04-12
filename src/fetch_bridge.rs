@@ -18,7 +18,7 @@ use anyhow::{Result, bail};
 use reqwest::blocking::Client;
 use reqwest::header::LOCATION;
 use rquickjs::{Context, Function};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use url::Url;
 
 use crate::ssrf::{self, DEFAULT_MAX_REDIRECTS};
@@ -34,6 +34,16 @@ pub struct FetchClient {
 }
 
 impl FetchClient {
+    fn lock_fetch_log(&self) -> MutexGuard<'_, Vec<String>> {
+        match self.fetch_log.lock() {
+            Ok(log) => log,
+            Err(poisoned) => {
+                tracing::warn!("fetch log mutex poisoned; recovering buffered entries");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Create a new fetch client with optional cookies and base URL
     #[must_use]
     pub fn new(cookies: Option<String>, base_url: Option<String>) -> Self {
@@ -68,10 +78,7 @@ impl FetchClient {
     /// Get the list of all fetched URLs
     #[must_use]
     pub fn get_fetch_log(&self) -> Vec<String> {
-        self.fetch_log
-            .lock()
-            .expect("Fetch log mutex should not be poisoned")
-            .clone()
+        self.lock_fetch_log().clone()
     }
 
     /// Fetch a URL and return the response body as text
@@ -100,9 +107,7 @@ impl FetchClient {
         ssrf::validate_url(&current_url)?;
 
         // Log the fetch for discovery
-        if let Ok(mut log) = self.fetch_log.lock() {
-            log.push(current_url.to_string());
-        }
+        self.lock_fetch_log().push(current_url.to_string());
 
         // Manual redirect loop with per-hop SSRF validation
         let mut redirect_count = 0u32;
@@ -488,6 +493,21 @@ mod tests {
             parsed["error"],
             r#"Invalid URL 'https://host/path?q="foo"': boom"#
         );
+    }
+
+    #[test]
+    fn get_fetch_log_recovers_after_mutex_poisoning() {
+        let client = FetchClient::new(None, None);
+        let fetch_log = Arc::clone(&client.fetch_log);
+
+        let result = std::panic::catch_unwind(move || {
+            let mut log = fetch_log.lock().expect("test mutex lock");
+            log.push("https://example.com".to_string());
+            panic!("poison fetch log");
+        });
+        assert!(result.is_err());
+
+        assert_eq!(client.get_fetch_log(), vec!["https://example.com"]);
     }
 
     // ─── Integration tests (require network) ─────────────────────────────

@@ -3,6 +3,9 @@
 //! Tests for `elicitation` and `structured` module functions,
 //! co-located here so they can reference any `crate::` module freely.
 
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+
 use std::collections::BTreeMap;
 
 use rust_mcp_sdk::schema::{ElicitResultContent, ElicitResultContentPrimitive};
@@ -116,6 +119,22 @@ fn build_structured_produces_correct_keys() {
         serde_json::Value::String("https://example.com".into())
     );
     assert_eq!(map["status"], serde_json::Value::Number(200.into()));
+}
+
+#[test]
+fn lock_subscribed_uris_recovers_after_mutex_poisoning() {
+    let subscribed_uris = Arc::new(Mutex::new(HashSet::new()));
+    let poisoned = Arc::clone(&subscribed_uris);
+
+    let result = std::panic::catch_unwind(move || {
+        let mut guard = poisoned.lock().expect("test subscription lock");
+        guard.insert("nab://watch/demo".to_string());
+        panic!("poison subscription set");
+    });
+    assert!(result.is_err());
+
+    let recovered = super::lock_subscribed_uris(&subscribed_uris);
+    assert!(recovered.contains("nab://watch/demo"));
 }
 
 // ── build_fetch_structured ───────────────────────────────────────────────────
