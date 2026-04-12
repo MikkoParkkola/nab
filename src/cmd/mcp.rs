@@ -284,16 +284,16 @@ fn cmd_mcp_install_toml(
         return Ok(());
     }
 
-    let block = format!(
-        "\n[mcp_servers.nab]\ncommand = \"{binary}\"\n",
-    );
+    let block = format!("\n[mcp_servers.nab]\ncommand = \"{binary}\"\n",);
 
     let out = if existing.contains("[mcp_servers.nab]") {
         // Force mode: replace the existing block (simple heuristic —
         // replace from [mcp_servers.nab] to the next [section] or EOF).
         let start = existing.find("[mcp_servers.nab]").unwrap();
         let rest = &existing[start + "[mcp_servers.nab]".len()..];
-        let end = rest.find("\n[").map_or(existing.len(), |i| start + "[mcp_servers.nab]".len() + i);
+        let end = rest
+            .find("\n[")
+            .map_or(existing.len(), |i| start + "[mcp_servers.nab]".len() + i);
         format!("{}{}{}", &existing[..start], block.trim(), &existing[end..])
     } else {
         format!("{}{}", existing.trim_end(), block)
@@ -317,8 +317,7 @@ fn cmd_mcp_install_toml(
         }
     }
 
-    std::fs::write(config_path, out)
-        .with_context(|| format!("write {}", config_path.display()))?;
+    std::fs::write(config_path, out).with_context(|| format!("write {}", config_path.display()))?;
 
     println!("Installed nab as MCP server for {}.", client.display_name());
     println!("  config: {}", config_path.display());
@@ -379,14 +378,30 @@ mod tests {
 
     #[test]
     fn from_str_original_clients() {
-        for name in &["claude-desktop", "claude", "claude-code", "cursor", "windsurf"] {
+        for name in &[
+            "claude-desktop",
+            "claude",
+            "claude-code",
+            "cursor",
+            "windsurf",
+        ] {
             assert!(McpClient::from_str(name).is_ok(), "should accept {name}");
         }
     }
 
     #[test]
     fn from_str_new_clients() {
-        for name in &["codex", "vscode", "vs-code", "copilot", "gemini", "amazon-q", "q", "zed", "lm-studio"] {
+        for name in &[
+            "codex",
+            "vscode",
+            "vs-code",
+            "copilot",
+            "gemini",
+            "amazon-q",
+            "q",
+            "zed",
+            "lm-studio",
+        ] {
             assert!(McpClient::from_str(name).is_ok(), "should accept {name}");
         }
     }
