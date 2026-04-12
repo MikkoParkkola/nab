@@ -500,4 +500,140 @@ mod tests {
         assert!(!McpClient::VSCode.is_toml());
         assert!(!McpClient::Zed.is_toml());
     }
+
+    // ── integration: TOML install path ──────────────────────────────────
+
+    #[test]
+    fn toml_install_fresh_creates_section() {
+        let dir = std::env::temp_dir().join("nab_test_toml_fresh");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("config.toml");
+
+        let result =
+            cmd_mcp_install_toml(&cfg, "/usr/bin/nab-mcp", &McpClient::Codex, false, false);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&cfg).unwrap();
+        assert!(content.contains("[mcp_servers.nab]"), "got: {content}");
+        assert!(
+            content.contains("command = \"/usr/bin/nab-mcp\""),
+            "got: {content}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn toml_install_dry_run_does_not_write() {
+        let dir = std::env::temp_dir().join("nab_test_toml_dry");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("config.toml");
+
+        let result = cmd_mcp_install_toml(&cfg, "/usr/bin/nab-mcp", &McpClient::Codex, false, true);
+        assert!(result.is_ok());
+        assert!(!cfg.exists(), "dry-run should not create the file");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn toml_install_skips_existing_without_force() {
+        let dir = std::env::temp_dir().join("nab_test_toml_skip");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("config.toml");
+
+        std::fs::write(&cfg, "[mcp_servers.nab]\ncommand = \"old\"\n").unwrap();
+        let result =
+            cmd_mcp_install_toml(&cfg, "/usr/bin/nab-mcp", &McpClient::Codex, false, false);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&cfg).unwrap();
+        assert!(
+            content.contains("command = \"old\""),
+            "should not overwrite without --force"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn toml_install_force_overwrites() {
+        let dir = std::env::temp_dir().join("nab_test_toml_force");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("config.toml");
+
+        std::fs::write(&cfg, "[mcp_servers.nab]\ncommand = \"old\"\n").unwrap();
+        let result = cmd_mcp_install_toml(&cfg, "/usr/bin/nab-mcp", &McpClient::Codex, true, false);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&cfg).unwrap();
+        assert!(
+            content.contains("command = \"/usr/bin/nab-mcp\""),
+            "should overwrite with --force"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── integration: JSON key paths (vscode/zed) ────────────────────────
+
+    #[test]
+    fn json_install_vscode_uses_servers_key() {
+        let dir = std::env::temp_dir().join("nab_test_vscode_key");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("mcp.json");
+
+        // Simulate the JSON install with VSCode's key
+        let key = McpClient::VSCode.mcp_config_key();
+        let mut root = serde_json::Map::new();
+        let servers = root
+            .entry(key)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        servers
+            .as_object_mut()
+            .unwrap()
+            .insert("nab".to_string(), serde_json::json!({"command": "nab-mcp"}));
+        let out = serde_json::to_string_pretty(&root).unwrap();
+        std::fs::write(&cfg, &out).unwrap();
+
+        let content = std::fs::read_to_string(&cfg).unwrap();
+        assert!(
+            content.contains("\"servers\""),
+            "VSCode should use 'servers' key, got: {content}"
+        );
+        assert!(
+            !content.contains("\"mcpServers\""),
+            "should NOT contain mcpServers"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn json_install_zed_uses_context_servers_key() {
+        let key = McpClient::Zed.mcp_config_key();
+        let mut root = serde_json::Map::new();
+        let servers = root
+            .entry(key)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        servers
+            .as_object_mut()
+            .unwrap()
+            .insert("nab".to_string(), serde_json::json!({"command": "nab-mcp"}));
+        let out = serde_json::to_string_pretty(&root).unwrap();
+
+        assert!(
+            out.contains("\"context_servers\""),
+            "Zed should use 'context_servers', got: {out}"
+        );
+        assert!(
+            !out.contains("\"mcpServers\""),
+            "should NOT contain mcpServers"
+        );
+    }
 }
