@@ -409,6 +409,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style guideli
 
 This tool includes browser cookie extraction and fingerprint spoofing capabilities. They are intended for legitimate use cases — accessing your own authenticated content, automated testing, sites where you have authorization. Use responsibly.
 
+## Troubleshooting
+
+**MCP server not connecting?** Run `nab-mcp` directly in your terminal to see errors. Verify the binary exists with `which nab-mcp`. If installed via `cargo install nab`, both `nab` and `nab-mcp` should be on your `$PATH`.
+
+**Cookie extraction failing?** Grant Full Disk Access to your terminal in **System Settings > Privacy & Security > Full Disk Access** (macOS). Browser cookies are stored in protected directories. Use `--cookies brave` to target a specific browser.
+
+**ASR model not found?** Run `nab models fetch fluidaudio` to download the model (~542 MB). The model directory is `~/.nab/models/`. Use `nab models list` to see what's installed.
+
+**Fetch returning HTML instead of markdown?** Some sites block automated access. Try `nab fetch URL --cookies brave` to use your browser session, or `nab fetch URL --1password` for sites that need login.
+
+**"too many open files" on watch?** Increase your ulimit: `ulimit -n 4096`. The default macOS limit (256) is too low for many concurrent watches.
+
 ## Ecosystem
 
 nab is part of a suite of MCP tools:
