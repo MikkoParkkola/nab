@@ -370,3 +370,119 @@ pub fn cmd_mcp_serve(cfg: &ServeConfig) -> Result<()> {
         std::process::exit(status.code().unwrap_or(1));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── from_str ────────────────────────────────────────────────────────
+
+    #[test]
+    fn from_str_original_clients() {
+        for name in &["claude-desktop", "claude", "claude-code", "cursor", "windsurf"] {
+            assert!(McpClient::from_str(name).is_ok(), "should accept {name}");
+        }
+    }
+
+    #[test]
+    fn from_str_new_clients() {
+        for name in &["codex", "vscode", "vs-code", "copilot", "gemini", "amazon-q", "q", "zed", "lm-studio"] {
+            assert!(McpClient::from_str(name).is_ok(), "should accept {name}");
+        }
+    }
+
+    #[test]
+    fn from_str_rejects_unknown() {
+        assert!(McpClient::from_str("not-a-client").is_err());
+    }
+
+    // ── config_path ─────────────────────────────────────────────────────
+
+    #[test]
+    fn config_path_claude_desktop() {
+        let p = McpClient::ClaudeDesktop.config_path().unwrap();
+        assert!(p.to_string_lossy().contains("claude_desktop_config.json"));
+    }
+
+    #[test]
+    fn config_path_claude_code() {
+        let p = McpClient::ClaudeCode.config_path().unwrap();
+        assert!(p.to_string_lossy().ends_with(".claude.json"));
+    }
+
+    #[test]
+    fn config_path_cursor() {
+        let p = McpClient::Cursor.config_path().unwrap();
+        assert!(p.to_string_lossy().contains(".cursor/mcp.json"));
+    }
+
+    #[test]
+    fn config_path_windsurf() {
+        let p = McpClient::Windsurf.config_path().unwrap();
+        assert!(p.to_string_lossy().contains("windsurf/mcp_config.json"));
+    }
+
+    #[test]
+    fn config_path_codex() {
+        let p = McpClient::Codex.config_path().unwrap();
+        assert!(p.to_string_lossy().contains(".codex/config.toml"));
+    }
+
+    #[test]
+    fn config_path_vscode() {
+        let p = McpClient::VSCode.config_path().unwrap();
+        assert!(p.to_string_lossy().contains(".vscode/mcp.json"));
+    }
+
+    #[test]
+    fn config_path_gemini() {
+        let p = McpClient::Gemini.config_path().unwrap();
+        assert!(p.to_string_lossy().contains(".gemini/settings.json"));
+    }
+
+    #[test]
+    fn config_path_amazon_q() {
+        let p = McpClient::AmazonQ.config_path().unwrap();
+        assert!(p.to_string_lossy().contains("amazonq/mcp.json"));
+    }
+
+    #[test]
+    fn config_path_zed() {
+        let p = McpClient::Zed.config_path().unwrap();
+        assert!(p.to_string_lossy().contains("settings.json"));
+    }
+
+    #[test]
+    fn config_path_lm_studio() {
+        let p = McpClient::LmStudio.config_path().unwrap();
+        assert!(p.to_string_lossy().contains(".lm-studio/mcp.json"));
+    }
+
+    // ── mcp_config_key ──────────────────────────────────────────────────
+
+    #[test]
+    fn mcp_config_key_defaults_to_mcp_servers() {
+        assert_eq!(McpClient::ClaudeDesktop.mcp_config_key(), "mcpServers");
+        assert_eq!(McpClient::Cursor.mcp_config_key(), "mcpServers");
+    }
+
+    #[test]
+    fn mcp_config_key_vscode_uses_servers() {
+        assert_eq!(McpClient::VSCode.mcp_config_key(), "servers");
+    }
+
+    #[test]
+    fn mcp_config_key_zed_uses_context_servers() {
+        assert_eq!(McpClient::Zed.mcp_config_key(), "context_servers");
+    }
+
+    // ── is_toml ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_toml_only_codex() {
+        assert!(McpClient::Codex.is_toml());
+        assert!(!McpClient::ClaudeDesktop.is_toml());
+        assert!(!McpClient::VSCode.is_toml());
+        assert!(!McpClient::Zed.is_toml());
+    }
+}
