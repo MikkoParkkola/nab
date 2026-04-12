@@ -97,6 +97,8 @@ Or use the auto-installer:
 nab mcp install                        # Claude Desktop (default)
 nab mcp install --client claude-code   # Claude Code
 nab mcp install --client cursor        # Cursor
+nab mcp install --client windsurf      # Windsurf
+nab mcp install --dry-run              # preview without writing
 ```
 
 See [MCP integration](#mcp-integration) below for the full list of tools, capabilities, and HTTP transport.
@@ -405,8 +407,8 @@ nab is part of a suite of MCP tools:
 
 | Tool | Description |
 |------|-------------|
-| [mcp-gateway](https://github.com/MikkoParkkola/mcp-gateway) | Universal MCP gateway — 4 meta-tools replace 100+ registrations |
-| [trvl](https://github.com/MikkoParkkola/trvl) | AI travel agent — 34 MCP tools for flights, hotels, ground transport |
+| [mcp-gateway](https://github.com/MikkoParkkola/mcp-gateway) | Universal MCP gateway — compact 12-15 tool surface replaces 100+ registrations |
+| [trvl](https://github.com/MikkoParkkola/trvl) | AI travel agent — 35 MCP tools for flights, hotels, ground transport |
 | **[nab](https://github.com/MikkoParkkola/nab)** | **Web content extraction — fetch any URL with cookies + anti-bot bypass** |
 | [axterminator](https://github.com/MikkoParkkola/axterminator) | macOS GUI automation — 34 MCP tools via Accessibility API |
 
