@@ -186,6 +186,14 @@ enum Commands {
         /// Defaults to auto-detection when omitted.
         #[arg(long)]
         language: Option<String>,
+
+        /// Run the Cloudflare AI Labyrinth (and similar) bot-trap detector
+        /// on the fetched HTML body. If the page is classified as a trap,
+        /// nab logs a warning and exits with `NabError::LabyrinthDetected`
+        /// instead of returning the content. See
+        /// <https://blog.cloudflare.com/ai-labyrinth/>.
+        #[arg(long)]
+        detect_labyrinth: bool,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -740,6 +748,7 @@ async fn main() -> Result<()> {
                 no_ocr,
                 no_transcribe,
                 language,
+                detect_labyrinth,
                 ..
             } => {
                 let cfg = cmd::FetchConfig {
@@ -769,6 +778,7 @@ async fn main() -> Result<()> {
                     no_ocr,
                     no_transcribe,
                     language,
+                    detect_labyrinth,
                     html_options: nab::content::html::HtmlConversionOptions {
                         allow_spa_extraction: !no_spa,
                         allow_jina_fallback: !no_fallback,

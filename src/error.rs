@@ -66,6 +66,17 @@ pub enum NabError {
         actual: usize,
     },
 
+    /// The fetched page tripped the Cloudflare AI Labyrinth (or similar)
+    /// bot-trap detector. The body is suppressed to avoid leaking
+    /// scraper-like behaviour back to the trap.
+    #[error("labyrinth detected: score={score:.1}, verdict={verdict}")]
+    LabyrinthDetected {
+        /// Total weighted score from the labyrinth detector.
+        score: f32,
+        /// Human-readable verdict (`Suspicious` or `Trap`).
+        verdict: String,
+    },
+
     /// Catch-all for unclassified errors propagated from internal anyhow chains.
     #[error(transparent)]
     Other(#[from] anyhow::Error),

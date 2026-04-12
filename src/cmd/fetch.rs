@@ -60,6 +60,10 @@ pub struct FetchConfig {
     pub no_transcribe: bool,
     /// Optional BCP-47 language hint for transcription (e.g. `"fi"`, `"en-US"`).
     pub language: Option<String>,
+    /// When `true`, run the Cloudflare AI Labyrinth detector on the
+    /// fetched HTML body and refuse to return content classified as a
+    /// trap. See [`nab::detect::labyrinth`].
+    pub detect_labyrinth: bool,
 }
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
@@ -156,6 +160,50 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let elapsed = start.elapsed();
     let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
+
+    // ── Cloudflare AI Labyrinth (and similar) bot-trap detection ──────────
+    // Run *before* any conversion / save / OCR step so we never persist or
+    // emit content that came from a trap. The detector is opt-in via
+    // `--detect-labyrinth` because it adds a few ms per fetch.
+    if cfg.detect_labyrinth
+        && content_type.contains("html")
+        && let Ok(parsed_url) = url::Url::parse(&cfg.url)
+    {
+        let score = nab::detect::detect_labyrinth(&raw_text, &parsed_url);
+        tracing::debug!(
+            url = %cfg.url,
+            total = score.total,
+            verdict = ?score.verdict,
+            "labyrinth scan complete"
+        );
+        if score.is_trap() {
+            for sig in &score.signals {
+                tracing::warn!(
+                    signal = sig.name,
+                    score = sig.score,
+                    detail = %sig.detail,
+                    "labyrinth signal"
+                );
+            }
+            tracing::warn!(
+                url = %cfg.url,
+                total = score.total,
+                "AI Labyrinth detected — refusing to return content"
+            );
+            return Err(nab::NabError::LabyrinthDetected {
+                score: score.total,
+                verdict: format!("{:?}", score.verdict),
+            }
+            .into());
+        }
+        if score.is_suspicious() {
+            tracing::warn!(
+                url = %cfg.url,
+                total = score.total,
+                "page looks suspicious (labyrinth score in warning band)"
+            );
+        }
+    }
 
     if cfg.capture_cookies && !set_cookies.is_empty() {
         write_stdout_line("🍪 Set-Cookie:")?;

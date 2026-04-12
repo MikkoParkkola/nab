@@ -47,6 +47,7 @@ pub mod auth;
 pub mod browser;
 pub mod browser_detect;
 pub mod content;
+pub mod detect;
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]
 pub mod fetch_bridge;
