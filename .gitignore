@@ -41,3 +41,5 @@ spectre_v1.py
 AGENTS.md
 CLAUDE.md
 .claude/
+.claude/agent-memory/
+docs/plans/
