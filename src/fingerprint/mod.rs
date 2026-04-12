@@ -10,13 +10,14 @@ use rand::seq::IndexedRandom;
 use reqwest::header::{
     ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, USER_AGENT,
 };
+use serde::{Deserialize, Serialize};
 
 // Load versions once on first use (auto-updates if stale)
 static BROWSER_VERSIONS: std::sync::LazyLock<autoupdate::BrowserVersions> =
     std::sync::LazyLock::new(autoupdate::BrowserVersions::load_or_update);
 
 /// Browser profile with realistic fingerprint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserProfile {
     pub user_agent: String,
     pub accept: String,

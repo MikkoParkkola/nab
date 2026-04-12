@@ -10,7 +10,7 @@ use nab::content::ContentRouter;
 
 use crate::helpers::resolve_cookie_header;
 use crate::structured::{TOOL_TRUNCATION_LIMIT, truncate_markdown};
-use crate::tools::client::{build_transient_client, resolve_session_client};
+use crate::tools::client::{build_transient_client, persist_session, resolve_session_client};
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
 
@@ -42,7 +42,9 @@ pub struct SubmitTool {
     cookies: Option<String>,
     /// Named session for cookie persistence.  When set, the form page fetch
     /// and the POST submission both use the session's cookie jar, preserving
-    /// authentication state.  See `fetch` `session` for full documentation.
+    /// authentication state. Session jars are AES-256-GCM encrypted at rest in
+    /// `~/.nab/sessions/` on non-Windows platforms. See `fetch` `session` for
+    /// full documentation.
     #[serde(default)]
     session: Option<String>,
 }
@@ -102,6 +104,9 @@ impl SubmitTool {
             .text()
             .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        if let Some(ref session_name) = self.session {
+            persist_session(session_name).await?;
+        }
 
         let _ = writeln!(output, "   Status: {status}\n");
 

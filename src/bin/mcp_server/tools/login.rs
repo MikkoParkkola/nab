@@ -18,7 +18,7 @@ use crate::elicitation::{
     oauth_service_name, resolve_login_cookies, run_login_with_credentials,
 };
 use crate::structured::{TOOL_TRUNCATION_LIMIT, truncate_markdown};
-use crate::tools::client::resolve_session_client;
+use crate::tools::client::{persist_session, resolve_session_client};
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
 
@@ -46,6 +46,8 @@ pub struct LoginTool {
     /// All `Set-Cookie` headers from the login flow are automatically stored
     /// in the jar and will be sent on subsequent `fetch` or `submit` calls
     /// that use the same session name — no manual cookie extraction needed.
+    /// Session jars are AES-256-GCM encrypted at rest in `~/.nab/sessions/`
+    /// on non-Windows platforms.
     ///
     /// Session names: 1-64 chars, alphanumeric + hyphens + underscores.
     #[serde(default)]
@@ -152,6 +154,9 @@ impl LoginTool {
             .login(&self.url)
             .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        if let Some(ref session_name) = self.session {
+            persist_session(session_name).await?;
+        }
 
         let _ = writeln!(output, "   Final URL: {}", result.final_url);
         output.push_str("   Status: ✅ Login successful\n\n");

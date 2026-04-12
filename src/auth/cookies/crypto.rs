@@ -31,8 +31,9 @@
 //! project. Any PQC upgrade must originate in Chromium's `os_crypt` component.
 //! Track upstream progress at: <https://issues.chromium.org/issues/40185252>
 //!
-//! nab itself stores no credentials and performs no nab-native encryption, so
-//! there are no nab-owned cryptographic surfaces to harden.
+//! nab-owned session persistence is handled separately in [`crate::session`] and
+//! uses Argon2id-derived AES-256-GCM. This module remains strictly for Chromium
+//! compatibility.
 
 use anyhow::{Context, Result};
 
@@ -156,7 +157,8 @@ pub fn derive_cookie_key(password: &[u8]) -> Result<Vec<u8>> {
 /// nab cannot change these without breaking cookie extraction entirely.
 ///
 /// Do NOT use this function or copy its algorithm for any nab-native data storage.
-/// For nab-native encryption, use AES-256-GCM with a random 96-bit nonce.
+/// For nab-native encryption, use the AES-256-GCM session storage in
+/// [`crate::session`] with a random 96-bit nonce.
 ///
 /// # Errors
 /// Returns an error if the blob is too short, the prefix is wrong, AES

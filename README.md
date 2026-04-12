@@ -149,7 +149,7 @@ Common flags for `fetch`:
 | `--max-tokens <n>` | Structure-aware token budget |
 | `--raw-html` | Skip markdown conversion |
 | `--diff` | Show what changed since the last fetch |
-| `--session <name>` | Persistent named session with cookie store |
+| `--session <name>` | Persistent named session with encrypted cookie store (memory-only on Windows for now) |
 | `-X <method>` `-d <data>` | HTTP method + body |
 | `-o <path>` | Write body to file |
 
@@ -365,7 +365,8 @@ Persistent state lives in `~/.nab/`:
 | Path | Purpose |
 |------|---------|
 | `~/.nab/snapshots/` | Content snapshots for `--diff` change detection |
-| `~/.nab/sessions/` | Saved login sessions |
+| `~/.nab/sessions/` | AES-256-GCM encrypted named-session jars (non-Windows) |
+| `~/.nab/session-key` | Locally generated master key for session encryption (non-Windows) |
 | `~/.nab/fingerprint_versions.json` | Cached browser versions (auto-updates every 14 days) |
 | `~/.local/share/nab/watches/` | URL watch state |
 | `~/.local/share/nab/models/` | Installed inference model binaries |

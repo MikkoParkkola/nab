@@ -185,6 +185,10 @@ hex = "0.4"                         # Hex encode/decode for sqlite3 blob round-t
 ego-tree = "0.11"
 # which is cross-platform (Windows/macOS/Linux) — finds ffmpeg/streamlink in PATH
 which = "8"
+reqwest_cookie_store = "0.10"          # Persistent named-session cookie jars
+cookie_store = "0.22"                  # Cookie serialization for encrypted session files
+aes-gcm = "0.10.3"                     # AES-256-GCM for nab-owned session encryption
+argon2 = "0.5.3"                       # Argon2id KDF for session data keys
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.5"         # macOS Keychain API (transitive via rustls, make direct)

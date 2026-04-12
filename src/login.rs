@@ -11,9 +11,6 @@ use crate::form::Form;
 use crate::http_client::AcceleratedClient;
 use crate::js_engine::JsEngine;
 
-/// Session storage directory
-const SESSION_DIR: &str = ".nab/sessions";
-
 /// Login flow orchestrator
 pub struct LoginFlow {
     client: AcceleratedClient,
@@ -619,12 +616,6 @@ pub struct LoginResult {
     pub final_url: String,
     pub body: String,
     pub message: String,
-}
-
-/// Get session directory path
-pub fn get_session_dir() -> Result<std::path::PathBuf> {
-    let home = dirs::home_dir().context("Could not find home directory")?;
-    Ok(home.join(SESSION_DIR))
 }
 
 /// Extract origin (scheme + host) from URL for CSRF protection

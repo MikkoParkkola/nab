@@ -22,7 +22,7 @@ use crate::helpers::{
     resolve_cookie_header, write_body_info, write_response_summary,
 };
 use crate::structured::{FetchStructuredParams, build_fetch_structured_v2, truncate_markdown};
-use crate::tools::client::{get_client, resolve_session_client};
+use crate::tools::client::{get_client, persist_session, resolve_session_client};
 
 #[derive(Debug, Clone, Copy, Default)]
 struct FetchDiagnosticMetadata {
@@ -115,8 +115,9 @@ pub struct FetchTool {
     /// authenticated state across multiple `fetch` calls after a `login`.
     ///
     /// Session names: 1-64 chars, alphanumeric + hyphens + underscores.
-    /// Sessions are created implicitly on first use and live for the
-    /// process lifetime.  Absent = stateless global client (no change).
+    /// Session jars are AES-256-GCM encrypted at rest in `~/.nab/sessions/`
+    /// on non-Windows platforms.
+    /// Absent = stateless global client (no change).
     #[serde(default)]
     session: Option<String>,
     /// Route the request through Tor (requires Tor daemon on localhost:9050).
@@ -194,6 +195,7 @@ impl FetchTool {
 
             let (status, content_type, response_headers, body_bytes, elapsed) =
                 fetch_with_session_response(&session_client, &self.url, start).await?;
+            persist_session(session_name).await?;
             let raw_text = String::from_utf8_lossy(&body_bytes).into_owned();
 
             write_response_summary(
