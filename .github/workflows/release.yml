@@ -90,7 +90,7 @@ jobs:
       - name: Install cross-compilation tools
         if: matrix.cross
         run: |
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build release binaries
         run: cargo build --locked --release --target ${{ matrix.target }} ${{ matrix.features }}
