@@ -70,6 +70,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: ${{ matrix.command }}
 
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --locked --dry-run
+
   secrets-scan:
     name: Secrets scan
     runs-on: ubuntu-latest
