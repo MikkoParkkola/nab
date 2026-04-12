@@ -38,3 +38,6 @@ retros/
 # Stray scripts from other projects
 spectre_v1.py
 .gitnexus
+AGENTS.md
+CLAUDE.md
+.claude/
