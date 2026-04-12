@@ -98,8 +98,13 @@ nab mcp install                        # Claude Desktop (default)
 nab mcp install --client claude-code   # Claude Code
 nab mcp install --client cursor        # Cursor
 nab mcp install --client windsurf      # Windsurf
+nab mcp install --client codex         # OpenAI Codex CLI
+nab mcp install --client vscode        # VS Code Copilot
+nab mcp install --client zed           # Zed
 nab mcp install --dry-run              # preview without writing
 ```
+
+Also supported: `gemini`, `amazon-q`, `lm-studio`.
 
 See [MCP integration](#mcp-integration) below for the full list of tools, capabilities, and HTTP transport.
 
@@ -237,10 +242,13 @@ nab mcp install                        # Claude Desktop (default)
 nab mcp install --client claude-code   # Claude Code
 nab mcp install --client cursor        # Cursor
 nab mcp install --client windsurf      # Windsurf
+nab mcp install --client codex         # OpenAI Codex CLI
+nab mcp install --client vscode        # VS Code Copilot
+nab mcp install --client zed           # Zed
 nab mcp install --dry-run              # preview what would change
 ```
 
-This auto-detects the `nab-mcp` binary path, backs up your existing config, and adds the `nab` entry. Restart your client after installing.
+Also supported: `gemini`, `amazon-q`, `lm-studio`. This auto-detects the `nab-mcp` binary path, backs up your existing config, and adds the `nab` entry. Restart your client after installing.
 
 ### Manual setup
 

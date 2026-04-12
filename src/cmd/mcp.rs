@@ -16,6 +16,12 @@ pub enum McpClient {
     ClaudeCode,
     Cursor,
     Windsurf,
+    Codex,
+    VSCode,
+    Gemini,
+    AmazonQ,
+    Zed,
+    LmStudio,
 }
 
 impl McpClient {
@@ -25,8 +31,25 @@ impl McpClient {
             "claude-code" => Ok(Self::ClaudeCode),
             "cursor" => Ok(Self::Cursor),
             "windsurf" => Ok(Self::Windsurf),
+            "codex" => Ok(Self::Codex),
+            "vscode" | "vs-code" | "copilot" => Ok(Self::VSCode),
+            "gemini" => Ok(Self::Gemini),
+            "amazon-q" | "q" => Ok(Self::AmazonQ),
+            "zed" => Ok(Self::Zed),
+            "lm-studio" => Ok(Self::LmStudio),
             other => bail!(
-                "unknown client {other:?} (supported: claude-desktop, claude-code, cursor, windsurf)"
+                "unknown client {other:?}\n\n\
+                 Supported clients:\n  \
+                 claude-desktop  Claude Desktop (default)\n  \
+                 claude-code     Claude Code\n  \
+                 cursor          Cursor\n  \
+                 windsurf        Windsurf\n  \
+                 codex           OpenAI Codex CLI\n  \
+                 vscode          VS Code Copilot\n  \
+                 gemini          Gemini CLI\n  \
+                 amazon-q        Amazon Q Developer\n  \
+                 zed             Zed\n  \
+                 lm-studio       LM Studio"
             ),
         }
     }
@@ -54,6 +77,21 @@ impl McpClient {
             Self::ClaudeCode => home.join(".claude.json"),
             Self::Cursor => home.join(".cursor/mcp.json"),
             Self::Windsurf => home.join(".codeium/windsurf/mcp_config.json"),
+            Self::Codex => home.join(".codex/config.toml"),
+            Self::VSCode => PathBuf::from(".vscode/mcp.json"), // workspace-relative
+            Self::Gemini => home.join(".gemini/settings.json"),
+            Self::AmazonQ => home.join(".aws/amazonq/mcp.json"),
+            Self::Zed => {
+                #[cfg(target_os = "macos")]
+                {
+                    home.join("Library/Application Support/Zed/settings.json")
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    home.join(".config/zed/settings.json")
+                }
+            }
+            Self::LmStudio => home.join(".lm-studio/mcp.json"),
         };
         Ok(path)
     }
@@ -64,7 +102,28 @@ impl McpClient {
             Self::ClaudeCode => "Claude Code",
             Self::Cursor => "Cursor",
             Self::Windsurf => "Windsurf",
+            Self::Codex => "Codex",
+            Self::VSCode => "VS Code Copilot",
+            Self::Gemini => "Gemini CLI",
+            Self::AmazonQ => "Amazon Q Developer",
+            Self::Zed => "Zed",
+            Self::LmStudio => "LM Studio",
         }
+    }
+
+    /// JSON key for MCP server entries. Most clients use `mcpServers`, but
+    /// VS Code Copilot uses `servers` and Zed uses `context_servers`.
+    fn mcp_config_key(&self) -> &'static str {
+        match self {
+            Self::VSCode => "servers",
+            Self::Zed => "context_servers",
+            _ => "mcpServers",
+        }
+    }
+
+    /// Whether this client uses TOML instead of JSON.
+    fn is_toml(&self) -> bool {
+        matches!(self, Self::Codex)
     }
 }
 
@@ -106,6 +165,13 @@ pub fn cmd_mcp_install(cfg: &InstallConfig) -> Result<()> {
     let config_path = client.config_path()?;
     let binary = nab_mcp_binary()?;
 
+    // Codex uses TOML, not JSON.
+    if client.is_toml() {
+        return cmd_mcp_install_toml(&config_path, &binary, &client, cfg.force, cfg.dry_run);
+    }
+
+    let key = client.mcp_config_key();
+
     // Load existing config or start fresh.
     let mut root: serde_json::Map<String, serde_json::Value> = if config_path.is_file() {
         let data = std::fs::read_to_string(&config_path)
@@ -124,13 +190,13 @@ pub fn cmd_mcp_install(cfg: &InstallConfig) -> Result<()> {
         serde_json::Map::new()
     };
 
-    // Ensure mcpServers section exists.
+    // Ensure MCP servers section exists (key varies by client).
     let servers = root
-        .entry("mcpServers")
+        .entry(key)
         .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
     let servers = servers
         .as_object_mut()
-        .context("mcpServers is not a JSON object")?;
+        .with_context(|| format!("{key} is not a JSON object"))?;
 
     // Check for existing entry.
     if servers.contains_key("nab") && !cfg.force {
@@ -177,6 +243,81 @@ pub fn cmd_mcp_install(cfg: &InstallConfig) -> Result<()> {
     }
 
     std::fs::write(&config_path, out)
+        .with_context(|| format!("write {}", config_path.display()))?;
+
+    println!("Installed nab as MCP server for {}.", client.display_name());
+    println!("  config: {}", config_path.display());
+    println!("  binary: {binary}");
+    println!();
+    println!("Restart {} to pick up the change.", client.display_name());
+    Ok(())
+}
+
+/// Install into a TOML config file (Codex).
+fn cmd_mcp_install_toml(
+    config_path: &std::path::Path,
+    binary: &str,
+    client: &McpClient,
+    force: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let existing = if config_path.is_file() {
+        std::fs::read_to_string(config_path)
+            .with_context(|| format!("read {}", config_path.display()))?
+    } else {
+        String::new()
+    };
+
+    // Check for existing entry.
+    if existing.contains("[mcp_servers.nab]") && !force {
+        if dry_run {
+            println!(
+                "nab is already installed in {}\n  would not change (use --force to overwrite)",
+                config_path.display()
+            );
+        } else {
+            println!(
+                "nab is already installed in {}\nUse --force to overwrite.",
+                config_path.display()
+            );
+        }
+        return Ok(());
+    }
+
+    let block = format!(
+        "\n[mcp_servers.nab]\ncommand = \"{binary}\"\n",
+    );
+
+    let out = if existing.contains("[mcp_servers.nab]") {
+        // Force mode: replace the existing block (simple heuristic —
+        // replace from [mcp_servers.nab] to the next [section] or EOF).
+        let start = existing.find("[mcp_servers.nab]").unwrap();
+        let rest = &existing[start + "[mcp_servers.nab]".len()..];
+        let end = rest.find("\n[").map_or(existing.len(), |i| start + "[mcp_servers.nab]".len() + i);
+        format!("{}{}{}", &existing[..start], block.trim(), &existing[end..])
+    } else {
+        format!("{}{}", existing.trim_end(), block)
+    };
+
+    if dry_run {
+        println!("Would write to {}:\n\n{out}", config_path.display());
+        return Ok(());
+    }
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create config directory {}", parent.display()))?;
+    }
+
+    if config_path.is_file() {
+        let backup = config_path.with_extension("nab.bak");
+        if let Ok(data) = std::fs::read(config_path) {
+            let _ = std::fs::write(&backup, data);
+            println!("  backup: {}", backup.display());
+        }
+    }
+
+    std::fs::write(config_path, out)
         .with_context(|| format!("write {}", config_path.display()))?;
 
     println!("Installed nab as MCP server for {}.", client.display_name());
