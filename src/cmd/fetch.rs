@@ -64,6 +64,66 @@ pub struct FetchConfig {
     /// fetched HTML body and refuse to return content classified as a
     /// trap. See [`nab::detect::labyrinth`].
     pub detect_labyrinth: bool,
+    /// WAF challenge handling strategy. See [`WafMode`].
+    pub waf_mode: WafMode,
+}
+
+/// Strategy for handling detected WAF challenges (AWS WAF, Cloudflare
+/// Turnstile, `DataDome`, …).
+///
+/// * `Off`  — never attempt to solve; surface the challenge as-is.
+/// * `Auto` — detect and pick the cheapest tier that works
+///   (replay → js → browser). Default.
+/// * `Replay` — replay-mode only; fail fast if replay cannot solve it.
+/// * `Js`   — force the JS interpreter path (requires `js-dom-full`).
+/// * `Browser` — open the default browser and wait for user solve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WafMode {
+    Off,
+    Auto,
+    Replay,
+    Js,
+    Browser,
+}
+
+impl WafMode {
+    /// Parse the CLI flag value.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "off" | "none" | "disabled" => Some(Self::Off),
+            "auto" | "" => Some(Self::Auto),
+            "replay" => Some(Self::Replay),
+            "js" | "javascript" => Some(Self::Js),
+            "browser" | "open" => Some(Self::Browser),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical CLI string form.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::Replay => "replay",
+            Self::Js => "js",
+            Self::Browser => "browser",
+        }
+    }
+}
+
+impl std::str::FromStr for WafMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| format!("unknown waf-mode: {s}"))
+    }
+}
+
+impl Default for WafMode {
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
@@ -160,6 +220,66 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let elapsed = start.elapsed();
     let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
+
+    // ── WAF challenge detection + tiered solver ───────────────────────────
+    // The CLI flag defaults to Auto: when a challenge is detected we
+    // attempt replay-mode first (cheap, native), then optionally the JS
+    // interpreter (local), and finally the default-browser escape hatch.
+    // This runs before any content conversion so no WAF interstitial
+    // leaks into the caller's output.
+    if !matches!(cfg.waf_mode, WafMode::Off) && content_type.contains("html") {
+        let header_slice: Vec<(&str, &str)> = response_headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        if let Some(kind) = nab::waf::detect_challenge(&raw_text, header_slice.iter().copied()) {
+            let vendor = match &kind {
+                nab::waf::ChallengeKind::AwsWaf(_) => "AWS WAF",
+                nab::waf::ChallengeKind::Cloudflare => "Cloudflare",
+                nab::waf::ChallengeKind::DataDome => "DataDome",
+            };
+            eprintln!("⚠️  WAF challenge detected ({vendor}), mode={}…", cfg.waf_mode.as_str());
+            // Replay tier.
+            if matches!(cfg.waf_mode, WafMode::Auto | WafMode::Replay) {
+                match nab::waf::solve_replay(&kind) {
+                    Ok(solved) => {
+                        eprintln!(
+                            "   replay solver returned algo={} iterations={}",
+                            solved.algo, solved.iterations
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("   replay solver failed: {e}");
+                        if matches!(cfg.waf_mode, WafMode::Replay) {
+                            return Err(anyhow::anyhow!("waf replay failed: {e}"));
+                        }
+                    }
+                }
+            }
+            // JS tier (placeholder — full Promise-driven executor lives in
+            // the js-engine module; the CLI defers running it until the
+            // replay tier cannot proceed).
+            if matches!(cfg.waf_mode, WafMode::Js) {
+                eprintln!("   js solver not yet wired in CLI — falling through");
+            }
+            // Browser escape hatch.
+            if matches!(cfg.waf_mode, WafMode::Browser) {
+                eprintln!("   opening default browser for manual solve (60s)…");
+                #[cfg(any(feature = "browser", feature = "browser-launcher"))]
+                {
+                    let _ = nab::browser::open_and_wait(
+                        &cfg.url,
+                        std::time::Duration::from_secs(60),
+                        None,
+                    );
+                }
+                #[cfg(not(any(feature = "browser", feature = "browser-launcher")))]
+                {
+                    eprintln!("   (build lacks browser-launcher feature — cannot open browser)");
+                }
+            }
+        }
+    }
 
     // ── Cloudflare AI Labyrinth (and similar) bot-trap detection ──────────
     // Run *before* any conversion / save / OCR step so we never persist or

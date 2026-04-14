@@ -43,7 +43,7 @@ pub mod annotate;
 pub mod api_discovery;
 pub mod arena;
 pub mod auth;
-#[cfg(feature = "browser")]
+#[cfg(any(feature = "browser", feature = "browser-launcher"))]
 pub mod browser;
 pub mod browser_detect;
 pub mod content;
@@ -72,6 +72,7 @@ pub mod stream;
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]
 pub mod util;
+pub mod waf;
 pub mod watch;
 pub mod webmcp;
 pub mod websocket;
@@ -85,6 +86,8 @@ pub use auth::{
 };
 #[cfg(feature = "browser")]
 pub use browser::{BrowserLogin, Cookie};
+#[cfg(any(feature = "browser", feature = "browser-launcher"))]
+pub use browser::open_and_wait;
 pub use browser_detect::{BrowserType, detect_default_browser};
 pub use fingerprint::{
     BrowserProfile, chrome_profile, firefox_profile, random_profile, safari_profile,

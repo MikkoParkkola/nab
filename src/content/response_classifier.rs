@@ -18,6 +18,9 @@ pub enum BrowserChallengeKind {
     Turnstile,
     Captcha,
     LinkedInBotDetection,
+    /// AWS WAF challenge — detected via `x-amzn-waf-action` header or
+    /// an `*.awswaf.com` sub-resource reference in the body.
+    AwsWaf,
 }
 
 /// High-level fetch-time response diagnosis.
@@ -61,6 +64,9 @@ impl ResponseDiagnostic {
             ResponseDiagnosticKind::BrowserChallenge(
                 BrowserChallengeKind::LinkedInBotDetection,
             ) => "linkedin_bot_detection",
+            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::AwsWaf) => {
+                "aws_waf_challenge"
+            }
             ResponseDiagnosticKind::RateLimited => "rate_limited",
         }
     }
@@ -95,6 +101,10 @@ impl ResponseDiagnostic {
             ResponseDiagnosticKind::BrowserChallenge(
                 BrowserChallengeKind::LinkedInBotDetection,
             ) => "LinkedIn bot detection (HTTP 999).".to_string(),
+            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::AwsWaf) => format!(
+                "AWS WAF challenge detected (HTTP {}).",
+                self.status
+            ),
             ResponseDiagnosticKind::RateLimited => format!(
                 "Rate limit or throttling response detected (HTTP {}).",
                 self.status
@@ -378,6 +388,13 @@ fn classify_http_response_lower(status: u16, body_lower: &str) -> Option<Respons
         });
     }
 
+    if looks_like_aws_waf(status, body_lower) {
+        return Some(ResponseDiagnostic {
+            kind: ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::AwsWaf),
+            status,
+        });
+    }
+
     if looks_like_turnstile(body_lower) {
         return Some(ResponseDiagnostic {
             kind: ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Turnstile),
@@ -456,6 +473,20 @@ fn map_diagnostic_signal(diagnostic: ResponseDiagnostic) -> ResponseSignal {
             reason: "rate-limit markers detected",
         },
     }
+}
+
+fn looks_like_aws_waf(status: u16, body_lower: &str) -> bool {
+    // AWS returns HTTP 202 for challenge interstitials and 403 for hard blocks.
+    // The body always references `.awswaf.com` either as a script src or as
+    // a `window.gokuProps` blob.
+    let status_matches = matches!(status, 202 | 403);
+    if !status_matches && status != 200 {
+        return false;
+    }
+    contains_any(
+        body_lower,
+        &[".awswaf.com", "window.gokuprops", "awswafintegration"],
+    )
 }
 
 fn looks_like_vercel_checkpoint(body_lower: &str) -> bool {
@@ -797,6 +828,17 @@ mod tests {
             classify_obfuscated_content(Some("text/html"), &article).is_none(),
             "expected readable article to avoid obfuscated classification"
         );
+    }
+
+    #[test]
+    fn classify_http_response_detects_aws_waf_challenge() {
+        let body = r#"<script src="https://abc.awswaf.com/xyz/challenge.js"></script>"#;
+        let diagnostic = classify_http_response(202, body).expect("aws waf classification");
+        assert_eq!(
+            diagnostic.kind,
+            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::AwsWaf)
+        );
+        assert_eq!(diagnostic.code(), "aws_waf_challenge");
     }
 
     #[test]

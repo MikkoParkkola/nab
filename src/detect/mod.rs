@@ -11,6 +11,11 @@
 //!
 //! See [`labyrinth`] for the AI Labyrinth scorer.
 
+pub mod challenge_scanner;
 pub mod labyrinth;
 
+pub use challenge_scanner::{
+    ChallengeReference, ChallengeVendor, first_vendor as first_challenge_vendor,
+    scan_for_challenges,
+};
 pub use labyrinth::{LabyrinthScore, Signal, Verdict, detect_labyrinth};

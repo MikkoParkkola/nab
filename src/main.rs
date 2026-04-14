@@ -194,6 +194,11 @@ enum Commands {
         /// <https://blog.cloudflare.com/ai-labyrinth/>.
         #[arg(long)]
         detect_labyrinth: bool,
+
+        /// WAF challenge handling strategy: off, auto, replay, js, browser.
+        /// `auto` (default) detects WAF challenges and picks the best solver.
+        #[arg(long, default_value = "auto")]
+        waf_mode: String,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -749,6 +754,7 @@ async fn main() -> Result<()> {
                 no_transcribe,
                 language,
                 detect_labyrinth,
+                waf_mode,
                 ..
             } => {
                 let cfg = cmd::FetchConfig {
@@ -779,6 +785,7 @@ async fn main() -> Result<()> {
                     no_transcribe,
                     language,
                     detect_labyrinth,
+                    waf_mode: waf_mode.parse().unwrap_or_default(),
                     html_options: nab::content::html::HtmlConversionOptions {
                         allow_spa_extraction: !no_spa,
                         allow_jina_fallback: !no_fallback,
