@@ -176,7 +176,7 @@ rust-mcp-sdk = { version = "0.9", default-features = false, features = ["server"
 # ═══════════════════════════════════════════════════════════════════════════════
 # NATIVE COOKIE DECRYPTION (macOS: AES-128-CBC + PBKDF2-SHA1 + Keychain)
 # ═══════════════════════════════════════════════════════════════════════════════
-aes = "0.8"                         # AES-128 block cipher (RustCrypto)
+aes = "0.9"                         # AES-128 block cipher (RustCrypto)
 cbc = { version = "0.1", features = ["block-padding"] }  # CBC mode + PKCS7 unpadding
 hmac = "0.13"                       # HMAC-SHA1 PRF for Chromium cookie key derivation
 sha1 = "0.11"                       # SHA-1 for PBKDF2 (Chrome/Brave use SHA1)
