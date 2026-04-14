@@ -746,8 +746,8 @@ mod tests {
 // ═════════════════════════════════════════════════════════════════════════════
 
 #[cfg(feature = "js-dom-full")]
-const FULL_DOM_SHIM_JS: &str = r#"
-(function() {
+const FULL_DOM_SHIM_JS: &str = r"
+(function(_g) {
     // Derive a high-resolution timestamp from the current wall clock.
     var _origin = Date.now();
 
@@ -777,8 +777,8 @@ const FULL_DOM_SHIM_JS: &str = r#"
             platform: 'macOS'
         }
     };
-    if (typeof navigator === 'undefined') {
-        this.navigator = _nav;
+    if (typeof navigator === 'undefined' || typeof navigator !== 'object') {
+        _g.navigator = _nav;
     } else {
         for (var k in _nav) { if (!(k in navigator)) navigator[k] = _nav[k]; }
     }
@@ -786,7 +786,7 @@ const FULL_DOM_SHIM_JS: &str = r#"
     // ── performance ────────────────────────────────────────────────────────
     var _marks = {};
     var _measures = {};
-    var performance = {
+    _g.performance = {
         now: function() { return Date.now() - _origin; },
         timeOrigin: _origin,
         timing: {
@@ -806,7 +806,6 @@ const FULL_DOM_SHIM_JS: &str = r#"
         clearMarks: function() { _marks = {}; },
         clearMeasures: function() { _measures = {}; }
     };
-    this.performance = performance;
 
     // ── document.cookie ────────────────────────────────────────────────────
     var _cookieStore = {};
@@ -912,7 +911,7 @@ const FULL_DOM_SHIM_JS: &str = r#"
         return out;
     }
 
-    var crypto = {
+    _g.crypto = {
         getRandomValues: function(buf) {
             var u8 = _toUint8(buf);
             for (var i = 0; i < u8.length; i++) u8[i] = _nextByte();
@@ -962,15 +961,14 @@ const FULL_DOM_SHIM_JS: &str = r#"
             verify: function() { return Promise.resolve(true); }
         }
     };
-    this.crypto = crypto;
 
     // ── HTMLCanvasElement stub ─────────────────────────────────────────────
     // Anti-fingerprinting: every canvas reports the same base64 blob.
     var _CANVAS_PNG =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEUAAACnej3aAAAAAXRSTlMAQObYZgAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=';
-    var _origCreate = document.createElement;
+    var _origCreate = document.createElement.bind(document);
     document.createElement = function(tag) {
-        var el = _origCreate.call(this, tag);
+        var el = _origCreate(tag);
         if (String(tag).toLowerCase() === 'canvas') {
             el.width = 300;
             el.height = 150;
@@ -1005,16 +1003,15 @@ const FULL_DOM_SHIM_JS: &str = r#"
     // callback synchronously as a best-effort approximation.
     var _nextId = 1;
     var _timers = {};
-    this.setTimeout = function(fn, _ms) {
+    _g.setTimeout = function(fn, _ms) {
         var id = _nextId++;
         _timers[id] = fn;
         try { if (typeof fn === 'function') fn(); } catch (e) {}
         return id;
     };
-    this.setInterval = function(_fn, _ms) { return _nextId++; };
-    this.clearTimeout = function(id) { delete _timers[id]; };
-    this.clearInterval = function(_id) {};
-    this.queueMicrotask = function(fn) { try { fn(); } catch (e) {} };
-})();
-"#;
-
+    _g.setInterval = function(_fn, _ms) { return _nextId++; };
+    _g.clearTimeout = function(id) { delete _timers[id]; };
+    _g.clearInterval = function(_id) {};
+    _g.queueMicrotask = function(fn) { try { fn(); } catch (e) {} };
+})(globalThis);
+";

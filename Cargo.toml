@@ -201,9 +201,9 @@ objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSError", "NSStr
 objc2-core-graphics = { version = "0.3.2", features = ["CGImage"] }
 
 [features]
-default = ["cli", "http3", "impersonate", "analyze", "browser-launcher"]
-# NOTE: js-dom-full is NOT default yet — inject_full_dom() API not implemented.
-# Enable manually: cargo build --features js-dom-full
+default = ["cli", "http3", "impersonate", "analyze", "browser-launcher", "js-dom-full"]
+# js-dom-full is default-on — extended DOM shim for WAF challenge scripts.
+# Disable with: cargo build --no-default-features --features cli,http3,impersonate,analyze,browser-launcher
 # Base ASR trait + audio extraction — no extra runtime deps.
 # FluidAudio is invoked via subprocess (`fluidaudiocli` binary), not as a Rust dep.
 # Install with: `nab models fetch fluidaudio` or build manually from
