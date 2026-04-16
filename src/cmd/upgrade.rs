@@ -140,6 +140,47 @@ pub struct Migration {
 /// Empty for now — add entries here as new versions require data changes.
 pub const MIGRATIONS: &[Migration] = &[];
 
+// ── What's new registry ──────────────────────────────────────────────────────
+
+/// "What's new" entries shown when upgrading to a specific version.
+struct WhatsNew {
+    /// Version that introduced these changes.
+    version: Version,
+    /// Bullet points shown to the user.
+    items: &'static [&'static str],
+}
+
+/// All known what's-new entries in ascending version order.
+///
+/// Add entries here when a release has user-facing changes worth announcing.
+static WHATS_NEW: &[WhatsNew] = &[WhatsNew {
+    version: Version { major: 0, minor: 7, patch: 1 },
+    items: &[
+        "New `upgrade` command with version stamp and migration framework",
+        "Agent-first install: tell your AI to read the README",
+        "12 MCP tools (analyze tool added)",
+    ],
+}];
+
+/// Print "what's new" items for all versions strictly after `from` up to
+/// `current` (inclusive).
+fn print_whats_new(from: &Version, current: &Version) {
+    let items: Vec<&str> = WHATS_NEW
+        .iter()
+        .filter(|w| w.version > *from && w.version <= *current)
+        .flat_map(|w| w.items.iter().copied())
+        .collect();
+
+    if items.is_empty() {
+        return;
+    }
+
+    println!("What's new since v{from}:");
+    for item in items {
+        println!("  - {item}");
+    }
+}
+
 // ── Model hint registry ───────────────────────────────────────────────────────
 
 /// A model that may have a newer version available.
@@ -195,7 +236,7 @@ pub fn check_upgrade() -> Result<()> {
             println!("Welcome to nab {current}!");
             Ok(())
         }
-        Some(stamp) if stamp < current => run_upgrade_inner(&stamp, &current, false, false),
+        Some(stamp) if stamp < current => run_upgrade_inner(&stamp, &current, false, false, false),
         Some(stamp) if stamp > current => {
             eprintln!(
                 "warning: nab {stamp} stamp is newer than this binary ({current}); \
@@ -218,14 +259,13 @@ pub fn cmd_upgrade(cfg: &UpgradeConfig) -> Result<()> {
     let stamp = match read_stamp()? {
         None => {
             if !cfg.quiet {
-                println!("No stamp found — this appears to be a fresh install.");
-                println!("Writing version stamp {current}.");
+                println!("nab v{current} — fresh install, stamp created.");
             }
             if !cfg.dry_run {
                 write_stamp(&current)?;
             }
             print_model_hints(&current, cfg.quiet);
-            return print_summary(0, cfg.quiet);
+            return Ok(());
         }
         Some(v) => v,
     };
@@ -246,7 +286,7 @@ pub fn cmd_upgrade(cfg: &UpgradeConfig) -> Result<()> {
             Ok(())
         }
         Ordering::Less => {
-            run_upgrade_inner(&stamp, &current, cfg.dry_run, cfg.quiet)
+            run_upgrade_inner(&stamp, &current, cfg.dry_run, cfg.quiet, false)
         }
     }
 }
@@ -259,30 +299,32 @@ fn current_version() -> Result<Version> {
 }
 
 /// Run all pending migrations from `from` (exclusive) up to `to` (inclusive).
-fn run_upgrade_inner(from: &Version, to: &Version, dry_run: bool, quiet: bool) -> Result<()> {
+fn run_upgrade_inner(
+    from: &Version,
+    to: &Version,
+    dry_run: bool,
+    quiet: bool,
+    fresh: bool,
+) -> Result<()> {
     let pending: Vec<&Migration> = MIGRATIONS
         .iter()
         .filter(|m| m.since > *from && m.since <= *to)
         .collect();
 
-    if !quiet {
-        println!("Upgrading nab {from} → {to}");
+    // Print what's-new (skip on fresh install — the user already sees the
+    // welcome message and doesn't need a delta).
+    if !quiet && !fresh {
+        print_whats_new(from, to);
     }
 
-    if pending.is_empty() {
+    for migration in &pending {
         if !quiet {
-            println!("  No migrations required.");
+            println!("  [migration] {}", migration.description);
         }
-    } else {
-        for migration in &pending {
-            if !quiet {
-                println!("  [migration] {}", migration.description);
-            }
-            if !dry_run {
-                (migration.run)().with_context(|| {
-                    format!("migration '{}' failed", migration.description)
-                })?;
-            }
+        if !dry_run {
+            (migration.run)().with_context(|| {
+                format!("migration '{}' failed", migration.description)
+            })?;
         }
     }
 
@@ -293,7 +335,12 @@ fn run_upgrade_inner(from: &Version, to: &Version, dry_run: bool, quiet: bool) -
     }
 
     print_model_hints(to, quiet);
-    print_summary(pending.len(), quiet)
+
+    if !quiet {
+        println!("nab upgraded v{from} → v{to}");
+    }
+
+    Ok(())
 }
 
 /// Print hints for any installed model that could be updated.
@@ -310,11 +357,13 @@ fn print_model_hints(current: &Version, quiet: bool) {
     }
 }
 
-/// Print a one-line completion summary.
+/// Print a one-line completion summary (kept for potential future use by
+/// callers that want migration-count output distinct from the upgrade line).
+#[allow(dead_code)]
 fn print_summary(migration_count: usize, quiet: bool) -> Result<()> {
-    if !quiet {
+    if !quiet && migration_count > 0 {
         println!(
-            "Done ({migration_count} migration{} applied).",
+            "({migration_count} migration{} applied)",
             if migration_count == 1 { "" } else { "s" }
         );
     }
@@ -487,6 +536,63 @@ mod tests {
         assert_eq!(pending.len(), 2);
         assert_eq!(*pending[0], versions[1]);
         assert_eq!(*pending[1], versions[2]);
+    }
+
+    // ── What's new filtering ────────────────────────────────────────────────
+
+    /// What's-new entries with `version > from && version <= current` are selected.
+    #[test]
+    fn whats_new_selects_correct_range() {
+        // GIVEN a from version older than any WHATS_NEW entry
+        let from = Version::parse("0.6.0").unwrap();
+        let current = Version::parse("0.7.1").unwrap();
+
+        // WHEN filtering what's-new items
+        let items: Vec<&str> = WHATS_NEW
+            .iter()
+            .filter(|w| w.version > from && w.version <= current)
+            .flat_map(|w| w.items.iter().copied())
+            .collect();
+
+        // THEN all 0.7.1 items are included
+        assert_eq!(items.len(), 3);
+        assert!(items[0].contains("upgrade"));
+    }
+
+    /// What's-new returns nothing when from == current.
+    #[test]
+    fn whats_new_empty_when_already_current() {
+        // GIVEN from == the version in WHATS_NEW
+        let from = Version::parse("0.7.1").unwrap();
+        let current = Version::parse("0.7.1").unwrap();
+
+        // WHEN filtering
+        let items: Vec<&str> = WHATS_NEW
+            .iter()
+            .filter(|w| w.version > from && w.version <= current)
+            .flat_map(|w| w.items.iter().copied())
+            .collect();
+
+        // THEN nothing matches (from is not strictly less)
+        assert!(items.is_empty());
+    }
+
+    /// What's-new returns nothing when from is ahead of all entries.
+    #[test]
+    fn whats_new_empty_when_from_is_newer() {
+        // GIVEN from beyond any registered entry
+        let from = Version::parse("1.0.0").unwrap();
+        let current = Version::parse("1.0.1").unwrap();
+
+        // WHEN filtering
+        let items: Vec<&str> = WHATS_NEW
+            .iter()
+            .filter(|w| w.version > from && w.version <= current)
+            .flat_map(|w| w.items.iter().copied())
+            .collect();
+
+        // THEN empty — all entries are below from
+        assert!(items.is_empty());
     }
 
     // ── Testable stamp path helpers ───────────────────────────────────────────
