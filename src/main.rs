@@ -528,6 +528,21 @@ enum Commands {
         action: ModelsAction,
     },
 
+    /// Run post-install migrations and print what's new
+    ///
+    /// Compares the version stamp at `~/.nab/version.stamp` to the running
+    /// binary and applies any pending data migrations.  Also hints at installed
+    /// models that have newer versions available.
+    Upgrade {
+        /// Show what would happen without making any changes
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Suppress informational output
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
     /// MCP server management (serve, install)
     ///
     /// `nab mcp` starts the MCP server on stdio (same as `nab-mcp`).
@@ -721,6 +736,15 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .compact()
         .init();
+
+    // Run silent migration check on every invocation except `nab upgrade`
+    // (which manages the stamp itself via cmd_upgrade).
+    if !matches!(&cli.command, Commands::Upgrade { .. }) {
+        if let Err(e) = cmd::check_upgrade() {
+            // Non-fatal: a broken stamp file must never prevent normal use.
+            tracing::debug!("upgrade check failed (non-fatal): {e:#}");
+        }
+    }
 
     let result: Result<()> = async {
         match cli.command {
@@ -1036,6 +1060,9 @@ async fn main() -> Result<()> {
                     cmd::cmd_models_verify().await?;
                 }
             },
+            Commands::Upgrade { dry_run, quiet } => {
+                cmd::cmd_upgrade(&cmd::UpgradeConfig { dry_run, quiet })?;
+            }
             Commands::Mcp {
                 action,
                 http,

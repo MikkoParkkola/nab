@@ -17,6 +17,7 @@ pub mod provider;
 pub mod spa;
 pub mod stream;
 pub mod submit;
+pub mod upgrade;
 pub mod validate;
 pub mod watch;
 
@@ -40,6 +41,7 @@ pub use provider::{cmd_provider_install, cmd_provider_list, cmd_provider_remove}
 pub use spa::{SpaConfig, cmd_spa};
 pub use stream::{StreamCmdConfig, cmd_stream};
 pub use submit::{SubmitConfig, cmd_submit};
+pub use upgrade::{UpgradeConfig, cmd_upgrade, check_upgrade};
 pub use validate::cmd_validate;
 pub use watch::{
     WatchAddConfig, WatchListConfig, WatchListFormat, WatchLogsConfig, cmd_watch_add,
