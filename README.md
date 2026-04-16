@@ -19,6 +19,14 @@ nab is a single Rust binary that does three things very well: it **fetches** any
 
 ## Quick start
 
+**Tell your AI assistant** (recommended):
+
+> Read https://github.com/MikkoParkkola/nab and install nab as my web fetching and audio analysis MCP server
+
+Your agent will install the binary, wire itself up, and start fetching. Works in Claude Code, Cursor, Windsurf, and any AI with terminal access.
+
+**Or install and try manually:**
+
 ```bash
 brew install MikkoParkkola/tap/nab                            # install
 nab fetch https://news.ycombinator.com                        # fetch as markdown
@@ -35,7 +43,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
 | `nab models fetch <name>` | Persistent install of inference model binaries. Currently `fluidaudio`. Whisper and sherpa-onnx land in Phase 3. |
-| `nab-mcp` | MCP 2025-11-25 server. stdio + Streamable HTTP. 11 tools, 3 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
+| `nab-mcp` | MCP 2025-11-25 server. stdio + Streamable HTTP. 12 tools, 4 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
 | `nab::content::ocr` | Apple Vision OCR engine. 15 languages. Apple Neural Engine accelerated. ~10-50 ms per image. macOS only. |
 
 ## Installation
