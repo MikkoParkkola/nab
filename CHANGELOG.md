@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-16
+
+### Changed
+- `nab upgrade` command for seamless binary updates
+- README rewritten with agent-first install as the recommended setup path
+- MCP tool count corrected from 11 to 12
+
 ## [0.7.0] - 2026-04-07
 
 ### Added
