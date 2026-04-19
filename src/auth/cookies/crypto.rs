@@ -168,7 +168,7 @@ pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8], has_domain_tag: bool) 
     // This cipher + IV combination is fixed by the Chromium on-disk cookie format.
     // Reference: chromium/components/os_crypt/os_crypt_mac.mm OSCryptImpl::DecryptString
     use aes::Aes128;
-    use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
+    use cbc::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::Pkcs7};
     type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
     anyhow::ensure!(
@@ -195,7 +195,7 @@ pub fn decrypt_cookie_value(encrypted: &[u8], key: &[u8], has_domain_tag: bool) 
 
     let mut buf = ciphertext.to_vec();
     let plaintext = decryptor
-        .decrypt_padded_mut::<Pkcs7>(&mut buf)
+        .decrypt_padded::<Pkcs7>(&mut buf)
         .map_err(|e| anyhow::anyhow!("AES-CBC unpadding failed: {e}"))?;
 
     let value_bytes = if has_domain_tag {

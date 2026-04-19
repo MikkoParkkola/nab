@@ -11,14 +11,14 @@ use super::{CookieSource, crypto::*, db::*};
 /// For schema-v24 blobs the caller should prepend 32 SHA-256 bytes itself.
 fn encrypt_v10(inner_plaintext: &[u8], key: &[u8]) -> Vec<u8> {
     use aes::Aes128;
-    use cbc::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+    use cbc::cipher::{BlockModeEncrypt, KeyIvInit, block_padding::Pkcs7};
     type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 
     let out_len = inner_plaintext.len() + 16;
     let mut out = vec![0u8; out_len];
     let enc = Aes128CbcEnc::new_from_slices(key, &AES_CBC_IV).unwrap();
     let ciphertext = enc
-        .encrypt_padded_b2b_mut::<Pkcs7>(inner_plaintext, &mut out)
+        .encrypt_padded_b2b::<Pkcs7>(inner_plaintext, &mut out)
         .expect("output buffer is always large enough");
 
     let mut blob = V10_PREFIX.to_vec();
