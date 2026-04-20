@@ -101,10 +101,9 @@ impl ResponseDiagnostic {
             ResponseDiagnosticKind::BrowserChallenge(
                 BrowserChallengeKind::LinkedInBotDetection,
             ) => "LinkedIn bot detection (HTTP 999).".to_string(),
-            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::AwsWaf) => format!(
-                "AWS WAF challenge detected (HTTP {}).",
-                self.status
-            ),
+            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::AwsWaf) => {
+                format!("AWS WAF challenge detected (HTTP {}).", self.status)
+            }
             ResponseDiagnosticKind::RateLimited => format!(
                 "Rate limit or throttling response detected (HTTP {}).",
                 self.status

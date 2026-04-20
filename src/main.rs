@@ -739,11 +739,11 @@ async fn main() -> Result<()> {
 
     // Run silent migration check on every invocation except `nab upgrade`
     // (which manages the stamp itself via cmd_upgrade).
-    if !matches!(&cli.command, Commands::Upgrade { .. }) {
-        if let Err(e) = cmd::check_upgrade() {
-            // Non-fatal: a broken stamp file must never prevent normal use.
-            tracing::debug!("upgrade check failed (non-fatal): {e:#}");
-        }
+    if !matches!(&cli.command, Commands::Upgrade { .. })
+        && let Err(e) = cmd::check_upgrade()
+    {
+        // Non-fatal: a broken stamp file must never prevent normal use.
+        tracing::debug!("upgrade check failed (non-fatal): {e:#}");
     }
 
     let result: Result<()> = async {

@@ -12,7 +12,7 @@
 //! 1. Extracts the goku blob from the HTML.
 //! 2. Looks up the algorithm hash in an embedded
 //!    [`ChallengeAlgorithmMap`] to pick a native Rust implementation.
-//! 3. Computes the PoW in Rust via [`sha2`] / [`scrypt`].
+//! 3. Computes the `PoW` in Rust via [`sha2`] / [`scrypt`].
 //! 4. POSTs the solution to the challenge `verify` endpoint.
 //! 5. Extracts the `aws-waf-token` cookie from the verify response.
 //!
@@ -33,6 +33,7 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 /// Embedded algorithm map. Generated from `src/waf/algorithm_map.json` at
@@ -60,7 +61,7 @@ pub enum AwsWafError {
 /// Extracted contents of the AWS WAF `window.gokuProps` object.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GokuContext {
-    /// Opaque challenge nonce to be hashed / POSTed back.
+    /// Opaque challenge nonce to be hashed / `POSTed` back.
     pub challenge: String,
     /// Full URL of the challenge script host, e.g.
     /// `https://abc123.awswaf.com/xyz/challenge.js`.
@@ -70,7 +71,7 @@ pub struct GokuContext {
     /// Full URL of the verify endpoint, derived from `challenge_script`.
     pub verify_url: String,
     /// Hex-encoded SHA-256 of the challenge descriptor; used to look up
-    /// the concrete PoW algorithm in the embedded algorithm map.
+    /// the concrete `PoW` algorithm in the embedded algorithm map.
     pub algorithm_hash: String,
 }
 
@@ -193,13 +194,11 @@ fn extract_awswaf_script_src(html: &str) -> Option<String> {
     let hit = lower.find(needle)?;
     // Expand backwards to the opening quote.
     let open = lower[..hit]
-        .rmatch_indices(|c: char| c == '"' || c == '\'')
+        .rmatch_indices(['"', '\''])
         .next()
         .map(|(i, _)| i + 1)?;
     // Expand forwards to the closing quote.
-    let close = lower[hit..]
-        .find(|c: char| c == '"' || c == '\'')
-        .map(|i| hit + i)?;
+    let close = lower[hit..].find(['"', '\'']).map(|i| hit + i)?;
     let raw = html.get(open..close)?.trim();
 
     // Normalise protocol-relative and relative URLs.
@@ -218,8 +217,7 @@ fn derive_endpoints(script_src: &str) -> (String, String) {
     // `inputs` and `verify` share the same prefix.
     let prefix = script_src
         .rsplit_once('/')
-        .map(|(head, _)| head)
-        .unwrap_or(script_src);
+        .map_or(script_src, |(head, _)| head);
     (
         format!("{prefix}/inputs?client=browser"),
         format!("{prefix}/verify"),
@@ -233,7 +231,7 @@ pub struct SolvedChallenge {
     pub solution: String,
     /// Algorithm that produced the solution.
     pub algo: String,
-    /// Number of PoW iterations performed (0 for non-iterative algos).
+    /// Number of `PoW` iterations performed (0 for non-iterative algos).
     pub iterations: u64,
 }
 
@@ -284,6 +282,9 @@ pub fn solve_replay(ctx: &GokuContext) -> Result<SolvedChallenge, AwsWafError> {
 
 /// Iterate `nonce` from 0 until `SHA256(challenge || nonce)` has at
 /// least `difficulty_bits` leading zero bits.
+// Allow: `Result` return kept for API parity with other waf solver hooks;
+// removing it now would ripple into callers outside this module.
+#[allow(clippy::unnecessary_wraps)]
 fn solve_sha256_pow(
     challenge: &str,
     max_iterations: u64,
@@ -328,7 +329,8 @@ fn leading_zero_bits(digest: &[u8]) -> u32 {
 fn hex_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        out.push_str(&format!("{b:02x}"));
+        // unwrap: writing to String never fails.
+        let _ = write!(out, "{b:02x}");
     }
     out
 }
@@ -355,7 +357,10 @@ mod tests {
     #[test]
     fn embedded_algorithm_map_loads() {
         let map = ChallengeAlgorithmMap::embedded().expect("embedded map must parse");
-        assert!(map.get("e07e04f2bd2dac5b1ad2a4c9bda2d7d6c4b7a7c3f5d1e9a2b6f4c8d1a3e5b7c9").is_some());
+        assert!(
+            map.get("e07e04f2bd2dac5b1ad2a4c9bda2d7d6c4b7a7c3f5d1e9a2b6f4c8d1a3e5b7c9")
+                .is_some()
+        );
     }
 
     #[test]
@@ -394,7 +399,8 @@ mod tests {
             challenge_script: "https://abc.awswaf.com/x.js".into(),
             inputs_url: "https://abc.awswaf.com/inputs".into(),
             verify_url: "https://abc.awswaf.com/verify".into(),
-            algorithm_hash: "00000000000000000000000000000000000000000000000000000000ffffffff".into(),
+            algorithm_hash: "00000000000000000000000000000000000000000000000000000000ffffffff"
+                .into(),
         };
         let err = solve_replay(&ctx).expect_err("unknown algo should fail");
         assert!(matches!(err, AwsWafError::UnknownAlgorithm(_)));
@@ -421,7 +427,7 @@ mod tests {
 
     #[test]
     fn malformed_goku_blob_returns_none() {
-        let html = r#"<html><script>window.gokuProps = {broken json</script></html>"#;
+        let html = r"<html><script>window.gokuProps = {broken json</script></html>";
         assert!(extract_goku_props(html).is_none());
     }
 }

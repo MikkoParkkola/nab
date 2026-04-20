@@ -49,9 +49,7 @@ impl Version {
         let parse_part = |raw: Option<&str>, label: &str| -> Result<u32> {
             raw.with_context(|| format!("version '{s}' is missing the {label} component"))?
                 .parse::<u32>()
-                .with_context(|| {
-                    format!("version '{s}': {label} component is not a valid u32")
-                })
+                .with_context(|| format!("version '{s}': {label} component is not a valid u32"))
         };
         Ok(Self {
             major: parse_part(parts.next(), "major")?,
@@ -117,8 +115,7 @@ pub fn read_stamp() -> Result<Option<Version>> {
 pub fn write_stamp(version: &Version) -> Result<()> {
     let path = stamp_path()?;
     let dir = path.parent().context("stamp path has no parent")?;
-    std::fs::create_dir_all(dir)
-        .with_context(|| format!("creating {}", dir.display()))?;
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     std::fs::write(&path, format!("{version}\n"))
         .with_context(|| format!("writing stamp to {}", path.display()))
 }
@@ -154,7 +151,11 @@ struct WhatsNew {
 ///
 /// Add entries here when a release has user-facing changes worth announcing.
 static WHATS_NEW: &[WhatsNew] = &[WhatsNew {
-    version: Version { major: 0, minor: 7, patch: 1 },
+    version: Version {
+        major: 0,
+        minor: 7,
+        patch: 1,
+    },
     items: &[
         "New `upgrade` command with version stamp and migration framework",
         "Agent-first install: tell your AI to read the README",
@@ -256,18 +257,15 @@ pub fn check_upgrade() -> Result<()> {
 pub fn cmd_upgrade(cfg: &UpgradeConfig) -> Result<()> {
     let current = current_version()?;
 
-    let stamp = match read_stamp()? {
-        None => {
-            if !cfg.quiet {
-                println!("nab v{current} — fresh install, stamp created.");
-            }
-            if !cfg.dry_run {
-                write_stamp(&current)?;
-            }
-            print_model_hints(&current, cfg.quiet);
-            return Ok(());
+    let Some(stamp) = read_stamp()? else {
+        if !cfg.quiet {
+            println!("nab v{current} — fresh install, stamp created.");
         }
-        Some(v) => v,
+        if !cfg.dry_run {
+            write_stamp(&current)?;
+        }
+        print_model_hints(&current, cfg.quiet);
+        return Ok(());
     };
 
     match stamp.cmp(&current) {
@@ -285,9 +283,7 @@ pub fn cmd_upgrade(cfg: &UpgradeConfig) -> Result<()> {
             print_model_hints(&current, cfg.quiet);
             Ok(())
         }
-        Ordering::Less => {
-            run_upgrade_inner(&stamp, &current, cfg.dry_run, cfg.quiet, false)
-        }
+        Ordering::Less => run_upgrade_inner(&stamp, &current, cfg.dry_run, cfg.quiet, false),
     }
 }
 
@@ -322,9 +318,8 @@ fn run_upgrade_inner(
             println!("  [migration] {}", migration.description);
         }
         if !dry_run {
-            (migration.run)().with_context(|| {
-                format!("migration '{}' failed", migration.description)
-            })?;
+            (migration.run)()
+                .with_context(|| format!("migration '{}' failed", migration.description))?;
         }
     }
 
@@ -349,9 +344,7 @@ fn print_model_hints(current: &Version, quiet: bool) {
         return;
     }
     for hint in MODEL_HINTS {
-        if *current >= hint.available_since
-            && super::models::read_version(hint.name).is_some()
-        {
+        if *current >= hint.available_since && super::models::read_version(hint.name).is_some() {
             println!("  hint [{}] {}", hint.name, hint.hint);
         }
     }
@@ -359,7 +352,9 @@ fn print_model_hints(current: &Version, quiet: bool) {
 
 /// Print a one-line completion summary (kept for potential future use by
 /// callers that want migration-count output distinct from the upgrade line).
-#[allow(dead_code)]
+// Allow: `Result<()>` kept for API symmetry with the rest of the upgrade
+// flow; callers propagate `?` uniformly.
+#[allow(dead_code, clippy::unnecessary_wraps)]
 fn print_summary(migration_count: usize, quiet: bool) -> Result<()> {
     if !quiet && migration_count > 0 {
         println!(
@@ -385,7 +380,14 @@ mod tests {
         // WHEN parsed
         let v = Version::parse("1.2.3").unwrap();
         // THEN fields are correct
-        assert_eq!(v, Version { major: 1, minor: 2, patch: 3 });
+        assert_eq!(
+            v,
+            Version {
+                major: 1,
+                minor: 2,
+                patch: 3
+            }
+        );
     }
 
     /// `Version::parse` trims surrounding whitespace (as read from a stamp file).
@@ -395,7 +397,14 @@ mod tests {
         // WHEN parsed
         let v = Version::parse("  0.7.1\n").unwrap();
         // THEN parsed correctly
-        assert_eq!(v, Version { major: 0, minor: 7, patch: 1 });
+        assert_eq!(
+            v,
+            Version {
+                major: 0,
+                minor: 7,
+                patch: 1
+            }
+        );
     }
 
     /// `Version::parse` rejects a string with fewer than three components.
@@ -458,7 +467,11 @@ mod tests {
     #[test]
     fn version_display_round_trips() {
         // GIVEN
-        let v = Version { major: 2, minor: 10, patch: 0 };
+        let v = Version {
+            major: 2,
+            minor: 10,
+            patch: 0,
+        };
         // WHEN formatted
         let s = v.to_string();
         // THEN round-trips
@@ -485,7 +498,11 @@ mod tests {
         // GIVEN a temp directory
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("version.stamp");
-        let v = Version { major: 0, minor: 8, patch: 0 };
+        let v = Version {
+            major: 0,
+            minor: 8,
+            patch: 0,
+        };
 
         // WHEN written and read back
         write_stamp_to_path(&v, &path).unwrap();
@@ -501,13 +518,17 @@ mod tests {
         // GIVEN a path nested inside a non-existent directory
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("new_dir").join("version.stamp");
-        let v = Version { major: 1, minor: 0, patch: 0 };
+        let v = Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        };
 
         // WHEN written
         let result = write_stamp_to_path(&v, &path);
 
         // THEN no error and file exists
-        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
         assert!(path.exists());
     }
 
@@ -607,8 +628,7 @@ mod tests {
 
     fn write_stamp_to_path(version: &Version, path: &PathBuf) -> Result<()> {
         let dir = path.parent().context("stamp path has no parent")?;
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("creating {}", dir.display()))?;
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         std::fs::write(path, format!("{version}\n"))
             .with_context(|| format!("writing stamp to {}", path.display()))
     }

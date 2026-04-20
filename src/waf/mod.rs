@@ -73,17 +73,16 @@ where
     let mut aws_by_header = false;
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("x-amzn-waf-action")
-            && (value.eq_ignore_ascii_case("challenge")
-                || value.eq_ignore_ascii_case("captcha"))
+            && (value.eq_ignore_ascii_case("challenge") || value.eq_ignore_ascii_case("captcha"))
         {
             aws_by_header = true;
             break;
         }
     }
-    if aws_by_header || html.contains("awswaf.com") {
-        if let Some(ctx) = aws::extract_goku_props(html) {
-            return Some(ChallengeKind::AwsWaf(Box::new(ctx)));
-        }
+    if (aws_by_header || html.contains("awswaf.com"))
+        && let Some(ctx) = aws::extract_goku_props(html)
+    {
+        return Some(ChallengeKind::AwsWaf(Box::new(ctx)));
     }
 
     // 2. Cloudflare / Turnstile.
@@ -156,14 +155,15 @@ mod tests {
 
     #[test]
     fn detects_aws_from_body() {
-        let kind =
-            detect_challenge(AWS_FIXTURE, std::iter::empty::<(&str, &str)>()).expect("aws detected");
+        let kind = detect_challenge(AWS_FIXTURE, std::iter::empty::<(&str, &str)>())
+            .expect("aws detected");
         assert!(matches!(kind, ChallengeKind::AwsWaf(_)));
     }
 
     #[test]
     fn detects_cloudflare_turnstile() {
-        let html = r#"<script src="https://challenges.cloudflare.com/cdn-cgi/challenge/..."></script>"#;
+        let html =
+            r#"<script src="https://challenges.cloudflare.com/cdn-cgi/challenge/..."></script>"#;
         let kind = detect_challenge(html, std::iter::empty::<(&str, &str)>())
             .expect("cloudflare detected");
         assert!(matches!(kind, ChallengeKind::Cloudflare));
@@ -172,8 +172,8 @@ mod tests {
     #[test]
     fn detects_datadome() {
         let html = r#"<script src="https://js.datadome.co/boot.js"></script>"#;
-        let kind = detect_challenge(html, std::iter::empty::<(&str, &str)>())
-            .expect("datadome detected");
+        let kind =
+            detect_challenge(html, std::iter::empty::<(&str, &str)>()).expect("datadome detected");
         assert!(matches!(kind, ChallengeKind::DataDome));
     }
 

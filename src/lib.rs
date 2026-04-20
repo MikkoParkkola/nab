@@ -84,10 +84,10 @@ pub use auth::{
     CookieSource, Credential, CredentialRetriever, CredentialSource, OnePasswordAuth, OtpCode,
     OtpRetriever, OtpSource,
 };
-#[cfg(feature = "browser")]
-pub use browser::{BrowserLogin, Cookie};
 #[cfg(any(feature = "browser", feature = "browser-launcher"))]
 pub use browser::open_and_wait;
+#[cfg(feature = "browser")]
+pub use browser::{BrowserLogin, Cookie};
 pub use browser_detect::{BrowserType, detect_default_browser};
 pub use fingerprint::{
     BrowserProfile, chrome_profile, firefox_profile, random_profile, safari_profile,

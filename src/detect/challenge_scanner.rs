@@ -70,6 +70,9 @@ pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
 
     // (needle, vendor) pairs. Needles are lowercase and match typical
     // CDN hostnames embedded inside `<script src=...>` tags.
+    // Allow: declaring this `const` inside the function keeps the data local;
+    // hoisting to module scope would pollute the namespace.
+    #[allow(clippy::items_after_statements)]
     const NEEDLES: &[(&str, ChallengeVendor)] = &[
         (".awswaf.com", ChallengeVendor::AwsWaf),
         (".datadome.co", ChallengeVendor::DataDome),
@@ -86,16 +89,13 @@ pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
             let abs = start + idx;
             // Extract a small window around the match for diagnostics.
             let window_start = lower[..abs]
-                .rmatch_indices(|c: char| c == '"' || c == '\'' || c == '<' || c == ' ')
+                .rmatch_indices(['"', '\'', '<', ' '])
                 .next()
                 .map_or(abs.saturating_sub(16), |(i, _)| i + 1);
             let window_end = lower[abs..]
-                .find(|c: char| c == '"' || c == '\'' || c == '>' || c == ' ')
+                .find(['"', '\'', '>', ' '])
                 .map_or(lower.len().min(abs + needle.len() + 32), |i| abs + i);
-            let snippet = html
-                .get(window_start..window_end)
-                .unwrap_or("")
-                .to_string();
+            let snippet = html.get(window_start..window_end).unwrap_or("").to_string();
 
             let reference = ChallengeReference {
                 vendor: *vendor,
@@ -119,7 +119,10 @@ pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
 /// Convenience: return the first detected vendor, if any.
 #[must_use]
 pub fn first_vendor(html: &str) -> Option<ChallengeVendor> {
-    scan_for_challenges(html).into_iter().next().map(|r| r.vendor)
+    scan_for_challenges(html)
+        .into_iter()
+        .next()
+        .map(|r| r.vendor)
 }
 
 #[cfg(test)]
@@ -137,7 +140,7 @@ mod tests {
 
     #[test]
     fn detects_datadome_script() {
-        let html = r#"<script src='https://js.datadome.co/boot.js'></script>"#;
+        let html = r"<script src='https://js.datadome.co/boot.js'></script>";
         assert_eq!(first_vendor(html), Some(ChallengeVendor::DataDome));
     }
 

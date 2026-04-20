@@ -372,6 +372,291 @@ impl Default for JsEngine {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Full DOM shim — feature-gated JS payload that lights up navigator,
+// performance, document.cookie, crypto, and canvas stubs for WAF challenge
+// scripts.
+//
+// Deliberately written in plain ES2015 so QuickJS accepts it verbatim without
+// transpilation. The shim defines no external callouts — random bytes come
+// from a seeded LCG, digests from a pure-JS SHA-256, and cookies live in an
+// in-engine Map keyed by cookie name.
+//
+// ~450 Rust LoC budget → ~240 lines of JS after minification. Kept as one
+// raw string literal for locality; the compiled binary embeds it as a &str.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "js-dom-full")]
+const FULL_DOM_SHIM_JS: &str = r"
+(function(_g) {
+    // Derive a high-resolution timestamp from the current wall clock.
+    var _origin = Date.now();
+
+    // ── navigator ──────────────────────────────────────────────────────────
+    var _nav = {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        platform: 'MacIntel',
+        hardwareConcurrency: 8,
+        deviceMemory: 8,
+        webdriver: false,
+        language: 'en-US',
+        languages: ['en-US', 'en'],
+        plugins: [],
+        doNotTrack: null,
+        connection: {
+            effectiveType: '4g',
+            rtt: 50,
+            downlink: 10,
+            saveData: false
+        },
+        userAgentData: {
+            brands: [
+                { brand: 'Chromium', version: '131' },
+                { brand: 'Not.A/Brand', version: '24' }
+            ],
+            mobile: false,
+            platform: 'macOS'
+        }
+    };
+    if (typeof navigator === 'undefined' || typeof navigator !== 'object') {
+        _g.navigator = _nav;
+    } else {
+        for (var k in _nav) { if (!(k in navigator)) navigator[k] = _nav[k]; }
+    }
+
+    // ── performance ────────────────────────────────────────────────────────
+    var _marks = {};
+    var _measures = {};
+    _g.performance = {
+        now: function() { return Date.now() - _origin; },
+        timeOrigin: _origin,
+        timing: {
+            navigationStart: _origin,
+            domInteractive: _origin + 10,
+            domContentLoadedEventEnd: _origin + 20,
+            loadEventEnd: _origin + 30
+        },
+        mark: function(name) { _marks[name] = Date.now() - _origin; },
+        measure: function(name, startMark, endMark) {
+            var s = _marks[startMark] || 0;
+            var e = _marks[endMark] || (Date.now() - _origin);
+            _measures[name] = e - s;
+        },
+        getEntriesByName: function() { return []; },
+        getEntriesByType: function() { return []; },
+        clearMarks: function() { _marks = {}; },
+        clearMeasures: function() { _measures = {}; }
+    };
+
+    // ── document.cookie ────────────────────────────────────────────────────
+    var _cookieStore = {};
+    Object.defineProperty(document, 'cookie', {
+        configurable: true,
+        get: function() {
+            var out = [];
+            for (var k in _cookieStore) {
+                if (Object.prototype.hasOwnProperty.call(_cookieStore, k)) {
+                    out.push(k + '=' + _cookieStore[k]);
+                }
+            }
+            return out.join('; ');
+        },
+        set: function(raw) {
+            if (!raw) return;
+            var first = String(raw).split(';')[0];
+            var eq = first.indexOf('=');
+            if (eq < 0) return;
+            var name = first.slice(0, eq).trim();
+            var value = first.slice(eq + 1).trim();
+            if (name) _cookieStore[name] = value;
+        }
+    });
+
+    // ── crypto ─────────────────────────────────────────────────────────────
+    // Deterministic-enough PRNG: xorshift128+ seeded from Date.now().
+    // Challenge scripts only inspect *shape*, not statistical quality.
+    var _s0 = (Date.now() & 0xffffffff) >>> 0;
+    var _s1 = ((Date.now() >>> 13) ^ 0x9E3779B9) >>> 0;
+    function _nextByte() {
+        var x = _s0, y = _s1;
+        _s0 = y;
+        x ^= (x << 23) >>> 0; x = x & 0xffffffff;
+        _s1 = ((x ^ y ^ (x >>> 17) ^ (y >>> 26)) >>> 0);
+        return (_s1 + y) & 0xff;
+    }
+
+    function _toUint8(buf) {
+        if (buf instanceof Uint8Array) return buf;
+        if (buf && buf.buffer && typeof buf.byteLength === 'number') {
+            return new Uint8Array(buf.buffer, buf.byteOffset || 0, buf.byteLength);
+        }
+        if (typeof buf === 'string') {
+            var out = new Uint8Array(buf.length);
+            for (var i = 0; i < buf.length; i++) out[i] = buf.charCodeAt(i) & 0xff;
+            return out;
+        }
+        return new Uint8Array(0);
+    }
+
+    // Pure-JS SHA-256 so digest() works without native bindings.
+    function _sha256(bytes) {
+        var K = [
+            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+        ];
+        var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+        var msg = Array.from(bytes);
+        var l = msg.length;
+        msg.push(0x80);
+        while ((msg.length % 64) !== 56) msg.push(0);
+        var bitLen = l * 8;
+        for (var i = 7; i >= 0; i--) msg.push((bitLen >>> (i * 8)) & 0xff);
+        for (var off = 0; off < msg.length; off += 64) {
+            var W = new Array(64);
+            for (var t = 0; t < 16; t++) {
+                W[t] = (msg[off + t*4] << 24) | (msg[off + t*4 + 1] << 16) | (msg[off + t*4 + 2] << 8) | msg[off + t*4 + 3];
+                W[t] = W[t] >>> 0;
+            }
+            for (var t2 = 16; t2 < 64; t2++) {
+                var s0 = ((W[t2-15] >>> 7) | (W[t2-15] << 25)) ^ ((W[t2-15] >>> 18) | (W[t2-15] << 14)) ^ (W[t2-15] >>> 3);
+                var s1 = ((W[t2-2] >>> 17) | (W[t2-2] << 15)) ^ ((W[t2-2] >>> 19) | (W[t2-2] << 13)) ^ (W[t2-2] >>> 10);
+                W[t2] = ((W[t2-16] + s0 + W[t2-7] + s1) >>> 0);
+            }
+            var a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+            for (var t3 = 0; t3 < 64; t3++) {
+                var S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+                var ch = (e & f) ^ ((~e) & g);
+                var T1 = (h + S1 + ch + K[t3] + W[t3]) >>> 0;
+                var S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+                var mj = (a & b) ^ (a & c) ^ (b & c);
+                var T2 = (S0 + mj) >>> 0;
+                h = g; g = f; f = e; e = (d + T1) >>> 0;
+                d = c; c = b; b = a; a = (T1 + T2) >>> 0;
+            }
+            H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0;
+            H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
+        }
+        var out = new Uint8Array(32);
+        for (var oi = 0; oi < 8; oi++) {
+            out[oi*4]   = (H[oi] >>> 24) & 0xff;
+            out[oi*4+1] = (H[oi] >>> 16) & 0xff;
+            out[oi*4+2] = (H[oi] >>> 8) & 0xff;
+            out[oi*4+3] = H[oi] & 0xff;
+        }
+        return out;
+    }
+
+    _g.crypto = {
+        getRandomValues: function(buf) {
+            var u8 = _toUint8(buf);
+            for (var i = 0; i < u8.length; i++) u8[i] = _nextByte();
+            return buf;
+        },
+        randomUUID: function() {
+            var b = new Uint8Array(16);
+            for (var i = 0; i < 16; i++) b[i] = _nextByte();
+            b[6] = (b[6] & 0x0f) | 0x40;
+            b[8] = (b[8] & 0x3f) | 0x80;
+            var h = [];
+            for (var j = 0; j < 16; j++) h.push(('00' + b[j].toString(16)).slice(-2));
+            return h.slice(0,4).join('') + '-' + h.slice(4,6).join('') + '-' +
+                   h.slice(6,8).join('') + '-' + h.slice(8,10).join('') + '-' +
+                   h.slice(10,16).join('');
+        },
+        subtle: {
+            digest: function(algo, buf) {
+                var name = (typeof algo === 'string') ? algo : (algo && algo.name) || 'SHA-256';
+                var bytes = _toUint8(buf);
+                // Only SHA-256 is implemented natively; other algos return a
+                // stable-length zero buffer so the challenge JS can proceed.
+                if (name === 'SHA-256') {
+                    var out = _sha256(bytes);
+                    return Promise.resolve(out.buffer);
+                }
+                var len = (name === 'SHA-384') ? 48 : (name === 'SHA-512') ? 64 : 32;
+                var zero = new Uint8Array(len);
+                return Promise.resolve(zero.buffer);
+            },
+            encrypt: function(algo, _key, data) {
+                // AES-GCM stub: return ciphertext = data || 16-byte tag.
+                var bytes = _toUint8(data);
+                var out = new Uint8Array(bytes.length + 16);
+                out.set(bytes, 0);
+                return Promise.resolve(out.buffer);
+            },
+            decrypt: function(algo, _key, data) {
+                var bytes = _toUint8(data);
+                var len = Math.max(0, bytes.length - 16);
+                var out = new Uint8Array(len);
+                out.set(bytes.subarray(0, len), 0);
+                return Promise.resolve(out.buffer);
+            },
+            importKey: function() { return Promise.resolve({ type: 'secret' }); },
+            sign: function(_a, _k, data) { return Promise.resolve(_sha256(_toUint8(data)).buffer); },
+            verify: function() { return Promise.resolve(true); }
+        }
+    };
+
+    // ── HTMLCanvasElement stub ─────────────────────────────────────────────
+    // Anti-fingerprinting: every canvas reports the same base64 blob.
+    var _CANVAS_PNG =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEUAAACnej3aAAAAAXRSTlMAQObYZgAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=';
+    var _origCreate = document.createElement.bind(document);
+    document.createElement = function(tag) {
+        var el = _origCreate(tag);
+        if (String(tag).toLowerCase() === 'canvas') {
+            el.width = 300;
+            el.height = 150;
+            el.toDataURL = function() { return 'data:image/png;base64,' + _CANVAS_PNG; };
+            el.getContext = function() {
+                return {
+                    fillRect: function() {},
+                    fillText: function() {},
+                    getImageData: function(_x, _y, w, h) {
+                        return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h };
+                    },
+                    measureText: function(text) { return { width: String(text).length * 6 }; },
+                    beginPath: function() {},
+                    closePath: function() {},
+                    stroke: function() {},
+                    fill: function() {},
+                    arc: function() {},
+                    save: function() {},
+                    restore: function() {},
+                    translate: function() {},
+                    rotate: function() {},
+                    scale: function() {}
+                };
+            };
+        }
+        return el;
+    };
+
+    // ── Timers + microtask queue ───────────────────────────────────────────
+    // QuickJS has no event loop, but many challenge scripts only need
+    // setTimeout(fn, 0) semantics (i.e. deferred execution). We run the
+    // callback synchronously as a best-effort approximation.
+    var _nextId = 1;
+    var _timers = {};
+    _g.setTimeout = function(fn, _ms) {
+        var id = _nextId++;
+        _timers[id] = fn;
+        try { if (typeof fn === 'function') fn(); } catch (e) {}
+        return id;
+    };
+    _g.setInterval = function(_fn, _ms) { return _nextId++; };
+    _g.clearTimeout = function(id) { delete _timers[id]; };
+    _g.clearInterval = function(_id) {};
+    _g.queueMicrotask = function(fn) { try { fn(); } catch (e) {} };
+})(globalThis);
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,288 +1015,3 @@ mod tests {
         assert_eq!(any_nonzero, "ok");
     }
 }
-
-// ═════════════════════════════════════════════════════════════════════════════
-// Full DOM shim — feature-gated JS payload that lights up navigator,
-// performance, document.cookie, crypto, and canvas stubs for WAF challenge
-// scripts.
-//
-// Deliberately written in plain ES2015 so QuickJS accepts it verbatim without
-// transpilation. The shim defines no external callouts — random bytes come
-// from a seeded LCG, digests from a pure-JS SHA-256, and cookies live in an
-// in-engine Map keyed by cookie name.
-//
-// ~450 Rust LoC budget → ~240 lines of JS after minification. Kept as one
-// raw string literal for locality; the compiled binary embeds it as a &str.
-// ═════════════════════════════════════════════════════════════════════════════
-
-#[cfg(feature = "js-dom-full")]
-const FULL_DOM_SHIM_JS: &str = r"
-(function(_g) {
-    // Derive a high-resolution timestamp from the current wall clock.
-    var _origin = Date.now();
-
-    // ── navigator ──────────────────────────────────────────────────────────
-    var _nav = {
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        platform: 'MacIntel',
-        hardwareConcurrency: 8,
-        deviceMemory: 8,
-        webdriver: false,
-        language: 'en-US',
-        languages: ['en-US', 'en'],
-        plugins: [],
-        doNotTrack: null,
-        connection: {
-            effectiveType: '4g',
-            rtt: 50,
-            downlink: 10,
-            saveData: false
-        },
-        userAgentData: {
-            brands: [
-                { brand: 'Chromium', version: '131' },
-                { brand: 'Not.A/Brand', version: '24' }
-            ],
-            mobile: false,
-            platform: 'macOS'
-        }
-    };
-    if (typeof navigator === 'undefined' || typeof navigator !== 'object') {
-        _g.navigator = _nav;
-    } else {
-        for (var k in _nav) { if (!(k in navigator)) navigator[k] = _nav[k]; }
-    }
-
-    // ── performance ────────────────────────────────────────────────────────
-    var _marks = {};
-    var _measures = {};
-    _g.performance = {
-        now: function() { return Date.now() - _origin; },
-        timeOrigin: _origin,
-        timing: {
-            navigationStart: _origin,
-            domInteractive: _origin + 10,
-            domContentLoadedEventEnd: _origin + 20,
-            loadEventEnd: _origin + 30
-        },
-        mark: function(name) { _marks[name] = Date.now() - _origin; },
-        measure: function(name, startMark, endMark) {
-            var s = _marks[startMark] || 0;
-            var e = _marks[endMark] || (Date.now() - _origin);
-            _measures[name] = e - s;
-        },
-        getEntriesByName: function() { return []; },
-        getEntriesByType: function() { return []; },
-        clearMarks: function() { _marks = {}; },
-        clearMeasures: function() { _measures = {}; }
-    };
-
-    // ── document.cookie ────────────────────────────────────────────────────
-    var _cookieStore = {};
-    Object.defineProperty(document, 'cookie', {
-        configurable: true,
-        get: function() {
-            var out = [];
-            for (var k in _cookieStore) {
-                if (Object.prototype.hasOwnProperty.call(_cookieStore, k)) {
-                    out.push(k + '=' + _cookieStore[k]);
-                }
-            }
-            return out.join('; ');
-        },
-        set: function(raw) {
-            if (!raw) return;
-            var first = String(raw).split(';')[0];
-            var eq = first.indexOf('=');
-            if (eq < 0) return;
-            var name = first.slice(0, eq).trim();
-            var value = first.slice(eq + 1).trim();
-            if (name) _cookieStore[name] = value;
-        }
-    });
-
-    // ── crypto ─────────────────────────────────────────────────────────────
-    // Deterministic-enough PRNG: xorshift128+ seeded from Date.now().
-    // Challenge scripts only inspect *shape*, not statistical quality.
-    var _s0 = (Date.now() & 0xffffffff) >>> 0;
-    var _s1 = ((Date.now() >>> 13) ^ 0x9E3779B9) >>> 0;
-    function _nextByte() {
-        var x = _s0, y = _s1;
-        _s0 = y;
-        x ^= (x << 23) >>> 0; x = x & 0xffffffff;
-        _s1 = ((x ^ y ^ (x >>> 17) ^ (y >>> 26)) >>> 0);
-        return (_s1 + y) & 0xff;
-    }
-
-    function _toUint8(buf) {
-        if (buf instanceof Uint8Array) return buf;
-        if (buf && buf.buffer && typeof buf.byteLength === 'number') {
-            return new Uint8Array(buf.buffer, buf.byteOffset || 0, buf.byteLength);
-        }
-        if (typeof buf === 'string') {
-            var out = new Uint8Array(buf.length);
-            for (var i = 0; i < buf.length; i++) out[i] = buf.charCodeAt(i) & 0xff;
-            return out;
-        }
-        return new Uint8Array(0);
-    }
-
-    // Pure-JS SHA-256 so digest() works without native bindings.
-    function _sha256(bytes) {
-        var K = [
-            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-        ];
-        var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
-        var msg = Array.from(bytes);
-        var l = msg.length;
-        msg.push(0x80);
-        while ((msg.length % 64) !== 56) msg.push(0);
-        var bitLen = l * 8;
-        for (var i = 7; i >= 0; i--) msg.push((bitLen >>> (i * 8)) & 0xff);
-        for (var off = 0; off < msg.length; off += 64) {
-            var W = new Array(64);
-            for (var t = 0; t < 16; t++) {
-                W[t] = (msg[off + t*4] << 24) | (msg[off + t*4 + 1] << 16) | (msg[off + t*4 + 2] << 8) | msg[off + t*4 + 3];
-                W[t] = W[t] >>> 0;
-            }
-            for (var t2 = 16; t2 < 64; t2++) {
-                var s0 = ((W[t2-15] >>> 7) | (W[t2-15] << 25)) ^ ((W[t2-15] >>> 18) | (W[t2-15] << 14)) ^ (W[t2-15] >>> 3);
-                var s1 = ((W[t2-2] >>> 17) | (W[t2-2] << 15)) ^ ((W[t2-2] >>> 19) | (W[t2-2] << 13)) ^ (W[t2-2] >>> 10);
-                W[t2] = ((W[t2-16] + s0 + W[t2-7] + s1) >>> 0);
-            }
-            var a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
-            for (var t3 = 0; t3 < 64; t3++) {
-                var S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
-                var ch = (e & f) ^ ((~e) & g);
-                var T1 = (h + S1 + ch + K[t3] + W[t3]) >>> 0;
-                var S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
-                var mj = (a & b) ^ (a & c) ^ (b & c);
-                var T2 = (S0 + mj) >>> 0;
-                h = g; g = f; f = e; e = (d + T1) >>> 0;
-                d = c; c = b; b = a; a = (T1 + T2) >>> 0;
-            }
-            H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0;
-            H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
-        }
-        var out = new Uint8Array(32);
-        for (var oi = 0; oi < 8; oi++) {
-            out[oi*4]   = (H[oi] >>> 24) & 0xff;
-            out[oi*4+1] = (H[oi] >>> 16) & 0xff;
-            out[oi*4+2] = (H[oi] >>> 8) & 0xff;
-            out[oi*4+3] = H[oi] & 0xff;
-        }
-        return out;
-    }
-
-    _g.crypto = {
-        getRandomValues: function(buf) {
-            var u8 = _toUint8(buf);
-            for (var i = 0; i < u8.length; i++) u8[i] = _nextByte();
-            return buf;
-        },
-        randomUUID: function() {
-            var b = new Uint8Array(16);
-            for (var i = 0; i < 16; i++) b[i] = _nextByte();
-            b[6] = (b[6] & 0x0f) | 0x40;
-            b[8] = (b[8] & 0x3f) | 0x80;
-            var h = [];
-            for (var j = 0; j < 16; j++) h.push(('00' + b[j].toString(16)).slice(-2));
-            return h.slice(0,4).join('') + '-' + h.slice(4,6).join('') + '-' +
-                   h.slice(6,8).join('') + '-' + h.slice(8,10).join('') + '-' +
-                   h.slice(10,16).join('');
-        },
-        subtle: {
-            digest: function(algo, buf) {
-                var name = (typeof algo === 'string') ? algo : (algo && algo.name) || 'SHA-256';
-                var bytes = _toUint8(buf);
-                // Only SHA-256 is implemented natively; other algos return a
-                // stable-length zero buffer so the challenge JS can proceed.
-                if (name === 'SHA-256') {
-                    var out = _sha256(bytes);
-                    return Promise.resolve(out.buffer);
-                }
-                var len = (name === 'SHA-384') ? 48 : (name === 'SHA-512') ? 64 : 32;
-                var zero = new Uint8Array(len);
-                return Promise.resolve(zero.buffer);
-            },
-            encrypt: function(algo, _key, data) {
-                // AES-GCM stub: return ciphertext = data || 16-byte tag.
-                var bytes = _toUint8(data);
-                var out = new Uint8Array(bytes.length + 16);
-                out.set(bytes, 0);
-                return Promise.resolve(out.buffer);
-            },
-            decrypt: function(algo, _key, data) {
-                var bytes = _toUint8(data);
-                var len = Math.max(0, bytes.length - 16);
-                var out = new Uint8Array(len);
-                out.set(bytes.subarray(0, len), 0);
-                return Promise.resolve(out.buffer);
-            },
-            importKey: function() { return Promise.resolve({ type: 'secret' }); },
-            sign: function(_a, _k, data) { return Promise.resolve(_sha256(_toUint8(data)).buffer); },
-            verify: function() { return Promise.resolve(true); }
-        }
-    };
-
-    // ── HTMLCanvasElement stub ─────────────────────────────────────────────
-    // Anti-fingerprinting: every canvas reports the same base64 blob.
-    var _CANVAS_PNG =
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEUAAACnej3aAAAAAXRSTlMAQObYZgAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=';
-    var _origCreate = document.createElement.bind(document);
-    document.createElement = function(tag) {
-        var el = _origCreate(tag);
-        if (String(tag).toLowerCase() === 'canvas') {
-            el.width = 300;
-            el.height = 150;
-            el.toDataURL = function() { return 'data:image/png;base64,' + _CANVAS_PNG; };
-            el.getContext = function() {
-                return {
-                    fillRect: function() {},
-                    fillText: function() {},
-                    getImageData: function(_x, _y, w, h) {
-                        return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h };
-                    },
-                    measureText: function(text) { return { width: String(text).length * 6 }; },
-                    beginPath: function() {},
-                    closePath: function() {},
-                    stroke: function() {},
-                    fill: function() {},
-                    arc: function() {},
-                    save: function() {},
-                    restore: function() {},
-                    translate: function() {},
-                    rotate: function() {},
-                    scale: function() {}
-                };
-            };
-        }
-        return el;
-    };
-
-    // ── Timers + microtask queue ───────────────────────────────────────────
-    // QuickJS has no event loop, but many challenge scripts only need
-    // setTimeout(fn, 0) semantics (i.e. deferred execution). We run the
-    // callback synchronously as a best-effort approximation.
-    var _nextId = 1;
-    var _timers = {};
-    _g.setTimeout = function(fn, _ms) {
-        var id = _nextId++;
-        _timers[id] = fn;
-        try { if (typeof fn === 'function') fn(); } catch (e) {}
-        return id;
-    };
-    _g.setInterval = function(_fn, _ms) { return _nextId++; };
-    _g.clearTimeout = function(id) { delete _timers[id]; };
-    _g.clearInterval = function(_id) {};
-    _g.queueMicrotask = function(fn) { try { fn(); } catch (e) {} };
-})(globalThis);
-";

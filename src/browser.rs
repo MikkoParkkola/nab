@@ -16,10 +16,10 @@ use anyhow::{Context, Result};
 #[cfg(feature = "browser")]
 use futures::StreamExt;
 use std::time::Duration;
-#[cfg(feature = "browser")]
-use tracing::{debug, info, warn};
 #[cfg(not(feature = "browser"))]
 use tracing::debug;
+#[cfg(feature = "browser")]
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "browser")]
 use crate::auth::Credential;
@@ -472,7 +472,7 @@ mod tests {
         // logic with a fake probe.
         use std::sync::atomic::{AtomicUsize, Ordering};
         let ticks = AtomicUsize::new(0);
-        let probe = |_: ()| -> String {
+        let probe = |(): ()| -> String {
             let n = ticks.fetch_add(1, Ordering::SeqCst);
             if n < 1 { "a".into() } else { "changed".into() }
         };
