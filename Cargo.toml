@@ -49,7 +49,12 @@ bytes = "1"                         # Required for h3
 
 # TLS fingerprint impersonation (Chrome/Safari/Firefox via BoringSSL)
 # Bypasses anti-bot TLS fingerprinting (LinkedIn HTTP 999, etc.)
-rquest = { version = "5.1", optional = true, default-features = false, features = [
+#
+# `rquest` was renamed to `wreq` upstream. Signatures are unchanged on the 5.x
+# line, so we alias via Cargo's `package` renaming: source keeps saying
+# `rquest` / `rquest_util`, Cargo resolves them to the renamed crates.
+# Upstream issue: MikkoParkkola/nab#59
+rquest = { package = "wreq", version = "5.3", optional = true, default-features = false, features = [
     "cookies",
     "brotli",
     "zstd",
@@ -57,7 +62,7 @@ rquest = { version = "5.1", optional = true, default-features = false, features 
     "deflate",
     "webpki-roots",
 ] }
-rquest-util = { version = "2.2", optional = true }
+rquest-util = { package = "wreq-util", version = "2.2.6", optional = true }
 
 # WebSocket support
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
