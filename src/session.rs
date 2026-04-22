@@ -478,7 +478,7 @@ fn build_reqwest_client(profile: &BrowserProfile, jar: Arc<SessionJar>) -> Resul
     Client::builder()
         .pool_max_idle_per_host(5)
         .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_keepalive(Duration::from_secs(60))
+        .tcp_keepalive(Duration::from_mins(1))
         .tcp_nodelay(true)
         .use_rustls_tls()
         .brotli(true)

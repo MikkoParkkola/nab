@@ -102,7 +102,7 @@ impl Default for NotificationConfig {
             telegram_chat_id: std::env::var("TELEGRAM_CHAT_ID").ok(),
             macos_notification: true,
             terminal_prompt: true,
-            timeout: Duration::from_secs(120),
+            timeout: Duration::from_mins(2),
         }
     }
 }

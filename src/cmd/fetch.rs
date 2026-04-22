@@ -267,7 +267,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
                 {
                     let _ = nab::browser::open_and_wait(
                         &cfg.url,
-                        std::time::Duration::from_secs(60),
+                        std::time::Duration::from_mins(1),
                         None,
                     );
                 }
@@ -607,7 +607,7 @@ async fn convert_body_to_markdown(
     let fetch_url = url.to_string();
 
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
+        std::time::Duration::from_mins(1),
         tokio::task::spawn_blocking(move || router.convert_with_url(&bytes, &ct, Some(&fetch_url))),
     )
     .await

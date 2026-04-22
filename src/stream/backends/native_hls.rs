@@ -35,7 +35,7 @@ impl NativeHlsBackend {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(16) // Keep more connections alive for speed
-            .pool_idle_timeout(Duration::from_secs(60))
+            .pool_idle_timeout(Duration::from_mins(1))
             .tcp_nodelay(true) // Reduce latency
             .build()?;
 
