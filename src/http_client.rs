@@ -55,7 +55,7 @@ fn accelerated_builder(
     let mut builder = Client::builder()
         .pool_max_idle_per_host(10)
         .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_keepalive(Duration::from_secs(60))
+        .tcp_keepalive(Duration::from_mins(1))
         .tcp_nodelay(true)
         .use_rustls_tls()
         .brotli(true)

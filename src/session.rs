@@ -269,9 +269,7 @@ fn nab_state_dir() -> Result<PathBuf> {
     Ok(home.join(NAB_STATE_DIR))
 }
 
-// Allow: must match the non-test signature so callers compile under both cfgs.
 #[cfg(test)]
-#[allow(clippy::unnecessary_wraps)]
 fn nab_state_dir() -> Result<PathBuf> {
     Ok(TEST_STATE_DIR.clone())
 }
@@ -478,7 +476,7 @@ fn build_reqwest_client(profile: &BrowserProfile, jar: Arc<SessionJar>) -> Resul
     Client::builder()
         .pool_max_idle_per_host(5)
         .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_keepalive(Duration::from_secs(60))
+        .tcp_keepalive(Duration::from_mins(1))
         .tcp_nodelay(true)
         .use_rustls_tls()
         .brotli(true)
@@ -530,9 +528,7 @@ fn persist_session_entry(name: &str, entry: &SessionEntry) -> Result<()> {
     persist_session_entry_in(name, entry, &state_dir)
 }
 
-// Allow: must match the non-test/non-windows signature so callers compile under all cfgs.
 #[cfg(any(test, windows))]
-#[allow(clippy::unnecessary_wraps)]
 fn persist_session_entry(_name: &str, _entry: &SessionEntry) -> Result<()> {
     Ok(())
 }
@@ -588,9 +584,7 @@ fn load_session_entry(name: &str) -> Result<Option<SessionEntry>> {
     load_session_entry_in(name, &state_dir)
 }
 
-// Allow: must match the non-test/non-windows signature so callers compile under all cfgs.
 #[cfg(any(test, windows))]
-#[allow(clippy::unnecessary_wraps)]
 fn load_session_entry(_name: &str) -> Result<Option<SessionEntry>> {
     Ok(None)
 }

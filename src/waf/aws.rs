@@ -33,7 +33,6 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 /// Embedded algorithm map. Generated from `src/waf/algorithm_map.json` at
@@ -282,9 +281,6 @@ pub fn solve_replay(ctx: &GokuContext) -> Result<SolvedChallenge, AwsWafError> {
 
 /// Iterate `nonce` from 0 until `SHA256(challenge || nonce)` has at
 /// least `difficulty_bits` leading zero bits.
-// Allow: `Result` return kept for API parity with other waf solver hooks;
-// removing it now would ripple into callers outside this module.
-#[allow(clippy::unnecessary_wraps)]
 fn solve_sha256_pow(
     challenge: &str,
     max_iterations: u64,
@@ -327,9 +323,12 @@ fn leading_zero_bits(digest: &[u8]) -> u32 {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        // unwrap: writing to String never fails.
+        // `write!` into a `String` cannot fail; using it instead of
+        // `push_str(&format!(...))` keeps clippy::format_collect quiet
+        // and avoids the per-byte intermediate allocation.
         let _ = write!(out, "{b:02x}");
     }
     out

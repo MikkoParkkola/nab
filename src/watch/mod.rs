@@ -51,7 +51,7 @@ const DEFAULT_INTERVAL_SECS: u64 = 3600;
 const BROADCAST_CAPACITY: usize = 64;
 
 /// Poller loop tick interval.
-const POLL_LOOP_INTERVAL: Duration = Duration::from_secs(60);
+const POLL_LOOP_INTERVAL: Duration = Duration::from_mins(1);
 
 // ─── WatchManager ─────────────────────────────────────────────────────────────
 

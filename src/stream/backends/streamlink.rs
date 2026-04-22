@@ -145,8 +145,7 @@ impl StreamlinkBackend {
             .stderr(Stdio::null())
             .status()
             .await
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .is_ok_and(|s| s.success())
     }
 
     /// Check if streamlink supports a URL (via `streamlink --can-handle-url`)
@@ -158,8 +157,7 @@ impl StreamlinkBackend {
             .stderr(Stdio::null())
             .status()
             .await
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .is_ok_and(|s| s.success())
     }
 
     /// Parse progress from streamlink stderr

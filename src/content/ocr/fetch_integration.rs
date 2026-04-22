@@ -484,7 +484,7 @@ mod tests {
         let mut f = std::fs::File::create(&path).expect("create");
         f.write_all(b"cached text").expect("write");
         // Set mtime to 31 days ago via std (stable since Rust 1.75).
-        let old_time = SystemTime::now() - Duration::from_secs(31 * 24 * 60 * 60);
+        let old_time = SystemTime::now() - Duration::from_hours(744);
         f.set_modified(old_time).expect("set_modified");
         drop(f);
         // WHEN read

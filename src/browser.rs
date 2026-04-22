@@ -116,7 +116,7 @@ impl BrowserLogin {
             warn!("   Waiting 60 seconds for manual intervention...");
 
             // Give user time to solve CAPTCHA
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(Duration::from_mins(1)).await;
         }
 
         // Extract cookies after successful login

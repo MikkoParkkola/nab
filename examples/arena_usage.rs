@@ -170,14 +170,14 @@ fn example_string_interning() {
 
     println!("Headers with interning:");
     for (i, (name, value)) in response.headers.iter().enumerate() {
-        let name_ptr = *name as *const str;
+        let name_ptr = std::ptr::from_ref::<str>(*name);
         println!("  {}: {} = {} (ptr: {:p})", i + 1, name, value, name_ptr);
     }
 
     // Verify that common headers share the same pointer
-    let content_type_ptr1 = response.headers[0].0 as *const str;
+    let content_type_ptr1 = std::ptr::from_ref::<str>(response.headers[0].0);
     response.add_header_interned(&arena, &interner, "content-type", "text/plain");
-    let content_type_ptr2 = response.headers[4].0 as *const str;
+    let content_type_ptr2 = std::ptr::from_ref::<str>(response.headers[4].0);
 
     println!(
         "\nString interning verification: content-type pointers {} ({})",

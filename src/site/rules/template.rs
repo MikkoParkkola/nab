@@ -109,11 +109,8 @@ fn substitute_filtered_placeholders<S: BuildHasher>(
     let mut result = line.to_string();
     let mut search_from = 0;
 
-    loop {
-        let Some(open) = result[search_from..].find('{') else {
-            break;
-        };
-        let open = open + search_from;
+    while let Some(rel_open) = result[search_from..].find('{') {
+        let open = rel_open + search_from;
 
         let Some(close) = result[open..].find('}') else {
             break;
