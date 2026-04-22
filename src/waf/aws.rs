@@ -33,7 +33,6 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 /// Embedded algorithm map. Generated from `src/waf/algorithm_map.json` at
@@ -198,7 +197,9 @@ fn extract_awswaf_script_src(html: &str) -> Option<String> {
         .next()
         .map(|(i, _)| i + 1)?;
     // Expand forwards to the closing quote.
-    let close = lower[hit..].find(['"', '\'']).map(|i| hit + i)?;
+    let close = lower[hit..]
+        .find(['"', '\''])
+        .map(|i| hit + i)?;
     let raw = html.get(open..close)?.trim();
 
     // Normalise protocol-relative and relative URLs.
@@ -282,9 +283,6 @@ pub fn solve_replay(ctx: &GokuContext) -> Result<SolvedChallenge, AwsWafError> {
 
 /// Iterate `nonce` from 0 until `SHA256(challenge || nonce)` has at
 /// least `difficulty_bits` leading zero bits.
-// Allow: `Result` return kept for API parity with other waf solver hooks;
-// removing it now would ripple into callers outside this module.
-#[allow(clippy::unnecessary_wraps)]
 fn solve_sha256_pow(
     challenge: &str,
     max_iterations: u64,
@@ -327,9 +325,12 @@ fn leading_zero_bits(digest: &[u8]) -> u32 {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        // unwrap: writing to String never fails.
+        // `write!` into a `String` cannot fail; using it instead of
+        // `push_str(&format!(...))` keeps clippy::format_collect quiet
+        // and avoids the per-byte intermediate allocation.
         let _ = write!(out, "{b:02x}");
     }
     out
@@ -357,10 +358,7 @@ mod tests {
     #[test]
     fn embedded_algorithm_map_loads() {
         let map = ChallengeAlgorithmMap::embedded().expect("embedded map must parse");
-        assert!(
-            map.get("e07e04f2bd2dac5b1ad2a4c9bda2d7d6c4b7a7c3f5d1e9a2b6f4c8d1a3e5b7c9")
-                .is_some()
-        );
+        assert!(map.get("e07e04f2bd2dac5b1ad2a4c9bda2d7d6c4b7a7c3f5d1e9a2b6f4c8d1a3e5b7c9").is_some());
     }
 
     #[test]
@@ -399,8 +397,7 @@ mod tests {
             challenge_script: "https://abc.awswaf.com/x.js".into(),
             inputs_url: "https://abc.awswaf.com/inputs".into(),
             verify_url: "https://abc.awswaf.com/verify".into(),
-            algorithm_hash: "00000000000000000000000000000000000000000000000000000000ffffffff"
-                .into(),
+            algorithm_hash: "00000000000000000000000000000000000000000000000000000000ffffffff".into(),
         };
         let err = solve_replay(&ctx).expect_err("unknown algo should fail");
         assert!(matches!(err, AwsWafError::UnknownAlgorithm(_)));

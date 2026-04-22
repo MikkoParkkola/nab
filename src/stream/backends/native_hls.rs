@@ -95,7 +95,7 @@ impl NativeHlsBackend {
         }
 
         // Sort by bandwidth (quality) descending
-        variants.sort_by(|a, b| b.bandwidth.cmp(&a.bandwidth));
+        variants.sort_by_key(|v| std::cmp::Reverse(v.bandwidth));
 
         Ok(variants)
     }

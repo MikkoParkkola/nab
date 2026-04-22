@@ -286,3 +286,8 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# unnecessary_wraps fires on `fn foo() -> Result<T>` shims (e.g. cfg-gated
+# stub variants of fallible helpers, or PoW solvers that are infallible
+# today but reserved for future error returns). The Result is part of the
+# stable API; rewriting it would force every caller to match a new shape.
+unnecessary_wraps = "allow"

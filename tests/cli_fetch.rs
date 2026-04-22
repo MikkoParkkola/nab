@@ -21,8 +21,7 @@ fn nab() -> Command {
 fn net_tests_enabled() -> bool {
     // Default to running network tests unless explicitly disabled.
     std::env::var("NAB_NET_TESTS")
-        .map(|v| v != "0" && v.to_lowercase() != "false")
-        .unwrap_or(true)
+        .map_or(true, |v| v != "0" && v.to_lowercase() != "false")
 }
 
 // ─── Basic fetch (network) ───────────────────────────────────────────────────

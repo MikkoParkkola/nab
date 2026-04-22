@@ -94,8 +94,7 @@ pub async fn cmd_stream(cfg: &StreamCmdConfig) -> Result<()> {
         "worst" => StreamQuality::Worst,
         q => q
             .parse::<u32>()
-            .map(StreamQuality::Specific)
-            .unwrap_or(StreamQuality::Best),
+            .map_or(StreamQuality::Best, StreamQuality::Specific),
     };
 
     // Select provider based on source

@@ -91,11 +91,7 @@ fn format_mebibytes(bytes: u64) -> String {
 }
 
 fn format_percent(numerator: u64, denominator: u64) -> u64 {
-    if denominator == 0 {
-        0
-    } else {
-        numerator.saturating_mul(100) / denominator
-    }
+    numerator.saturating_mul(100).checked_div(denominator).unwrap_or(0)
 }
 
 /// Read the pinned git SHA from the VERSION file. Returns `None` when absent.
@@ -139,8 +135,7 @@ pub fn install_status(model: &ModelEntry) -> Result<InstallStatus> {
             let path = whisper_model_path()?;
             let ok = path
                 .metadata()
-                .map(|m| m.len() >= 100 * 1024 * 1024)
-                .unwrap_or(false);
+                .is_ok_and(|m| m.len() >= 100 * 1024 * 1024);
             if ok {
                 Ok(InstallStatus::Installed { version: None })
             } else {
@@ -236,7 +231,7 @@ pub async fn cmd_models_verify() -> Result<()> {
 
 fn verify_whisper_files() -> Result<bool> {
     let path = whisper_model_path()?;
-    let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+    let size = path.metadata().map_or(0, |m| m.len());
     if size >= 100 * 1024 * 1024 {
         println!(
             "  whisper: {} MB — {}",
@@ -260,7 +255,7 @@ fn verify_sherpa_files() -> Result<bool> {
     for file in SHERPA_FILES {
         let path = dir.join(file);
         if path.exists() {
-            let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+            let size = path.metadata().map_or(0, |m| m.len());
             println!("  sherpa-onnx/{file}: {} MB", format_mebibytes(size));
         } else {
             println!("  sherpa-onnx/{file}: MISSING");
@@ -280,8 +275,7 @@ async fn verify_binary(binary_name: &str) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .await
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 /// `nab models fetch <name>` — download or clone + build + symlink a model.

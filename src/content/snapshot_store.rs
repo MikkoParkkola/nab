@@ -99,7 +99,7 @@ impl SnapshotStore {
     /// Load the most recent snapshot for `url`, or `None` if none exist.
     pub fn load_latest_snapshot(&self, url: &str) -> Option<ContentSnapshot> {
         let mut metas = self.list_snapshots(url);
-        metas.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        metas.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
         metas.first().and_then(|m| Self::load_from_path(&m.path))
     }
 
@@ -133,7 +133,7 @@ impl SnapshotStore {
     /// Delete oldest snapshots beyond `max_per_url`.
     fn prune_old(&self, dir: &Path) {
         let mut metas = read_metas(dir);
-        metas.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)); // oldest first
+        metas.sort_by_key(|a| a.timestamp); // oldest first
         let excess = metas.len().saturating_sub(self.max_per_url);
         for meta in metas.iter().take(excess) {
             let _ = fs::remove_file(&meta.path); // best-effort

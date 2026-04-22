@@ -63,27 +63,28 @@ pub struct ChallengeReference {
 /// Returns every distinct `(vendor, snippet)` pair found. The function is
 /// case-insensitive on hostnames and never allocates more than the output
 /// vector.
+// (needle, vendor) pairs. Needles are lowercase and match typical
+// CDN hostnames embedded inside `<script src=...>` tags. Hoisted to
+// module scope so clippy::items_after_statements stays quiet, and so
+// that adding a vendor doesn't require touching the function body.
+const CHALLENGE_NEEDLES: &[(&str, ChallengeVendor)] = &[
+    (".awswaf.com", ChallengeVendor::AwsWaf),
+    (".datadome.co", ChallengeVendor::DataDome),
+    ("challenges.cloudflare.com", ChallengeVendor::Cloudflare),
+    (".perimeterx.net", ChallengeVendor::PerimeterX),
+    (".px-cdn.net", ChallengeVendor::PerimeterX),
+    (".px-cloud.net", ChallengeVendor::PerimeterX),
+    ("/akam/", ChallengeVendor::Akamai),
+];
+
 #[must_use]
 pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
     let mut hits: Vec<ChallengeReference> = Vec::new();
     let lower = html.to_ascii_lowercase();
 
-    // (needle, vendor) pairs. Needles are lowercase and match typical
-    // CDN hostnames embedded inside `<script src=...>` tags.
-    // Allow: declaring this `const` inside the function keeps the data local;
-    // hoisting to module scope would pollute the namespace.
-    #[allow(clippy::items_after_statements)]
-    const NEEDLES: &[(&str, ChallengeVendor)] = &[
-        (".awswaf.com", ChallengeVendor::AwsWaf),
-        (".datadome.co", ChallengeVendor::DataDome),
-        ("challenges.cloudflare.com", ChallengeVendor::Cloudflare),
-        (".perimeterx.net", ChallengeVendor::PerimeterX),
-        (".px-cdn.net", ChallengeVendor::PerimeterX),
-        (".px-cloud.net", ChallengeVendor::PerimeterX),
-        ("/akam/", ChallengeVendor::Akamai),
-    ];
+    let needles: &[(&str, ChallengeVendor)] = CHALLENGE_NEEDLES;
 
-    for (needle, vendor) in NEEDLES {
+    for (needle, vendor) in needles {
         let mut start = 0;
         while let Some(idx) = lower[start..].find(needle) {
             let abs = start + idx;
@@ -95,7 +96,10 @@ pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
             let window_end = lower[abs..]
                 .find(['"', '\'', '>', ' '])
                 .map_or(lower.len().min(abs + needle.len() + 32), |i| abs + i);
-            let snippet = html.get(window_start..window_end).unwrap_or("").to_string();
+            let snippet = html
+                .get(window_start..window_end)
+                .unwrap_or("")
+                .to_string();
 
             let reference = ChallengeReference {
                 vendor: *vendor,
@@ -119,10 +123,7 @@ pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
 /// Convenience: return the first detected vendor, if any.
 #[must_use]
 pub fn first_vendor(html: &str) -> Option<ChallengeVendor> {
-    scan_for_challenges(html)
-        .into_iter()
-        .next()
-        .map(|r| r.vendor)
+    scan_for_challenges(html).into_iter().next().map(|r| r.vendor)
 }
 
 #[cfg(test)]

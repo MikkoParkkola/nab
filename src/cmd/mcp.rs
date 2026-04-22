@@ -284,7 +284,7 @@ fn cmd_mcp_install_toml(
         return Ok(());
     }
 
-    let block = format!("\n[mcp_servers.nab]\ncommand = \"{binary}\"\n",);
+    let block = format!("\n[mcp_servers.nab]\ncommand = \"{binary}\"\n");
 
     let out = if existing.contains("[mcp_servers.nab]") {
         // Force mode: replace the existing block (simple heuristic —

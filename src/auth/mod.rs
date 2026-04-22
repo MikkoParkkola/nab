@@ -113,8 +113,7 @@ impl OnePasswordAuth {
         Command::new("op")
             .args(["account", "list"])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     }
 
     /// Get credential for a URL/domain.

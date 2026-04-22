@@ -194,8 +194,7 @@ impl TranscriptionBackend {
         std::process::Command::new("which")
             .arg("python3")
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     }
 }
 

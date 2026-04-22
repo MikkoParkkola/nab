@@ -304,8 +304,7 @@ pub(crate) async fn elicit_oauth_url(
         service_name,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_millis())
-            .unwrap_or(0)
+            .map_or(0, |d| d.subsec_millis())
     );
 
     let result = runtime

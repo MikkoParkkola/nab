@@ -102,7 +102,7 @@ pub fn prune_snapshots(snapshots: &mut Vec<WatchSnapshot>, max: usize) -> Vec<St
         return vec![];
     }
     // Sort newest-first so we can drain the tail.
-    snapshots.sort_by(|a, b| b.captured_at.cmp(&a.captured_at));
+    snapshots.sort_by_key(|s| std::cmp::Reverse(s.captured_at));
     let removed: Vec<String> = snapshots.drain(max..).map(|s| s.sha256).collect();
     removed
 }

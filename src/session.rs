@@ -269,9 +269,7 @@ fn nab_state_dir() -> Result<PathBuf> {
     Ok(home.join(NAB_STATE_DIR))
 }
 
-// Allow: must match the non-test signature so callers compile under both cfgs.
 #[cfg(test)]
-#[allow(clippy::unnecessary_wraps)]
 fn nab_state_dir() -> Result<PathBuf> {
     Ok(TEST_STATE_DIR.clone())
 }
@@ -530,9 +528,7 @@ fn persist_session_entry(name: &str, entry: &SessionEntry) -> Result<()> {
     persist_session_entry_in(name, entry, &state_dir)
 }
 
-// Allow: must match the non-test/non-windows signature so callers compile under all cfgs.
 #[cfg(any(test, windows))]
-#[allow(clippy::unnecessary_wraps)]
 fn persist_session_entry(_name: &str, _entry: &SessionEntry) -> Result<()> {
     Ok(())
 }
@@ -588,9 +584,7 @@ fn load_session_entry(name: &str) -> Result<Option<SessionEntry>> {
     load_session_entry_in(name, &state_dir)
 }
 
-// Allow: must match the non-test/non-windows signature so callers compile under all cfgs.
 #[cfg(any(test, windows))]
-#[allow(clippy::unnecessary_wraps)]
 fn load_session_entry(_name: &str) -> Result<Option<SessionEntry>> {
     Ok(None)
 }
@@ -662,8 +656,7 @@ fn seed_jar(jar: &SessionJar, cookie_str: &str, seed_url: Option<&str>) -> Resul
         }
 
         let set_cookie = format!("{pair}; Domain={domain}; Path={path}");
-        let Ok(cookie) = RawCookie::parse(set_cookie).map(cookie_store::RawCookie::into_owned)
-        else {
+        let Ok(cookie) = RawCookie::parse(set_cookie).map(cookie_store::RawCookie::into_owned) else {
             continue;
         };
         store.store_response_cookies(std::iter::once(cookie), &url);
