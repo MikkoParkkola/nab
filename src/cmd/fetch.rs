@@ -77,8 +77,7 @@ pub struct FetchConfig {
 /// * `Replay` — replay-mode only; fail fast if replay cannot solve it.
 /// * `Js`   — force the JS interpreter path (requires `js-dom-full`).
 /// * `Browser` — open the default browser and wait for user solve.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WafMode {
     Off,
     #[default]
@@ -121,7 +120,6 @@ impl std::str::FromStr for WafMode {
         Self::parse(s).ok_or_else(|| format!("unknown waf-mode: {s}"))
     }
 }
-
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
 pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
@@ -235,7 +233,10 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
                 nab::waf::ChallengeKind::Cloudflare => "Cloudflare",
                 nab::waf::ChallengeKind::DataDome => "DataDome",
             };
-            eprintln!("⚠️  WAF challenge detected ({vendor}), mode={}…", cfg.waf_mode.as_str());
+            eprintln!(
+                "⚠️  WAF challenge detected ({vendor}), mode={}…",
+                cfg.waf_mode.as_str()
+            );
             // Replay tier.
             if matches!(cfg.waf_mode, WafMode::Auto | WafMode::Replay) {
                 match nab::waf::solve_replay(&kind) {

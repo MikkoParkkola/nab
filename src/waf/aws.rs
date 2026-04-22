@@ -197,9 +197,7 @@ fn extract_awswaf_script_src(html: &str) -> Option<String> {
         .next()
         .map(|(i, _)| i + 1)?;
     // Expand forwards to the closing quote.
-    let close = lower[hit..]
-        .find(['"', '\''])
-        .map(|i| hit + i)?;
+    let close = lower[hit..].find(['"', '\'']).map(|i| hit + i)?;
     let raw = html.get(open..close)?.trim();
 
     // Normalise protocol-relative and relative URLs.
@@ -358,7 +356,10 @@ mod tests {
     #[test]
     fn embedded_algorithm_map_loads() {
         let map = ChallengeAlgorithmMap::embedded().expect("embedded map must parse");
-        assert!(map.get("e07e04f2bd2dac5b1ad2a4c9bda2d7d6c4b7a7c3f5d1e9a2b6f4c8d1a3e5b7c9").is_some());
+        assert!(
+            map.get("e07e04f2bd2dac5b1ad2a4c9bda2d7d6c4b7a7c3f5d1e9a2b6f4c8d1a3e5b7c9")
+                .is_some()
+        );
     }
 
     #[test]
@@ -397,7 +398,8 @@ mod tests {
             challenge_script: "https://abc.awswaf.com/x.js".into(),
             inputs_url: "https://abc.awswaf.com/inputs".into(),
             verify_url: "https://abc.awswaf.com/verify".into(),
-            algorithm_hash: "00000000000000000000000000000000000000000000000000000000ffffffff".into(),
+            algorithm_hash: "00000000000000000000000000000000000000000000000000000000ffffffff"
+                .into(),
         };
         let err = solve_replay(&ctx).expect_err("unknown algo should fail");
         assert!(matches!(err, AwsWafError::UnknownAlgorithm(_)));

@@ -91,7 +91,10 @@ fn format_mebibytes(bytes: u64) -> String {
 }
 
 fn format_percent(numerator: u64, denominator: u64) -> u64 {
-    numerator.saturating_mul(100).checked_div(denominator).unwrap_or(0)
+    numerator
+        .saturating_mul(100)
+        .checked_div(denominator)
+        .unwrap_or(0)
 }
 
 /// Read the pinned git SHA from the VERSION file. Returns `None` when absent.
@@ -133,9 +136,7 @@ pub fn install_status(model: &ModelEntry) -> Result<InstallStatus> {
         "whisper" => {
             // installed when GGUF file exists and is > 100 MB
             let path = whisper_model_path()?;
-            let ok = path
-                .metadata()
-                .is_ok_and(|m| m.len() >= 100 * 1024 * 1024);
+            let ok = path.metadata().is_ok_and(|m| m.len() >= 100 * 1024 * 1024);
             if ok {
                 Ok(InstallStatus::Installed { version: None })
             } else {

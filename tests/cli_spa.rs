@@ -18,8 +18,7 @@ fn nab() -> Command {
 
 /// Returns `true` when network integration tests are enabled.
 fn net_tests_enabled() -> bool {
-    std::env::var("NAB_NET_TESTS")
-        .map_or(true, |v| v != "0" && v.to_lowercase() != "false")
+    std::env::var("NAB_NET_TESTS").map_or(true, |v| v != "0" && v.to_lowercase() != "false")
 }
 
 // ─── Argument validation ─────────────────────────────────────────────────────

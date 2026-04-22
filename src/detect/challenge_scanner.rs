@@ -96,10 +96,7 @@ pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
             let window_end = lower[abs..]
                 .find(['"', '\'', '>', ' '])
                 .map_or(lower.len().min(abs + needle.len() + 32), |i| abs + i);
-            let snippet = html
-                .get(window_start..window_end)
-                .unwrap_or("")
-                .to_string();
+            let snippet = html.get(window_start..window_end).unwrap_or("").to_string();
 
             let reference = ChallengeReference {
                 vendor: *vendor,
@@ -123,7 +120,10 @@ pub fn scan_for_challenges(html: &str) -> Vec<ChallengeReference> {
 /// Convenience: return the first detected vendor, if any.
 #[must_use]
 pub fn first_vendor(html: &str) -> Option<ChallengeVendor> {
-    scan_for_challenges(html).into_iter().next().map(|r| r.vendor)
+    scan_for_challenges(html)
+        .into_iter()
+        .next()
+        .map(|r| r.vendor)
 }
 
 #[cfg(test)]

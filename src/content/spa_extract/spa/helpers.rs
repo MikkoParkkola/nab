@@ -84,10 +84,10 @@ pub(super) fn collect_text_from_json(value: &serde_json::Value, texts: &mut Vec<
             if s.len() >= MIN_TEXT_LEN
                 && !s.starts_with("http")
                 && !s.starts_with("urn:")
-                && !s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
-            => {
-                texts.push(s.clone());
-            }
+                && !s.chars().all(|c| c.is_ascii_hexdigit() || c == '-') =>
+        {
+            texts.push(s.clone());
+        }
         serde_json::Value::Object(map) => {
             for v in map.values() {
                 collect_text_from_json(v, texts);

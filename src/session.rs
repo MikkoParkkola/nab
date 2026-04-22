@@ -656,7 +656,8 @@ fn seed_jar(jar: &SessionJar, cookie_str: &str, seed_url: Option<&str>) -> Resul
         }
 
         let set_cookie = format!("{pair}; Domain={domain}; Path={path}");
-        let Ok(cookie) = RawCookie::parse(set_cookie).map(cookie_store::RawCookie::into_owned) else {
+        let Ok(cookie) = RawCookie::parse(set_cookie).map(cookie_store::RawCookie::into_owned)
+        else {
             continue;
         };
         store.store_response_cookies(std::iter::once(cookie), &url);
