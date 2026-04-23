@@ -66,7 +66,11 @@ impl WatchCreateTool {
             .map_err(|e| CallToolError::from_message(format!("Invalid diff_kind: {e}")))?;
 
         let opts = AddOptions {
-            selector: if self.selector.is_empty() { None } else { Some(self.selector.clone()) },
+            selector: if self.selector.is_empty() {
+                None
+            } else {
+                Some(self.selector.clone())
+            },
             interval_secs,
             options: WatchOptions {
                 diff_kind,

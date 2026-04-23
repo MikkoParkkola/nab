@@ -144,7 +144,11 @@ impl AnalyzeTool {
 
         // ── Build transcription options ────────────────────────────────────────
         let opts = TranscribeOptions {
-            language: if self.language.is_empty() { None } else { Some(self.language.clone()) },
+            language: if self.language.is_empty() {
+                None
+            } else {
+                Some(self.language.clone())
+            },
             word_timestamps: true,
             diarize: self.diarize,
             max_duration_seconds: None,
