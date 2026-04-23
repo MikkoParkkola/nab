@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP tool schemas no longer emit invalid `"nullable": true` keyword, which had blocked all Claude Code sub-agents from loading nab's tool list. Five `Option<String>` fields (`analyze.language`, `analyze.backend`, `watch_create.selector`, `watch_create.interval`, `watch_create.diff_kind`) converted to `String` with `#[serde(default)]` and empty-string sentinel. API semantics unchanged — omitted field still means "use default". Closes [#61](https://github.com/MikkoParkkola/nab/issues/61).
+
 ## [0.8.1] - 2026-04-16
 
 ### Changed
