@@ -67,8 +67,10 @@ pub struct AnalyzeTool {
     /// When omitted the backend performs automatic language detection.
     /// Providing a hint avoids the detection step and may improve accuracy for
     /// short clips.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
+    ///
+    /// Omit (or pass empty string) for automatic detection.
+    #[serde(default)]
+    pub language: String,
 
     /// Enable speaker diarization.
     ///
@@ -83,8 +85,10 @@ pub struct AnalyzeTool {
     /// Omit for automatic selection (recommended). Accepted values:
     /// `"fluidaudio"` (macOS arm64 only), `"sherpa-onnx"` (Phase 3),
     /// `"whisper-rs"` (Phase 3).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub backend: Option<String>,
+    ///
+    /// Pass empty string for automatic selection (default).
+    #[serde(default)]
+    pub backend: String,
 
     /// Enable active reading — live reference lookup during transcription.
     ///
@@ -140,7 +144,7 @@ impl AnalyzeTool {
 
         // ── Build transcription options ────────────────────────────────────────
         let opts = TranscribeOptions {
-            language: self.language.clone(),
+            language: if self.language.is_empty() { None } else { Some(self.language.clone()) },
             word_timestamps: true,
             diarize: self.diarize,
             max_duration_seconds: None,

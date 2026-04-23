@@ -44,27 +44,29 @@ pub fn get_watch_manager() -> Arc<WatchManager> {
 pub struct WatchCreateTool {
     /// URL to watch.
     pub url: String,
-    /// Optional CSS selector — only the matched element is compared.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selector: Option<String>,
-    /// Polling interval as a duration string: `30s`, `5m`, `1h`, `24h` (default: `1h`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub interval: Option<String>,
-    /// Diff algorithm: `text` | `semantic` | `dom` (default: `text`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diff_kind: Option<String>,
+    /// Optional CSS selector — only the matched element is compared. Empty string = whole page.
+    #[serde(default)]
+    pub selector: String,
+    /// Polling interval as a duration string: `30s`, `5m`, `1h`, `24h`. Empty = default (`1h`).
+    #[serde(default)]
+    pub interval: String,
+    /// Diff algorithm: `text` | `semantic` | `dom`. Empty = default (`text`).
+    #[serde(default)]
+    pub diff_kind: String,
 }
 
 impl WatchCreateTool {
     pub async fn run(self) -> Result<CallToolResult, CallToolError> {
-        let interval_secs = parse_interval(self.interval.as_deref())
+        let interval_opt = (!self.interval.is_empty()).then_some(self.interval.as_str());
+        let interval_secs = parse_interval(interval_opt)
             .map_err(|e| CallToolError::from_message(format!("Invalid interval: {e}")))?;
 
-        let diff_kind = parse_diff_kind(self.diff_kind.as_deref())
+        let diff_kind_opt = (!self.diff_kind.is_empty()).then_some(self.diff_kind.as_str());
+        let diff_kind = parse_diff_kind(diff_kind_opt)
             .map_err(|e| CallToolError::from_message(format!("Invalid diff_kind: {e}")))?;
 
         let opts = AddOptions {
-            selector: self.selector.clone(),
+            selector: if self.selector.is_empty() { None } else { Some(self.selector.clone()) },
             interval_secs,
             options: WatchOptions {
                 diff_kind,
@@ -89,11 +91,11 @@ impl WatchCreateTool {
              Subscribe with `resources/subscribe` and URI `nab://watch/{id}` to receive \
              `notifications/resources/updated` when content changes.",
             url = self.url,
-            selector = self
-                .selector
-                .as_deref()
-                .map(|s| format!("- **Selector**: `{s}`\n"))
-                .unwrap_or_default(),
+            selector = if self.selector.is_empty() {
+                String::new()
+            } else {
+                format!("- **Selector**: `{}`\n", self.selector)
+            },
         );
 
         Ok(CallToolResult::text_content(vec![TextContent::from(text)]))
