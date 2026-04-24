@@ -518,8 +518,11 @@ fn tool_annotations(name: &str) -> ToolAnnotations {
         // analyze reads a local file; result is deterministic for the same input
         "analyze" => (true, false, true, Some(false)),
         // watch_remove deletes a watch (state change, destructive)
-        "watch_remove" => (false, true, true, None),
-        _ => (true, false, true, None), // fetch, fetch_batch, validate, fingerprint, auth_lookup, benchmark
+        "watch_remove" => (false, true, true, Some(false)),
+        "watch_list" => (true, false, true, Some(false)),
+        "fetch" | "fetch_batch" | "benchmark" => (true, false, true, Some(true)),
+        "auth_lookup" | "fingerprint" | "validate" => (true, false, true, Some(false)),
+        _ => (false, true, false, Some(true)),
     };
     ToolAnnotations {
         read_only_hint: Some(read_only),
