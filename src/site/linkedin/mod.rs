@@ -31,6 +31,8 @@ pub mod helpers;
 pub(super) mod oembed;
 pub(super) mod types;
 pub mod url;
+#[cfg(feature = "impersonate")]
+pub(super) mod voyager;
 
 pub use helpers::{extract_csrf_token, extract_username_from_url};
 #[cfg(feature = "impersonate")]

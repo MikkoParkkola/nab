@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **LinkedIn HTTP 999 bot-detection bypass restored** (`src/impersonate_client.rs`): Chrome 137 emulation (was Chrome 136), and stopped overriding `Accept` / `Accept-Language` headers — `wreq-util`'s Chrome emulation already sets the canonical Chrome values for those, and our shorter overrides were creating a TLS-vs-header fingerprint mismatch that LinkedIn was rejecting with HTTP 999. Added top-level-navigation hints (`upgrade-insecure-requests: 1`, `sec-fetch-user: ?1`, `cache-control: max-age=0`) that real Chrome top-level navigations always send. Authenticated LinkedIn fetches succeed again with valid browser cookies. Activity-feed extraction (the parser layer) is tracked separately.
+- **LinkedIn HTTP 999 bot-detection bypass restored** (`src/impersonate_client.rs`): Chrome 137 emulation (was Chrome 136), and stopped overriding `Accept` / `Accept-Language` headers — `wreq-util`'s Chrome emulation already sets the canonical Chrome values for those, and our shorter overrides were creating a TLS-vs-header fingerprint mismatch that LinkedIn was rejecting with HTTP 999. Added top-level-navigation hints (`upgrade-insecure-requests: 1`, `sec-fetch-user: ?1`, `cache-control: max-age=0`) that real Chrome top-level navigations always send. Authenticated LinkedIn fetches succeed again with valid browser cookies.
+- **`--raw-html` bypasses site routers** (`src/cmd/fetch.rs`): the LinkedIn / GitHub / Reddit / etc. site providers always rewrite the response into structured markdown; that conflicts with the explicit user request for wire HTML. `--raw-html` now skips the site router entirely so the generic fetch path emits the unmodified HTML body.
+
+### Added
+
+- **`src/site/linkedin/voyager.rs`** — Voyager API client scaffolding for `LinkedIn` activity feeds. Wires `extract_csrf_token` (from `JSESSIONID` cookie) and `parse_voyager_activity` (already in helpers) plus `VoyagerActivityResponse` (already in types) into an actual XHR path. Step 1 (resolve `/in/{handle}` → profile URN via `voyager/api/identity/dash/profiles`) is verified working. Step 2 (fetch share feed) currently calls the historical REST endpoints; in 2026 LinkedIn answered them with 400/404 because activity feeds moved to a GraphQL endpoint whose `queryId` hash rotates per release. The module ships auth + URN resolution pieces; `queryId` discovery from lazy JS chunks is the next step (tracked in MIK-3059).
 
 ## [0.10.1] - 2026-04-25
 

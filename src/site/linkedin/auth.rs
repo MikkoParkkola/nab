@@ -33,6 +33,22 @@ pub(super) async fn fetch_authenticated(
     cookies: &str,
     kind: LinkedInUrlKind,
 ) -> Result<SiteContent> {
+    // Activity feeds are not in the SSR HTML — `LinkedIn` loads them
+    // client-side from `/voyager/api/feed/updatesV2`. Try that first; fall
+    // back to SSR scraping (which still surfaces profile chrome) only if
+    // Voyager declines to return posts.
+    if matches!(kind, LinkedInUrlKind::Activity) {
+        match super::voyager::fetch_activity_via_voyager(url, cookies).await {
+            Ok(Some(content)) => return Ok(content),
+            Ok(None) => {
+                tracing::debug!("Voyager returned no posts for {}; falling back to SSR", url);
+            }
+            Err(e) => {
+                tracing::warn!("Voyager activity fetch failed for {}: {}", url, e);
+            }
+        }
+    }
+
     fetch_authenticated_html(url, cookies, kind).await
 }
 

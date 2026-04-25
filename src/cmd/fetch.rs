@@ -162,16 +162,23 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         }
     }
 
-    let site_router = nab::site::SiteRouter::new();
-    let cookie_opt = non_empty(&cookie_header);
-    if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
-        output_body(
-            &site_content.markdown,
-            cfg.output_file.as_deref(),
-            cfg.links,
-            cfg.max_body,
-        )?;
-        return Ok(());
+    // Site providers produce structured markdown, which is incompatible with
+    // --raw-html (the user is asking for the wire HTML). Skip the site router
+    // entirely when raw HTML is requested so that the generic fetch path runs
+    // and emits the unmodified HTML body. Cookies + impersonation still apply
+    // via the lower-level fetch_safe path.
+    if !cfg.raw_html {
+        let site_router = nab::site::SiteRouter::new();
+        let cookie_opt = non_empty(&cookie_header);
+        if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
+            output_body(
+                &site_content.markdown,
+                cfg.output_file.as_deref(),
+                cfg.links,
+                cfg.max_body,
+            )?;
+            return Ok(());
+        }
     }
 
     let markdown = !cfg.raw_html;
