@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-25
+
+### Added
+
+- **Secure Ingestion guard** (`nab::security::ingestion_guard`, MIK-3035): public Rust API for detecting and stripping machine-targeted markup before HTML reaches an LLM agent. Five detector kinds:
+  - AI-addressed HTML comments (e.g. `<!-- Machine Intelligence Notice: ... -->`)
+  - Machine-only attribute payloads (`data-dim`, `data-ai`, `data-mcp`, `data-agent`, `data-machine`)
+  - Machine-class elements (`<span class="m" ...>`)
+  - `display:none` text containers (severity `Block`)
+  - `aria-hidden="true"` text containers (severity `Block`)
+- `detect(html)` returns a `DetectionReport` with per-kind counts and excerpt samples; `sanitize(html)` returns `(cleaned, report)` with conservative strip rules (visible text preserved, machine-only attributes stripped, hidden text removed).
+- 11 unit tests including a golden-corpus regression seeded from the verbatim `<!-- Machine Intelligence Notice ... -->` block on `ruachtov.ai/about.html` (fetched 2026-04-25).
+- `examples/scan_html.rs` — scan any HTML file: `cargo run --example scan_html -- page.html`. Pass `--sanitize` to emit cleaned HTML to stdout.
+- Live verification at release time: nab detects 8 / 45 / 48 machine-targeted markup elements across `ruachtov.ai/about.html`, `/blog/semantic-web.html`, and `/blog/dimensional-markup.html` respectively.
+
+This module is licensed under PolyForm Noncommercial 1.0.0 per the v0.9.0 dual-licensing decision (Path C).
+
 ## [0.9.0] - 2026-04-25
 
 ### Changed

@@ -16,16 +16,13 @@ are licensed under the **PolyForm Noncommercial** license (version 1.0.0). All o
 
 ## Enterprise Edition coverage (planned, per ADR-001 / MIK-3036)
 
-### Existing premium-value modules to be designated EE:
+### EE-designated paths (active):
 
 - `src/auth/` — 1Password, WebAuthn, cookie injection (premium authenticated reach)
 - `src/fingerprint/` — fingerprint spoofing (anti-bot, WAF evasion)
 - `src/waf/` — WAF evasion patterns
 - `src/site/` — per-site provider integrations (proprietary domain knowledge)
-
-### Planned: Secure Ingestion EE module (per MIK-3035, deferred to v0.10):
-
-- `src/security/` — prompt-injection and machine-targeted-directive stripping, provenance metadata, domain reputation tracking, two-tier output mode. Not in v0.9.0; ships in a follow-up release with golden-corpus tests and benchmarks.
+- `src/security/` — Secure Ingestion guard (machine-targeted directive detection + sanitisation, provenance reporting). Shipped in v0.10.0. Detects AI-addressed HTML comments, machine-only `data-*` attribute payloads, machine-class elements, `display:none` text, and `aria-hidden="true"` text. See `examples/scan_html.rs`.
 
 ## Summary of PolyForm Noncommercial terms
 
