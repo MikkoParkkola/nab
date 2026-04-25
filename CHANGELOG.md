@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **LinkedIn HTTP 999 bot-detection bypass restored** (`src/impersonate_client.rs`): Chrome 137 emulation (was Chrome 136), and stopped overriding `Accept` / `Accept-Language` headers — `wreq-util`'s Chrome emulation already sets the canonical Chrome values for those, and our shorter overrides were creating a TLS-vs-header fingerprint mismatch that LinkedIn was rejecting with HTTP 999. Added top-level-navigation hints (`upgrade-insecure-requests: 1`, `sec-fetch-user: ?1`, `cache-control: max-age=0`) that real Chrome top-level navigations always send. Authenticated LinkedIn fetches succeed again with valid browser cookies. Activity-feed extraction (the parser layer) is tracked separately.
+
 ## [0.10.1] - 2026-04-25
 
 ### Changed

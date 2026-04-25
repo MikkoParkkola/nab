@@ -34,10 +34,11 @@ pub fn needs_impersonation(url: &str) -> bool {
 
 /// Select the browser emulation profile for the given URL.
 ///
-/// Chrome 136 is chosen as the default: highest version available = highest
-/// probability of matching `LinkedIn`'s browser whitelist.
+/// Chrome 137 is chosen as the default: highest version available in
+/// `wreq-util` 2.2.6 = highest probability of matching `LinkedIn`'s browser
+/// whitelist. Older profiles (e.g. Chrome 136) get rejected with HTTP 999.
 fn select_emulation(_url: &str) -> Emulation {
-    Emulation::Chrome136
+    Emulation::Chrome137
 }
 
 /// Response from an impersonated fetch.
@@ -72,13 +73,20 @@ pub async fn fetch_impersonated(
         .build()
         .context("Failed to build impersonating HTTP client")?;
 
+    // IMPORTANT: do NOT override Accept / Accept-Language / sec-ch-ua / User-Agent.
+    // wreq's Chrome emulation already sets the canonical Chrome 137 versions of
+    // these. Overriding them here creates a header/TLS-fingerprint mismatch that
+    // LinkedIn (and others) reject with HTTP 999.
+    //
+    // We only ADD top-level-navigation hints that wreq does not set:
+    //   - Upgrade-Insecure-Requests: every Chrome top-level nav
+    //   - Sec-Fetch-User: ?1                — user-initiated nav
+    //   - Cache-Control / Pragma           — cold-load nav (typed URL)
     let mut request = client
         .get(url)
-        .header(
-            "Accept",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        )
-        .header("Accept-Language", "en-US,en;q=0.9");
+        .header("upgrade-insecure-requests", "1")
+        .header("sec-fetch-user", "?1")
+        .header("cache-control", "max-age=0");
 
     if let Some(cookie_val) = cookies {
         request = request.header("Cookie", cookie_val);
@@ -138,8 +146,8 @@ mod tests {
     }
 
     #[test]
-    fn selects_chrome_136() {
+    fn selects_chrome_137() {
         let emulation = select_emulation("https://www.linkedin.com/in/user");
-        assert_eq!(emulation, Emulation::Chrome136);
+        assert_eq!(emulation, Emulation::Chrome137);
     }
 }
