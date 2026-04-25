@@ -63,9 +63,15 @@ User installs a small Manifest V3 extension. Extension exposes `localhost:NNNN` 
 - One-time install, signed.
 - Cleanest pure-architecture answer to behavioural fingerprinting. No external browser launched by nab.
 
-## Killed track — B (static GraphQL queryId extraction)
+## Killed track REVIVED — B (static GraphQL queryId extraction)
 
-LinkedIn's GraphQL queryId is `voyagerFeedDashProfileUpdates.<hash>`. Original idea: walk the webpack chunk graph, parse the chunk manifest, fetch route chunks, grep for the operation name. Result: chunks are not reachable from SSR HTML via BFS in any deterministic way; LinkedIn rotates queryIds every ~2-3 weeks; maintenance cost outweighs value. Dropped.
+Original verdict (2026-04-25): killed because "chunks not reachable from SSR via BFS". That framing was wrong. **Re-tested 2026-04-26 and it works.**
+
+The 14 `<script src="https://static.licdn.com/aero-v1/sc/h/...">` chunks loaded by `/in/{handle}/recent-activity/all/` are reachable via direct GET (no auth on the static CDN). Downloading them and grepping for `voyagerFeedDashProfileUpdates\.[a-f0-9]+` surfaces 5 queryId hashes today; all 5 hit the GraphQL endpoint with HTTP 200 and return the typed activity-feed response (300+ KB each).
+
+Wired into `src/site/linkedin/voyager.rs` ahead of the historical REST fallbacks. End-to-end test confirmed: `nab fetch https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/ --cookies brave` now returns the live activity feed as markdown — no browser, no DevTools capture.
+
+When all 5 hashes start failing simultaneously (LinkedIn rotates queryIds every ~2-3 weeks), re-discover by repeating the chunk-grep procedure. A future iteration auto-discovers on demand and caches.
 
 ## Why behavioural fingerprinting beats feature spoofing
 

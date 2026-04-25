@@ -119,16 +119,41 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
     bail!("could not extract profile URN for username `{username}`")
 }
 
+/// `voyagerFeedDashProfileUpdates` GraphQL queryId hashes discovered in the
+/// `/in/{handle}/recent-activity/all/` SPA bundle on 2026-04-26. `LinkedIn`
+/// ships several variants per release (different filters / pagination),
+/// so we try each in order and return the first 2xx with a non-empty body.
+///
+/// **Refresh**: when all five start returning HTTP 400 ("query not found"),
+/// re-discover by visiting the activity URL, extracting the bundle script
+/// URLs from `<script src="https://static.licdn.com/aero-v1/sc/h/…">`, and
+/// grepping each chunk for `voyagerFeedDashProfileUpdates\.[a-f0-9]+`.
+const FEED_QUERY_IDS: &[&str] = &[
+    "8f05a4e5ad12d9cb2b56eaa22afbcab9",
+    "7f16f6612fc18a3623688ca7a74d7696",
+    "3a42619bc23360ce8c29e737277e2ea9",
+    "4af00b28d60ed0f1488018948daad822",
+    "11595bab074f70dab009cecc3a585768",
+];
+
 /// Fetch the member share feed for a given profile URN.
 async fn fetch_member_share_feed(profile_urn: &str, cookies: &str, csrf: &str) -> Result<String> {
     let encoded_urn = urlencoding::encode(profile_urn);
 
-    // `LinkedIn` rotates which endpoint is canonical for the activity feed.
-    // Try a small set of historically-shipped paths in order; return the
-    // first one that returns 2xx with a non-empty JSON body. The shapes are
-    // similar enough that `render_voyager_body` handles all of them via the
-    // typed parser → recursive commentary scan fallback.
-    let candidates = [
+    // Try the modern GraphQL endpoint first (works as of 2026-04-26), then
+    // fall back to historical REST endpoints. Returns the first 2xx with a
+    // non-empty body; render_voyager_body handles all shapes.
+    let mut candidates: Vec<String> = FEED_QUERY_IDS
+        .iter()
+        .map(|hash| {
+            format!(
+                "https://www.linkedin.com/voyager/api/graphql\
+                 ?variables=(profileUrn:{encoded_urn},count:{ACTIVITY_COUNT},start:0)\
+                 &queryId=voyagerFeedDashProfileUpdates.{hash}"
+            )
+        })
+        .collect();
+    candidates.extend([
         // Legacy v1 — still answers in 2025/2026 for many handles.
         format!(
             "https://www.linkedin.com/voyager/api/feed/updates\
@@ -150,7 +175,7 @@ async fn fetch_member_share_feed(profile_urn: &str, cookies: &str, csrf: &str) -
             "https://www.linkedin.com/voyager/api/identity/profileView\
              ?id={encoded_urn}"
         ),
-    ];
+    ]);
 
     let headers = voyager_headers(csrf);
     let mut last_err: Option<String> = None;
