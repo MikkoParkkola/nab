@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! `LinkedIn` content extraction.
 //!
 //! Supports two extraction paths:

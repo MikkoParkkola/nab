@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Tests for `LinkedIn` extraction — URL classification, helpers, and parsing.
 
 use super::LinkedInProvider;

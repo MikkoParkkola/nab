@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Pure helper functions for the rule-based provider.
 //!
 //! Extracted from `provider.rs` to keep the main module focused on the

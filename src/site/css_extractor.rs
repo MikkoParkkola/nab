@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! CSS-selector-based site content extractor.
 //!
 //! Implements [`SiteProvider`] using configurable CSS selectors so users can

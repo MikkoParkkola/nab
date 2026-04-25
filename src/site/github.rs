@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! GitHub repository README extraction via GitHub API.
 //!
 //! Uses the public GitHub REST API to extract repository README content

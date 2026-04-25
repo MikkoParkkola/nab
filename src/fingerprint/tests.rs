@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Additional unit tests for fingerprint module
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! `LinkedIn` oEmbed fallback extraction.
 //!
 //! Provides limited data (title, author, thumbnail) for public posts, pulse

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! AES-128-CBC cookie decryption and PBKDF2 key derivation for Chromium browsers.
 //!
 //! # macOS Cookie Decryption

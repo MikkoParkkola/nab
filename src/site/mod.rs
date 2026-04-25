@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Site-specific content extraction.
 //!
 //! Provides specialized extractors for platforms where direct API access

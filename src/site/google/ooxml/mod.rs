@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! OOXML (Office Open XML) parsing for Google Workspace exports.
 //!
 //! Handles `.docx`, `.xlsx`, and `.pptx` comment/suggestion extraction,

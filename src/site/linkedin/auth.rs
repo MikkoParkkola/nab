@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Authenticated `LinkedIn` extraction via TLS fingerprint impersonation.
 //!
 //! All functions in this module are gated behind `#[cfg(feature = "impersonate")]`.

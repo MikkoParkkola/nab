@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Browser cookie extraction and credential retrieval.
 //!
 //! Provides:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Google Workspace content extraction (Docs, Sheets, Slides).
 //!
 //! Exports documents via the Google export API using browser cookies for

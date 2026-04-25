@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Hacker News content extraction via Algolia API and Firebase REST API.
 //!
 //! Uses the official Algolia HN Search API for individual item pages,

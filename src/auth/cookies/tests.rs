@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Tests for browser cookie extraction, crypto, and DB parsing.
 
 use super::{CookieSource, crypto::*, db::*};

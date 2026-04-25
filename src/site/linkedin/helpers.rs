@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Shared utility helpers for `LinkedIn` extraction.
 
 #[cfg(feature = "impersonate")]

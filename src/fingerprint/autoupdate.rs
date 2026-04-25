@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 // Browser version auto-updater
 // Fetches latest versions from official APIs and caches them locally
 

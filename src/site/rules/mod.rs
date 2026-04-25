@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Config-driven site rule engine.
 //!
 //! Loads TOML rule files from two sources (in priority order):

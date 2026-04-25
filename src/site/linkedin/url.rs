@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! URL classification for `LinkedIn` pages.
 
 /// `LinkedIn` URL content type.

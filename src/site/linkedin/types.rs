@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! `LinkedIn` data types: Voyager API response shapes and oEmbed.
 
 use serde::Deserialize;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Web Application Firewall (WAF) challenge handling.
 //!
 //! This module groups per-vendor challenge solvers behind a small

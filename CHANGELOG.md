@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-25
+
+### Changed
+
+- **Dual licensing introduced** (Path C, MIK-3035 / MIK-3036): designated Enterprise Edition modules — `src/auth/`, `src/fingerprint/`, `src/waf/`, `src/site/` — are now licensed under PolyForm Noncommercial 1.0.0; everything else remains MIT. See [LICENSE-EE.md](LICENSE-EE.md) and the License section of the README for details.
+- Every EE-designated source file now carries an `// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0` header.
+- Releases prior to v0.9.0 remain entirely MIT and stay MIT forever; the new license terms apply only to commits in v0.9.0 and later that touch EE-designated paths.
+
 ### Fixed
 
 - MCP tool schemas no longer emit invalid `"nullable": true` keyword, which had blocked all Claude Code sub-agents from loading nab's tool list. Five `Option<String>` fields (`analyze.language`, `analyze.backend`, `watch_create.selector`, `watch_create.interval`, `watch_create.diff_kind`) converted to `String` with `#[serde(default)]` and empty-string sentinel. API semantics unchanged — omitted field still means "use default". Closes [#61](https://github.com/MikkoParkkola/nab/issues/61).

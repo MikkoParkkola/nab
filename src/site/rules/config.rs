@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! TOML deserialization types for site rule configuration.
 //!
 //! The schema supports `type = "api"` rules that specify:

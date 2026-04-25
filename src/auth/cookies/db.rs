@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! `SQLite` cookie database helpers for Chromium-based browsers.
 //!
 //! Handles copying the live database to a temp location, querying cookie rows,

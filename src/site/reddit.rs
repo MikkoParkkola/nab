@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Reddit content extraction via Reddit JSON API.
 //!
 //! Reddit provides a JSON API by appending `.json` to any URL.

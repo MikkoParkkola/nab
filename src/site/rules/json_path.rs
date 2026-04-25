@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Simple JSON dot-path extraction from [`serde_json::Value`].
 //!
 //! # Syntax

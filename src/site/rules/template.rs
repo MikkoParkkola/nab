@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! Markdown template rendering for site rules.
 //!
 //! Supports three placeholder forms:

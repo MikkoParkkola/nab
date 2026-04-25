@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! AWS WAF challenge replay solver.
 //!
 //! AWS WAF protects origins by serving a small HTML interstitial that

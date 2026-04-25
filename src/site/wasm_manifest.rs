@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! WASM provider manifest: on-disk format and loading logic.
 //!
 //! Each installed WASM provider lives in:

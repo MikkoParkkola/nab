@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 //! WASM-backed site content extractors — raw ABI and Component Model.
 //!
 //! Two provider implementations share the [`SiteProvider`] interface:

@@ -445,4 +445,23 @@ nab is part of a suite of MCP tools:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+nab is **dual-licensed** as of v0.9.0:
+
+| Scope | License | File |
+|-------|---------|------|
+| Core fetch / analyze / watch / MCP server / public web fetching | MIT | [LICENSE](LICENSE) |
+| Designated Enterprise Edition modules (authenticated reach + anti-bot) | PolyForm Noncommercial 1.0.0 | [LICENSE-EE.md](LICENSE-EE.md) |
+
+EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`):
+
+- `src/auth/` — 1Password, WebAuthn, and browser-cookie injection (premium authenticated reach)
+- `src/fingerprint/` — browser fingerprint spoofing (anti-bot evasion)
+- `src/waf/` — WAF challenge handling
+- `src/site/` — per-site provider integrations (proprietary domain knowledge)
+
+**What this means in practice**:
+- Free for noncommercial use, modification, redistribution.
+- Commercial use of EE modules requires a separate commercial license — contact `mikko.parkkola@iki.fi`.
+- All releases prior to v0.9.0 remain entirely MIT and stay MIT forever.
+
+A Secure Ingestion EE module (machine-targeted-directive stripping with provenance metadata) is planned for a follow-up release; see [LICENSE-EE.md](LICENSE-EE.md) for the planned scope.
