@@ -543,6 +543,14 @@ enum Commands {
         quiet: bool,
     },
 
+    /// LinkedIn-specific tooling. Currently: `nab linkedin export`
+    /// initiates and downloads the official LinkedIn data archive
+    /// (Settings → Data Privacy → Get a copy of your data).
+    Linkedin {
+        #[command(subcommand)]
+        action: LinkedinAction,
+    },
+
     /// MCP server management (serve, install)
     ///
     /// `nab mcp` starts the MCP server on stdio (same as `nab-mcp`).
@@ -559,6 +567,70 @@ enum Commands {
         /// Allowed CORS origin for HTTP mode.
         #[arg(long, value_name = "ORIGIN")]
         http_allow_origin: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum LinkedinAction {
+    /// Request and download a LinkedIn data archive.
+    ///
+    /// LinkedIn lets every user request a ZIP of their own data
+    /// (Settings → Data Privacy → "Get a copy of your data"). FAST archives
+    /// (connections + account history) take ~10 minutes; FULL archives
+    /// (posts, articles, messages, reactions) take up to 24 hours.
+    ///
+    ///   nab linkedin export --kind fast --wait
+    ///   nab linkedin export --kind full           # request only, exit
+    ///   nab linkedin export --poll-only --wait    # resume polling later
+    Export {
+        /// Browser to read cookies from (auto, brave, chrome, firefox, safari, edge).
+        #[arg(short, long, default_value = "auto")]
+        cookies: String,
+
+        /// Archive kind: `fast` (~10 min, contacts/history) or `full` (~24 h, all content).
+        #[arg(long, default_value = "full", value_parser = ["fast", "full"])]
+        kind: String,
+
+        /// Where to write the ZIP. Defaults to `~/Downloads/linkedin-export-<ts>.zip`.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Block until the archive is ready and download it. Otherwise, just
+        /// fire the request and exit.
+        #[arg(long)]
+        wait: bool,
+
+        /// Skip the request POST. Useful when the request was fired earlier
+        /// (web UI or prior `--no-wait` invocation) and you only want to poll.
+        #[arg(long)]
+        poll_only: bool,
+
+        /// Initial poll interval in seconds (exponential backoff up to --poll-max).
+        #[arg(long, default_value = "60")]
+        poll_base: u64,
+
+        /// Cap on the polling interval, in seconds.
+        #[arg(long, default_value = "600")]
+        poll_max: u64,
+
+        /// Total wallclock cap in seconds. Default 26 h.
+        #[arg(long, default_value = "93600")]
+        max_wait: u64,
+
+        /// Override the status-page URL (escape hatch when LinkedIn rotates the path).
+        #[arg(long)]
+        form_url: Option<String>,
+
+        /// Override the JSON request URL (escape hatch when LinkedIn rotates
+        /// the internal mysettings-api path).
+        #[arg(long)]
+        request_url: Option<String>,
+
+        /// Override the JSON body (escape hatch when the field name rotates).
+        /// Capture from Chrome DevTools → Network → click the "Get a copy of
+        /// your data" button → Request Payload.
+        #[arg(long)]
+        body_override: Option<String>,
     },
 }
 
@@ -1063,6 +1135,40 @@ async fn main() -> Result<()> {
             Commands::Upgrade { dry_run, quiet } => {
                 cmd::cmd_upgrade(&cmd::UpgradeConfig { dry_run, quiet })?;
             }
+            Commands::Linkedin { action } => match action {
+                LinkedinAction::Export {
+                    cookies,
+                    kind,
+                    output,
+                    wait,
+                    poll_only,
+                    poll_base,
+                    poll_max,
+                    max_wait,
+                    form_url,
+                    request_url,
+                    body_override,
+                } => {
+                    let kind_arg = match kind.as_str() {
+                        "fast" => cmd::ArchiveKindArg::Fast,
+                        _ => cmd::ArchiveKindArg::Full,
+                    };
+                    cmd::cmd_linkedin_export(cmd::LinkedinExportConfig {
+                        cookies,
+                        kind: kind_arg,
+                        output,
+                        wait,
+                        poll_only,
+                        poll_base_secs: poll_base,
+                        poll_max_secs: poll_max,
+                        max_wait_secs: max_wait,
+                        form_url,
+                        request_url,
+                        body_override,
+                    })
+                    .await?;
+                }
+            },
             Commands::Mcp {
                 action,
                 http,

@@ -83,7 +83,7 @@ Fresh `--user-data-dir`. No scroll/click history. No warmup browsing. Unfamiliar
 
 ## Build order
 
-1. F — `nab linkedin export` subcommand.
+1. F — `nab linkedin export` subcommand. ✅ **Infrastructure shipped 2026-04-26**. CLI, csrf extraction, cookies resolution, JSON POST + GET via Chrome-137 impersonation, exponential-backoff polling state machine, ZIP download path, 12 unit tests. Endpoint pinned to `/mysettings-api/settingsApiDataExport/` (discovered 2026-04-25 by grepping the SPA bundle). The current default JSON body is rejected with HTTP 400; the field name has rotated. Pin via Chrome DevTools → `--body-override` flag. Block: live body capture; the rest of the pipeline is stable.
 2. A — fingerprint-clone wired into `impersonate_client.rs`.
 3. C — MV3 extension + localhost bridge.
 

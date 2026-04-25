@@ -27,6 +27,8 @@
 
 #[cfg(feature = "impersonate")]
 pub(super) mod auth;
+#[cfg(feature = "impersonate")]
+pub mod export;
 pub mod helpers;
 pub(super) mod oembed;
 pub(super) mod types;

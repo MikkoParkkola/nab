@@ -48,9 +48,16 @@ pub struct ImpersonatedResponse {
     pub body: String,
 }
 
+/// HTTP method for impersonated requests.
+#[derive(Debug, Clone, Copy)]
+pub enum ImpersonatedMethod {
+    Get,
+    Post,
+}
+
 /// Fetch a URL using TLS fingerprint impersonation.
 ///
-/// Builds a fresh `rquest` client with Chrome 136 TLS fingerprint.
+/// Builds a fresh `rquest` client with Chrome 137 TLS fingerprint.
 /// The client sets its own User-Agent and Sec-CH-UA headers matching
 /// the TLS profile — do NOT override these.
 ///
@@ -59,6 +66,20 @@ pub async fn fetch_impersonated(
     url: &str,
     cookies: Option<&str>,
     extra_headers: Option<&[(String, String)]>,
+) -> Result<ImpersonatedResponse> {
+    request_impersonated(ImpersonatedMethod::Get, url, cookies, extra_headers, None).await
+}
+
+/// Send a request using TLS fingerprint impersonation. GET or POST.
+///
+/// `body` is only used for POST. Pass `None` for GET. Caller is responsible
+/// for setting `content-type` in `extra_headers` when sending POST bodies.
+pub async fn request_impersonated(
+    method: ImpersonatedMethod,
+    url: &str,
+    cookies: Option<&str>,
+    extra_headers: Option<&[(String, String)]>,
+    body: Option<Vec<u8>>,
 ) -> Result<ImpersonatedResponse> {
     let emulation = select_emulation(url);
 
@@ -82,11 +103,24 @@ pub async fn fetch_impersonated(
     //   - Upgrade-Insecure-Requests: every Chrome top-level nav
     //   - Sec-Fetch-User: ?1                — user-initiated nav
     //   - Cache-Control / Pragma           — cold-load nav (typed URL)
-    let mut request = client
-        .get(url)
-        .header("upgrade-insecure-requests", "1")
-        .header("sec-fetch-user", "?1")
-        .header("cache-control", "max-age=0");
+    let mut request = match method {
+        ImpersonatedMethod::Get => client
+            .get(url)
+            .header("upgrade-insecure-requests", "1")
+            .header("sec-fetch-user", "?1")
+            .header("cache-control", "max-age=0"),
+        ImpersonatedMethod::Post => {
+            let mut req = client
+                .post(url)
+                .header("upgrade-insecure-requests", "1")
+                .header("sec-fetch-user", "?1")
+                .header("cache-control", "no-cache");
+            if let Some(payload) = body {
+                req = req.body(payload);
+            }
+            req
+        }
+    };
 
     if let Some(cookie_val) = cookies {
         request = request.header("Cookie", cookie_val);

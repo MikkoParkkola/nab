@@ -8,6 +8,7 @@ pub mod export_rules;
 pub mod fetch;
 pub mod fetch_batch;
 pub mod fingerprint;
+pub mod linkedin;
 pub mod login;
 pub mod mcp;
 pub mod models;
@@ -30,6 +31,7 @@ pub use cookies::cmd_cookies;
 pub use export_rules::{cmd_export_rules, cmd_list_rules};
 pub use fetch::{FetchConfig, cmd_fetch};
 pub use fingerprint::cmd_fingerprint;
+pub use linkedin::{ArchiveKindArg, LinkedinExportConfig, cmd_linkedin_export};
 pub use login::{LoginConfig, cmd_login};
 pub use mcp::{
     InstallConfig as McpInstallConfig, ServeConfig as McpServeConfig, cmd_mcp_install,
