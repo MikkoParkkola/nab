@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-//! LinkedIn data-export (Track F).
+//! `LinkedIn` data-export (Track F).
 //!
-//! LinkedIn lets every user request a ZIP archive of their own data via
+//! `LinkedIn` lets every user request a ZIP archive of their own data via
 //! Settings → Data Privacy → "Get a copy of your data". The same surface is
 //! reachable as an SSR form at `https://www.linkedin.com/psettings/member-data`.
 //! This module automates the full lifecycle:
@@ -16,7 +16,7 @@
 //!
 //! The form-based path is chosen over the JSON XHR endpoints
 //! (`/voyager/api/identity/dataExports`) because the form has been the
-//! user-visible flow since 2018; LinkedIn rotates queryIds and JSON shapes
+//! user-visible flow since 2018; `LinkedIn` rotates `queryIds` and JSON shapes
 //! every ~2-3 weeks, but the form action URL is stable.
 //!
 //! Confidence levels (per nab convention):
@@ -25,7 +25,7 @@
 //!   linkedin-api Python package convention. The endpoint accepts at minimum
 //!   `csrfToken` + `archiveType` form fields.
 //! - A (assumed): exact "ready" marker text in HTML response. Matched
-//!   defensively (multiple substrings) so a copy-edit on LinkedIn's side does
+//!   defensively (multiple substrings) so a copy-edit on `LinkedIn`'s side does
 //!   not silently break polling.
 
 use anyhow::{Context, Result, bail};
@@ -65,7 +65,7 @@ impl ArchiveKind {
 /// Result of a poll cycle.
 #[derive(Debug, Clone)]
 pub enum ArchiveStatus {
-    /// LinkedIn has not finished generating the archive yet.
+    /// `LinkedIn` has not finished generating the archive yet.
     Pending {
         /// Free-text status message from the server, when one is rendered.
         message: Option<String>,
@@ -106,13 +106,13 @@ fn form_headers(csrf: &str, content_type: Option<&str>) -> Vec<(String, String)>
 ///
 /// Body shape: defaults to JSON `{"archiveType": "FAST_FILE_ONLY"|"ARCHIVE"}`
 /// based on the SPA-bundle clues in `/psettings/member-data`. As of 2026-04-25
-/// LinkedIn's `/mysettings-api/settingsApiDataExport/` accepts the POST but
+/// `LinkedIn`'s `/mysettings-api/settingsApiDataExport/` accepts the POST but
 /// rejects the default body with HTTP 400 — the exact field name has rotated.
 ///
-/// To discover the live body shape, use Chrome DevTools → Network tab → click
+/// To discover the live body shape, use Chrome `DevTools` → Network tab → click
 /// "Get a copy of your data" → copy the request payload → pass it via
 /// `body_override`. The infrastructure (csrf, cookies, headers, polling) is
-/// stable; only the body needs DevTools capture per release cycle.
+/// stable; only the body needs `DevTools` capture per release cycle.
 pub async fn request_archive(
     cookies: &str,
     csrf: &str,
@@ -154,7 +154,7 @@ pub async fn request_archive(
 /// One poll cycle. Pure function over an HTML body — extracted for testing
 /// without touching the network.
 pub fn parse_status_page(html: &str) -> ArchiveStatus {
-    // The "ready" marker: LinkedIn renders an `<a href="…ambry…">Download
+    // The "ready" marker: `LinkedIn` renders an `<a href="…ambry…">Download
     // archive</a>` link once the ZIP is signed. The hostname rotates between
     // `download.linkedin.com`, `media.licdn.com`, and pre-signed S3-style URLs,
     // so we match by the link text rather than by hostname.
@@ -209,7 +209,7 @@ fn extract_download_url(html: &str) -> Option<String> {
         if let Some(start) = html.find(needle) {
             let tail = &html[start..];
             let end = tail
-                .find(|c: char| c == '"' || c == '\'' || c == '<' || c == ' ')
+                .find(['"', '\'', '<', ' '])
                 .unwrap_or(tail.len());
             let candidate = &tail[..end];
             if candidate.contains("archive")

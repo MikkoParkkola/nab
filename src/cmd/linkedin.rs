@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#![allow(clippy::doc_markdown)]
 
 //! `nab linkedin export` — automated LinkedIn data archive request and
 //! retrieval. See `src/site/linkedin/export.rs` for the protocol details.
@@ -226,12 +227,12 @@ async fn download_to_file(url: &str, cookies: &str, dest: &std::path::Path) -> R
         );
     }
 
-    if let Some(parent) = dest.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("create_dir_all {}", parent.display()))?;
-        }
+    if let Some(parent) = dest.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create_dir_all {}", parent.display()))?;
     }
 
     let mut file = tokio::fs::File::create(dest)

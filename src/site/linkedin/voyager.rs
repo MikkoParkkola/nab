@@ -37,6 +37,8 @@
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use std::fmt::Write as _;
+
 use super::helpers::{extract_csrf_token, extract_username_from_url, parse_voyager_activity};
 use super::types::VoyagerActivityResponse;
 use crate::impersonate_client;
@@ -101,13 +103,13 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
         if let Some(start) = resp.body.find(needle) {
             let tail = &resp.body[start..];
             let end = tail
-                .find(|c: char| c == '"' || c == ',' || c == '}' || c == ')' || c == '&')
+                .find(['"', ',', '}', ')', '&'])
                 .unwrap_or(tail.len());
             return Ok(tail[..end].to_string());
         }
     }
 
-    bail!("could not extract profile URN for username `{}`", username)
+    bail!("could not extract profile URN for username `{username}`")
 }
 
 /// Fetch the member share feed for a given profile URN.
@@ -278,7 +280,7 @@ pub async fn fetch_activity_via_voyager(
     let mut md = String::new();
     md.push_str("## Recent Activity\n\n");
     md.push_str(&posts_md);
-    md.push_str(&format!("[View on LinkedIn]({url})\n"));
+    let _ = writeln!(md, "[View on LinkedIn]({url})");
 
     Ok(Some(SiteContent {
         markdown: md,

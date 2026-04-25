@@ -546,6 +546,7 @@ enum Commands {
     /// LinkedIn-specific tooling. Currently: `nab linkedin export`
     /// initiates and downloads the official LinkedIn data archive
     /// (Settings → Data Privacy → Get a copy of your data).
+    #[allow(clippy::doc_markdown)]
     Linkedin {
         #[command(subcommand)]
         action: LinkedinAction,
@@ -571,6 +572,7 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::doc_markdown)]
 enum LinkedinAction {
     /// Request and download a LinkedIn data archive.
     ///

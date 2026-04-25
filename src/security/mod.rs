@@ -20,8 +20,8 @@
 //! machine-readable layer.
 //!
 //! See [`ingestion_guard`] for the v0 detector + sanitiser. Future work:
-//! WebMCP advertisement detection (manifest discovery is in
-//! [`crate::webmcp`]) is on the same trust path; promotion of the WebMCP
+//! `WebMCP` advertisement detection (manifest discovery is in
+//! [`crate::webmcp`]) is on the same trust path; promotion of the `WebMCP`
 //! discovery output into a sanctioned/strict policy gate will land here.
 
 pub mod ingestion_guard;
