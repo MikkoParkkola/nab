@@ -74,11 +74,17 @@ fn voyager_headers(csrf: &str) -> Vec<(String, String)> {
 
 /// Resolve a `LinkedIn` username to its profile URN via the dash endpoint.
 ///
-/// Returns `urn:li:fsd_profile:ACoAA…` style URN that the feed endpoint
-/// accepts as `profileUrn`. Falls back to extracting any `urn:li:fs_profile:`
-/// or `urn:li:fsd_profile:` identifier from the response body when the typed
-/// JSON pointer fails (decorator envelopes vary across `LinkedIn` versions).
-async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Result<String> {
+/// Returns `(profile_urn, display_name)` for a `LinkedIn` username.
+///
+/// `profile_urn` is the `urn:li:fsd_profile:ACoAA…` shape the feed endpoint
+/// accepts as `profileUrn`. `display_name` is the user's full name as
+/// rendered on the profile (e.g. "Mikko Parkkola"); used downstream to
+/// filter reshare envelopes whose commentary text belongs to other authors.
+async fn resolve_profile_urn(
+    username: &str,
+    cookies: &str,
+    csrf: &str,
+) -> Result<(String, String)> {
     let url = format!(
         "https://www.linkedin.com/voyager/api/identity/dash/profiles\
          ?q=memberIdentity&memberIdentity={username}\
@@ -96,6 +102,26 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
     let json: Value =
         serde_json::from_str(&resp.body).context("Voyager dash/profiles response was not JSON")?;
 
+    let display_name = {
+        let first = json
+            .pointer("/elements/0/firstName")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                json.pointer("/data/elements/0/firstName")
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or("");
+        let last = json
+            .pointer("/elements/0/lastName")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                json.pointer("/data/elements/0/lastName")
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or("");
+        format!("{first} {last}").trim().to_string()
+    };
+
     if let Some(urn) = json
         .pointer("/elements/0/entityUrn")
         .and_then(Value::as_str)
@@ -104,7 +130,7 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
                 .and_then(Value::as_str)
         })
     {
-        return Ok(urn.to_string());
+        return Ok((urn.to_string(), display_name));
     }
 
     // Fallback: walk the entire body for the first profile URN we recognise.
@@ -112,7 +138,7 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
         if let Some(start) = resp.body.find(needle) {
             let tail = &resp.body[start..];
             let end = tail.find(['"', ',', '}', ')', '&']).unwrap_or(tail.len());
-            return Ok(tail[..end].to_string());
+            return Ok((tail[..end].to_string(), display_name));
         }
     }
 
@@ -221,12 +247,35 @@ async fn fetch_member_share_feed(profile_urn: &str, cookies: &str, csrf: &str) -
 }
 
 /// Walk an arbitrary JSON value collecting commentary text from any
-/// `{"commentary": {"text": {"text": "..."}}}` shape, regardless of nesting
-/// depth or envelope. Used as a fallback when the typed parse misses
-/// posts because `LinkedIn` wrapped them in a `data` / `included` envelope.
-fn scan_commentary(value: &Value, posts: &mut Vec<String>) {
+/// `{"commentary": {"text": {"text": "..."}}}` shape — but ONLY when the
+/// enclosing update node's `actor.name.text` matches `expected_actor_name`.
+///
+/// Without this filter, reshares pollute the output: `MEMBER_FEED` returns
+/// the user's reshare-update, but the `commentary` text inside it belongs
+/// to the ORIGINAL poster (e.g. "I just deleted all my MCPs" attributed to
+/// Mitko Vasilev appears under a Mikko Parkkola profile fetch because Mikko
+/// reshared it). The actor-name guard pushes only updates the user authored.
+fn scan_commentary(value: &Value, posts: &mut Vec<String>, expected_actor_name: &str) {
     match value {
         Value::Object(map) => {
+            // Detect this node's actor.name.text (if any). When the field is
+            // present and matches, allow commentary collection at this depth.
+            let actor_name = map
+                .get("actor")
+                .and_then(Value::as_object)
+                .and_then(|a| a.get("name"))
+                .and_then(Value::as_object)
+                .and_then(|n| n.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+
+            // Skip the entire subtree of foreign actors (reshare envelopes,
+            // included[] entries for other profiles). When actor is absent,
+            // descend (decorator wrappers, root data{} blocks).
+            if !actor_name.is_empty() && actor_name != expected_actor_name {
+                return;
+            }
+
             if let Some(commentary) = map.get("commentary").and_then(Value::as_object) {
                 if let Some(text) = commentary
                     .get("text")
@@ -246,12 +295,12 @@ fn scan_commentary(value: &Value, posts: &mut Vec<String>) {
                 }
             }
             for v in map.values() {
-                scan_commentary(v, posts);
+                scan_commentary(v, posts, expected_actor_name);
             }
         }
         Value::Array(arr) => {
             for v in arr {
-                scan_commentary(v, posts);
+                scan_commentary(v, posts, expected_actor_name);
             }
         }
         _ => {}
@@ -264,7 +313,12 @@ fn scan_commentary(value: &Value, posts: &mut Vec<String>) {
 /// used by the v1 `/feed/updates` endpoint plus naked v2 responses), then
 /// falls back to a recursive commentary-walker for the
 /// `{data:…, included:[…]}` decorator envelope.
-fn render_voyager_body(body: &str) -> String {
+///
+/// `expected_actor_name` is required to filter out reshared posts whose
+/// commentary text belongs to other authors (the `MEMBER_FEED` queryId
+/// returns the user's reshare envelopes alongside their original posts;
+/// without this filter the reshared text is mis-attributed to the user).
+fn render_voyager_body(body: &str, expected_actor_name: &str) -> String {
     if let Ok(typed) = serde_json::from_str::<VoyagerActivityResponse>(body) {
         let md = parse_voyager_activity(&typed);
         if !md.trim().is_empty() {
@@ -274,7 +328,7 @@ fn render_voyager_body(body: &str) -> String {
 
     if let Ok(value) = serde_json::from_str::<Value>(body) {
         let mut posts = Vec::new();
-        scan_commentary(&value, &mut posts);
+        scan_commentary(&value, &mut posts, expected_actor_name);
         if !posts.is_empty() {
             let mut md = String::new();
             for post in posts.iter().take(ACTIVITY_COUNT as usize) {
@@ -302,9 +356,9 @@ pub async fn fetch_activity_via_voyager(url: &str, cookies: &str) -> Result<Opti
     let csrf = extract_csrf_token(cookies)
         .context("no JSESSIONID cookie — cannot derive Voyager csrf-token")?;
 
-    let profile_urn = resolve_profile_urn(&username, cookies, &csrf).await?;
+    let (profile_urn, display_name) = resolve_profile_urn(&username, cookies, &csrf).await?;
     let body = fetch_member_share_feed(&profile_urn, cookies, &csrf).await?;
-    let posts_md = render_voyager_body(&body);
+    let posts_md = render_voyager_body(&body, &display_name);
 
     if posts_md.trim().is_empty() {
         return Ok(None);
@@ -335,32 +389,54 @@ mod tests {
 
     #[test]
     fn render_typed_response() {
+        // Typed parser path doesn't filter — first wins.
         let body = r#"{"elements":[
             {"value":{"commentary":{"text":{"text":"first post"}}}},
             {"value":{"commentary":{"text":{"text":"second post"}}}}
         ]}"#;
-        let md = render_voyager_body(body);
+        let md = render_voyager_body(body, "");
         assert!(md.contains("first post"), "missing first post: {md}");
         assert!(md.contains("second post"), "missing second post: {md}");
     }
 
     #[test]
     fn render_decorator_envelope_fallback() {
+        // Decorator-envelope path: when no actor.name on the wrapping node,
+        // descend; collect commentary regardless of actor (no enclosing actor).
         let body = r#"{"data":{"elements":[
             {"*value":"urn:li:fsd_update:abc"}
         ]},"included":[
             {"$type":"com.linkedin.voyager.feed.Update",
              "commentary":{"text":{"text":"envelope post"}}}
         ]}"#;
-        let md = render_voyager_body(body);
+        let md = render_voyager_body(body, "Mikko Parkkola");
         assert!(md.contains("envelope post"), "missing envelope post: {md}");
     }
 
     #[test]
     fn render_empty_response() {
         let body = r#"{"elements":[]}"#;
-        let md = render_voyager_body(body);
+        let md = render_voyager_body(body, "Mikko Parkkola");
         assert!(md.trim().is_empty());
+    }
+
+    #[test]
+    fn scan_filters_out_reshare_with_foreign_actor() {
+        // Simulates a MEMBER_FEED reshare envelope: outer node has Mikko's
+        // actor, inner reshared block has Mitko Vasilev's actor and the
+        // commentary text we should NOT attribute to Mikko.
+        let body = r#"{"included":[
+            {"actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":"my own post about trvl"}}},
+            {"actor":{"name":{"text":"Mitko Vasilev"}},
+             "commentary":{"text":{"text":"I just deleted all my MCPs"}}}
+        ]}"#;
+        let md = render_voyager_body(body, "Mikko Parkkola");
+        assert!(md.contains("my own post about trvl"), "missing own post: {md}");
+        assert!(
+            !md.contains("deleted all my MCPs"),
+            "leaked reshared content: {md}"
+        );
     }
 
     #[test]
