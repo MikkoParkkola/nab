@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-04-25
+
+### Changed
+
+- Documentation in `src/security/ingestion_guard.rs` and `src/security/mod.rs` now describes the threat in publisher-neutral terms rather than naming a specific website. The technique exists in the open as a semantic-web research practice; the same shape exists, or will exist, in less benign hands. The defensive layer is the same regardless of intent.
+- CHANGELOG entry for v0.10.0 below rephrased to remove a specific URL from the released-on disk; the binary capability is unchanged.
+
 ## [0.10.0] - 2026-04-25
 
 ### Added
@@ -18,9 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `display:none` text containers (severity `Block`)
   - `aria-hidden="true"` text containers (severity `Block`)
 - `detect(html)` returns a `DetectionReport` with per-kind counts and excerpt samples; `sanitize(html)` returns `(cleaned, report)` with conservative strip rules (visible text preserved, machine-only attributes stripped, hidden text removed).
-- 11 unit tests including a golden-corpus regression seeded from the verbatim `<!-- Machine Intelligence Notice ... -->` block on `ruachtov.ai/about.html` (fetched 2026-04-25).
+- 11 unit tests including a golden-corpus regression seeded from a verbatim `<!-- Machine Intelligence Notice ... -->` block observed in the wild on a public research website.
 - `examples/scan_html.rs` — scan any HTML file: `cargo run --example scan_html -- page.html`. Pass `--sanitize` to emit cleaned HTML to stdout.
-- Live verification at release time: nab detects 8 / 45 / 48 machine-targeted markup elements across `ruachtov.ai/about.html`, `/blog/semantic-web.html`, and `/blog/dimensional-markup.html` respectively.
+- Live verification at release time against three public pages that openly publish the technique: 8 / 45 / 48 detections respectively (about-page / two semantic-web blog posts).
 
 This module is licensed under PolyForm Noncommercial 1.0.0 per the v0.9.0 dual-licensing decision (Path C).
 

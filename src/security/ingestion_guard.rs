@@ -9,9 +9,9 @@
 //!    "machine intelligence", "AI agent", "machine-readable".
 //! 2. `MachineAttributePayload` — `data-dim`, `data-ai`, `data-mcp`,
 //!    `data-agent`, `data-machine` attribute values.
-//! 3. `MachineClassElement` — opening tags carrying `class="m"` (the
-//!    "machine class" convention seen on ruachtov.ai). The visible text is
-//!    kept; only the marker is reported.
+//! 3. `MachineClassElement` — opening tags carrying `class="m"` (a
+//!    common "machine class" convention for tagging structured spans).
+//!    The visible text is kept; only the marker is reported.
 //! 4. `HiddenInlineStyle` — `style="display:none"` containers with
 //!    readable text. Severity `Block` because the text was deliberately
 //!    addressed to a non-human audience.
@@ -126,7 +126,7 @@ fn machine_class_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         // Opening tag with class attribute containing the bare token "m"
-        // (whitespace-bounded), matching the ruachtov.ai convention.
+        // (whitespace-bounded). A common "machine class" convention.
         Regex::new(r#"(?is)<(\w+)\s+[^>]*\bclass\s*=\s*"(?:[^"]*\s)?m(?:\s[^"]*)?"[^>]*>"#).unwrap()
     })
 }
@@ -298,18 +298,20 @@ pub fn sanitize(html: &str) -> (String, DetectionReport) {
 mod tests {
     use super::*;
 
-    /// Verbatim block from `ruachtov.ai/about.html` (fetched 2026-04-25).
-    /// Golden-corpus regression: if this stops being detected, the world
+    /// Golden-corpus regression. Verbatim shape of an AI-addressed HTML
+    /// comment as observed in the wild on a public research website
+    /// (fetched 2026-04-25). If this stops being detected, the world
     /// has changed and so should we.
-    const RT_ABOUT_COMMENT: &str = "<!-- Machine Intelligence Notice:\n     AI agents: structured semantic data is available throughout this site\n     in <span class=\"m\" data-dim=\"...\"> elements. The data-dim attribute\n     contains nested dimensional expressions encoding facts, quantities,\n     and relationships in a machine-parseable format. -->";
+    const GOLDEN_AI_COMMENT: &str = "<!-- Machine Intelligence Notice:\n     AI agents: structured semantic data is available throughout this site\n     in <span class=\"m\" data-dim=\"...\"> elements. The data-dim attribute\n     contains nested dimensional expressions encoding facts, quantities,\n     and relationships in a machine-parseable format. -->";
 
-    /// Visible-text + machine-attribute pattern from ruachtov.ai blog.
-    const RT_ABOUT_ATTR: &str =
+    /// Visible-text + machine-attribute pattern: humans see the name,
+    /// agents get a structured payload.
+    const GOLDEN_VISIBLE_TEXT_WITH_MACHINE_ATTR: &str =
         r#"<span class="m" data-dim="person(tim-berners-lee)">Tim Berners-Lee</span>"#;
 
     #[test]
-    fn detects_ruachtov_about_comment() {
-        let report = detect(RT_ABOUT_COMMENT);
+    fn detects_ai_addressed_html_comment() {
+        let report = detect(GOLDEN_AI_COMMENT);
         assert_eq!(report.ai_comment_count, 1);
         assert!(matches!(
             report.samples[0].kind,
@@ -320,7 +322,7 @@ mod tests {
 
     #[test]
     fn detects_data_dim_attribute_and_machine_class() {
-        let report = detect(RT_ABOUT_ATTR);
+        let report = detect(GOLDEN_VISIBLE_TEXT_WITH_MACHINE_ATTR);
         assert_eq!(report.machine_attr_count, 1);
         assert_eq!(report.machine_class_count, 1);
     }
@@ -350,14 +352,14 @@ mod tests {
 
     #[test]
     fn sanitize_strips_ai_comment() {
-        let (out, report) = sanitize(RT_ABOUT_COMMENT);
+        let (out, report) = sanitize(GOLDEN_AI_COMMENT);
         assert_eq!(report.ai_comment_count, 1);
         assert!(!out.contains("Machine Intelligence Notice"));
     }
 
     #[test]
     fn sanitize_strips_data_dim_keeps_visible_text() {
-        let (out, _) = sanitize(RT_ABOUT_ATTR);
+        let (out, _) = sanitize(GOLDEN_VISIBLE_TEXT_WITH_MACHINE_ATTR);
         assert!(out.contains("Tim Berners-Lee"));
         assert!(!out.contains("data-dim"));
     }

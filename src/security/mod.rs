@@ -9,10 +9,10 @@
 //! addresses aimed at AI agents in layers that humans never read: HTML
 //! comments addressed to "machine intelligence", machine-only attribute
 //! payloads (`data-dim`, `data-ai-*`, …), `class="m"`-style "machine"
-//! spans, `display:none` text, and `aria-hidden="true"` content. The
-//! technique is documented openly by research collectives such as
-//! Ruach Tov; the same shape, in less polite hands, is a supply-chain
-//! attack on every agent that browses the web.
+//! spans, `display:none` text, and `aria-hidden="true"` content. Whether
+//! the publisher is honest (semantic web research) or hostile (supply-chain
+//! attack), the agent reading the page cannot tell the difference from the
+//! markup alone.
 //!
 //! Defensive treatment is the same regardless of intent: detect the
 //! channel, surface its provenance, and strip it by default before the
