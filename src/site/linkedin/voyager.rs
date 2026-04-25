@@ -121,16 +121,25 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
 
 /// `voyagerFeedDashProfileUpdates` GraphQL queryId hashes discovered in the
 /// `/in/{handle}/recent-activity/all/` SPA bundle on 2026-04-26. `LinkedIn`
-/// ships several variants per release (different filters / pagination),
-/// so we try each in order and return the first 2xx with a non-empty body.
+/// ships a separate hash per activity-tab (Posts / Comments / Reactions /
+/// Reshares); the order below puts the user's own original posts first so
+/// `/recent-activity/all/` URLs return Posts-tab content by default. The
+/// other hashes remain as fallbacks if the primary rotates first.
 ///
-/// **Refresh**: when all five start returning HTTP 400 ("query not found"),
+/// Mapping verified 2026-04-26 by inspecting `entityUrn` shape per hash:
+/// - `7f16…` → `MEMBER_FEED` (user's original posts) ← default
+/// - `8f05…` → `PROFILE_COMMENTS` (user's comments on others' posts)
+/// - `3a42…` → `PROFILE_REACTIONS` (posts the user reacted to)
+/// - `4af0…` → `MEMBER_SHARES` (user's reshares of others' posts)
+/// - `1159…` → small / less-tested variant
+///
+/// **Refresh**: when all start returning HTTP 400 ("query not found"),
 /// re-discover by visiting the activity URL, extracting the bundle script
 /// URLs from `<script src="https://static.licdn.com/aero-v1/sc/h/…">`, and
 /// grepping each chunk for `voyagerFeedDashProfileUpdates\.[a-f0-9]+`.
 const FEED_QUERY_IDS: &[&str] = &[
-    "8f05a4e5ad12d9cb2b56eaa22afbcab9",
     "7f16f6612fc18a3623688ca7a74d7696",
+    "8f05a4e5ad12d9cb2b56eaa22afbcab9",
     "3a42619bc23360ce8c29e737277e2ea9",
     "4af00b28d60ed0f1488018948daad822",
     "11595bab074f70dab009cecc3a585768",
