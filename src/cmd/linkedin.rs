@@ -209,15 +209,9 @@ async fn wait_for_ready(
 
 #[cfg(feature = "impersonate")]
 async fn download_to_file(url: &str, cookies: &str, dest: &std::path::Path) -> Result<()> {
-    let resp = request_impersonated(
-        ImpersonatedMethod::Get,
-        url,
-        Some(cookies),
-        None,
-        None,
-    )
-    .await
-    .with_context(|| format!("download GET failed for {url}"))?;
+    let resp = request_impersonated(ImpersonatedMethod::Get, url, Some(cookies), None, None)
+        .await
+        .with_context(|| format!("download GET failed for {url}"))?;
 
     if !resp.status.is_success() {
         bail!(
@@ -279,7 +273,10 @@ mod tests {
 
     #[test]
     fn fmt_elapsed_over_hour() {
-        assert_eq!(fmt_elapsed(Duration::from_secs(3 * 3600 + 12 * 60 + 7)), "3h12m");
+        assert_eq!(
+            fmt_elapsed(Duration::from_secs(3 * 3600 + 12 * 60 + 7)),
+            "3h12m"
+        );
     }
 
     #[test]

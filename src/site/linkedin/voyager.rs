@@ -60,9 +60,15 @@ fn voyager_headers(csrf: &str) -> Vec<(String, String)> {
     vec![
         ("csrf-token".to_string(), csrf.to_string()),
         ("accept".to_string(), ACCEPT_VND_LINKEDIN.to_string()),
-        ("x-restli-protocol-version".to_string(), RESTLI_VERSION.to_string()),
+        (
+            "x-restli-protocol-version".to_string(),
+            RESTLI_VERSION.to_string(),
+        ),
         ("x-li-lang".to_string(), "en_US".to_string()),
-        ("referer".to_string(), "https://www.linkedin.com/".to_string()),
+        (
+            "referer".to_string(),
+            "https://www.linkedin.com/".to_string(),
+        ),
     ]
 }
 
@@ -87,13 +93,16 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
             username
         );
     }
-    let json: Value = serde_json::from_str(&resp.body)
-        .context("Voyager dash/profiles response was not JSON")?;
+    let json: Value =
+        serde_json::from_str(&resp.body).context("Voyager dash/profiles response was not JSON")?;
 
     if let Some(urn) = json
         .pointer("/elements/0/entityUrn")
         .and_then(Value::as_str)
-        .or_else(|| json.pointer("/data/elements/0/entityUrn").and_then(Value::as_str))
+        .or_else(|| {
+            json.pointer("/data/elements/0/entityUrn")
+                .and_then(Value::as_str)
+        })
     {
         return Ok(urn.to_string());
     }
@@ -102,9 +111,7 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
     for needle in ["urn:li:fsd_profile:", "urn:li:fs_profile:"] {
         if let Some(start) = resp.body.find(needle) {
             let tail = &resp.body[start..];
-            let end = tail
-                .find(['"', ',', '}', ')', '&'])
-                .unwrap_or(tail.len());
+            let end = tail.find(['"', ',', '}', ')', '&']).unwrap_or(tail.len());
             return Ok(tail[..end].to_string());
         }
     }
@@ -113,11 +120,7 @@ async fn resolve_profile_urn(username: &str, cookies: &str, csrf: &str) -> Resul
 }
 
 /// Fetch the member share feed for a given profile URN.
-async fn fetch_member_share_feed(
-    profile_urn: &str,
-    cookies: &str,
-    csrf: &str,
-) -> Result<String> {
+async fn fetch_member_share_feed(profile_urn: &str, cookies: &str, csrf: &str) -> Result<String> {
     let encoded_urn = urlencoding::encode(profile_urn);
 
     // `LinkedIn` rotates which endpoint is canonical for the activity feed.
@@ -153,8 +156,7 @@ async fn fetch_member_share_feed(
     let mut last_err: Option<String> = None;
     for endpoint in &candidates {
         let resp =
-            impersonate_client::fetch_impersonated(endpoint, Some(cookies), Some(&headers))
-                .await?;
+            impersonate_client::fetch_impersonated(endpoint, Some(cookies), Some(&headers)).await?;
         if resp.status.is_success() && !resp.body.trim().is_empty() {
             tracing::debug!(
                 "Voyager feed call succeeded via {} (body {} bytes)",
@@ -260,12 +262,9 @@ fn render_voyager_body(body: &str) -> String {
 /// reachable but the response carries no posts (caller falls back to SSR
 /// HTML scraping for at least the profile chrome), and `Err(_)` on hard
 /// failures (no JSESSIONID cookie, network error, decryption failure, etc.).
-pub async fn fetch_activity_via_voyager(
-    url: &str,
-    cookies: &str,
-) -> Result<Option<SiteContent>> {
-    let username = extract_username_from_url(url)
-        .context("activity URL did not contain /in/{username}")?;
+pub async fn fetch_activity_via_voyager(url: &str, cookies: &str) -> Result<Option<SiteContent>> {
+    let username =
+        extract_username_from_url(url).context("activity URL did not contain /in/{username}")?;
     let csrf = extract_csrf_token(cookies)
         .context("no JSESSIONID cookie — cannot derive Voyager csrf-token")?;
 

@@ -42,7 +42,8 @@ pub const DEFAULT_FORM_URL: &str = "https://www.linkedin.com/psettings/member-da
 /// Discovered 2026-04-25 by grepping `psettings/member-data` HTML for
 /// `mysettings-api/settingsApiDataExport` (the SPA settings front-end calls
 /// this internal proxy which fans out to Voyager identity/dataExports).
-pub const DEFAULT_REQUEST_URL: &str = "https://www.linkedin.com/mysettings-api/settingsApiDataExport/";
+pub const DEFAULT_REQUEST_URL: &str =
+    "https://www.linkedin.com/mysettings-api/settingsApiDataExport/";
 
 /// Archive type variants accepted by the form.
 #[derive(Debug, Clone, Copy)]
@@ -120,11 +121,10 @@ pub async fn request_archive(
     request_url: &str,
     body_override: Option<&str>,
 ) -> Result<()> {
-    let body = body_override
-        .map_or_else(
-            || format!(r#"{{"archiveType":"{}"}}"#, kind.as_form_value()),
-            std::string::ToString::to_string,
-        );
+    let body = body_override.map_or_else(
+        || format!(r#"{{"archiveType":"{}"}}"#, kind.as_form_value()),
+        std::string::ToString::to_string,
+    );
 
     let headers = form_headers(csrf, Some("application/json"));
     let resp = request_impersonated(
@@ -208,9 +208,7 @@ fn extract_download_url(html: &str) -> Option<String> {
     ] {
         if let Some(start) = html.find(needle) {
             let tail = &html[start..];
-            let end = tail
-                .find(['"', '\'', '<', ' '])
-                .unwrap_or(tail.len());
+            let end = tail.find(['"', '\'', '<', ' ']).unwrap_or(tail.len());
             let candidate = &tail[..end];
             if candidate.contains("archive")
                 || candidate.contains("data-export")
@@ -293,7 +291,10 @@ mod tests {
         let html = r#"<html><a href="https://download.linkedin.com/exports/abc.zip">Download archive</a></html>"#;
         match parse_status_page(html) {
             ArchiveStatus::Ready { download_url } => {
-                assert_eq!(download_url, "https://download.linkedin.com/exports/abc.zip");
+                assert_eq!(
+                    download_url,
+                    "https://download.linkedin.com/exports/abc.zip"
+                );
             }
             ArchiveStatus::Pending { .. } => panic!("should be ready"),
         }
