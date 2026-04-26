@@ -1,6 +1,6 @@
 # nab Architecture
 
-This document describes the internal architecture of nab, a token-optimized browser engine with HTTP/3, TLS impersonation, JavaScript execution, cookie authentication, anti-fingerprinting, and an MCP server for LLM tool integration.
+This document describes the internal architecture of nab, a token-optimized web microfetch tool with HTTP/3, TLS impersonation, JavaScript execution, cookie authentication, anti-fingerprinting, and an MCP server for LLM tool integration.
 
 ## Design Philosophy
 
@@ -20,9 +20,10 @@ This document describes the internal architecture of nab, a token-optimized brow
 ```
                     ┌─────────────────────────────────────┐
                     │       MCP Server (nab-mcp)          │
-                    │  8 tools: fetch, fetch_batch,       │
+                    │  12 tools: fetch, fetch_batch,      │
                     │  submit, login, auth_lookup,        │
-                    │  fingerprint, validate, benchmark   │
+                    │  fingerprint, validate, benchmark,  │
+                    │  analyze, watch_*                   │
                     │  stdio transport, outputSchema,     │
                     │  task-augmented execution,           │
                     │  elicitation, server icons           │
@@ -87,7 +88,7 @@ This document describes the internal architecture of nab, a token-optimized brow
 **Purpose**: Stdio-based MCP server exposing nab's capabilities as LLM tools.
 
 **Key Features**:
-- 8 tools: `fetch`, `fetch_batch`, `submit`, `login`, `auth_lookup`, `fingerprint`, `validate`, `benchmark`
+- 12 tools: `fetch`, `fetch_batch`, `submit`, `login`, `auth_lookup`, `fingerprint`, `validate`, `benchmark`, `analyze`, `watch_create`, `watch_list`, `watch_remove`
 - MCP protocol 2025-11-25 with `outputSchema` on every tool
 - Task-augmented execution for `fetch_batch` (non-blocking parallel fetches)
 - Elicitation support for interactive credential selection during `login`
@@ -352,7 +353,7 @@ title = "h1.page-title"
 - Pinned `BrowserProfile` per session for fingerprint consistency
 - Thread-safe with `tokio::sync::RwLock`
 
-**Used By**: MCP server (sessions persist across tool calls), fetch operations with `--session` flag
+**Used By**: MCP server (sessions persist across tool calls), MCP `fetch` operations with the `session` parameter
 
 ### 10. SSRF Protection (`ssrf.rs`)
 
@@ -502,7 +503,7 @@ cmd/
 ## Data Flow: Typical Fetch Operation
 
 ```
-1. User: nab fetch https://example.com --cookies brave --focus "pricing"
+1. User: nab fetch https://example.com --cookies brave
          |
 2. CLI parsing (main.rs) -> cmd/fetch.rs
          |
@@ -524,14 +525,12 @@ cmd/
 10. Content pipeline (content/mod.rs -> ContentRouter)
          |  -> HTML handler -> readability -> quality scoring
          |
-11. Query-focused extraction (content/focus.rs, if --focus set)
+11. Diff tracking (content/diff.rs, if --diff set)
          |
-12. Token budget truncation (content/budget.rs, if --max-tokens set)
-         |
-13. Diff tracking (content/diff.rs, if --diff set)
-         |
-14. Output to stdout (markdown/JSON/compact format)
+12. Output to stdout (markdown/JSON/compact format)
 ```
+
+MCP `fetch` layers query-focused extraction (`content/focus.rs`) and token budget truncation (`content/budget.rs`) via the `focus` and `max_tokens` parameters.
 
 ## Data Flow: MCP Fetch
 

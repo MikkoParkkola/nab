@@ -11,10 +11,10 @@ nab implements MCP 2025-11-25 via `rust-mcp-sdk = "0.9"`. It already has:
 
 - ✅ Protocol version `2025-11-25` (LATEST_PROTOCOL_VERSION constant)
 - ✅ stdio transport
-- ✅ 8 tools with structured output schemas + annotations
+- ✅ 12 tools with structured output schemas + annotations
 - ✅ task-augmented execution (fetch_batch, soon analyze)
 - ✅ 2 resources (`nab://guide/quickstart`, `nab://status`)
-- ✅ 3 prompts (fetch-and-extract, multi-page-research, authenticated-fetch)
+- ✅ 4 prompts (fetch-and-extract, multi-page-research, authenticated-fetch, match-speakers-with-hebb)
 - ✅ Elicitation: form mode + URL mode (login.rs, elicitation.rs)
 - ✅ Server icons (light/dark SVG)
 - ✅ Implementation metadata (name, version, title, description, instructions)
@@ -56,7 +56,7 @@ Mandatory security per spec (basic/transports):
 Server-side: nab needs to *call* sampling on the client (not advertise it as a server capability — sampling is a client capability per spec). nab uses sampling for:
 
 - **Active reading** (Phase 1.5b — see active-reading.md design)
-- **Smart fetch focus**: when `nab fetch URL --focus "what was decided"` is called, nab can sample to identify which DOM sections to keep
+- **Smart fetch focus**: when MCP `fetch` is called with `focus = "what was decided"`, nab can sample to identify which DOM sections to keep
 - **Form field auto-fill**: when `nab login` finds a form, nab can sample for "what's the right value for this field?"
 
 The pattern: check `runtime.peer_capabilities().sampling` at request time; if Some, call `runtime.create_message(...)`. Tests pass via mock client.
@@ -166,7 +166,7 @@ Same for `prompts.list_changed` and `resources.list_changed`.
 
 ### 9. Pagination cursors
 
-Currently nab returns small lists (8 tools, 3 prompts, 2 resources). No pagination needed today. If watch resources grow into hundreds, add cursor support:
+Currently nab returns small lists (12 tools, 4 prompts, 2 static resources plus watch resources). No pagination needed today. If watch resources grow into hundreds, add cursor support:
 
 ```rust
 async fn handle_list_resources_request(&self, params: Option<PaginatedRequestParams>, _runtime: Arc<dyn McpServer>) -> Result<ListResourcesResult, RpcError> {

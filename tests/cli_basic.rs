@@ -86,7 +86,7 @@ fn fetch_help() {
         .stdout(predicate::str::contains("<URL>"))
         .stdout(predicate::str::contains("--cookies"))
         .stdout(predicate::str::contains("--no-spa"))
-        .stdout(predicate::str::contains("--no-fallback"))
+        .stdout(predicate::str::contains("--remote-fallback"))
         .stdout(predicate::str::contains("--raw-html"))
         .stdout(predicate::str::contains("--method"));
 }

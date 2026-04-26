@@ -6,9 +6,9 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
 use serde::{Deserialize, Serialize};
 
-use nab::content::ContentRouter;
-
-use crate::helpers::resolve_cookie_header;
+use crate::helpers::{
+    convert_body_async, read_response_capped, resolve_cookie_header, validate_tool_url,
+};
 use crate::structured::{TOOL_TRUNCATION_LIMIT, truncate_markdown};
 use crate::tools::client::{build_transient_client, persist_session, resolve_session_client};
 
@@ -89,6 +89,7 @@ impl SubmitTool {
         let action_url = form
             .resolve_action(&self.url)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        validate_tool_url(&action_url)?;
         let form_data = form.encode_urlencoded();
 
         let response = inner_client
@@ -100,20 +101,14 @@ impl SubmitTool {
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
         let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let body_bytes = read_response_capped(response).await?;
         if let Some(ref session_name) = self.session {
             persist_session(session_name).await?;
         }
 
         let _ = writeln!(output, "   Status: {status}\n");
 
-        let router = ContentRouter::new();
-        let conversion = router
-            .convert(body.as_bytes(), "text/html")
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let conversion = convert_body_async(&body_bytes, "text/html", &action_url).await?;
 
         output.push_str(&truncate_markdown(
             &conversion.markdown,
@@ -145,6 +140,7 @@ impl SubmitTool {
         &self,
         output: &mut String,
     ) -> Result<(String, reqwest::Client), CallToolError> {
+        validate_tool_url(&self.url)?;
         let cookie_header = resolve_cookie_header(&self.url, self.cookies.as_deref());
         if let Some(ref session_name) = self.session {
             let session_client =
@@ -155,10 +151,8 @@ impl SubmitTool {
                 .send()
                 .await
                 .map_err(|e| CallToolError::from_message(e.to_string()))?;
-            let html = resp
-                .text()
-                .await
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            let html_bytes = read_response_capped(resp).await?;
+            let html = String::from_utf8_lossy(&html_bytes).into_owned();
             Ok((html, session_client))
         } else {
             let client = build_transient_client(Some(&cookie_header), &self.url).await?;
@@ -167,10 +161,8 @@ impl SubmitTool {
                 .send()
                 .await
                 .map_err(|e| CallToolError::from_message(e.to_string()))?;
-            let html = resp
-                .text()
-                .await
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            let html_bytes = read_response_capped(resp).await?;
+            let html = String::from_utf8_lossy(&html_bytes).into_owned();
             Ok((html, client))
         }
     }

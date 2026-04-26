@@ -65,9 +65,5 @@ fn main() -> ExitCode {
         print!("{out}");
     }
 
-    if report.is_clean() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::SUCCESS
-    }
+    ExitCode::SUCCESS
 }

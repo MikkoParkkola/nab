@@ -513,15 +513,14 @@ fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
 ///   calling again with the same args has no additional effect
 fn tool_annotations(name: &str) -> ToolAnnotations {
     let (read_only, destructive, idempotent, open_world) = match name {
-        "submit" => (false, true, false, Some(true)),
         "login" | "watch_create" => (false, false, false, Some(true)),
         // analyze reads a local file; result is deterministic for the same input
-        "analyze" => (true, false, true, Some(false)),
+        "analyze" | "watch_list" | "auth_lookup" | "fingerprint" | "validate" => {
+            (true, false, true, Some(false))
+        }
         // watch_remove deletes a watch (state change, destructive)
         "watch_remove" => (false, true, true, Some(false)),
-        "watch_list" => (true, false, true, Some(false)),
         "fetch" | "fetch_batch" | "benchmark" => (true, false, true, Some(true)),
-        "auth_lookup" | "fingerprint" | "validate" => (true, false, true, Some(false)),
         _ => (false, true, false, Some(true)),
     };
     ToolAnnotations {
@@ -818,8 +817,8 @@ fn status_content() -> String {
         "# nab Server Status\n\n\
          **Version**: {}\n\
          **Status**: running\n\
-         **Tools**: fetch, fetch_batch, submit, login, auth_lookup, fingerprint, validate, benchmark, watch_create, watch_list, watch_remove\n\
-         **Prompts**: fetch-and-extract, multi-page-research, authenticated-fetch\n\
+         **Tools**: fetch, fetch_batch, submit, login, auth_lookup, fingerprint, validate, benchmark, analyze, watch_create, watch_list, watch_remove\n\
+         **Prompts**: fetch-and-extract, multi-page-research, authenticated-fetch, match-speakers-with-hebb\n\
          **Resources**: nab://guide/quickstart, nab://status, nab://watch/<id> (subscribable)\n\
          **Watch subscriptions**: enabled — use watch_create then resources/subscribe nab://watch/<id>\n",
         env!("CARGO_PKG_VERSION")
@@ -1199,7 +1198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_info: Implementation {
             name: "nab".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            title: Some("MicroFetch Browser Engine".into()),
+            title: Some("nab Microfetch".into()),
             description: Some(
                 "Token-optimized web fetcher with HTTP/3, browser fingerprinting, \
                  and 1Password integration."
@@ -1247,7 +1246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              HTTP/3, and browser fingerprinting. \
              fetch_batch supports task-augmented execution for non-blocking parallel fetches. \
              Use prompts/list to discover guided workflows (fetch-and-extract, \
-             multi-page-research, authenticated-fetch). \
+             multi-page-research, authenticated-fetch, match-speakers-with-hebb). \
              Use resources/list for the quickstart guide (nab://guide/quickstart) \
              and live server status (nab://status)."
                 .into(),

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 
 use anyhow::Result;
+use reqwest::header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderName, HeaderValue, REFERER};
 use serde_json::json;
 
 use nab::content::diff::ContentSnapshot;
@@ -14,7 +15,7 @@ use nab::content::response_classifier::{
     classify_thin_content,
 };
 use nab::content::snapshot_store::SnapshotStore;
-use nab::{AcceleratedClient, OnePasswordAuth, SafeFetchConfig};
+use nab::{AcceleratedClient, OnePasswordAuth, SafeFetchConfig, SafeRequestOptions};
 
 use super::output::{output_body, write_stdout, write_stdout_line};
 use crate::OutputFormat;
@@ -196,12 +197,17 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         if matches!(cfg.format, OutputFormat::Full) {
             write_stdout_line(&format!("🔥 Warming up session: {warmup}"))?;
         }
-        let mut warmup_req = client.inner().get(warmup.as_str());
-        warmup_req = warmup_req.headers(profile.to_headers());
-        if !cookie_header.is_empty() {
-            warmup_req = warmup_req.header("Cookie", &cookie_header);
-        }
-        let _ = warmup_req.send().await;
+        let headers = build_safe_request_headers(cfg, &profile, &cookie_header, warmup, false)?;
+        let _ = client
+            .request_safe(
+                warmup,
+                SafeRequestOptions {
+                    headers,
+                    config: SafeFetchConfig::default(),
+                    ..SafeRequestOptions::default()
+                },
+            )
+            .await;
     }
 
     let start = Instant::now();
@@ -457,12 +463,53 @@ async fn execute_safe_get(
 
     Ok((
         safe_resp.status,
-        String::from("HTTP/2"),
+        format!("{:?}", safe_resp.version),
         set_cookies,
         safe_resp.content_type.clone(),
         resp_headers,
         safe_resp.body,
     ))
+}
+
+fn build_safe_request_headers(
+    cfg: &FetchConfig,
+    profile: &nab::fingerprint::BrowserProfile,
+    cookie_header: &str,
+    url: &str,
+    include_default_content_type: bool,
+) -> Result<HeaderMap> {
+    let mut headers = profile.to_headers();
+
+    if !cookie_header.is_empty() {
+        headers.insert(COOKIE, HeaderValue::from_str(cookie_header)?);
+    }
+
+    if cfg.auto_referer
+        && let Some(referer) = super::build_referer(url)
+    {
+        headers.insert(REFERER, HeaderValue::from_str(&referer)?);
+    }
+
+    if include_default_content_type
+        && cfg.data.is_some()
+        && !cfg
+            .custom_headers
+            .iter()
+            .any(|h| h.to_lowercase().starts_with("content-type"))
+    {
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    }
+
+    for header_str in &cfg.custom_headers {
+        let Some((name, value)) = header_str.split_once(':') else {
+            continue;
+        };
+        let name = HeaderName::from_bytes(name.trim().as_bytes())?;
+        let value = HeaderValue::from_str(value.trim())?;
+        headers.insert(name, value);
+    }
+
+    Ok(headers)
 }
 
 /// Execute a manually-built request (non-GET, cookies, custom headers, etc.).
@@ -480,87 +527,48 @@ async fn execute_manual_request(
     bytes::Bytes,
 )> {
     let url = &cfg.url;
-    let mut request = match cfg.method.to_uppercase().as_str() {
-        "POST" => client.inner().post(url),
-        "PUT" => client.inner().put(url),
-        "PATCH" => client.inner().patch(url),
-        "DELETE" => client.inner().delete(url),
-        "HEAD" => client.inner().head(url),
-        _ => client.inner().get(url),
+    let method = cfg.method.parse::<reqwest::Method>()?;
+    let headers = build_safe_request_headers(cfg, profile, cookie_header, url, true)?;
+    let config = if cfg.no_redirect {
+        SafeFetchConfig {
+            max_redirects: 0,
+            ..SafeFetchConfig::default()
+        }
+    } else {
+        SafeFetchConfig::default()
     };
+    let safe_resp = client
+        .request_safe(
+            url,
+            SafeRequestOptions {
+                method,
+                headers,
+                body: cfg.data.clone().map(bytes::Bytes::from),
+                config,
+            },
+        )
+        .await?;
 
-    if let Some(body_data) = &cfg.data {
-        request = request.body(body_data.clone());
-        if !cfg
-            .custom_headers
-            .iter()
-            .any(|h| h.to_lowercase().starts_with("content-type"))
-        {
-            request = request.header("Content-Type", "application/json");
-        }
-    }
-
-    request = request.headers(profile.to_headers());
-
-    if !cookie_header.is_empty() {
-        request = request.header("Cookie", cookie_header);
-    }
-
-    if cfg.auto_referer
-        && let Some(referer) = super::build_referer(url)
-    {
-        request = request.header("Referer", referer);
-    }
-
-    for header_str in &cfg.custom_headers {
-        let parts: Vec<&str> = header_str.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            request = request.header(parts[0].trim(), parts[1].trim());
-        }
-    }
-
-    let response = request.send().await?;
-    let status = response.status();
-    let version_str = format!("{:?}", response.version());
-
-    let set_cookies: Vec<String> = response
-        .headers()
-        .get_all("set-cookie")
+    let set_cookies: Vec<String> = safe_resp
+        .headers
         .iter()
-        .filter_map(|v| v.to_str().ok().map(String::from))
+        .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+        .map(|(_, v)| v.clone())
         .collect();
 
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("text/html")
-        .to_string();
-
     let resp_headers: Vec<(String, String)> = if cfg.show_headers {
-        response
-            .headers()
-            .iter()
-            .map(|(name, value)| {
-                (
-                    name.to_string(),
-                    value.to_str().unwrap_or("<binary>").to_string(),
-                )
-            })
-            .collect()
+        safe_resp.headers.clone()
     } else {
         Vec::new()
     };
 
-    let bytes = response.bytes().await?;
-
     Ok((
-        status,
-        version_str,
+        safe_resp.status,
+        format!("{:?}", safe_resp.version),
         set_cookies,
-        content_type,
+        safe_resp.content_type,
         resp_headers,
-        bytes,
+        safe_resp.body,
     ))
 }
 
@@ -819,7 +827,9 @@ fn build_fetch_diagnostics(
     if let Some(thin) = classify_thin_content(content_type, html_len, markdown_len, quality) {
         warnings.push(thin_content_message(thin));
         if !allow_jina_fallback {
-            warnings.push("Remote reader fallback is disabled by --no-fallback.".to_string());
+            warnings.push(
+                "Remote reader fallback is disabled. Pass --remote-fallback to opt in.".to_string(),
+            );
         }
     }
 
@@ -1047,14 +1057,25 @@ pub(super) fn build_client(
 fn build_client_with_proxy(proxy_url: &str, no_redirect: bool) -> Result<AcceleratedClient> {
     let proxy = reqwest::Proxy::all(proxy_url)
         .map_err(|e| anyhow::anyhow!("Invalid proxy URL '{proxy_url}': {e}"))?;
+    let no_redirect_proxy = reqwest::Proxy::all(proxy_url)
+        .map_err(|e| anyhow::anyhow!("Invalid proxy URL '{proxy_url}': {e}"))?;
+    let profile = nab::random_profile();
+    let headers = profile.to_headers();
 
-    let mut builder = reqwest::Client::builder().proxy(proxy);
+    let mut builder = reqwest::Client::builder()
+        .proxy(proxy)
+        .default_headers(headers.clone());
     if no_redirect {
         builder = builder.redirect(reqwest::redirect::Policy::none());
     }
 
     let inner_client = builder.build()?;
-    AcceleratedClient::from_client(inner_client)
+    let no_redirect_client = reqwest::Client::builder()
+        .proxy(no_redirect_proxy)
+        .default_headers(headers)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    AcceleratedClient::from_clients_with_profile(inner_client, no_redirect_client, profile)
 }
 
 // Re-export from mod.rs for internal use.
@@ -1126,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn build_fetch_diagnostics_for_thin_content_includes_no_fallback_hint() {
+    fn build_fetch_diagnostics_for_thin_content_includes_remote_fallback_hint() {
         let thin_markdown = "x".repeat(100);
         let warnings = build_fetch_diagnostics(
             200,
@@ -1146,8 +1167,8 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .any(|warning| warning.contains("--no-fallback")),
-            "expected no-fallback hint, got: {warnings:?}"
+                .any(|warning| warning.contains("--remote-fallback")),
+            "expected remote-fallback hint, got: {warnings:?}"
         );
     }
 

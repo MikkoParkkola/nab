@@ -17,7 +17,7 @@ no user intervention, no external tools, ~10ms/page.
 
 | Constraint | Value | Rationale |
 |------------|-------|-----------|
-| License | MIT (nab) + Apache-2.0 (pdfium-render) | Compatible |
+| License | Mixed MIT + PolyForm NC (nab) + Apache-2.0 (pdfium-render) | Compatible |
 | Binary size | Behind feature flag | pdfium adds ~4MB static |
 | Latency | ~10ms/page | Competitive with `pdftotext` |
 | Rust edition | 2021, MSRV 1.93 | Match existing Cargo.toml |

@@ -77,12 +77,14 @@ nab looks up the credentials for the URL, follows the login form, handles CSRF t
 
 ### Query-focused extraction
 
-Send a focus query to get only the parts of the page relevant to your question:
+Use the MCP `fetch` tool with `focus` and `max_tokens` to get only the parts of the page relevant to your question:
 
-```bash
-nab fetch https://docs.anthropic.com/en/api/messages \
-  --focus "what does the streaming response look like" \
-  --max-tokens 2000
+```json
+{
+  "url": "https://docs.anthropic.com/en/api/messages",
+  "focus": "what does the streaming response look like",
+  "max_tokens": 2000
+}
 ```
 
 nab applies BM25-lite scoring to the extracted markdown, keeps the top sections, and respects a strict token budget that never splits mid-block (headings, code blocks, tables stay intact).
@@ -242,7 +244,7 @@ This starts a Streamable HTTP MCP endpoint on localhost. The transport is fully 
 
 ### Available tools
 
-Once nab-mcp is configured, your MCP client gets 11 tools:
+Once nab-mcp is configured, your MCP client gets 12 tools:
 
 | Tool | Use it for |
 |------|-----------|
@@ -264,13 +266,17 @@ Plus 4 prompts (including `match-speakers-with-hebb` for cross-tool composition 
 
 ### Fetch with browser cookies and a session
 
-```bash
-nab fetch https://app.example.com/dashboard \
-  --cookies brave \
-  --session work-app
+Use the MCP `fetch` tool with a named `session`:
+
+```json
+{
+  "url": "https://app.example.com/dashboard",
+  "cookies": "brave",
+  "session": "work-app"
+}
 ```
 
-The session persists cookies across requests. Subsequent fetches with the same `--session` reuse the saved jar.
+The session persists cookies across requests. Subsequent MCP fetches with the same `session` value reuse the saved jar.
 
 ### Analyze with diarization and export embeddings for hebb
 

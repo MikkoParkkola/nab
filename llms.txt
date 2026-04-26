@@ -43,13 +43,14 @@ Transport: stdio (default) or Streamable HTTP (--http HOST:PORT)
 - fetch-and-extract(url, focus) — Guided URL extraction
 - multi-page-research(urls) — Multi-page research workflow
 - authenticated-fetch(url) — Auth-aware fetch with 1Password
+- match-speakers-with-hebb(audio) — Match nab speaker embeddings against hebb voiceprints
 
 ## CLI (14 commands)
 
 nab fetch https://example.com                          # fetch as markdown
 nab fetch URL --cookies brave                          # use browser cookies
 nab fetch URL --1password                              # auto-login via 1Password
-nab fetch URL --focus "pricing" --max-tokens 2000      # query-focused extraction
+# MCP fetch supports focus="pricing", max_tokens=2000  # query-focused extraction
 nab fetch --batch urls.txt --parallel 8                # batch fetch
 nab spa URL                                            # extract SPA/JS data
 nab analyze interview.mp4 --diarize                    # transcribe + speakers

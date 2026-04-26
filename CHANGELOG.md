@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Safe fetch now uses the SSRF-validated socket address for the actual request connection, strips credential-bearing headers across cross-origin redirects, keeps MCP Tor fetches on the configured SOCKS proxy for manually validated redirect hops, and leaves remote `r.jina.ai` thin-content recovery disabled unless `--remote-fallback` is explicitly passed.
+
 ## [0.10.3] - 2026-04-26
 
 ### Fixed
@@ -47,7 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `display:none` text containers (severity `Block`)
   - `aria-hidden="true"` text containers (severity `Block`)
 - `detect(html)` returns a `DetectionReport` with per-kind counts and excerpt samples; `sanitize(html)` returns `(cleaned, report)` with conservative strip rules (visible text preserved, machine-only attributes stripped, hidden text removed).
-- 11 unit tests including a golden-corpus regression seeded from a verbatim `<!-- Machine Intelligence Notice ... -->` block observed in the wild on a public research website.
+- Unit tests include a golden-corpus regression seeded from a verbatim `<!-- Machine Intelligence Notice ... -->` block observed in the wild on a public research website.
+- Wired Secure Ingestion into the default HTML-to-markdown conversion path so hidden machine-targeted directives are stripped before readability and html2md extraction.
 - `examples/scan_html.rs` — scan any HTML file: `cargo run --example scan_html -- page.html`. Pass `--sanitize` to emit cleaned HTML to stdout.
 - Live verification at release time against three public pages that openly publish the technique: 8 / 45 / 48 detections respectively (about-page / two semantic-web blog posts).
 
@@ -57,7 +62,7 @@ This module is licensed under PolyForm Noncommercial 1.0.0 per the v0.9.0 dual-l
 
 ### Changed
 
-- **Dual licensing introduced** (Path C, MIK-3035 / MIK-3036): designated Enterprise Edition modules — `src/auth/`, `src/fingerprint/`, `src/waf/`, `src/site/` — are now licensed under PolyForm Noncommercial 1.0.0; everything else remains MIT. See [LICENSE-EE.md](LICENSE-EE.md) and the License section of the README for details.
+- **Dual licensing introduced** (Path C, MIK-3035 / MIK-3036): designated Enterprise Edition modules — `src/auth/`, `src/fingerprint/`, `src/waf/`, `src/site/`, `src/security/` — are now licensed under PolyForm Noncommercial 1.0.0; everything else remains MIT. See [LICENSE.md](LICENSE.md), [LICENSE-EE.md](LICENSE-EE.md), and the License section of the README for details.
 - Every EE-designated source file now carries an `// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0` header.
 - Releases prior to v0.9.0 remain entirely MIT and stay MIT forever; the new license terms apply only to commits in v0.9.0 and later that touch EE-designated paths.
 
@@ -112,11 +117,11 @@ This module is licensed under PolyForm Noncommercial 1.0.0 per the v0.9.0 dual-l
 - **Structured logging** — `notifications/message` with RFC 5424 levels, replacing stderr-only `tracing`
 - **Argument completion** — `completion/complete` for tool arguments
 - **Elicitation form mode + URL mode** — interactive credential input; OAuth/SSO redirects for Google, GitHub, Microsoft, Apple, Facebook, and 8 more
-- 11 tools, 3 prompts (4 with `match-speakers-with-hebb`), 2+N resources
+- 12 tools, 4 prompts, 2+N resources
 
 ### Changed
 - `nab analyze` migrated from monolithic transcribe path to `AsrBackend` trait architecture
-- MCP server now exposes 11 tools (was 8): added `analyze`, `watch_create`, `watch_list`, `watch_remove`
+- MCP server now exposes 12 tools (was 8): added `analyze`, `watch_create`, `watch_list`, `watch_remove`
 - MCP `resources` capability now declares `subscribe: true`
 - All tools advertise structured output schemas, annotations, and validation errors
 

@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn sanitize_idempotent_on_clean_html() {
-        let html = r#"<p>Hello world.</p>"#;
+        let html = r"<p>Hello world.</p>";
         let (out, report) = sanitize(html);
         assert!(report.is_clean());
         assert_eq!(out, html);
