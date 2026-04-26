@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-04-26
+
+### Fixed
+
+- **Windows MSVC release build broke when `impersonate` feature was off** (`src/cmd/linkedin.rs`): the v0.10.2 release CI failed because `use nab::impersonate_client::{...}` was imported at module scope without a `#[cfg(feature = "impersonate")]` gate, but the `impersonate_client` module is itself feature-gated in `lib.rs`. Default Windows MSVC release builds in CI do not enable the `impersonate` feature, so the import was unresolved (E0432). Same pattern for `tokio::io::AsyncWriteExt`, `std::time::{Duration, Instant}`, and `anyhow::Context` — all only used inside impersonate-gated functions but imported at module scope. Fix: gate all impersonate-only imports behind `#[cfg(feature = "impersonate")]`, and gate the now-dead `resolve_output_path` / `fmt_elapsed` helpers + their tests behind the same feature. Verified with `cargo build --no-default-features --features cli` (clean build, only one harmless dead-fields warning) and the full impersonate suite (1293/1293 tests passing).
+
 ## [0.10.2] - 2026-04-26
 
 ### Fixed

@@ -15,11 +15,16 @@
 //!    request-id-shaped status and exit.
 
 use std::path::PathBuf;
+#[cfg(feature = "impersonate")]
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+#[cfg(feature = "impersonate")]
+use anyhow::Context;
+use anyhow::{Result, bail};
+#[cfg(feature = "impersonate")]
 use tokio::io::AsyncWriteExt;
 
+#[cfg(feature = "impersonate")]
 use nab::impersonate_client::{ImpersonatedMethod, request_impersonated};
 #[cfg(feature = "impersonate")]
 use nab::site::linkedin::export::{
@@ -239,6 +244,7 @@ async fn download_to_file(url: &str, cookies: &str, dest: &std::path::Path) -> R
     Ok(())
 }
 
+#[cfg(feature = "impersonate")]
 fn resolve_output_path(explicit: Option<&std::path::Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
@@ -250,6 +256,7 @@ fn resolve_output_path(explicit: Option<&std::path::Path>) -> Result<PathBuf> {
     Ok(downloads.join(format!("linkedin-export-{stamp}.zip")))
 }
 
+#[cfg(feature = "impersonate")]
 fn fmt_elapsed(d: Duration) -> String {
     let s = d.as_secs();
     let h = s / 3600;
@@ -262,7 +269,7 @@ fn fmt_elapsed(d: Duration) -> String {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "impersonate"))]
 mod tests {
     use super::*;
 
