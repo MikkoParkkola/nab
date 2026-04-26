@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-nab's MCP server (`nab-mcp`) currently exposes 8 tools: `fetch`, `fetch_batch`, `submit`, `login`, `auth_lookup`, `fingerprint`, `validate`, and `benchmark`. These tools fetch URLs and convert content to markdown for LLM consumption, but they treat every response as an opaque blob -- the full content is always returned regardless of what the LLM actually needs.
+nab's MCP server (`nab-mcp`) exposes 12 tools: `fetch`, `fetch_batch`, `submit`, `login`, `auth_lookup`, `fingerprint`, `validate`, `benchmark`, `analyze`, `watch_create`, `watch_list`, and `watch_remove`. These tools fetch URLs and convert content to markdown for LLM consumption, transcribe local media, and monitor URLs for changes.
 
 This document specifies 5 features that make nab the first MCP server designed for token economy. Together they reduce per-call token consumption by 10-50x for common patterns, eliminate sequential round-trips, and extend nab from a stateless fetcher into a session-aware web automation layer.
 

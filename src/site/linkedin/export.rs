@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn parse_ready_page_fallback_hostname() {
-        let html = r#"<html>Your archive is ready: https://www.linkedin.com/ambry/data-export/abc123.zip</html>"#;
+        let html = r"<html>Your archive is ready: https://www.linkedin.com/ambry/data-export/abc123.zip</html>";
         match parse_status_page(html) {
             ArchiveStatus::Ready { download_url } => {
                 assert!(download_url.contains("ambry"));

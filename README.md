@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
 [![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
 [![Rust](https://img.shields.io/badge/Rust-1.93+-orange.svg?logo=rust)](https://www.rust-lang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT + PolyForm NC](https://img.shields.io/badge/License-MIT%20%2B%20PolyForm%20NC-yellow.svg)](LICENSE.md)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
 [![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_MCP-0078d4?logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=nab&config=%7B%22command%22%3A%22nab-mcp%22%7D)
@@ -39,7 +39,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 
 | Command | What it does |
 |---------|--------------|
-| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, 11 site providers, query-focused extraction, token budget. |
+| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, 11 site providers. MCP fetch also supports query-focused extraction and token budgets. |
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
 | `nab models fetch <name>` | Persistent install of inference model binaries. Currently `fluidaudio`. Whisper and sherpa-onnx land in Phase 3. |
@@ -135,9 +135,6 @@ nab fetch https://internal.company.com --1password
 # Google Workspace (Docs, Sheets, Slides) with comments
 nab fetch --cookies brave "https://docs.google.com/document/d/DOCID/edit"
 
-# Query-focused extraction — only sections relevant to "authentication"
-nab fetch https://docs.example.com --focus "authentication" --max-tokens 2000
-
 # Output JSON with confidence scores
 nab fetch https://example.com --format json
 
@@ -153,13 +150,13 @@ Common flags for `fetch`:
 | `--1password` / `--op` | 1Password credential lookup + auto-login |
 | `--proxy <url>` | HTTP or SOCKS5 proxy |
 | `--format <fmt>` | `full` (default), `compact`, `json` |
-| `--focus <query>` | BM25-lite query-focused extraction |
-| `--max-tokens <n>` | Structure-aware token budget |
 | `--raw-html` | Skip markdown conversion |
+| `--remote-fallback` | Opt in to remote thin-content recovery via `r.jina.ai`; avoid for internal, authenticated, or sensitive URLs |
 | `--diff` | Show what changed since the last fetch |
-| `--session <name>` | Persistent named session with encrypted cookie store (memory-only on Windows for now) |
 | `-X <method>` `-d <data>` | HTTP method + body |
 | `-o <path>` | Write body to file |
+
+MCP `fetch` additionally supports `focus`, `max_tokens`, and `session` parameters for query-focused extraction, structure-aware token budgets, and persistent encrypted cookie sessions.
 
 ### Analyze
 
@@ -288,8 +285,8 @@ Bind to localhost by default. Origin checks and `MCP-Protocol-Version` header va
 
 | Capability | Status |
 |-----------|--------|
-| Tools | 11 tools with structured output schemas, annotations, validation errors |
-| Prompts | 3 prompts (`fetch-and-extract`, `multi-page-research`, `authenticated-fetch`, `match-speakers-with-hebb`) |
+| Tools | 12 tools with structured output schemas, annotations, validation errors |
+| Prompts | 4 prompts (`fetch-and-extract`, `multi-page-research`, `authenticated-fetch`, `match-speakers-with-hebb`) |
 | Resources | 2 static + N dynamic watch resources, all subscribable |
 | Logging | `notifications/message` with RFC 5424 levels |
 | Sampling | nab calls back to the host LLM for active reading, focus extraction, form auto-fill |
@@ -299,7 +296,7 @@ Bind to localhost by default. Origin checks and `MCP-Protocol-Version` header va
 | Server icons | Light + dark SVG |
 | Transports | stdio + Streamable HTTP (resumable, session-scoped) |
 
-The 11 MCP tools:
+The 12 MCP tools:
 
 | Tool | Description |
 |------|-------------|
@@ -458,10 +455,9 @@ EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-No
 - `src/fingerprint/` — browser fingerprint spoofing (anti-bot evasion)
 - `src/waf/` — WAF challenge handling
 - `src/site/` — per-site provider integrations (proprietary domain knowledge)
+- `src/security/` — Secure Ingestion guard for stripping machine-targeted HTML directives and hidden metadata
 
 **What this means in practice**:
 - Free for noncommercial use, modification, redistribution.
 - Commercial use of EE modules requires a separate commercial license — contact `mikko.parkkola@iki.fi`.
 - All releases prior to v0.9.0 remain entirely MIT and stay MIT forever.
-
-A Secure Ingestion EE module (machine-targeted-directive stripping with provenance metadata) is planned for a follow-up release; see [LICENSE-EE.md](LICENSE-EE.md) for the planned scope.

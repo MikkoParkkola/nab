@@ -11,12 +11,17 @@
 //! - Configurable response body size cap (default 10 MB)
 //! - Cloudflare `text/markdown` support via `Accept` header
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 use bytes::Bytes;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::header::{
+    ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HeaderMap, ORIGIN,
+    PROXY_AUTHORIZATION, REFERER,
+};
+use reqwest::{Client, Method, Response, StatusCode};
 use tokio::sync::RwLock;
 use tracing::{debug, info, instrument, warn};
 use url::Url;
@@ -36,6 +41,7 @@ pub struct AcceleratedClient {
     /// Client with redirects disabled, used by `fetch_safe` for manual redirect handling.
     no_redirect_client: Client,
     profile: Arc<RwLock<BrowserProfile>>,
+    safe_client_config: Option<SafeClientConfig>,
 }
 
 /// Returns a reqwest `ClientBuilder` with common acceleration settings applied.
@@ -46,6 +52,12 @@ enum TransportMode {
     Http2PriorKnowledge,
     Http2Adaptive,
     Http1Only,
+}
+
+#[derive(Clone)]
+struct SafeClientConfig {
+    headers: HeaderMap,
+    transport: TransportMode,
 }
 
 fn accelerated_builder(
@@ -87,11 +99,17 @@ fn build_http_client(
 }
 
 impl AcceleratedClient {
-    fn from_parts(client: Client, no_redirect_client: Client, profile: BrowserProfile) -> Self {
+    fn from_parts(
+        client: Client,
+        no_redirect_client: Client,
+        profile: BrowserProfile,
+        safe_client_config: Option<SafeClientConfig>,
+    ) -> Self {
         Self {
             client,
             no_redirect_client,
             profile: Arc::new(RwLock::new(profile)),
+            safe_client_config,
         }
     }
 
@@ -118,7 +136,15 @@ impl AcceleratedClient {
             reqwest::redirect::Policy::none(),
         )?;
 
-        Ok(Self::from_parts(client, no_redirect_client, profile))
+        Ok(Self::from_parts(
+            client,
+            no_redirect_client,
+            profile,
+            Some(SafeClientConfig {
+                headers,
+                transport: TransportMode::Http2Adaptive,
+            }),
+        ))
     }
 
     /// Create client that tries HTTP/2 with fallback to HTTP/1.1
@@ -138,7 +164,15 @@ impl AcceleratedClient {
             reqwest::redirect::Policy::none(),
         )?;
 
-        Ok(Self::from_parts(client, no_redirect_client, profile))
+        Ok(Self::from_parts(
+            client,
+            no_redirect_client,
+            profile,
+            Some(SafeClientConfig {
+                headers,
+                transport: TransportMode::Http2Adaptive,
+            }),
+        ))
     }
 
     /// Create a client that forces HTTP/1.1 for origin servers with HTTP/2 issues.
@@ -158,12 +192,37 @@ impl AcceleratedClient {
             reqwest::redirect::Policy::none(),
         )?;
 
-        Ok(Self::from_parts(client, no_redirect_client, profile))
+        Ok(Self::from_parts(
+            client,
+            no_redirect_client,
+            profile,
+            Some(SafeClientConfig {
+                headers,
+                transport: TransportMode::Http1Only,
+            }),
+        ))
     }
 
     /// Create client from an existing `reqwest::Client` (for custom configurations like proxies)
     pub fn from_client(client: Client) -> Result<Self> {
         Self::from_client_with_profile(client, random_profile())
+    }
+
+    /// Create client from existing normal and no-redirect `reqwest::Client`s.
+    ///
+    /// Use this when transport configuration such as a proxy must apply to both
+    /// the ordinary client and the manually validated redirect client.
+    pub fn from_clients(client: Client, no_redirect_client: Client) -> Result<Self> {
+        Self::from_clients_with_profile(client, no_redirect_client, random_profile())
+    }
+
+    /// Create client from existing normal and no-redirect clients with a fixed profile.
+    pub fn from_clients_with_profile(
+        client: Client,
+        no_redirect_client: Client,
+        profile: BrowserProfile,
+    ) -> Result<Self> {
+        Ok(Self::from_parts(client, no_redirect_client, profile, None))
     }
 
     /// Create a client that routes all traffic through the Tor SOCKS5 proxy.
@@ -188,9 +247,23 @@ impl AcceleratedClient {
     /// }
     /// ```
     pub fn with_tor_proxy() -> Result<Self> {
-        let proxy = reqwest::Proxy::all(TOR_PROXY_URL)?;
-        let inner = Client::builder().proxy(proxy).build()?;
-        Self::from_client(inner)
+        Self::with_socks_proxy_url(TOR_PROXY_URL)
+    }
+
+    fn with_socks_proxy_url(proxy_url: &str) -> Result<Self> {
+        let proxy = reqwest::Proxy::all(proxy_url)?;
+        let no_redirect_proxy = reqwest::Proxy::all(proxy_url)?;
+        let profile = random_profile();
+        let headers = profile.to_headers();
+        let inner = accelerated_builder(&headers, TransportMode::Http2Adaptive)
+            .proxy(proxy)
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()?;
+        let no_redirect_client = accelerated_builder(&headers, TransportMode::Http2Adaptive)
+            .proxy(no_redirect_proxy)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Self::from_clients_with_profile(inner, no_redirect_client, profile)
     }
 
     fn from_client_with_profile(client: Client, profile: BrowserProfile) -> Result<Self> {
@@ -202,7 +275,7 @@ impl AcceleratedClient {
             reqwest::redirect::Policy::none(),
         )?;
 
-        Ok(Self::from_parts(client, no_redirect_client, profile))
+        Ok(Self::from_parts(client, no_redirect_client, profile, None))
     }
 
     /// Create client that doesn't follow redirects (for auth flows)
@@ -218,7 +291,15 @@ impl AcceleratedClient {
 
         let no_redirect_client = client.clone();
 
-        Ok(Self::from_parts(client, no_redirect_client, profile))
+        Ok(Self::from_parts(
+            client,
+            no_redirect_client,
+            profile,
+            Some(SafeClientConfig {
+                headers,
+                transport: TransportMode::Http2Adaptive,
+            }),
+        ))
     }
 
     /// Fetch a URL with all accelerations
@@ -278,55 +359,93 @@ impl AcceleratedClient {
         url: &str,
         config: &SafeFetchConfig,
     ) -> Result<SafeFetchResponse> {
-        self.fetch_safe_with_validators(
+        self.request_safe_with_validators(
             url,
-            config,
+            SafeRequestOptions {
+                config: config.clone(),
+                ..SafeRequestOptions::default()
+            },
             ssrf::validate_url,
-            ssrf::validate_redirect_target,
+            validate_redirect_target_and_pin,
         )
         .await
     }
 
-    async fn fetch_safe_with_validators(
+    /// Send a request with SSRF protection, redirect validation, and a body cap.
+    ///
+    /// Unlike [`Self::fetch_safe`], this supports non-GET methods, additional
+    /// headers, and request bodies while preserving the same safety guarantees.
+    #[instrument(skip(self, options), fields(url = %url, method = %options.method))]
+    pub async fn request_safe(
         &self,
         url: &str,
-        config: &SafeFetchConfig,
-        validate_url: fn(&Url) -> std::result::Result<std::net::SocketAddr, crate::error::NabError>,
-        validate_redirect_target: fn(&Url) -> std::result::Result<(), crate::error::NabError>,
+        options: SafeRequestOptions,
     ) -> Result<SafeFetchResponse> {
+        self.request_safe_with_validators(
+            url,
+            options,
+            ssrf::validate_url,
+            validate_redirect_target_and_pin,
+        )
+        .await
+    }
+
+    async fn request_safe_with_validators<V, R>(
+        &self,
+        url: &str,
+        options: SafeRequestOptions,
+        validate_url: V,
+        validate_redirect_target: R,
+    ) -> Result<SafeFetchResponse>
+    where
+        V: Fn(&Url) -> std::result::Result<SocketAddr, crate::error::NabError>,
+        R: Fn(&Url) -> std::result::Result<SocketAddr, crate::error::NabError>,
+    {
+        let config = &options.config;
         let mut current_url: Url = url
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid URL '{url}': {e}"))?;
 
         // Validate initial URL against SSRF deny list
-        let _pinned = validate_url(&current_url)?;
-        debug!("SSRF validation passed for {current_url}");
+        let mut pinned_addr = validate_url(&current_url)?;
+        debug!(pinned = %pinned_addr, "SSRF validation passed for {current_url}");
 
         let mut redirect_count = 0u32;
+        let mut method = options.method.clone();
+        let mut body = options.body.clone();
+        let mut request_headers = options.headers.clone();
 
         loop {
-            let mut request = self.no_redirect_client.get(current_url.as_str());
+            let request_client = self.pinned_no_redirect_client(&current_url, pinned_addr)?;
+            let mut request = request_client
+                .request(method.clone(), current_url.as_str())
+                .headers(request_headers.clone());
 
             // Add Accept header preferring text/markdown (Cloudflare Markdown for Agents)
-            if config.prefer_markdown {
+            if config.prefer_markdown && !request_headers.contains_key(ACCEPT) {
                 request = request.header(
-                    "Accept",
+                    ACCEPT,
                     "text/markdown, text/html;q=0.9, application/xhtml+xml;q=0.8, */*;q=0.7",
                 );
             }
 
+            if let Some(body) = body.clone() {
+                request = request.body(body);
+            }
+
             let response = request.send().await?;
             let status = response.status();
+            let version = response.version();
 
             info!(
                 status = %status,
-                version = ?response.version(),
+                version = ?version,
                 url = %current_url,
                 "Response received"
             );
 
             // Handle redirects manually with per-hop SSRF validation
-            if status.is_redirection() {
+            if status.is_redirection() && config.max_redirects > 0 {
                 redirect_count += 1;
                 if redirect_count > config.max_redirects {
                     bail!(
@@ -347,8 +466,16 @@ impl AcceleratedClient {
                     .map_err(|e| anyhow::anyhow!("Invalid redirect URL '{location}': {e}"))?;
 
                 // Validate redirect target against SSRF deny list
-                validate_redirect_target(&next_url)?;
+                pinned_addr = validate_redirect_target(&next_url)?;
                 debug!("Redirect hop {redirect_count}: {current_url} -> {next_url}");
+                strip_cross_origin_redirect_headers(&mut request_headers, &current_url, &next_url);
+
+                if should_redirect_with_get(status, &method) {
+                    method = Method::GET;
+                    body = None;
+                    request_headers.remove(CONTENT_LENGTH);
+                    request_headers.remove(CONTENT_TYPE);
+                }
 
                 current_url = next_url;
                 continue;
@@ -372,6 +499,7 @@ impl AcceleratedClient {
 
             return Ok(SafeFetchResponse {
                 status,
+                version,
                 url: current_url,
                 content_type,
                 headers,
@@ -386,6 +514,63 @@ impl AcceleratedClient {
     pub fn inner(&self) -> &Client {
         &self.client
     }
+
+    fn pinned_no_redirect_client(&self, url: &Url, pinned_addr: SocketAddr) -> Result<Client> {
+        let Some(config) = &self.safe_client_config else {
+            return Ok(self.no_redirect_client.clone());
+        };
+
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("URL has no host: {url}"))?;
+
+        Ok(accelerated_builder(&config.headers, config.transport)
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(host, pinned_addr)
+            .build()?)
+    }
+}
+
+fn validate_redirect_target_and_pin(
+    url: &Url,
+) -> std::result::Result<SocketAddr, crate::error::NabError> {
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(crate::error::NabError::SsrfBlocked(format!(
+                "disallowed redirect scheme '{scheme}'"
+            )));
+        }
+    }
+
+    ssrf::validate_url(url)
+}
+
+fn should_redirect_with_get(status: StatusCode, method: &Method) -> bool {
+    (status == StatusCode::MOVED_PERMANENTLY
+        || status == StatusCode::FOUND
+        || status == StatusCode::SEE_OTHER)
+        && *method != Method::GET
+        && *method != Method::HEAD
+}
+
+fn same_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str().map(str::to_ascii_lowercase)
+            == right.host_str().map(str::to_ascii_lowercase)
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn strip_cross_origin_redirect_headers(headers: &mut HeaderMap, from: &Url, to: &Url) {
+    if same_origin(from, to) {
+        return;
+    }
+
+    headers.remove(COOKIE);
+    headers.remove(AUTHORIZATION);
+    headers.remove(PROXY_AUTHORIZATION);
+    headers.remove(ORIGIN);
+    headers.remove(REFERER);
 }
 
 /// Configuration for [`AcceleratedClient::fetch_safe`].
@@ -409,11 +594,37 @@ impl Default for SafeFetchConfig {
     }
 }
 
+/// Request options for [`AcceleratedClient::request_safe`].
+#[derive(Debug, Clone)]
+pub struct SafeRequestOptions {
+    /// HTTP method to use for the first request.
+    pub method: Method,
+    /// Request headers to send.
+    pub headers: HeaderMap,
+    /// Optional request body.
+    pub body: Option<Bytes>,
+    /// Shared redirect/body/accept behavior.
+    pub config: SafeFetchConfig,
+}
+
+impl Default for SafeRequestOptions {
+    fn default() -> Self {
+        Self {
+            method: Method::GET,
+            headers: HeaderMap::new(),
+            body: None,
+            config: SafeFetchConfig::default(),
+        }
+    }
+}
+
 /// Response from [`AcceleratedClient::fetch_safe`].
 #[derive(Debug)]
 pub struct SafeFetchResponse {
     /// HTTP status code.
     pub status: StatusCode,
+    /// HTTP protocol version used for the final response.
+    pub version: reqwest::Version,
     /// Final URL after redirects.
     pub url: Url,
     /// Content-Type header value.
@@ -449,7 +660,7 @@ impl SafeFetchResponse {
 /// Reads the body in chunks via streaming to avoid allocating the entire
 /// response in memory before checking the size. If the body exceeds
 /// `max_size`, it is truncated and a warning is logged.
-async fn read_body_capped(response: Response, max_size: usize) -> Result<Bytes> {
+pub async fn read_body_capped(response: Response, max_size: usize) -> Result<Bytes> {
     // Use content-length hint for early rejection if available
     // Truncation acceptable: content_length is used only as a size hint for logging
     #[allow(clippy::cast_possible_truncation)]
@@ -488,7 +699,7 @@ impl Default for AcceleratedClient {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -598,9 +809,9 @@ mod tests {
         }
     }
 
-    fn loopback_redirect_allowed_for_tests(url: &Url) -> std::result::Result<(), NabError> {
+    fn loopback_redirect_allowed_for_tests(url: &Url) -> std::result::Result<SocketAddr, NabError> {
         match url.scheme() {
-            "http" | "https" => loopback_url_allowed_for_tests(url).map(|_| ()),
+            "http" | "https" => loopback_url_allowed_for_tests(url),
             scheme => Err(NabError::SsrfBlocked(format!(
                 "disallowed redirect scheme '{scheme}'"
             ))),
@@ -738,6 +949,7 @@ mod tests {
     fn safe_fetch_response_text_lossy() {
         let resp = SafeFetchResponse {
             status: StatusCode::OK,
+            version: reqwest::Version::HTTP_11,
             url: Url::parse("https://example.com").unwrap(),
             content_type: "text/html".to_string(),
             headers: vec![],
@@ -751,6 +963,7 @@ mod tests {
     fn safe_fetch_response_text_lossy_non_utf8() {
         let resp = SafeFetchResponse {
             status: StatusCode::OK,
+            version: reqwest::Version::HTTP_11,
             url: Url::parse("https://example.com").unwrap(),
             content_type: "text/html".to_string(),
             headers: vec![],
@@ -765,6 +978,7 @@ mod tests {
     fn safe_fetch_response_is_markdown_true() {
         let resp = SafeFetchResponse {
             status: StatusCode::OK,
+            version: reqwest::Version::HTTP_11,
             url: Url::parse("https://example.com").unwrap(),
             content_type: "text/markdown".to_string(),
             headers: vec![],
@@ -778,6 +992,7 @@ mod tests {
     fn safe_fetch_response_is_markdown_with_charset() {
         let resp = SafeFetchResponse {
             status: StatusCode::OK,
+            version: reqwest::Version::HTTP_11,
             url: Url::parse("https://example.com").unwrap(),
             content_type: "text/markdown; charset=utf-8".to_string(),
             headers: vec![],
@@ -791,6 +1006,7 @@ mod tests {
     fn safe_fetch_response_is_markdown_false_for_html() {
         let resp = SafeFetchResponse {
             status: StatusCode::OK,
+            version: reqwest::Version::HTTP_11,
             url: Url::parse("https://example.com").unwrap(),
             content_type: "text/html".to_string(),
             headers: vec![],
@@ -851,9 +1067,12 @@ mod tests {
 
         let config = SafeFetchConfig::default();
         let response = client
-            .fetch_safe_with_validators(
+            .request_safe_with_validators(
                 &format!("{base_url}/profile"),
-                &config,
+                SafeRequestOptions {
+                    config,
+                    ..SafeRequestOptions::default()
+                },
                 loopback_url_allowed_for_tests,
                 loopback_redirect_allowed_for_tests,
             )
@@ -896,9 +1115,12 @@ mod tests {
 
         let config = SafeFetchConfig::default();
         let response = client
-            .fetch_safe_with_validators(
+            .request_safe_with_validators(
                 &format!("{base_url}/rotate"),
-                &config,
+                SafeRequestOptions {
+                    config,
+                    ..SafeRequestOptions::default()
+                },
                 loopback_url_allowed_for_tests,
                 loopback_redirect_allowed_for_tests,
             )
@@ -964,9 +1186,12 @@ mod tests {
         let client = AcceleratedClient::new().unwrap();
         let config = SafeFetchConfig::default();
         let result = client
-            .fetch_safe_with_validators(
+            .request_safe_with_validators(
                 &format!("{base_url}/redirect"),
-                &config,
+                SafeRequestOptions {
+                    config,
+                    ..SafeRequestOptions::default()
+                },
                 loopback_url_allowed_for_tests,
                 loopback_redirect_allowed_for_tests,
             )
@@ -983,6 +1208,248 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_safe_returns_redirect_when_max_redirects_is_zero() {
+        let (base_url, server) = spawn_test_server(1, |request| {
+            assert!(
+                request.starts_with("GET /redirect HTTP/1.1\r\n"),
+                "unexpected request: {request}"
+            );
+            TestResponse::redirect("/final")
+        })
+        .await;
+
+        let client = AcceleratedClient::new().unwrap();
+        let config = SafeFetchConfig {
+            max_redirects: 0,
+            ..SafeFetchConfig::default()
+        };
+        let resp = client
+            .request_safe_with_validators(
+                &format!("{base_url}/redirect"),
+                SafeRequestOptions {
+                    config,
+                    ..SafeRequestOptions::default()
+                },
+                loopback_url_allowed_for_tests,
+                loopback_redirect_allowed_for_tests,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status, StatusCode::FOUND);
+        assert_eq!(resp.redirect_count, 0);
+        assert!(
+            resp.headers
+                .iter()
+                .any(|(name, value)| name.eq_ignore_ascii_case("location") && value == "/final")
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_safe_uses_pinned_resolution_for_request_connect() {
+        let (base_url, server) = spawn_test_server(1, |request| {
+            let request = request.to_ascii_lowercase();
+            assert!(
+                request.starts_with("get /pinned http/1.1\r\n"),
+                "unexpected request: {request}"
+            );
+            assert!(
+                request.contains("host: pinned.test:"),
+                "request should preserve original host while connecting to pinned IP: {request}"
+            );
+            TestResponse::ok("pinned resolution worked", "text/plain")
+        })
+        .await;
+        let server_addr: SocketAddr = base_url
+            .strip_prefix("http://")
+            .unwrap()
+            .parse()
+            .expect("test server address");
+        let pinned_url = format!("http://pinned.test:{}/pinned", server_addr.port());
+
+        let client = AcceleratedClient::new_http1_only().unwrap();
+        let resp = client
+            .request_safe_with_validators(
+                &pinned_url,
+                SafeRequestOptions::default(),
+                move |url| match url.host_str() {
+                    Some("pinned.test") => Ok(server_addr),
+                    _ => loopback_url_allowed_for_tests(url),
+                },
+                move |url| match url.host_str() {
+                    Some("pinned.test") => Ok(server_addr),
+                    _ => loopback_redirect_allowed_for_tests(url),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status, StatusCode::OK);
+        assert_eq!(resp.text_lossy(), "pinned resolution worked");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_safe_strips_sensitive_headers_on_cross_origin_redirect() {
+        let target_request = Arc::new(Mutex::new(None::<String>));
+        let target_request_for_server = Arc::clone(&target_request);
+        let (target_base_url, target_server) = spawn_test_server(1, move |request| {
+            *target_request_for_server.lock().unwrap() = Some(request);
+            TestResponse::ok("target reached", "text/plain")
+        })
+        .await;
+        let target_addr: SocketAddr = target_base_url
+            .strip_prefix("http://")
+            .unwrap()
+            .parse()
+            .expect("target server address");
+        let target_url = format!("http://target.test:{}/final", target_addr.port());
+
+        let (origin_base_url, origin_server) = spawn_test_server(1, move |request| {
+            let request = request.to_ascii_lowercase();
+            assert!(request.contains("cookie: session=secret"));
+            assert!(request.contains("authorization: bearer secret"));
+            assert!(request.contains("proxy-authorization: basic secret"));
+            assert!(request.contains("origin: https://origin.test"));
+            assert!(request.contains("referer: https://origin.test/start"));
+            TestResponse::redirect(&target_url)
+        })
+        .await;
+        let origin_addr: SocketAddr = origin_base_url
+            .strip_prefix("http://")
+            .unwrap()
+            .parse()
+            .expect("origin server address");
+        let origin_url = format!("http://origin.test:{}/redirect", origin_addr.port());
+
+        let mut headers = HeaderMap::new();
+        headers.insert(COOKIE, "session=secret".parse().unwrap());
+        headers.insert(AUTHORIZATION, "Bearer secret".parse().unwrap());
+        headers.insert(PROXY_AUTHORIZATION, "Basic secret".parse().unwrap());
+        headers.insert(ORIGIN, "https://origin.test".parse().unwrap());
+        headers.insert(REFERER, "https://origin.test/start".parse().unwrap());
+
+        let client = AcceleratedClient::new_http1_only().unwrap();
+        let map_host = move |url: &Url| match url.host_str() {
+            Some("origin.test") => Ok(origin_addr),
+            Some("target.test") => Ok(target_addr),
+            _ => loopback_url_allowed_for_tests(url),
+        };
+        let resp = client
+            .request_safe_with_validators(
+                &origin_url,
+                SafeRequestOptions {
+                    headers,
+                    ..SafeRequestOptions::default()
+                },
+                map_host,
+                move |url| match url.scheme() {
+                    "http" | "https" => match url.host_str() {
+                        Some("origin.test") => Ok(origin_addr),
+                        Some("target.test") => Ok(target_addr),
+                        _ => loopback_url_allowed_for_tests(url),
+                    },
+                    scheme => Err(NabError::SsrfBlocked(format!(
+                        "disallowed redirect scheme '{scheme}'"
+                    ))),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status, StatusCode::OK);
+        assert_eq!(resp.text_lossy(), "target reached");
+
+        let target_request = target_request
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("target should receive redirected request")
+            .to_ascii_lowercase();
+        assert!(!target_request.contains("cookie:"), "{target_request}");
+        assert!(
+            !target_request.contains("authorization:"),
+            "{target_request}"
+        );
+        assert!(
+            !target_request.contains("proxy-authorization:"),
+            "{target_request}"
+        );
+        assert!(!target_request.contains("origin:"), "{target_request}");
+        assert!(!target_request.contains("referer:"), "{target_request}");
+
+        origin_server.await.unwrap();
+        target_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn socks_proxy_safe_path_uses_no_redirect_proxy_client() {
+        let proxy_seen = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let proxy_seen_for_server = Arc::clone(&proxy_seen);
+        let proxy_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind proxy probe");
+        let proxy_addr = proxy_listener.local_addr().expect("proxy probe address");
+        let proxy_server = tokio::spawn(async move {
+            let (mut stream, _) = proxy_listener.accept().await.expect("accept proxy probe");
+            let mut buffer = [0_u8; 8];
+            let read = stream.read(&mut buffer).await.expect("read socks greeting");
+            proxy_seen_for_server
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buffer[..read]);
+            stream
+                .write_all(&[0x05, 0xff])
+                .await
+                .expect("reject socks greeting");
+        });
+
+        let origin_seen = Arc::new(Mutex::new(false));
+        let origin_seen_for_server = Arc::clone(&origin_seen);
+        let origin_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind origin probe");
+        let origin_addr = origin_listener.local_addr().expect("origin probe address");
+        let origin_server = tokio::spawn(async move {
+            if tokio::time::timeout(Duration::from_millis(250), origin_listener.accept())
+                .await
+                .is_ok()
+            {
+                *origin_seen_for_server.lock().unwrap() = true;
+            }
+        });
+
+        let client =
+            AcceleratedClient::with_socks_proxy_url(&format!("socks5h://{proxy_addr}")).unwrap();
+        let result = client
+            .request_safe_with_validators(
+                &format!("http://{origin_addr}/through-proxy"),
+                SafeRequestOptions::default(),
+                loopback_url_allowed_for_tests,
+                loopback_redirect_allowed_for_tests,
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "SOCKS probe rejects the handshake, so the request should fail through the proxy"
+        );
+        proxy_server.await.unwrap();
+        origin_server.await.unwrap();
+
+        let proxy_seen = proxy_seen.lock().unwrap().clone();
+        assert!(
+            proxy_seen.starts_with(&[0x05]),
+            "safe request should hit SOCKS proxy, got bytes: {proxy_seen:?}"
+        );
+        assert!(
+            !*origin_seen.lock().unwrap(),
+            "safe request bypassed the SOCKS proxy and connected directly to origin"
+        );
+    }
+
+    #[tokio::test]
     async fn fetch_safe_returns_body() {
         let (base_url, server) = spawn_test_server(1, |request| {
             assert!(
@@ -996,9 +1463,12 @@ mod tests {
         let client = AcceleratedClient::new().unwrap();
         let config = SafeFetchConfig::default();
         let resp = client
-            .fetch_safe_with_validators(
+            .request_safe_with_validators(
                 &format!("{base_url}/body"),
-                &config,
+                SafeRequestOptions {
+                    config,
+                    ..SafeRequestOptions::default()
+                },
                 loopback_url_allowed_for_tests,
                 loopback_redirect_allowed_for_tests,
             )
@@ -1032,9 +1502,12 @@ mod tests {
             ..SafeFetchConfig::default()
         };
         let resp = client
-            .fetch_safe_with_validators(
+            .request_safe_with_validators(
                 &format!("{base_url}/large"),
-                &config,
+                SafeRequestOptions {
+                    config,
+                    ..SafeRequestOptions::default()
+                },
                 loopback_url_allowed_for_tests,
                 loopback_redirect_allowed_for_tests,
             )

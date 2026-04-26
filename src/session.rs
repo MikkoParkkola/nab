@@ -56,6 +56,7 @@ use tempfile::NamedTempFile;
 use tokio::sync::RwLock;
 
 use crate::fingerprint::{BrowserProfile, random_profile};
+use crate::ssrf::{DEFAULT_MAX_REDIRECTS, validate_redirect_target};
 
 #[cfg(not(test))]
 const NAB_STATE_DIR: &str = ".nab";
@@ -486,7 +487,17 @@ fn build_reqwest_client(profile: &BrowserProfile, jar: Arc<SessionJar>) -> Resul
         .default_headers(profile.to_headers())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= DEFAULT_MAX_REDIRECTS as usize {
+                return attempt.error(format!(
+                    "too many redirects (>{DEFAULT_MAX_REDIRECTS}) in session request"
+                ));
+            }
+            if let Err(error) = validate_redirect_target(attempt.url()) {
+                return attempt.error(error.to_string());
+            }
+            attempt.follow()
+        }))
         .http2_adaptive_window(true)
         .cookie_provider(jar)
         .build()

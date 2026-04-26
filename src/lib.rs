@@ -9,7 +9,7 @@
     clippy::float_cmp
 )]
 
-//! `nab` - Ultra-minimal browser engine
+//! `nab` - Multimodal web microfetch for LLM agents
 //!
 //! # Features
 //!
@@ -94,7 +94,9 @@ pub use fingerprint::{
     BrowserProfile, chrome_profile, firefox_profile, random_profile, safari_profile,
 };
 pub use form::{Form, parse_field_args};
-pub use http_client::{AcceleratedClient, SafeFetchConfig, SafeFetchResponse, TOR_PROXY_URL};
+pub use http_client::{
+    AcceleratedClient, SafeFetchConfig, SafeFetchResponse, SafeRequestOptions, TOR_PROXY_URL,
+};
 pub use http3_client::Http3Client;
 #[cfg(feature = "http3")]
 pub use http3_client::Http3Response;

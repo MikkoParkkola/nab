@@ -34,6 +34,7 @@ use nab::site::linkedin::export::{
 
 /// Configuration for `cmd_linkedin_export`.
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "impersonate"), allow(dead_code))]
 pub struct LinkedinExportConfig {
     /// `--cookies` browser flag (`auto`, `brave`, `chrome`, …, `none`).
     pub cookies: String,

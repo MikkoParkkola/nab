@@ -7,10 +7,12 @@
 use std::fmt::Write as FmtWrite;
 use std::time::Instant;
 
+use reqwest::header::{COOKIE, HeaderValue};
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
+use url::Url;
 
 use nab::content::ContentRouter;
-use nab::{AcceleratedClient, SafeFetchConfig};
+use nab::{AcceleratedClient, SafeFetchConfig, SafeRequestOptions};
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 
@@ -42,6 +44,22 @@ pub(crate) fn resolve_cookie_header(url: &str, browser: Option<&str>) -> String 
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
+
+pub(crate) fn validate_tool_url(url: &str) -> Result<Url, CallToolError> {
+    let parsed = url
+        .parse::<Url>()
+        .map_err(|e| CallToolError::from_message(format!("Invalid URL '{url}': {e}")))?;
+    nab::validate_url(&parsed).map_err(|e| CallToolError::from_message(e.to_string()))?;
+    Ok(parsed)
+}
+
+pub(crate) async fn read_response_capped(
+    response: reqwest::Response,
+) -> Result<bytes::Bytes, CallToolError> {
+    nab::http_client::read_body_capped(response, nab::DEFAULT_MAX_BODY_SIZE)
+        .await
+        .map_err(|e| CallToolError::from_message(e.to_string()))
+}
 
 /// Fetch via `fetch_safe` and return the response components.
 pub(crate) async fn fetch_safe_response(
@@ -90,41 +108,39 @@ pub(crate) async fn fetch_with_cookies(
     ),
     CallToolError,
 > {
-    let response = client
-        .inner()
-        .get(url)
-        .header("Cookie", cookie_header)
-        .headers(profile.to_headers())
-        .send()
+    let mut headers = profile.to_headers();
+    if !cookie_header.is_empty() {
+        let cookie_value = HeaderValue::from_str(cookie_header)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        headers.insert(COOKIE, cookie_value);
+    }
+
+    let safe_resp = client
+        .request_safe(
+            url,
+            SafeRequestOptions {
+                headers,
+                config: SafeFetchConfig::default(),
+                ..SafeRequestOptions::default()
+            },
+        )
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
     let elapsed = start.elapsed();
-    let status = response.status();
-    let ct = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("text/html")
-        .to_string();
-    let hdrs: Vec<(String, String)> = response
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
-        .collect();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| CallToolError::from_message(e.to_string()))?;
-    Ok((status, ct, hdrs, bytes, elapsed))
+    Ok((
+        safe_resp.status,
+        safe_resp.content_type,
+        safe_resp.headers,
+        safe_resp.body,
+        elapsed,
+    ))
 }
 
 /// Fetch a URL using a session-owned `reqwest::Client` whose cookie jar
 /// already contains the session's cookies.
 ///
-/// The caller is responsible for any URL-level SSRF validation before invoking
-/// this helper.  The session client follows redirects via its own policy (up to
-/// 10 hops); body bytes are returned without a size cap (same as the
-/// `fetch_with_cookies` path).
+/// The URL is SSRF-validated before dispatch. Session clients use a redirect
+/// policy that validates every redirect target, and response bodies are capped.
 pub(crate) async fn fetch_with_session_response(
     session_client: &reqwest::Client,
     url: &str,
@@ -139,6 +155,7 @@ pub(crate) async fn fetch_with_session_response(
     ),
     CallToolError,
 > {
+    validate_tool_url(url)?;
     let response = session_client
         .get(url)
         .send()
@@ -157,10 +174,7 @@ pub(crate) async fn fetch_with_session_response(
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
         .collect();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+    let bytes = read_response_capped(response).await?;
     Ok((status, ct, hdrs, bytes, elapsed))
 }
 

@@ -197,11 +197,11 @@ let handlers: Vec<Box<dyn ContentHandler>> = {
 
 ## License Compatibility
 
-| Component | License | Compatible with nab (MIT)? |
+| Component | License | Compatible with nab mixed MIT + PolyForm NC? |
 |-----------|---------|---------------------------|
 | `pdfium-render` crate | MIT OR Apache-2.0 | Yes |
 | PDFium (Chromium) | BSD-3-Clause | Yes |
-| nab | MIT | N/A (source) |
+| nab | Mixed MIT + PolyForm Noncommercial EE paths | N/A (source) |
 
 All licenses are permissive and compatible. No issues.
 
