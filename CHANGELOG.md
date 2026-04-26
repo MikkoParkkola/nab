@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-04-26
+
 ### Fixed
 
 - **LinkedIn activity-feed renderer no longer attributes Comments / reshares / reactions to the user as posts** (`src/site/linkedin/voyager.rs`): the prior recursive `scan_commentary` walker collected text from any node where the enclosing `actor.name.text` matched the resolved profile name. That filter was necessary but not sufficient: LinkedIn's `included[]` array carries `social.Comment` entities (the user's own comments on others' posts, surfaced in `/recent-activity/all/`), `Profile` entities, `SocialDetail` entities, and `feed.Update` entities all interleaved. The walker leaked Comment text — one-line reactions like "Exactly what I need!", "Legend!", "you are welcome!" — into the rendered post list, falsely framing them as user posts. **Fix**: typed-pass parser that filters strictly on `$type == "com.linkedin.voyager.dash.feed.Update"`. Reshares are detected via the `resharedUpdate` field and tagged `[RESHARE of <author>]` rather than carrying the original poster's commentary. Each rendered post now also includes an engagement summary (impressions / reactions / comments / reposts) joined from `SocialActivityCounts` via the activity URN, plus the per-post URL. Output is sorted newest-first by activity URN (snowflake-style monotonic id). 9 unit tests cover the new parser including engagement join, reshare attribution, sort order, Comment-entity exclusion, and per-post URL emission.
