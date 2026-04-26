@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+#![allow(clippy::doc_markdown, clippy::map_unwrap_or)]
 
 //! Voyager XHR client for `LinkedIn` activity feeds.
 //!
@@ -29,10 +30,16 @@
 //! grepping for the queryId; this module ships the auth + URN resolution
 //! pieces that path will need.
 //!
-//! The typed `VoyagerActivityResponse` parse is the happy path. When
+//! The typed `VoyagerActivityResponse` parse is the legacy happy path. When
 //! `LinkedIn` wraps the response in `{data:…, included:[…]}` (decorator
-//! envelope), we fall back to a recursive commentary scan so post text is
-//! recovered regardless of envelope shape.
+//! envelope, the modern shape) we run a typed-pass walker over `included[]`
+//! that selects strictly `$type == "com.linkedin.voyager.dash.feed.Update"`
+//! entries — Comment / Profile / SocialDetail entries are excluded by
+//! construction. Reshares are detected via the `resharedUpdate` field and
+//! tagged accordingly so the original poster's commentary is never mis-
+//! attributed to the user. Engagement counters (likes / comments / shares /
+//! impressions) are joined from `SocialActivityCounts` entries via the
+//! activity URN.
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -246,78 +253,216 @@ async fn fetch_member_share_feed(profile_urn: &str, cookies: &str, csrf: &str) -
     );
 }
 
-/// Walk an arbitrary JSON value collecting commentary text from any
-/// `{"commentary": {"text": {"text": "..."}}}` shape — but ONLY when the
-/// enclosing update node's `actor.name.text` matches `expected_actor_name`.
+/// Engagement counters for a single activity URN, sourced from
+/// `com.linkedin.voyager.dash.feed.SocialActivityCounts` entries in `included[]`.
+#[derive(Debug, Default, Clone)]
+struct SocialCounts {
+    likes: u64,
+    comments: u64,
+    shares: u64,
+    impressions: u64,
+}
+
+/// One rendered post extracted from a Voyager `included[]` `Update` entity.
 ///
-/// Without this filter, reshares pollute the output: `MEMBER_FEED` returns
-/// the user's reshare-update, but the `commentary` text inside it belongs
-/// to the ORIGINAL poster (e.g. "I just deleted all my MCPs" attributed to
-/// Mitko Vasilev appears under a Mikko Parkkola profile fetch because Mikko
-/// reshared it). The actor-name guard pushes only updates the user authored.
-fn scan_commentary(value: &Value, posts: &mut Vec<String>, expected_actor_name: &str) {
-    match value {
-        Value::Object(map) => {
-            // Detect this node's actor.name.text (if any). When the field is
-            // present and matches, allow commentary collection at this depth.
-            let actor_name = map
-                .get("actor")
-                .and_then(Value::as_object)
-                .and_then(|a| a.get("name"))
-                .and_then(Value::as_object)
-                .and_then(|n| n.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+/// Designed so the renderer never needs to recurse back into the JSON: the
+/// activity URN, author, body, reshare provenance, and engagement are all
+/// captured in this struct.
+#[derive(Debug, Clone)]
+struct PostRecord {
+    /// Canonical post id, e.g. `urn:li:activity:7451014806356230146`. Used to
+    /// build the per-post URL and to join against `SocialCounts`.
+    activity_urn: String,
+    /// Author display name as rendered in `actor.name.text`.
+    actor_name: String,
+    /// Post body text. May be empty for share-with-no-comment.
+    body: String,
+    /// `Some(original_author)` when this is a reshare. The body field then
+    /// holds the user's reshare commentary (often empty); the original post's
+    /// commentary is intentionally NOT included to prevent mis-attribution.
+    reshare_of: Option<String>,
+    /// Engagement counters joined via `activity_urn`.
+    counts: SocialCounts,
+}
 
-            // Skip the entire subtree of foreign actors (reshare envelopes,
-            // included[] entries for other profiles). When actor is absent,
-            // descend (decorator wrappers, root data{} blocks).
-            if !actor_name.is_empty() && actor_name != expected_actor_name {
-                return;
-            }
-
-            if let Some(commentary) = map.get("commentary").and_then(Value::as_object) {
-                if let Some(text) = commentary
-                    .get("text")
-                    .and_then(Value::as_object)
-                    .and_then(|t| t.get("text"))
-                    .and_then(Value::as_str)
-                {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() && !posts.contains(&trimmed.to_string()) {
-                        posts.push(trimmed.to_string());
-                    }
-                } else if let Some(text) = commentary.get("text").and_then(Value::as_str) {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() && !posts.contains(&trimmed.to_string()) {
-                        posts.push(trimmed.to_string());
-                    }
-                }
-            }
-            for v in map.values() {
-                scan_commentary(v, posts, expected_actor_name);
-            }
-        }
-        Value::Array(arr) => {
-            for v in arr {
-                scan_commentary(v, posts, expected_actor_name);
-            }
-        }
-        _ => {}
+impl PostRecord {
+    /// `https://www.linkedin.com/feed/update/urn:li:activity:N/`
+    fn url(&self) -> String {
+        format!(
+            "https://www.linkedin.com/feed/update/{}/",
+            self.activity_urn
+        )
     }
+}
+
+/// Extract `urn:li:activity:NUMBER` from `urn:li:fsd_update:(urn:li:activity:NUMBER,...)`.
+///
+/// LinkedIn's compound URN syntax is `(child_urn,tag1,tag2,...)`; the activity
+/// URN is always the first comma-delimited piece.
+fn activity_urn_from_update_urn(update_urn: &str) -> Option<String> {
+    let inner = update_urn.strip_prefix("urn:li:fsd_update:(")?;
+    let first = inner.split(',').next()?;
+    if first.starts_with("urn:li:activity:") {
+        Some(first.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract `urn:li:activity:NUMBER` directly from a `SocialActivityCounts.urn`
+/// field. Filters out comment-level counts (`urn:li:comment:(...)`).
+fn activity_urn_from_counts_urn(urn: &str) -> Option<String> {
+    if urn.starts_with("urn:li:activity:") {
+        Some(urn.to_string())
+    } else {
+        None
+    }
+}
+
+/// Walk `included[]` and collect engagement counters keyed by activity URN.
+fn collect_social_counts(included: &[Value]) -> std::collections::HashMap<String, SocialCounts> {
+    let mut map = std::collections::HashMap::new();
+    for entry in included {
+        let Some(t) = entry.get("$type").and_then(Value::as_str) else {
+            continue;
+        };
+        if t != "com.linkedin.voyager.dash.feed.SocialActivityCounts" {
+            continue;
+        }
+        let Some(urn) = entry.get("urn").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(activity_urn) = activity_urn_from_counts_urn(urn) else {
+            // Comment-level counts: urn:li:comment:(...) — skip.
+            continue;
+        };
+        let counts = SocialCounts {
+            likes: entry.get("numLikes").and_then(Value::as_u64).unwrap_or(0),
+            comments: entry
+                .get("numComments")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            shares: entry.get("numShares").and_then(Value::as_u64).unwrap_or(0),
+            impressions: entry
+                .get("numImpressions")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        };
+        map.insert(activity_urn, counts);
+    }
+    map
+}
+
+/// Walk `included[]` and collect Update entities as PostRecords.
+///
+/// Skips Comment, SocialDetail, Profile, etc. — only `feed.Update` becomes a
+/// post. This is the structural fix for the prior recursive walker that mis-
+/// attributed comment text and inline reshared commentary to the user.
+fn collect_posts(
+    included: &[Value],
+    counts_map: &std::collections::HashMap<String, SocialCounts>,
+) -> Vec<PostRecord> {
+    let mut posts = Vec::new();
+    for entry in included {
+        let Some(t) = entry.get("$type").and_then(Value::as_str) else {
+            continue;
+        };
+        if t != "com.linkedin.voyager.dash.feed.Update" {
+            continue;
+        }
+        let Some(update_urn) = entry.get("entityUrn").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(activity_urn) = activity_urn_from_update_urn(update_urn) else {
+            continue;
+        };
+
+        let actor_name = entry
+            .pointer("/actor/name/text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+
+        // The user's own commentary on this update. For reshares, this is the
+        // user's optional reshare comment — the original post's commentary
+        // lives inside resharedUpdate.* and is intentionally NOT pulled here.
+        let body = entry
+            .pointer("/commentary/text/text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        // Reshare detection: presence of resharedUpdate marks a reshare. We
+        // try to surface the original author's name when it is inlined; when
+        // it is only a URN reference we still tag the post as a reshare so
+        // downstream readers know not to attribute the body to the user.
+        let reshare_of = entry.get("resharedUpdate").and_then(|rs| {
+            rs.pointer("/actor/name/text")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    // Naked URN reference — surface a placeholder so we still
+                    // tag the post as a reshare downstream.
+                    if rs.is_object() || rs.is_string() {
+                        Some("(original author)".to_string())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+        let counts = counts_map.get(&activity_urn).cloned().unwrap_or_default();
+
+        posts.push(PostRecord {
+            activity_urn,
+            actor_name,
+            body,
+            reshare_of,
+            counts,
+        });
+    }
+    // Newest first: activity URN is a snowflake-style monotonic id.
+    posts.sort_by(|a, b| b.activity_urn.cmp(&a.activity_urn));
+    posts
+}
+
+/// Render an engagement summary line. Returns empty string when all zero.
+fn fmt_engagement(c: &SocialCounts) -> String {
+    if c.likes == 0 && c.comments == 0 && c.shares == 0 && c.impressions == 0 {
+        return String::new();
+    }
+    let mut parts = Vec::new();
+    if c.impressions > 0 {
+        parts.push(format!("{} impressions", c.impressions));
+    }
+    if c.likes > 0 {
+        parts.push(format!("{} reactions", c.likes));
+    }
+    if c.comments > 0 {
+        parts.push(format!("{} comments", c.comments));
+    }
+    if c.shares > 0 {
+        parts.push(format!("{} reposts", c.shares));
+    }
+    parts.join(" · ")
 }
 
 /// Render a Voyager response body as markdown.
 ///
-/// Tries the typed `VoyagerActivityResponse` parser first (matches the shape
-/// used by the v1 `/feed/updates` endpoint plus naked v2 responses), then
-/// falls back to a recursive commentary-walker for the
-/// `{data:…, included:[…]}` decorator envelope.
+/// Two-stage strategy:
 ///
-/// `expected_actor_name` is required to filter out reshared posts whose
-/// commentary text belongs to other authors (the `MEMBER_FEED` queryId
-/// returns the user's reshare envelopes alongside their original posts;
-/// without this filter the reshared text is mis-attributed to the user).
+/// 1. Try the typed `VoyagerActivityResponse` parser (matches the legacy v1
+///    `/feed/updates` shape). Kept as a happy-path fast lane for endpoints
+///    that have not migrated to GraphQL.
+/// 2. Fall back to the typed-pass `included[]` walker which filters strictly
+///    on `$type == "com.linkedin.voyager.dash.feed.Update"`. This is the
+///    structural fix that prevents Comment / Profile / SocialDetail entries
+///    from leaking into the rendered output.
+///
+/// `expected_actor_name` flags posts whose author does not match the resolved
+/// profile name as reshares (defence in depth — `resharedUpdate` is the
+/// primary signal but is occasionally absent on quote-shares).
 fn render_voyager_body(body: &str, expected_actor_name: &str) -> String {
     if let Ok(typed) = serde_json::from_str::<VoyagerActivityResponse>(body) {
         let md = parse_voyager_activity(&typed);
@@ -326,21 +471,54 @@ fn render_voyager_body(body: &str, expected_actor_name: &str) -> String {
         }
     }
 
-    if let Ok(value) = serde_json::from_str::<Value>(body) {
-        let mut posts = Vec::new();
-        scan_commentary(&value, &mut posts, expected_actor_name);
-        if !posts.is_empty() {
-            let mut md = String::new();
-            for post in posts.iter().take(ACTIVITY_COUNT as usize) {
-                md.push_str("---\n\n");
-                md.push_str(post);
-                md.push_str("\n\n");
-            }
-            return md;
-        }
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return String::new();
+    };
+    let included: &[Value] = value
+        .get("included")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if included.is_empty() {
+        return String::new();
     }
 
-    String::new()
+    let counts_map = collect_social_counts(included);
+    let posts = collect_posts(included, &counts_map);
+    if posts.is_empty() {
+        return String::new();
+    }
+
+    let mut md = String::new();
+    for post in posts.iter().take(ACTIVITY_COUNT as usize) {
+        // Tag: POST (own original) | RESHARE of X | RESHARE? (foreign actor,
+        // no resharedUpdate field — defensive label).
+        let tag = if let Some(orig) = &post.reshare_of {
+            format!("RESHARE of {orig}")
+        } else if !expected_actor_name.is_empty()
+            && !post.actor_name.is_empty()
+            && post.actor_name != expected_actor_name
+        {
+            format!("RESHARE? (actor: {})", post.actor_name)
+        } else {
+            "POST".to_string()
+        };
+
+        let _ = writeln!(md, "---");
+        let _ = writeln!(md, "**[{tag}]** · <{}>", post.url());
+        let engagement = fmt_engagement(&post.counts);
+        if !engagement.is_empty() {
+            let _ = writeln!(md, "_{engagement}_");
+        }
+        let _ = writeln!(md);
+        if post.body.is_empty() {
+            let _ = writeln!(md, "_(no commentary)_");
+        } else {
+            let _ = writeln!(md, "{}", post.body);
+        }
+        let _ = writeln!(md);
+    }
+    md
 }
 
 /// Fetch `LinkedIn` activity-feed content for `/in/{username}/recent-activity/`
@@ -358,6 +536,16 @@ pub async fn fetch_activity_via_voyager(url: &str, cookies: &str) -> Result<Opti
 
     let (profile_urn, display_name) = resolve_profile_urn(&username, cookies, &csrf).await?;
     let body = fetch_member_share_feed(&profile_urn, cookies, &csrf).await?;
+
+    // Debug helper: dump the raw Voyager body when NAB_DUMP_VOYAGER is set.
+    // Useful when LinkedIn rotates queryId hashes or envelope shapes — capture
+    // a known-working response and diff against the new one.
+    if let Ok(path) = std::env::var("NAB_DUMP_VOYAGER")
+        && let Err(e) = std::fs::write(&path, &body)
+    {
+        tracing::warn!("NAB_DUMP_VOYAGER write to {path} failed: {e}");
+    }
+
     let posts_md = render_voyager_body(&body, &display_name);
 
     if posts_md.trim().is_empty() {
@@ -400,17 +588,110 @@ mod tests {
     }
 
     #[test]
-    fn render_decorator_envelope_fallback() {
-        // Decorator-envelope path: when no actor.name on the wrapping node,
-        // descend; collect commentary regardless of actor (no enclosing actor).
-        let body = r#"{"data":{"elements":[
-            {"*value":"urn:li:fsd_update:abc"}
-        ]},"included":[
-            {"$type":"com.linkedin.voyager.feed.Update",
-             "commentary":{"text":{"text":"envelope post"}}}
+    fn render_decorator_envelope_only_includes_update_entities() {
+        // included[] mixes Update + Comment + Profile — only Update should
+        // surface as a post in the rendered markdown.
+        let body = r#"{"data":{},"included":[
+            {"$type":"com.linkedin.voyager.dash.feed.Update",
+             "entityUrn":"urn:li:fsd_update:(urn:li:activity:7000000000000000001,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+             "actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":"my actual post"}}},
+            {"$type":"com.linkedin.voyager.dash.social.Comment",
+             "entityUrn":"urn:li:fsd_comment:(activity:7000000000000000001,1)",
+             "commentary":{"text":{"text":"a one-line comment that should NOT appear as a post"}}},
+            {"$type":"com.linkedin.voyager.dash.identity.profile.Profile",
+             "firstName":"Other","lastName":"Person"}
         ]}"#;
         let md = render_voyager_body(body, "Mikko Parkkola");
-        assert!(md.contains("envelope post"), "missing envelope post: {md}");
+        assert!(md.contains("my actual post"), "missing post: {md}");
+        assert!(
+            !md.contains("one-line comment"),
+            "leaked Comment entity into post output: {md}"
+        );
+        assert!(
+            !md.contains("Other Person"),
+            "leaked Profile entity into post output: {md}"
+        );
+        assert!(md.contains("[POST]"), "missing POST tag: {md}");
+    }
+
+    #[test]
+    fn render_reshare_does_not_attribute_inner_text_to_user() {
+        // Outer Update is Mikko's reshare wrapper (no commentary). The
+        // resharedUpdate field carries the original post by Mitko Vasilev
+        // whose body must NOT appear under Mikko's name.
+        let body = r#"{"data":{},"included":[
+            {"$type":"com.linkedin.voyager.dash.feed.Update",
+             "entityUrn":"urn:li:fsd_update:(urn:li:activity:7000000000000000002,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+             "actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":""}},
+             "resharedUpdate":{
+                "actor":{"name":{"text":"Mitko Vasilev"}},
+                "commentary":{"text":{"text":"I just deleted all my MCPs"}}
+             }}
+        ]}"#;
+        let md = render_voyager_body(body, "Mikko Parkkola");
+        assert!(
+            md.contains("RESHARE of Mitko Vasilev"),
+            "missing reshare tag: {md}"
+        );
+        assert!(
+            !md.contains("deleted all my MCPs"),
+            "leaked reshared content into Mikko's post body: {md}"
+        );
+    }
+
+    #[test]
+    fn render_attaches_engagement_counts_via_activity_join() {
+        let body = r#"{"data":{},"included":[
+            {"$type":"com.linkedin.voyager.dash.feed.Update",
+             "entityUrn":"urn:li:fsd_update:(urn:li:activity:7000000000000000003,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+             "actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":"a post with engagement"}}},
+            {"$type":"com.linkedin.voyager.dash.feed.SocialActivityCounts",
+             "urn":"urn:li:activity:7000000000000000003",
+             "numLikes":42,"numComments":5,"numShares":1,"numImpressions":900}
+        ]}"#;
+        let md = render_voyager_body(body, "Mikko Parkkola");
+        assert!(md.contains("900 impressions"), "missing impressions: {md}");
+        assert!(md.contains("42 reactions"), "missing reactions: {md}");
+        assert!(md.contains("5 comments"), "missing comments: {md}");
+        assert!(md.contains("1 reposts"), "missing reposts: {md}");
+    }
+
+    #[test]
+    fn render_includes_post_url_for_each_post() {
+        let body = r#"{"data":{},"included":[
+            {"$type":"com.linkedin.voyager.dash.feed.Update",
+             "entityUrn":"urn:li:fsd_update:(urn:li:activity:7000000000000000004,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+             "actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":"link me"}}}
+        ]}"#;
+        let md = render_voyager_body(body, "Mikko Parkkola");
+        assert!(
+            md.contains(
+                "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000004/"
+            ),
+            "missing per-post URL: {md}"
+        );
+    }
+
+    #[test]
+    fn render_sorts_newest_first_by_activity_urn() {
+        let body = r#"{"data":{},"included":[
+            {"$type":"com.linkedin.voyager.dash.feed.Update",
+             "entityUrn":"urn:li:fsd_update:(urn:li:activity:7000000000000000010,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+             "actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":"older post"}}},
+            {"$type":"com.linkedin.voyager.dash.feed.Update",
+             "entityUrn":"urn:li:fsd_update:(urn:li:activity:7000000000000000099,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+             "actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":"newer post"}}}
+        ]}"#;
+        let md = render_voyager_body(body, "Mikko Parkkola");
+        let newer = md.find("newer post").expect("newer post missing");
+        let older = md.find("older post").expect("older post missing");
+        assert!(newer < older, "newer should render first; md: {md}");
     }
 
     #[test]
@@ -421,21 +702,11 @@ mod tests {
     }
 
     #[test]
-    fn scan_filters_out_reshare_with_foreign_actor() {
-        // Simulates a MEMBER_FEED reshare envelope: outer node has Mikko's
-        // actor, inner reshared block has Mitko Vasilev's actor and the
-        // commentary text we should NOT attribute to Mikko.
-        let body = r#"{"included":[
-            {"actor":{"name":{"text":"Mikko Parkkola"}},
-             "commentary":{"text":{"text":"my own post about trvl"}}},
-            {"actor":{"name":{"text":"Mitko Vasilev"}},
-             "commentary":{"text":{"text":"I just deleted all my MCPs"}}}
-        ]}"#;
-        let md = render_voyager_body(body, "Mikko Parkkola");
-        assert!(md.contains("my own post about trvl"), "missing own post: {md}");
-        assert!(
-            !md.contains("deleted all my MCPs"),
-            "leaked reshared content: {md}"
+    fn activity_urn_extraction_from_compound_update_urn() {
+        let urn = "urn:li:fsd_update:(urn:li:activity:7451014806356230146,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)";
+        assert_eq!(
+            activity_urn_from_update_urn(urn).as_deref(),
+            Some("urn:li:activity:7451014806356230146")
         );
     }
 
