@@ -113,7 +113,7 @@ toml = "1.1"                            # Plugin config parsing
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sandboxed WASM runtime for third-party site extractors.
 # No unsafe code needed — wasmtime's safe API is used throughout.
-wasmtime = { version = "43", optional = true, default-features = false, features = [
+wasmtime = { version = "44", optional = true, default-features = false, features = [
     "cranelift",         # JIT compiler backend
     "runtime",           # Core runtime
     "component-model",   # WIT Component Model (bindgen!, Linker<T>, Component)
