@@ -95,16 +95,41 @@ pub(super) fn query_cookie_db(temp_db: &std::path::Path, domain: &str) -> Result
 
 /// Build SQL `host_key` conditions for `domain` and its parent domains.
 pub(super) fn build_domain_conditions(domain: &str) -> Vec<String> {
+    domain_candidates(domain)
+        .into_iter()
+        .map(|host_key| format!("host_key = '{}'", host_key.replace('\'', "''")))
+        .collect()
+}
+
+pub(super) fn domain_candidates(domain: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    push_host_key_pair(&mut candidates, domain);
+
+    if let Some(base_domain) = domain.strip_prefix("www.") {
+        if !base_domain.is_empty() {
+            push_host_key_pair(&mut candidates, base_domain);
+        }
+    } else if !domain.is_empty() {
+        push_host_key_pair(&mut candidates, &format!("www.{domain}"));
+    }
+
     let parts: Vec<&str> = domain.split('.').collect();
-    let mut conditions = vec![
-        format!("host_key = '{domain}'"),
-        format!("host_key = '.{domain}'"),
-    ];
     for i in 1..parts.len() {
         let parent = parts[i..].join(".");
-        conditions.push(format!("host_key = '.{parent}'"));
+        push_host_key(&mut candidates, &format!(".{parent}"));
     }
-    conditions
+    candidates
+}
+
+fn push_host_key_pair(candidates: &mut Vec<String>, domain: &str) {
+    push_host_key(candidates, domain);
+    push_host_key(candidates, &format!(".{domain}"));
+}
+
+fn push_host_key(candidates: &mut Vec<String>, host_key: &str) {
+    if !candidates.iter().any(|candidate| candidate == host_key) {
+        candidates.push(host_key.to_string());
+    }
 }
 
 /// Parse tab-separated output from `sqlite3` into [`CookieRow`] structs.

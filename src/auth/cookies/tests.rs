@@ -401,6 +401,26 @@ fn build_domain_conditions_apex_domain() {
     assert!(conds.iter().any(|c| c.contains("'.example.com'")));
 }
 
+#[test]
+fn build_domain_conditions_apex_domain_includes_www_variants() {
+    let conds = build_domain_conditions("linkedin.com");
+
+    assert!(conds.contains(&"host_key = 'linkedin.com'".to_string()));
+    assert!(conds.contains(&"host_key = '.linkedin.com'".to_string()));
+    assert!(conds.contains(&"host_key = 'www.linkedin.com'".to_string()));
+    assert!(conds.contains(&"host_key = '.www.linkedin.com'".to_string()));
+}
+
+#[test]
+fn build_domain_conditions_www_domain_includes_apex_variants() {
+    let conds = build_domain_conditions("www.linkedin.com");
+
+    assert!(conds.contains(&"host_key = 'www.linkedin.com'".to_string()));
+    assert!(conds.contains(&"host_key = '.www.linkedin.com'".to_string()));
+    assert!(conds.contains(&"host_key = 'linkedin.com'".to_string()));
+    assert!(conds.contains(&"host_key = '.linkedin.com'".to_string()));
+}
+
 // ─── parse_cookie_rows ────────────────────────────────────────────────────────
 
 #[test]

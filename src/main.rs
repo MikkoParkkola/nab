@@ -682,7 +682,7 @@ enum McpAction {
 enum CookiesAction {
     /// Export cookies for a domain in Netscape format
     Export {
-        /// Domain to export cookies for (e.g., "github.com")
+        /// Domain to export cookies for (e.g., "github.com"). Bare domains also include www. variants.
         domain: String,
 
         /// Browser to export from (auto, brave, chrome, firefox, safari, edge)

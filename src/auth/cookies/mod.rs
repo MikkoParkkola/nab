@@ -25,7 +25,7 @@ use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
 use super::{Credential, OnePasswordAuth};
-use db::{copy_db_to_temp, decrypt_rows, has_domain_tag, query_cookie_db};
+use db::{copy_db_to_temp, decrypt_rows, domain_candidates, has_domain_tag, query_cookie_db};
 
 // ─── CookieSource ─────────────────────────────────────────────────────────────
 
@@ -172,6 +172,7 @@ impl CookieSource {
             CookieSource::Firefox => "firefox",
             CookieSource::Safari => "safari",
         };
+        let domain_candidates_json = serde_json::to_string(&domain_candidates(domain))?;
 
         let script = format!(
             r#"
@@ -179,15 +180,22 @@ import json
 try:
     import browser_cookie3 as bc
     cj = bc.{browser_fn}()
+    request_domains = {domain_candidates_json}
 
-    def matches_cookie_domain(cookie_domain, request_domain):
+    def matches_cookie_domain(cookie_domain, request_domains):
+        for request_domain in request_domains:
+            if matches_single_cookie_domain(cookie_domain, request_domain):
+                return True
+        return False
+
+    def matches_single_cookie_domain(cookie_domain, request_domain):
         if cookie_domain.startswith('.'):
             parent = cookie_domain[1:]
             return request_domain == parent or request_domain.endswith('.' + parent)
         else:
             return cookie_domain == request_domain
 
-    cookies = {{c.name: c.value for c in cj if matches_cookie_domain(c.domain, '{domain}')}}
+    cookies = {{c.name: c.value for c in cj if matches_cookie_domain(c.domain, request_domains)}}
     print(json.dumps(cookies))
 except Exception as e:
     print(json.dumps({{"__error__": str(e)}}))
