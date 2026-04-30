@@ -5,9 +5,8 @@
 //! retrieval. See `src/site/linkedin/export.rs` for the protocol details.
 //!
 //! Workflow:
-//! 1. Resolve cookies for `www.linkedin.com` (note MIK-3068: bare
-//!    `linkedin.com` only returns 10 cookies; the auth-critical `li_at`
-//!    + `JSESSIONID` live under `www.`).
+//! 1. Resolve cookies for `www.linkedin.com`, where LinkedIn stores
+//!    auth-critical cookies such as `li_at` and `JSESSIONID`.
 //! 2. Extract csrf-token from JSESSIONID.
 //! 3. POST the archive request (FAST or FULL).
 //! 4. If `--wait` is set: poll the settings page on exponential backoff
