@@ -42,7 +42,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 | `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, 11 site providers. MCP fetch also supports query-focused extraction and token budgets. |
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
-| `nab models fetch <name>` | Persistent install of inference model binaries. Currently `fluidaudio`. Whisper and sherpa-onnx land in Phase 3. |
+| `nab models fetch <name>` | Persistent install of inference model binaries. Supports `fluidaudio` (default on macOS Apple Silicon), `sherpa-onnx` (cross-platform Parakeet TDT, ~30× realtime CPU), and `whisper` (universal fallback, whisper-large-v3-turbo, 99 langs). |
 | `nab-mcp` | MCP 2025-11-25 server. stdio + Streamable HTTP. 12 tools, 4 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
 | `nab::content::ocr` | Apple Vision OCR engine. 15 languages. Apple Neural Engine accelerated. ~10-50 ms per image. macOS only. |
 
@@ -200,8 +200,8 @@ Real numbers from a 2 h 09 m English audio file (Karen Hao interview, MacBook Pr
 | Backend | Platform | Languages | Diarization |
 |---------|----------|-----------|-------------|
 | `fluidaudio` (default on macOS arm64) | macOS arm64 | 25 EU languages, +zh/ja/ko/vi via Qwen3-ASR (opt-in) | PyAnnote community-1 |
-| `sherpa-onnx` (Phase 3) | Linux/x86, macOS, Windows | Parakeet ONNX, 25+ langs | sherpa-onnx pyannote-seg-3.0 |
-| `whisper-rs` (Phase 3) | Universal fallback | whisper-large-v3-turbo, 99 langs | none |
+| `sherpa-onnx` | Linux/x86, macOS, Windows | Parakeet ONNX, 25+ langs | sherpa-onnx pyannote-seg-3.0 |
+| `whisper-rs` | Universal fallback | whisper-large-v3-turbo, 99 langs | none |
 
 ### Watch
 
@@ -236,7 +236,7 @@ nab models update fluidaudio              # check for upstream updates
 nab models verify fluidaudio              # checksum + smoke test
 ```
 
-Phase 3 will add `whisper` and `sherpa-onnx` subcommands.
+Both `whisper` and `sherpa-onnx` ship as cross-platform fallbacks alongside the macOS-default `fluidaudio` backend.
 
 ## MCP integration
 
