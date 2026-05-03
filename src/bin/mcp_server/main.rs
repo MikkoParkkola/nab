@@ -512,23 +512,22 @@ fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
 /// - `idempotent_hint`: meaningful only when `read_only_hint == false`; true means
 ///   calling again with the same args has no additional effect
 fn tool_annotations(name: &str) -> ToolAnnotations {
-    let (read_only, destructive, idempotent, open_world) = match name {
-        "login" | "watch_create" => (false, false, false, Some(true)),
-        // analyze reads a local file; result is deterministic for the same input
+    let (read_only, destructive, idempotent, open_world, title) = match name {
+        "login" | "watch_create" => (false, false, false, Some(true), name.to_string()),
+        "submit" => (false, true, false, Some(true), "Submit Form".to_string()),
         "analyze" | "watch_list" | "auth_lookup" | "fingerprint" | "validate" => {
-            (true, false, true, Some(false))
+            (true, false, true, Some(false), name.to_string())
         }
-        // watch_remove deletes a watch (state change, destructive)
-        "watch_remove" => (false, true, true, Some(false)),
-        "fetch" | "fetch_batch" | "benchmark" => (true, false, true, Some(true)),
-        _ => (false, true, false, Some(true)),
+        "watch_remove" => (false, true, true, Some(false), "Remove Watch".to_string()),
+        "fetch" | "fetch_batch" | "benchmark" => (true, false, true, Some(true), name.to_string()),
+        _ => (false, true, false, Some(true), name.to_string()),
     };
     ToolAnnotations {
         read_only_hint: Some(read_only),
         destructive_hint: Some(destructive),
         idempotent_hint: Some(idempotent),
         open_world_hint: open_world,
-        title: None,
+        title: Some(title),
     }
 }
 
