@@ -40,7 +40,7 @@ nab handles sensitive data including:
 - **Cookie isolation**: Browser cookie databases are read-only; nab never writes to them.
 - **Session isolation**: Named MCP sessions use independent cookie jars.
 - **TLS verification**: Certificate validation is always enabled (no `--insecure` flag).
-- **Dependency auditing**: `cargo-audit` runs in CI on every push via `rustsec/audit-check`.
+- **Dependency auditing**: `cargo audit` runs in CI on every push with a bounded timeout.
 
 ## Disclosure Policy
 
