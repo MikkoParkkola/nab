@@ -102,13 +102,17 @@ fn lesswrong_markdown_api_url(canonical_url: &str) -> Result<Option<String>> {
         .map(|segments| segments.filter(|segment| !segment.is_empty()).collect())
         .unwrap_or_default();
 
-    let Some(slug) = segments.as_slice().strip_prefix(&["posts"]).and_then(|rest| {
-        if rest.len() >= 2 {
-            rest.last().copied()
-        } else {
-            None
-        }
-    }) else {
+    let Some(slug) = segments
+        .as_slice()
+        .strip_prefix(&["posts"])
+        .and_then(|rest| {
+            if rest.len() >= 2 {
+                rest.last().copied()
+            } else {
+                None
+            }
+        })
+    else {
         return Ok(None);
     };
 
@@ -242,7 +246,10 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            assert_eq!(lesswrong_markdown_api_url(input).unwrap().as_deref(), Some(expected));
+            assert_eq!(
+                lesswrong_markdown_api_url(input).unwrap().as_deref(),
+                Some(expected)
+            );
         }
     }
 

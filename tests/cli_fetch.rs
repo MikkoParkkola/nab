@@ -277,6 +277,36 @@ fn fetch_max_body_truncates() {
         .stdout(predicate::str::contains("more bytes]"));
 }
 
+#[test]
+fn fetch_greaterwrong_mirror_returns_lesswrong_article_body() {
+    if !net_tests_enabled() {
+        return;
+    }
+
+    nab()
+        .args([
+            "fetch",
+            "--cookies",
+            "none",
+            "--no-save",
+            "--no-ocr",
+            "--no-transcribe",
+            "--max-body",
+            "1600",
+            "https://www.greaterwrong.com/posts/fewDbvpKMZLgGuWT2/the-world-can-t-keep-up-with-ai-labs",
+        ])
+        .timeout(std::time::Duration::from_secs(30))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "# The World Can't Keep Up With AI Labs",
+        ))
+        .stdout(predicate::str::contains(
+            "Late last year a new AI psychosis kicked off",
+        ))
+        .stdout(predicate::str::contains("LessWrong 2.0 viewer").not());
+}
+
 // ─── Error handling ──────────────────────────────────────────────────────────
 
 #[test]
