@@ -39,6 +39,24 @@ impl SiteProvider for LessWrongProvider {
         _prefetched_html: Option<&[u8]>,
     ) -> Result<SiteContent> {
         let canonical_url = canonical_lesswrong_url(url)?;
+        if let Some(api_url) = lesswrong_markdown_api_url(&canonical_url)? {
+            let markdown = client
+                .inner()
+                .get(&api_url)
+                .send()
+                .await
+                .with_context(|| format!("failed to fetch LessWrong markdown URL '{api_url}'"))?
+                .error_for_status()
+                .with_context(|| format!("HTTP error for LessWrong markdown URL '{api_url}'"))?
+                .text()
+                .await
+                .with_context(|| {
+                    format!("failed to read LessWrong markdown response from '{api_url}'")
+                })?;
+
+            return Ok(site_content_from_markdown(&markdown, &canonical_url));
+        }
+
         let html = client
             .fetch_text(&canonical_url)
             .await
@@ -75,6 +93,41 @@ fn canonical_lesswrong_url(url: &str) -> Result<String> {
     parsed.set_fragment(None);
 
     Ok(parsed.to_string())
+}
+
+fn lesswrong_markdown_api_url(canonical_url: &str) -> Result<Option<String>> {
+    let parsed = Url::parse(canonical_url).context("invalid LessWrong canonical URL")?;
+    let segments: Vec<&str> = parsed
+        .path_segments()
+        .map(|segments| segments.filter(|segment| !segment.is_empty()).collect())
+        .unwrap_or_default();
+
+    let Some(slug) = segments.as_slice().strip_prefix(&["posts"]).and_then(|rest| {
+        if rest.len() >= 2 {
+            rest.last().copied()
+        } else {
+            None
+        }
+    }) else {
+        return Ok(None);
+    };
+
+    Ok(Some(format!("https://{LESSWRONG_HOST}/api/post/{slug}")))
+}
+
+fn site_content_from_markdown(markdown: &str, canonical_url: &str) -> SiteContent {
+    SiteContent {
+        markdown: markdown.to_string(),
+        metadata: SiteMetadata {
+            author: None,
+            title: markdown_title(markdown),
+            published: None,
+            platform: "lesswrong".to_string(),
+            canonical_url: canonical_url.to_string(),
+            media_urls: Vec::new(),
+            engagement: None,
+        },
+    }
 }
 
 fn site_content_from_html(html: &str, canonical_url: &str) -> SiteContent {
@@ -161,6 +214,75 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(canonical_lesswrong_url(input).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn maps_representative_post_urls_to_lesswrong_markdown_api() {
+        let cases = [
+            (
+                "https://www.lesswrong.com/posts/fewDbvpKMZLgGuWT2/the-world-can-t-keep-up-with-ai-labs",
+                "https://www.lesswrong.com/api/post/the-world-can-t-keep-up-with-ai-labs",
+            ),
+            (
+                "https://www.lesswrong.com/posts/abc123/a-post-title",
+                "https://www.lesswrong.com/api/post/a-post-title",
+            ),
+            (
+                "http://www.lesswrong.com/posts/abc123/a-post-title?compact=1",
+                "https://www.lesswrong.com/api/post/a-post-title",
+            ),
+            (
+                "https://www.lesswrong.com/posts/abc123/a-post-title/",
+                "https://www.lesswrong.com/api/post/a-post-title",
+            ),
+            (
+                "https://www.lesswrong.com/posts/abc123/title-with-dashes",
+                "https://www.lesswrong.com/api/post/title-with-dashes",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(lesswrong_markdown_api_url(input).unwrap().as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn leaves_non_post_urls_on_html_fallback() {
+        assert_eq!(
+            lesswrong_markdown_api_url("https://www.lesswrong.com/w/ai")
+                .unwrap()
+                .as_deref(),
+            None
+        );
+    }
+
+    #[test]
+    fn wraps_markdown_api_response_as_site_content() {
+        let markdown = r#"# The World Can't Keep Up With AI Labs
+
+*   By [Lee.aao](/users/lee-aao)
+
+Late last year a new AI psychosis kicked off. This time it was coding agents.
+"#;
+
+        let content = site_content_from_markdown(
+            markdown,
+            "https://www.lesswrong.com/posts/fewDbvpKMZLgGuWT2/the-world-can-t-keep-up-with-ai-labs",
+        );
+
+        assert!(
+            content
+                .markdown
+                .contains("Late last year a new AI psychosis kicked off")
+        );
+        assert_eq!(
+            content.metadata.title.as_deref(),
+            Some("The World Can't Keep Up With AI Labs")
+        );
+        assert_eq!(
+            content.metadata.canonical_url,
+            "https://www.lesswrong.com/posts/fewDbvpKMZLgGuWT2/the-world-can-t-keep-up-with-ai-labs"
+        );
     }
 
     #[test]
