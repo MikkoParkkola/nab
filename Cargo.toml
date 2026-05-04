@@ -32,7 +32,6 @@ reqwest = { version = "0.13", default-features = false, features = [
     "rustls",            # TLS via rustls-platform-verifier (native OS certs + bundled roots)
     "http2",             # HTTP/2 multiplexing (now an explicit feature in 0.13)
     "stream",            # Streaming responses
-    "hickory-dns",       # DNS caching + Happy Eyeballs (IPv4/6 racing)
     "charset",           # Auto charset detection
     "blocking",          # Blocking client for auto-update initialization
     "json",              # JSON support for API responses
@@ -113,7 +112,7 @@ toml = "1.1"                            # Plugin config parsing
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sandboxed WASM runtime for third-party site extractors.
 # No unsafe code needed — wasmtime's safe API is used throughout.
-wasmtime = { version = "44", optional = true, default-features = false, features = [
+wasmtime = { version = "44.0.1", optional = true, default-features = false, features = [
     "cranelift",         # JIT compiler backend
     "runtime",           # Core runtime
     "component-model",   # WIT Component Model (bindgen!, Linker<T>, Component)
