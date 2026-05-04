@@ -14,7 +14,7 @@
 //! Provider loading order (first match wins):
 //! 1. **Rule-based providers** from `~/.config/nab/sites/*.toml` (user overrides)
 //! 2. **Rule-based providers** from embedded defaults (twitter, youtube, wikipedia, etc.)
-//! 3. **Hardcoded Rust providers** for platforms NOT covered by a rule (hackernews, github, google, linkedin, reddit)
+//! 3. **Hardcoded Rust providers** for platforms NOT covered by a rule (hackernews, github, google, lesswrong, linkedin, reddit)
 //! 4. **CSS extractor plugins** from `~/.config/nab/plugins.toml`
 //!
 //! # Example
@@ -38,6 +38,7 @@ pub mod css_extractor;
 pub mod github;
 pub mod google;
 pub mod hackernews;
+pub mod lesswrong;
 pub mod linkedin;
 pub mod reddit;
 pub mod rules;
@@ -164,6 +165,7 @@ impl SiteRouter {
             Box::new(hackernews::HackerNewsProvider),
             Box::new(github::GitHubProvider),
             Box::new(google::GoogleWorkspaceProvider),
+            Box::new(lesswrong::LessWrongProvider),
             Box::new(linkedin::LinkedInProvider),
         ];
 
