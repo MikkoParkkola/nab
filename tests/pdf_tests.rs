@@ -500,7 +500,7 @@ fn empty_byte_slice_returns_error_not_panic() {
     assert!(
         result.is_err(),
         "empty input should return Err, got Ok with: {}",
-        result.as_ref().map(|r| r.markdown.as_str()).unwrap_or("")
+        result.as_ref().map_or("", |r| r.markdown.as_str())
     );
 }
 

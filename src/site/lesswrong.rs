@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-//! LessWrong mirror extraction.
+//! `LessWrong` mirror extraction.
 //!
-//! `greaterwrong.com` is a JavaScript viewer for LessWrong content. The static
+//! `greaterwrong.com` is a JavaScript viewer for `LessWrong` content. The static
 //! HTML returned to non-browser clients contains only viewer chrome, while the
 //! equivalent `lesswrong.com` page contains the article data that nab's generic
 //! HTML pipeline already extracts well.
@@ -18,7 +18,7 @@ use crate::http_client::AcceleratedClient;
 const LESSWRONG_HOST: &str = "www.lesswrong.com";
 const GREATERWRONG_HOSTS: &[&str] = &["greaterwrong.com", "www.greaterwrong.com"];
 
-/// Provider for LessWrong mirror URLs.
+/// Provider for `LessWrong` mirror URLs.
 pub struct LessWrongProvider;
 
 #[async_trait]
@@ -265,12 +265,12 @@ mod tests {
 
     #[test]
     fn wraps_markdown_api_response_as_site_content() {
-        let markdown = r#"# The World Can't Keep Up With AI Labs
+        let markdown = r"# The World Can't Keep Up With AI Labs
 
 *   By [Lee.aao](/users/lee-aao)
 
 Late last year a new AI psychosis kicked off. This time it was coding agents.
-"#;
+";
 
         let content = site_content_from_markdown(
             markdown,

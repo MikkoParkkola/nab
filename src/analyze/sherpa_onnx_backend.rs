@@ -276,9 +276,7 @@ fn build_recognizer(model_dir: &Path) -> Result<OfflineRecognizer> {
 
 /// Return a reasonable thread count for ONNX inference (half of logical CPUs, min 1).
 fn num_cpus() -> i32 {
-    let n = std::thread::available_parallelism()
-        .map(std::num::NonZero::get)
-        .unwrap_or(2);
+    let n = std::thread::available_parallelism().map_or(2, std::num::NonZero::get);
     ((n / 2).max(1)) as i32
 }
 

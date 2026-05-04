@@ -188,8 +188,7 @@ impl AsrBackend for WhisperRsBackend {
     fn is_available(&self) -> bool {
         self.model_path
             .metadata()
-            .map(|m| m.len() >= MIN_MODEL_BYTES)
-            .unwrap_or(false)
+            .is_ok_and(|m| m.len() >= MIN_MODEL_BYTES)
     }
 
     async fn transcribe(
