@@ -32,6 +32,27 @@ static TITLE_SELECTOR: LazyLock<Selector> =
 static OG_TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
     Selector::parse("meta[property='og:title']").expect("static og:title selector")
 });
+static SUBSTACK_TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("h1.post-title, .post-title").expect("static substack title selector")
+});
+static SUBSTACK_SUBTITLE_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse(".subtitle").expect("static substack subtitle selector"));
+static SUBSTACK_BODY_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(".available-content .body.markup").expect("static substack body selector")
+});
+static SUBSTACK_NOISE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(
+        ".subscription-widget-wrap, \
+         .subscription-widget-wrap-editor, \
+         .subscription-widget, \
+         .subscribe-widget, \
+         .subscription-widget-subscribe, \
+         .post-ufi, \
+         .byline-wrapper, \
+         form, input, button, iframe, svg, picture, source, img",
+    )
+    .expect("static substack noise selector")
+});
 
 /// Extracted article content from HTML.
 #[derive(Debug, Clone)]
@@ -51,6 +72,15 @@ pub struct Article {
 /// Returns `Some(Article)` if extraction succeeds, `None` if the page
 /// doesn't look like an article (e.g., homepage, search results).
 pub fn extract_article(html: &str, url: &str) -> Option<Article> {
+    if let Some(substack_result) = extract_substack_article(html) {
+        tracing::debug!(
+            "substack extraction: {} chars for {}",
+            substack_result.text_content.len(),
+            url
+        );
+        return Some(substack_result);
+    }
+
     let readability_result = extract_with_readability_crate(html, url);
     let scraper_result = extract_with_scraper(html);
 
@@ -75,6 +105,165 @@ pub fn extract_article(html: &str, url: &str) -> Option<Article> {
         (None, Some(s)) => Some(s),
         (None, None) => None,
     }
+}
+
+/// Extract the authored body from Substack's static post DOM.
+///
+/// Substack pages include the complete post body in `.available-content
+/// .body.markup`, but the surrounding `<article>` also contains header UI,
+/// reaction buttons, subscribe forms, image `srcset` payloads, recommendations,
+/// and comments. Generic readability scoring can therefore pick a node that is
+/// technically longer but much less useful to an LLM.
+fn extract_substack_article(html: &str) -> Option<Article> {
+    let document = Html::parse_document(html);
+    let body = document.select(&SUBSTACK_BODY_SELECTOR).next()?;
+    let title = extract_substack_title(&document)?;
+    let subtitle = extract_substack_subtitle(&document);
+
+    let body_html = strip_substack_noise(&body.html());
+    let mut content_html = String::from("<article>");
+    content_html.push_str("<h1>");
+    content_html.push_str(&escape_html_text(&title));
+    content_html.push_str("</h1>");
+
+    if let Some(subtitle) = subtitle.as_ref() {
+        content_html.push_str("<p><em>");
+        content_html.push_str(&escape_html_text(subtitle));
+        content_html.push_str("</em></p>");
+    }
+
+    content_html.push_str(&body_html);
+    content_html.push_str("</article>");
+
+    let text_content = strip_html_tags(&content_html);
+    if text_content.len() < 100 {
+        return None;
+    }
+
+    let excerpt = text_content
+        .chars()
+        .take(200)
+        .collect::<String>()
+        .trim()
+        .to_string();
+
+    Some(Article {
+        title,
+        content_html,
+        excerpt,
+        text_content,
+    })
+}
+
+fn extract_substack_title(document: &Html) -> Option<String> {
+    document
+        .select(&SUBSTACK_TITLE_SELECTOR)
+        .find_map(|title| {
+            let text = title.text().collect::<Vec<_>>().join(" ");
+            let text = normalize_whitespace(&text);
+            if text.is_empty() { None } else { Some(text) }
+        })
+        .or_else(|| extract_og_title(document))
+}
+
+fn extract_substack_subtitle(document: &Html) -> Option<String> {
+    document
+        .select(&SUBSTACK_SUBTITLE_SELECTOR)
+        .find_map(|title| {
+            let text = title.text().collect::<Vec<_>>().join(" ");
+            let text = normalize_whitespace(&text);
+            if text.is_empty() { None } else { Some(text) }
+        })
+}
+
+fn extract_og_title(document: &Html) -> Option<String> {
+    document.select(&OG_TITLE_SELECTOR).find_map(|og| {
+        og.value().attr("content").and_then(|content| {
+            let title = content.trim().to_string();
+            if title.is_empty() { None } else { Some(title) }
+        })
+    })
+}
+
+fn strip_substack_noise(html: &str) -> String {
+    let document = Html::parse_fragment(html);
+    let excluded_ids = document
+        .select(&SUBSTACK_NOISE_SELECTOR)
+        .map(|el| el.id())
+        .collect::<std::collections::HashSet<_>>();
+
+    serialize_children_excluding(&document, document.root_element().id(), &excluded_ids)
+}
+
+fn serialize_children_excluding(
+    document: &Html,
+    parent_id: ego_tree::NodeId,
+    exclude: &std::collections::HashSet<ego_tree::NodeId>,
+) -> String {
+    let Some(node) = document.tree.get(parent_id) else {
+        return String::new();
+    };
+    let mut out = String::new();
+
+    for child in node.children() {
+        if exclude.contains(&child.id()) {
+            continue;
+        }
+        match child.value() {
+            scraper::Node::Element(el) => {
+                out.push('<');
+                out.push_str(el.name());
+                for (k, v) in el.attrs() {
+                    out.push(' ');
+                    out.push_str(k);
+                    out.push_str("=\"");
+                    out.push_str(&v.replace('"', "&quot;"));
+                    out.push('"');
+                }
+                out.push('>');
+                out.push_str(&serialize_children_excluding(document, child.id(), exclude));
+                if !is_void_element(el.name()) {
+                    out.push_str("</");
+                    out.push_str(el.name());
+                    out.push('>');
+                }
+            }
+            scraper::Node::Text(text) => out.push_str(text),
+            _ => {}
+        }
+    }
+
+    out
+}
+
+fn is_void_element(name: &str) -> bool {
+    matches!(
+        name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+fn escape_html_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn normalize_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Extract using the readability crate.
@@ -538,6 +727,89 @@ mod tests {
             article.text_content.len() > 800,
             "Text too short: {} chars",
             article.text_content.len()
+        );
+    }
+
+    #[test]
+    fn extracts_substack_body_without_post_chrome() {
+        let body_1 = "This is the first substantial article paragraph about infrastructure, institutions, and why practical constraints still matter for technological change.";
+        let body_2 = "This second article paragraph continues the argument with enough detail to dominate the extraction and leave interface labels below the body ratio budget.";
+        let footnote = "This footnote is part of the authored article and should remain available to downstream summarizers.";
+        let html = format!(
+            r#"
+            <html>
+            <head>
+                <meta property="og:title" content="Open Graph Fallback Title">
+                <title>Publisher Homepage</title>
+            </head>
+            <body>
+                <header>
+                    <h1>Publication Name</h1>
+                    <nav>Home Archive About</nav>
+                    <button>Subscribe</button>
+                </header>
+                <article class="typography newsletter-post post">
+                    <div class="post-header">
+                        <h1 class="post-title published">Actual Substack Post Title</h1>
+                        <h3 class="subtitle">A useful subtitle for the post</h3>
+                        <div class="post-ufi">451 90 Share</div>
+                        <div class="byline-wrapper">Author avatar and profile chrome</div>
+                    </div>
+                    <div class="available-content">
+                        <div dir="auto" class="body markup">
+                            <div class="captioned-image-container">
+                                <figure>
+                                    <a class="image-link" href="https://cdn.example.com/huge-image.png">
+                                        <picture>
+                                            <source srcset="very-large-srcset-payload 1x, very-large-srcset-payload 2x">
+                                            <img src="https://cdn.example.com/huge-image.png" data-attrs="huge image metadata">
+                                        </picture>
+                                    </a>
+                                    <figcaption>Figure caption text stays if present.</figcaption>
+                                </figure>
+                            </div>
+                            <p>{body_1}</p>
+                            <p>{body_2}</p>
+                            <div class="subscription-widget-wrap-editor">
+                                <p>Subscribe now for more posts.</p>
+                                <form><input value="reader@example.com"><button>Subscribe</button></form>
+                            </div>
+                            <div class="footnote">
+                                <a id="footnote-1">1</a>
+                                <div class="footnote-content"><p>{footnote}</p></div>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+                <section class="comments">A long comment thread should not be selected.</section>
+            </body>
+            </html>
+        "#
+        );
+
+        let article = extract_article(
+            &html,
+            "https://writer.substack.com/p/actual-substack-post-title",
+        )
+        .unwrap();
+
+        assert_eq!(article.title, "Actual Substack Post Title");
+        assert!(article.text_content.contains(body_1));
+        assert!(article.text_content.contains(body_2));
+        assert!(article.text_content.contains(footnote));
+        assert!(!article.text_content.contains("Publication Name"));
+        assert!(!article.text_content.contains("451"));
+        assert!(!article.text_content.contains("Subscribe now"));
+        assert!(!article.content_html.contains("srcset"));
+        assert!(!article.content_html.contains("huge image metadata"));
+
+        let authored_chars = body_1.len() + body_2.len() + footnote.len();
+        #[allow(clippy::cast_precision_loss)]
+        let authored_ratio = authored_chars as f64 / article.text_content.len() as f64;
+        assert!(
+            authored_ratio >= 0.80,
+            "authored body ratio too low: {authored_ratio:.2}; text: {}",
+            article.text_content
         );
     }
 
