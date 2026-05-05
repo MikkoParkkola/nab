@@ -1362,4 +1362,71 @@ mod tests {
             md
         );
     }
+
+    #[test]
+    fn substack_markdown_prefers_authored_body_over_post_chrome() {
+        use super::html_to_markdown_with_url;
+
+        let body_1 = "This Substack article paragraph carries the author's main argument about technical progress, incentives, and the practical limits of software.";
+        let body_2 = "The second paragraph adds enough detail that article text should dominate the final markdown instead of interface controls or signup boxes.";
+        let footnote = "A real footnote should remain because it is authored content rather than publication chrome.";
+        let html = format!(
+            r#"<html>
+<head><title>Publication Shell</title></head>
+<body>
+<div data-testid="navbar"><button>Subscribe</button><button>Sign in</button></div>
+<article class="typography newsletter-post post">
+  <div class="post-header">
+    <h1 class="post-title published">Actual Substack Post Title</h1>
+    <h3 class="subtitle">Useful subtitle</h3>
+    <div class="byline-wrapper">Author avatar and profile chrome</div>
+    <div class="post-ufi">451 90 Share</div>
+  </div>
+  <div class="available-content">
+    <div dir="auto" class="body markup">
+      <div class="captioned-image-container">
+        <figure>
+          <a class="image-link" href="https://cdn.example.com/image.png">
+            <picture>
+              <source srcset="large-image-srcset-payload 1x, large-image-srcset-payload 2x">
+              <img src="https://cdn.example.com/image.png" data-attrs="large image metadata">
+            </picture>
+          </a>
+          <figcaption>Figure caption text stays.</figcaption>
+        </figure>
+      </div>
+      <p>{body_1}</p>
+      <p>{body_2}</p>
+      <div class="subscription-widget-wrap-editor">
+        <p>Subscribe now for more posts.</p>
+        <form><input><button>Subscribe</button></form>
+      </div>
+      <div class="footnote"><div class="footnote-content"><p>{footnote}</p></div></div>
+    </div>
+  </div>
+</article>
+<section class="comments">Reader comments and recommendations should not win extraction.</section>
+</body>
+</html>"#
+        );
+
+        let md = html_to_markdown_with_url(&html, Some("https://writer.substack.com/p/post"));
+
+        assert!(md.contains("Actual Substack Post Title"));
+        assert!(md.contains(body_1));
+        assert!(md.contains(body_2));
+        assert!(md.contains(footnote));
+        assert!(!md.contains("Author avatar"));
+        assert!(!md.contains("451"));
+        assert!(!md.contains("Subscribe now"));
+        assert!(!md.contains("large-image-srcset-payload"));
+
+        let authored_chars = body_1.len() + body_2.len() + footnote.len();
+        #[allow(clippy::cast_precision_loss)]
+        let authored_ratio = authored_chars as f64 / md.len() as f64;
+        assert!(
+            authored_ratio >= 0.80,
+            "authored markdown ratio too low: {authored_ratio:.2}; markdown: {md}"
+        );
+    }
 }
