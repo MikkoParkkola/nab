@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/nab.svg)](https://crates.io/crates/nab)
 [![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
 [![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
-[![Rust](https://img.shields.io/badge/Rust-1.93+-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License: MIT + PolyForm NC](https://img.shields.io/badge/License-MIT%20%2B%20PolyForm%20NC-yellow.svg)](LICENSE.md)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
 [![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
@@ -61,7 +61,7 @@ brew install nab
 cargo install nab
 ```
 
-Requires Rust 1.93 or newer.
+Requires Rust 1.95 or newer.
 
 ### Pre-built binary
 
@@ -405,7 +405,7 @@ async fn main() -> anyhow::Result<()> {
 
 ## Requirements
 
-- **Rust 1.93+** for building from source
+- **Rust 1.95+** for building from source
 - **ffmpeg** for `analyze` and `stream` commands: `brew install ffmpeg`
 - **1Password CLI** (optional, for credential integration): see [1Password docs](https://developer.1password.com/docs/cli/get-started/)
 
