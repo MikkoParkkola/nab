@@ -157,6 +157,7 @@ async-trait = "0.1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+nab-yara-engine = { path = "crates/nab-yara-engine" }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UTILITIES
@@ -290,3 +291,7 @@ missing_panics_doc = "allow"
 # today but reserved for future error returns). The Result is part of the
 # stable API; rewriting it would force every caller to match a new shape.
 unnecessary_wraps = "allow"
+
+[workspace]
+members = [".", "crates/nab-core", "crates/nab-yara-engine"]
+resolver = "3"
