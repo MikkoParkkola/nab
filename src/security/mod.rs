@@ -24,6 +24,8 @@
 //! [`crate::webmcp`]) is on the same trust path; promotion of the `WebMCP`
 //! discovery output into a sanctioned/strict policy gate will land here.
 
+pub mod fetch_yara;
 pub mod ingestion_guard;
 
+pub use fetch_yara::{guard_fetch_output, guard_fetch_output_with_config};
 pub use ingestion_guard::{DetectionReport, DirectiveKind, Sample, Severity, detect, sanitize};

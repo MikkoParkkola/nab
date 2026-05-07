@@ -39,7 +39,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 
 | Command | What it does |
 |---------|--------------|
-| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, 11 site providers. MCP fetch also supports query-focused extraction and token budgets. |
+| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, fetch-time YARA-X redaction for prompt-injection/exfil signatures, 11 site providers. MCP fetch also supports query-focused extraction and token budgets. |
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
 | `nab models fetch <name>` | Persistent install of inference model binaries. Supports `fluidaudio` (default on macOS Apple Silicon), `sherpa-onnx` (cross-platform Parakeet TDT, ~30× realtime CPU), and `whisper` (universal fallback, whisper-large-v3-turbo, 99 langs). |
@@ -427,6 +427,8 @@ This tool includes browser cookie extraction and fingerprint spoofing capabiliti
 
 **Fetch returning HTML instead of markdown?** Some sites block automated access. Try `nab fetch URL --cookies brave` to use your browser session, or `nab fetch URL --1password` for sites that need login.
 
+**YARA-X guard redacted a fetch?** `nab fetch` and MCP `fetch` scan returned bodies by default before saving or returning content. `NAB_YARA_ACTION=refuse` blocks instead of redacting. `NAB_YARA_BYPASS=1` is an audited emergency opt-out.
+
 **"too many open files" on watch?** Increase your ulimit: `ulimit -n 4096`. The default macOS limit (256) is too low for many concurrent watches.
 
 ## Ecosystem
@@ -456,6 +458,7 @@ EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-No
 - `src/waf/` — WAF challenge handling
 - `src/site/` — per-site provider integrations (proprietary domain knowledge)
 - `src/security/` — Secure Ingestion guard for stripping machine-targeted HTML directives and hidden metadata
+- `crates/nab-yara-engine/` — fetch-time YARA-X signature guard for prompt injection, exfiltration, secrets, and obfuscation
 
 **What this means in practice**:
 - Free for noncommercial use, modification, redistribution.
