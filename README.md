@@ -118,6 +118,16 @@ Also supported: `gemini`, `amazon-q`, `lm-studio`.
 
 See [MCP integration](#mcp-integration) below for the full list of tools, capabilities, and HTTP transport.
 
+## Claude Code plugin
+
+This repository includes a local Claude Code plugin in [plugin/](plugin/README.md). It bundles nab MCP auto-registration with the Claude Elite `research`, `url-insight`, `wayback`, `ia`, and `oreilly` skills.
+
+```bash
+claude --plugin-dir ./plugin
+```
+
+The plugin exposes the `/nab` workflow shape for `fetch`, authenticated Brave-cookie fetches, archive retrieval, and multi-source research. It keeps nab's auth-aware path front and center: `nab fetch --cookies brave <url>` for existing browser sessions and `nab fetch --1password <url>` for 1Password/TOTP flows.
+
 ## Usage
 
 ### Fetch

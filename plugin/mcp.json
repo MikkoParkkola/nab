@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "nab": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/nab-mcp-wrapper"
+    }
+  }
+}
