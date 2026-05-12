@@ -24,8 +24,43 @@ fn stackoverflow_toml() -> &'static str {
 fn parse_twitter_toml_succeeds() {
     let cfg = SiteRuleConfig::from_toml(twitter_toml()).unwrap();
     assert_eq!(cfg.site.name, "twitter");
+    assert_eq!(cfg.site.engine, RuleEngine::Api);
     assert_eq!(cfg.site.patterns.len(), 1);
     assert!(cfg.site.patterns[0].contains("status"));
+}
+
+#[test]
+fn site_engine_defaults_to_api() {
+    let cfg = SiteRuleConfig::from_toml(youtube_toml()).unwrap();
+    assert_eq!(cfg.site.engine, RuleEngine::Api);
+}
+
+#[test]
+fn site_engine_browser_parses_from_site_section_only() {
+    let toml_str = r#"
+[site]
+name = "linkedin-browser"
+engine = "browser"
+patterns = ["(?i)linkedin\\.com/in/"]
+"#;
+
+    let site = SiteRuleConfig::site_from_toml(toml_str).unwrap();
+    assert_eq!(site.name, "linkedin-browser");
+    assert_eq!(site.engine, RuleEngine::Browser);
+    assert!(site.engine.is_browser());
+}
+
+#[test]
+fn site_engine_rejects_unknown_value() {
+    let toml_str = r#"
+[site]
+name = "bad-engine"
+engine = "spaceship"
+patterns = ["example\\.com"]
+"#;
+
+    let err = SiteRuleConfig::site_from_toml(toml_str).unwrap_err();
+    assert!(err.to_string().contains("failed to parse site rule TOML"));
 }
 
 #[test]

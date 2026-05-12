@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use provider::ApiRuleProvider;
 
 use super::SiteProvider;
-use crate::site::rules::config::SiteRuleConfig;
+use crate::site::rules::config::{RuleEngine, SiteConfig, SiteRuleConfig};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Embedded defaults
@@ -82,6 +82,34 @@ pub fn load_site_rules() -> Vec<Box<dyn SiteProvider>> {
     overrides.into_iter().chain(defaults).collect()
 }
 
+/// Return the configured engine for the first site rule that matches `url`.
+///
+/// User rules in `~/.config/nab/sites/*.toml` are checked before embedded
+/// defaults. Browser-engine rules may contain only a `[site]` section; they
+/// act as routing directives rather than API providers.
+#[must_use]
+pub fn engine_for_url(url: &str) -> Option<RuleEngine> {
+    let (user_sites, overridden_names) = load_user_site_configs();
+
+    if let Some(engine) = matching_engine(url, user_sites.iter()) {
+        return Some(engine);
+    }
+
+    let embedded_sites = embedded_rules()
+        .into_iter()
+        .filter(|(name, _)| !overridden_names.contains(*name))
+        .filter_map(|(name, toml)| match SiteRuleConfig::site_from_toml(toml) {
+            Ok(site) => Some(site),
+            Err(e) => {
+                tracing::warn!("Skipping invalid embedded site rule '{name}': {e}");
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    matching_engine(url, embedded_sites.iter())
+}
+
 /// Returns the set of rule names provided by embedded defaults.
 ///
 /// Useful for [`SiteRouter`] to skip hardcoded Rust providers whose name
@@ -118,13 +146,21 @@ fn load_user_overrides() -> (Vec<Box<dyn SiteProvider>>, HashSet<String>) {
             continue;
         }
         match parse_rule_file(&path) {
-            Ok((name, provider)) => {
+            Ok(ParsedRuleFile::Provider { name, provider }) => {
                 tracing::debug!(
                     "Loaded user site rule override: {name} from {}",
                     path.display()
                 );
                 names.insert(name);
                 providers.push(provider);
+            }
+            Ok(ParsedRuleFile::DirectiveOnly { name, engine }) => {
+                tracing::debug!(
+                    "Loaded user site rule directive: {name} engine={} from {}",
+                    engine.as_str(),
+                    path.display()
+                );
+                names.insert(name);
             }
             Err(e) => {
                 tracing::warn!("Skipping invalid site rule '{}': {e}", path.display());
@@ -150,13 +186,40 @@ fn load_embedded_defaults(overridden_names: &HashSet<String>) -> Vec<Box<dyn Sit
         .collect()
 }
 
-/// Read a TOML file at `path`, parse it, and return `(name, boxed_provider)`.
-fn parse_rule_file(path: &std::path::Path) -> anyhow::Result<(String, Box<dyn SiteProvider>)> {
+enum ParsedRuleFile {
+    Provider {
+        name: String,
+        provider: Box<dyn SiteProvider>,
+    },
+    DirectiveOnly {
+        name: String,
+        engine: RuleEngine,
+    },
+}
+
+/// Read a TOML file at `path`, parse it, and return the provider or directive.
+fn parse_rule_file(path: &std::path::Path) -> anyhow::Result<ParsedRuleFile> {
     let toml = std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("read error: {e}"))?;
-    let config = SiteRuleConfig::from_toml(&toml)?;
+    parse_rule_toml(&toml)
+}
+
+/// Parse TOML content and return the provider or directive.
+fn parse_rule_toml(toml: &str) -> anyhow::Result<ParsedRuleFile> {
+    let site = SiteRuleConfig::site_from_toml(toml)?;
+    if site.engine.is_browser() {
+        return Ok(ParsedRuleFile::DirectiveOnly {
+            name: site.name,
+            engine: site.engine,
+        });
+    }
+
+    let config = SiteRuleConfig::from_toml(toml)?;
     let name = config.site.name.clone();
     let provider = ApiRuleProvider::new(config)?;
-    Ok((name, Box::new(provider)))
+    Ok(ParsedRuleFile::Provider {
+        name,
+        provider: Box::new(provider),
+    })
 }
 
 /// Parse TOML content and build a boxed [`SiteProvider`].
@@ -164,6 +227,51 @@ pub(crate) fn parse_and_build(toml: &str) -> anyhow::Result<Box<dyn SiteProvider
     let config = SiteRuleConfig::from_toml(toml)?;
     let provider = ApiRuleProvider::new(config)?;
     Ok(Box::new(provider))
+}
+
+/// Load user-supplied `[site]` sections, including browser-only directives.
+fn load_user_site_configs() -> (Vec<SiteConfig>, HashSet<String>) {
+    let sites_dir = user_sites_dir();
+    let mut sites = Vec::new();
+    let mut names = HashSet::new();
+
+    let Ok(entries) = std::fs::read_dir(&sites_dir) else {
+        return (sites, names);
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "toml") {
+            continue;
+        }
+        let Ok(toml) = std::fs::read_to_string(&path) else {
+            tracing::warn!("Skipping unreadable site rule '{}'", path.display());
+            continue;
+        };
+        match SiteRuleConfig::site_from_toml(&toml) {
+            Ok(site) => {
+                names.insert(site.name.clone());
+                sites.push(site);
+            }
+            Err(e) => tracing::warn!("Skipping invalid site rule '{}': {e}", path.display()),
+        }
+    }
+
+    (sites, names)
+}
+
+fn matching_engine<'a>(
+    url: &str,
+    sites: impl IntoIterator<Item = &'a SiteConfig>,
+) -> Option<RuleEngine> {
+    for site in sites {
+        for pattern in &site.patterns {
+            if regex::Regex::new(pattern).is_ok_and(|re| re.is_match(url)) {
+                return Some(site.engine);
+            }
+        }
+    }
+    None
 }
 
 /// Return `~/.config/nab/sites/`.
@@ -343,6 +451,64 @@ mod tests {
     fn parse_and_build_fails_for_invalid_toml() {
         let result = parse_and_build("not valid toml %%%");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn browser_engine_rule_parses_as_directive_only() {
+        let toml = r#"
+[site]
+name = "linkedin-browser"
+engine = "browser"
+patterns = ["(?i)linkedin\\.com/in/"]
+"#;
+
+        match parse_rule_toml(toml).expect("browser directive") {
+            ParsedRuleFile::DirectiveOnly { name, engine } => {
+                assert_eq!(name, "linkedin-browser");
+                assert_eq!(engine, RuleEngine::Browser);
+            }
+            ParsedRuleFile::Provider { .. } => panic!("browser rule must not build API provider"),
+        }
+    }
+
+    #[test]
+    fn matching_engine_returns_browser_for_matching_pattern() {
+        let site = SiteConfig {
+            name: "linkedin-browser".to_string(),
+            engine: RuleEngine::Browser,
+            patterns: vec![r"(?i)linkedin\.com/in/".to_string()],
+        };
+
+        assert_eq!(
+            matching_engine("https://www.linkedin.com/in/example", [&site]),
+            Some(RuleEngine::Browser)
+        );
+        assert_eq!(matching_engine("https://example.com", [&site]), None);
+    }
+
+    #[test]
+    fn parse_and_build_rejects_browser_engine_api_provider() {
+        let toml = r#"
+[site]
+name = "browser-api"
+engine = "browser"
+patterns = ["example\\.com"]
+
+[rewrite]
+from = ".*"
+to = "https://api.example.com"
+
+[json]
+title = ".title"
+
+[template]
+format = "{title}"
+"#;
+
+        match parse_and_build(toml) {
+            Ok(_) => panic!("browser engine rule must not build an API provider"),
+            Err(err) => assert!(err.to_string().contains("engine='browser'")),
+        }
     }
 
     #[test]

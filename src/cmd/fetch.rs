@@ -171,12 +171,20 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         }
     }
 
+    let force_browser_engine = nab::site::rules::engine_for_url(&cfg.url)
+        .is_some_and(nab::site::rules::config::RuleEngine::is_browser);
+    if force_browser_engine && matches!(cfg.format, OutputFormat::Full) {
+        write_stdout_line(
+            "🌐 Site rule requests engine=browser; skipping API site providers for this URL",
+        )?;
+    }
+
     // Site providers produce structured markdown, which is incompatible with
-    // --raw-html (the user is asking for the wire HTML). Skip the site router
-    // entirely when raw HTML is requested so that the generic fetch path runs
-    // and emits the unmodified HTML body. Cookies + impersonation still apply
-    // via the lower-level fetch_safe path.
-    if !cfg.raw_html {
+    // --raw-html (the user is asking for the wire HTML). Browser-engine site
+    // rules are routing directives, so they also skip API providers and fall
+    // through to the lower-level fetch path. Cookies + impersonation still
+    // apply via fetch_safe/manual request below.
+    if !cfg.raw_html && !force_browser_engine {
         let site_router = nab::site::SiteRouter::new();
         let cookie_opt = non_empty(&cookie_header);
         if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
