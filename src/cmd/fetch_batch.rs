@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use nab::content::ContentRouter;
+use nab::content::budget::{max_tokens_with_output_headroom, truncate_to_budget};
+use nab::content::html::HtmlConversionOptions;
 use nab::rate_limit::DomainRateLimiter;
 
 use super::fetch::{FetchConfig, build_client};
@@ -61,6 +63,8 @@ pub async fn cmd_fetch_batch(cfg: &FetchConfig) -> Result<()> {
         no_redirect: cfg.no_redirect,
         auto_referer: cfg.auto_referer,
         raw_html: cfg.raw_html,
+        html_options: cfg.html_options,
+        max_output_tokens: cfg.max_output_tokens,
     });
 
     for url in urls {
@@ -113,6 +117,8 @@ struct BatchRequestParams {
     no_redirect: bool,
     auto_referer: bool,
     raw_html: bool,
+    html_options: HtmlConversionOptions,
+    max_output_tokens: Option<usize>,
 }
 
 /// Fetch a single URL in a batch context and return a JSON result.
@@ -185,17 +191,20 @@ async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_
             let markdown = if params.raw_html {
                 raw_text
             } else {
-                let router = ContentRouter::new();
-                router.convert(&body_bytes, &content_type).map_or_else(
-                    |_| String::from_utf8_lossy(&body_bytes).to_string(),
-                    |r| r.markdown,
-                )
+                let router = ContentRouter::with_html_options(params.html_options);
+                router
+                    .convert_with_url(&body_bytes, &content_type, Some(&url))
+                    .map_or_else(
+                        |_| String::from_utf8_lossy(&body_bytes).to_string(),
+                        |r| r.markdown,
+                    )
             };
             let markdown =
                 match nab::security::guard_fetch_output(&markdown, "cli_fetch_batch", &url) {
                     Ok(markdown) => markdown,
                     Err(e) => return serde_json::json!({"url": url, "error": e.to_string()}),
                 };
+            let markdown = apply_output_token_budget(&markdown, params.max_output_tokens);
 
             let title = extract_title_from_bytes(&body_bytes);
             let metadata = serde_json::json!({
@@ -215,6 +224,14 @@ async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_
         }
         Err(e) => serde_json::json!({"url": url, "error": e.to_string()}),
     }
+}
+
+fn apply_output_token_budget(markdown: &str, max_output_tokens: Option<usize>) -> String {
+    let Some(max_tokens) = max_output_tokens else {
+        return markdown.to_string();
+    };
+    let content_budget = max_tokens_with_output_headroom(max_tokens);
+    truncate_to_budget(markdown, Some(content_budget)).markdown
 }
 
 /// Extract `<title>` from raw HTML bytes.
