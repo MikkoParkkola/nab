@@ -1,0 +1,17 @@
+{
+  "description": "Non-blocking YARA-X warning stub for nab fetch edges. Full edge enforcement is tracked in MIK-3390.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*nab.*fetch.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/nab-yara-edge.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

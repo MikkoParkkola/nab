@@ -1,0 +1,18 @@
+[package]
+name = "nab-yara-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "YARA-X fetch-time prompt-injection and exfiltration guard for nab"
+license-file = "../../LICENSE.md"
+publish = false
+
+[dependencies]
+thiserror = "2"
+tracing = "0.1"
+yara-x = { version = "1.16", default-features = false, features = [
+    "constant-folding",
+    "exact-atoms",
+    "fast-regexp",
+    "inventory",
+] }

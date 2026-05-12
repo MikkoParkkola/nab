@@ -42,6 +42,7 @@ pub mod lesswrong;
 pub mod linkedin;
 pub mod reddit;
 pub mod rules;
+pub mod substack;
 pub mod wasm_manifest;
 #[cfg(feature = "wasm-providers")]
 pub mod wasm_provider;
@@ -167,6 +168,7 @@ impl SiteRouter {
             Box::new(google::GoogleWorkspaceProvider),
             Box::new(lesswrong::LessWrongProvider),
             Box::new(linkedin::LinkedInProvider),
+            Box::new(substack::SubstackProvider),
         ];
 
         for p in hardcoded {

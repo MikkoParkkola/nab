@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/nab.svg)](https://crates.io/crates/nab)
 [![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
 [![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
-[![Rust](https://img.shields.io/badge/Rust-1.93+-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License: MIT + PolyForm NC](https://img.shields.io/badge/License-MIT%20%2B%20PolyForm%20NC-yellow.svg)](LICENSE.md)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
 [![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
@@ -39,7 +39,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 
 | Command | What it does |
 |---------|--------------|
-| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, 11 site providers. MCP fetch also supports query-focused extraction and token budgets. |
+| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, fetch-time YARA-X redaction for prompt-injection/exfil signatures, 12 site providers. MCP fetch also supports query-focused extraction, readability, and token budgets. |
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
 | `nab models fetch <name>` | Persistent install of inference model binaries. Supports `fluidaudio` (default on macOS Apple Silicon), `sherpa-onnx` (cross-platform Parakeet TDT, ~30× realtime CPU), and `whisper` (universal fallback, whisper-large-v3-turbo, 99 langs). |
@@ -61,7 +61,7 @@ brew install nab
 cargo install nab
 ```
 
-Requires Rust 1.93 or newer.
+Requires Rust 1.95 or newer.
 
 ### Pre-built binary
 
@@ -118,6 +118,16 @@ Also supported: `gemini`, `amazon-q`, `lm-studio`.
 
 See [MCP integration](#mcp-integration) below for the full list of tools, capabilities, and HTTP transport.
 
+## Claude Code plugin
+
+This repository includes a local Claude Code plugin in [plugin/](plugin/README.md). It bundles nab MCP auto-registration with the Claude Elite `research`, `url-insight`, `wayback`, `ia`, and `oreilly` skills.
+
+```bash
+claude --plugin-dir ./plugin
+```
+
+The plugin exposes the `/nab` workflow shape for `fetch`, authenticated Brave-cookie fetches, archive retrieval, and multi-source research. It keeps nab's auth-aware path front and center: `nab fetch --cookies brave <url>` for existing browser sessions and `nab fetch --1password <url>` for 1Password/TOTP flows.
+
 ## Usage
 
 ### Fetch
@@ -151,12 +161,14 @@ Common flags for `fetch`:
 | `--proxy <url>` | HTTP or SOCKS5 proxy |
 | `--format <fmt>` | `full` (default), `compact`, `json` |
 | `--raw-html` | Skip markdown conversion |
+| `--readability` | Force readability extraction for generic HTML pages |
+| `--max-output-tokens <n>` | Apply an output token envelope; returned markdown uses 80% for headroom |
 | `--remote-fallback` | Opt in to remote thin-content recovery via `r.jina.ai`; avoid for internal, authenticated, or sensitive URLs |
 | `--diff` | Show what changed since the last fetch |
 | `-X <method>` `-d <data>` | HTTP method + body |
 | `-o <path>` | Write body to file |
 
-MCP `fetch` additionally supports `focus`, `max_tokens`, and `session` parameters for query-focused extraction, structure-aware token budgets, and persistent encrypted cookie sessions.
+MCP `fetch` additionally supports `focus`, `readability`, `max_tokens`, and `session` parameters for query-focused extraction, readability extraction, structure-aware token budgets, and persistent encrypted cookie sessions.
 
 ### Analyze
 
@@ -314,7 +326,7 @@ The 12 MCP tools:
 
 ## Site providers
 
-nab detects URLs for 11 platforms and uses their APIs or structured data instead of scraping HTML.
+nab detects URLs for 12 platforms and uses APIs or stable structured page data instead of broad HTML scraping.
 
 | Provider | URL pattern | Method |
 |----------|-------------|--------|
@@ -329,6 +341,7 @@ nab detects URLs for 11 platforms and uses their APIs or structured data instead
 | Mastodon | `*/users/*/statuses/*` | ActivityPub |
 | LinkedIn | `linkedin.com/posts/*` | oEmbed |
 | Instagram | `instagram.com/p/*`, `*/reel/*` | oEmbed |
+| Substack | `*.substack.com/p/*`, `substack.com/*/p/*` | Article DOM (`.available-content`) |
 
 If no provider matches, nab falls back to standard HTML fetch + markdown conversion.
 
@@ -405,7 +418,7 @@ async fn main() -> anyhow::Result<()> {
 
 ## Requirements
 
-- **Rust 1.93+** for building from source
+- **Rust 1.95+** for building from source
 - **ffmpeg** for `analyze` and `stream` commands: `brew install ffmpeg`
 - **1Password CLI** (optional, for credential integration): see [1Password docs](https://developer.1password.com/docs/cli/get-started/)
 
@@ -426,6 +439,8 @@ This tool includes browser cookie extraction and fingerprint spoofing capabiliti
 **ASR model not found?** Run `nab models fetch fluidaudio` to download the model (~542 MB). The model directory is `~/.nab/models/`. Use `nab models list` to see what's installed.
 
 **Fetch returning HTML instead of markdown?** Some sites block automated access. Try `nab fetch URL --cookies brave` to use your browser session, or `nab fetch URL --1password` for sites that need login.
+
+**YARA-X guard redacted a fetch?** `nab fetch` and MCP `fetch` scan returned bodies by default before saving or returning content. `NAB_YARA_ACTION=refuse` blocks instead of redacting. `NAB_YARA_BYPASS=1` is an audited emergency opt-out.
 
 **"too many open files" on watch?** Increase your ulimit: `ulimit -n 4096`. The default macOS limit (256) is too low for many concurrent watches.
 
@@ -456,6 +471,7 @@ EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-No
 - `src/waf/` — WAF challenge handling
 - `src/site/` — per-site provider integrations (proprietary domain knowledge)
 - `src/security/` — Secure Ingestion guard for stripping machine-targeted HTML directives and hidden metadata
+- `crates/nab-yara-engine/` — fetch-time YARA-X signature guard for prompt injection, exfiltration, secrets, and obfuscation
 
 **What this means in practice**:
 - Free for noncommercial use, modification, redistribution.

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${NAB_MCP_BIN:-}" ]]; then
+  exec "${NAB_MCP_BIN}" "$@"
+fi
+
+candidates=()
+if resolved="$(command -v nab-mcp 2>/dev/null)"; then
+  candidates+=("${resolved}")
+fi
+candidates+=(
+  "/opt/homebrew/bin/nab-mcp"
+  "/usr/local/bin/nab-mcp"
+  "${HOME}/.cargo/bin/nab-mcp"
+)
+
+for candidate in "${candidates[@]}"; do
+  if [[ -x "${candidate}" ]]; then
+    exec "${candidate}" "$@"
+  fi
+done
+
+cat >&2 <<'EOF'
+nab-mcp was not found.
+
+Install nab, then reload plugins:
+  brew tap MikkoParkkola/tap && brew install nab
+  # or
+  cargo install nab
+
+Set NAB_MCP_BIN=/absolute/path/to/nab-mcp if you use a custom build.
+EOF
+exit 127

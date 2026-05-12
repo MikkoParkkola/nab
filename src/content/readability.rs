@@ -107,6 +107,49 @@ pub fn extract_article(html: &str, url: &str) -> Option<Article> {
     }
 }
 
+/// Convert an extracted article into compact markdown.
+#[must_use]
+pub fn article_to_markdown(article: &Article) -> String {
+    let md = html2md::parse_html(&article.content_html);
+    let lines: Vec<&str> = md
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let md_result = lines.join("\n\n");
+
+    // html2md sometimes truncates list-heavy content (<ol>/<li>). If the
+    // article's plain text is significantly longer than the markdown output,
+    // fall back to the plain text which preserves all content from the DOM.
+    if article.text_content.len() > md_result.len() + 100 {
+        plain_text_to_markdown_blocks(&article.text_content)
+    } else {
+        md_result
+    }
+}
+
+fn plain_text_to_markdown_blocks(text: &str) -> String {
+    const MAX_PARAGRAPH_CHARS: usize = 1_000;
+
+    let mut paragraphs = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let separator_len = usize::from(!current.is_empty());
+        if !current.is_empty() && current.len() + separator_len + word.len() > MAX_PARAGRAPH_CHARS {
+            paragraphs.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        paragraphs.push(current);
+    }
+
+    paragraphs.join("\n\n")
+}
+
 /// Extract the authored body from Substack's static post DOM.
 ///
 /// Substack pages include the complete post body in `.available-content
@@ -671,6 +714,23 @@ mod tests {
         assert_eq!(text, "Hello world with links");
         assert!(!text.contains('<'));
         assert!(!text.contains('>'));
+    }
+
+    #[test]
+    fn plain_text_fallback_keeps_budgetable_block_boundaries() {
+        let text = (0..260)
+            .map(|idx| format!("word{idx}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let markdown = plain_text_to_markdown_blocks(&text);
+
+        assert!(markdown.contains("\n\n"));
+        assert!(
+            markdown
+                .split("\n\n")
+                .all(|paragraph| paragraph.len() <= 1_000)
+        );
     }
 
     #[test]

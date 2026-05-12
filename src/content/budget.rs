@@ -46,6 +46,9 @@ pub const STRUCTURED_CONTENT_MAX_CHARS: usize = 16_000;
 /// Using integer arithmetic avoids float-cast warnings.
 const HEADING_BUDGET_PERCENT: usize = 30;
 
+/// Returned content should leave caller headroom for instructions and metadata.
+pub const OUTPUT_BUDGET_HEADROOM_PERCENT: usize = 80;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /// Priority level assigned to each markdown block.
@@ -116,6 +119,22 @@ pub struct BudgetResult {
 #[must_use]
 pub fn estimate_tokens(text: &str) -> usize {
     text.len().div_ceil(CHARS_PER_TOKEN)
+}
+
+/// Convert a caller-provided token budget into the actual content budget.
+///
+/// `max_tokens` is treated as an envelope for the whole response. nab caps the
+/// extracted markdown at 80% of that value so MCP clients and CLI callers retain
+/// headroom for metadata, tool framing, and follow-up instructions.
+#[must_use]
+pub fn max_tokens_with_output_headroom(max_tokens: usize) -> usize {
+    if max_tokens == 0 {
+        return 0;
+    }
+    max_tokens
+        .saturating_mul(OUTPUT_BUDGET_HEADROOM_PERCENT)
+        .saturating_div(100)
+        .max(1)
 }
 
 /// Truncate `markdown` to fit within `max_tokens` using structure-aware
@@ -672,6 +691,14 @@ mod tests {
         let result = truncate_to_budget(md, Some(10_000));
         assert!(!result.truncated);
         assert_eq!(result.markdown, md);
+    }
+
+    #[test]
+    fn max_tokens_with_output_headroom_caps_at_eighty_percent() {
+        assert_eq!(max_tokens_with_output_headroom(0), 0);
+        assert_eq!(max_tokens_with_output_headroom(1), 1);
+        assert_eq!(max_tokens_with_output_headroom(10), 8);
+        assert_eq!(max_tokens_with_output_headroom(10_000), 8_000);
     }
 
     #[test]
