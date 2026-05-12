@@ -69,6 +69,14 @@ impl ApiRuleProvider {
     ///
     /// Returns an error if any regex in `config` fails to compile.
     pub fn new(config: SiteRuleConfig) -> Result<Self> {
+        if config.site.engine.is_browser() {
+            bail!(
+                "rule '{}' uses engine='{}'; ApiRuleProvider only supports engine='api'",
+                config.site.name,
+                config.site.engine.as_str()
+            );
+        }
+
         let patterns = config
             .site
             .patterns

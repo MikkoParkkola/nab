@@ -258,21 +258,25 @@ impl FetchTool {
 
         // ── Standard path (no session) ────────────────────────────────────────
 
-        let site_router = nab::site::SiteRouter::new();
         let cookie_opt = if cookie_header.is_empty() {
             None
         } else {
             Some(cookie_header.as_str())
         };
+        let force_browser_engine = nab::site::rules::engine_for_url(&self.url)
+            .is_some_and(nab::site::rules::config::RuleEngine::is_browser);
+        let site_content = if force_browser_engine {
+            None
+        } else {
+            nab::site::SiteRouter::new()
+                .try_extract(&self.url, client, cookie_opt)
+                .await
+        };
 
         // Determine markdown, status, content_type, and elapsed_ms from either
         // a specialized site provider or the standard HTTP fetch path.  Both
         // paths converge below into the single diff + structured_content pipeline.
-        let (markdown, status_u16, content_type, elapsed_ms, diagnostics) = if let Some(
-            site_content,
-        ) =
-            site_router.try_extract(&self.url, client, cookie_opt).await
-        {
+        let fetch_result = if let Some(site_content) = site_content {
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             output.push_str("\n📄 Content (from specialized provider):\n\n");
             (
@@ -363,6 +367,7 @@ impl FetchTool {
                 diagnostics,
             )
         };
+        let (markdown, status_u16, content_type, elapsed_ms, diagnostics) = fetch_result;
 
         self.finish_fetch(
             output,

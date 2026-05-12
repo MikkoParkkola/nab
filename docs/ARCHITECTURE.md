@@ -220,7 +220,7 @@ site/
 │   └── ooxml/          # OOXML parsing (docx/xlsx/pptx via zip + roxmltree)
 └── rules/              # Config-driven rule engine
     ├── mod.rs           # Rule loading: user overrides + embedded defaults
-    ├── config.rs        # TOML rule schema (SiteRuleConfig)
+    ├── config.rs        # TOML rule schema (SiteRuleConfig, engine routing)
     ├── config_tests.rs  # Config parsing tests
     ├── helpers.rs       # Template and extraction helpers
     ├── provider.rs      # ApiRuleProvider: generic rule-based SiteProvider
@@ -244,6 +244,10 @@ site/
 2. Rule-based providers from embedded defaults (9 rules compiled into binary)
 3. Hardcoded Rust providers for platforms not covered by a rule (hackernews, github, google-workspace, linkedin)
 4. CSS extractor plugins from `~/.config/nab/plugins.toml`
+
+`[site] engine = "api"` is the default. `[site] engine = "browser"` marks a
+rule as a browser-path routing directive; it can omit API-provider sections and
+causes matching fetches to skip config-driven API providers.
 
 **Used By**: Fetch pipeline (before generic HTML conversion), MCP fetch tool
 
@@ -556,7 +560,8 @@ MCP `fetch` layers query-focused extraction (`content/focus.rs`) and token budge
 
 **Optional configuration files** (in `~/.config/nab/`):
 - `plugins.toml`: CSS extractor and binary plugin definitions
-- `sites/*.toml`: User overrides for built-in site rules
+- `sites/*.toml`: User overrides for built-in site rules, including optional
+  browser routing directives via `[site] engine = "browser"`
 
 **Optional environment variables**:
 - `RUST_LOG=nab=debug`: Enable debug logging
@@ -586,7 +591,7 @@ MCP `fetch` layers query-focused extraction (`content/focus.rs`) and token budge
 2. **New auth method**: Extend `CredentialRetriever` or `OtpRetriever` in `auth.rs`
 3. **New fingerprint profile**: Add profile function in `fingerprint/mod.rs`
 4. **New output format**: Add to `OutputFormat` enum in `cmd/output.rs`
-5. **New site rule**: Add TOML file to `~/.config/nab/sites/` or `site/rules/defaults/`
+5. **New site rule**: Add TOML file to `~/.config/nab/sites/` or `site/rules/defaults/`; use `[site] engine = "browser"` for hosts that must bypass API providers
 6. **New CSS extractor plugin**: Add entry to `~/.config/nab/plugins.toml` with CSS selectors
 7. **New site provider (Rust)**: Implement `SiteProvider` trait, register in `SiteRouter::new()`
 8. **New content handler**: Implement `ContentHandler` trait, register in `ContentRouter::new()`

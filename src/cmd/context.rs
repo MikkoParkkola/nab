@@ -140,15 +140,21 @@ async fn fetch_one_inner(url: &str, cookies: &str) -> Result<(String, String)> {
     let cookie_opt = non_empty(&cookie_header);
 
     // Try site rule providers first (Wikipedia, YouTube, Twitter, etc.).
-    let site_router = SiteRouter::new();
-    if let Some(content) = site_router.try_extract(url, &client, cookie_opt).await {
-        let title = content
-            .metadata
-            .title
-            .clone()
-            .or_else(|| extract_title_from_markdown(&content.markdown))
-            .unwrap_or_else(|| url.to_owned());
-        return Ok((title, content.markdown));
+    // Browser-engine rules are routing directives, so they intentionally skip
+    // API providers and fall through to the generic HTTP conversion path.
+    let force_browser_engine = nab::site::rules::engine_for_url(url)
+        .is_some_and(nab::site::rules::config::RuleEngine::is_browser);
+    if !force_browser_engine {
+        let site_router = SiteRouter::new();
+        if let Some(content) = site_router.try_extract(url, &client, cookie_opt).await {
+            let title = content
+                .metadata
+                .title
+                .clone()
+                .or_else(|| extract_title_from_markdown(&content.markdown))
+                .unwrap_or_else(|| url.to_owned());
+            return Ok((title, content.markdown));
+        }
     }
 
     // No rule matched — fall back to generic HTTP fetch + content conversion.

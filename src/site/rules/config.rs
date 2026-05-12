@@ -3,6 +3,7 @@
 //! TOML deserialization types for site rule configuration.
 //!
 //! The schema supports `type = "api"` rules that specify:
+//! - Engine selection (`api` by default, or `browser` to force browser-path routing)
 //! - URL pattern matching
 //! - URL rewriting (with regex capture groups or `{url}` placeholder)
 //! - HTTP request configuration
@@ -60,6 +61,11 @@ pub struct SiteRuleConfig {
     /// Engagement metrics field mapping.
     #[serde(default)]
     pub engagement: EngagementConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct SiteOnlyConfig {
+    site: SiteConfig,
 }
 
 /// `[[fetch_additional]]` — one additional sequential HTTP fetch.
@@ -218,8 +224,67 @@ pub struct FallbackConfig {
 pub struct SiteConfig {
     /// Provider name (e.g., `"twitter"`, `"youtube"`).
     pub name: String,
+    /// Extraction engine requested for matching URLs.
+    ///
+    /// `"api"` (default) builds a normal [`ApiRuleProvider`]. `"browser"`
+    /// marks the rule as a routing directive: matching URLs skip the API site
+    /// provider path so the fetch ladder can take its browser-capable route.
+    ///
+    /// [`ApiRuleProvider`]: crate::site::rules::provider::ApiRuleProvider
+    #[serde(default)]
+    pub engine: RuleEngine,
     /// List of regex patterns (case-insensitive) that URLs must match.
     pub patterns: Vec<String>,
+}
+
+impl SiteConfig {
+    /// Validate the common `[site]` section fields.
+    fn validate(&self) -> Result<()> {
+        if self.name.is_empty() {
+            bail!("site.name must not be empty");
+        }
+        if self.patterns.is_empty() {
+            bail!("site.patterns must not be empty for rule '{}'", self.name);
+        }
+        for pattern in &self.patterns {
+            regex::Regex::new(pattern).with_context(|| {
+                format!(
+                    "invalid pattern regex '{}' in rule '{}'",
+                    pattern, self.name
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// Site rule extraction engine.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleEngine {
+    /// Config-driven API/HTML extraction through [`ApiRuleProvider`].
+    #[default]
+    Api,
+    /// Browser-capable route. The rule is a routing directive, not an API provider.
+    Browser,
+}
+
+impl RuleEngine {
+    /// Return `true` when this rule asks the caller to skip API providers and
+    /// take the browser-capable path instead.
+    #[must_use]
+    pub const fn is_browser(self) -> bool {
+        matches!(self, Self::Browser)
+    }
+
+    /// Return the TOML string representation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::Browser => "browser",
+        }
+    }
 }
 
 /// `[rewrite]` — URL rewrite configuration.
@@ -461,6 +526,22 @@ pub struct EngagementConfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl SiteRuleConfig {
+    /// Parse and validate only the `[site]` section from a TOML string.
+    ///
+    /// This accepts browser-engine routing rules that intentionally omit API
+    /// provider sections such as `[rewrite]`, `[json]`, and `[template]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the TOML is malformed, `[site]` is missing, or
+    /// common site fields are invalid.
+    pub fn site_from_toml(toml_str: &str) -> Result<SiteConfig> {
+        let config: SiteOnlyConfig =
+            toml::from_str(toml_str).context("failed to parse site rule TOML")?;
+        config.site.validate()?;
+        Ok(config.site)
+    }
+
     /// Parse and validate a TOML string into a [`SiteRuleConfig`].
     ///
     /// # Errors
@@ -475,24 +556,7 @@ impl SiteRuleConfig {
 
     /// Validate that required fields are present and regexes compile.
     fn validate(&self) -> Result<()> {
-        if self.site.name.is_empty() {
-            bail!("site.name must not be empty");
-        }
-        if self.site.patterns.is_empty() {
-            bail!(
-                "site.patterns must not be empty for rule '{}'",
-                self.site.name
-            );
-        }
-        // Validate that each pattern compiles as a regex.
-        for pattern in &self.site.patterns {
-            regex::Regex::new(pattern).with_context(|| {
-                format!(
-                    "invalid pattern regex '{}' in rule '{}'",
-                    pattern, self.site.name
-                )
-            })?;
-        }
+        self.site.validate()?;
         // Validate that the rewrite `from` regex compiles.
         regex::Regex::new(&self.rewrite.from).with_context(|| {
             format!(
