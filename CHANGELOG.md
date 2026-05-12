@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `nab-yara-engine`, a YARA-X fetch-time signature guard wired into CLI `nab fetch`, batch fetch, media fetch output, site-provider output, and MCP `fetch`. It is default-on, redacts matched sections with a clear `NAB YARA SANITIZED` marker, supports `NAB_YARA_ACTION=refuse`, and supports audited emergency bypass with `NAB_YARA_BYPASS=1`.
 - Safe fetch now uses the SSRF-validated socket address for the actual request connection, strips credential-bearing headers across cross-origin redirects, keeps MCP Tor fetches on the configured SOCKS proxy for manually validated redirect hops, and leaves remote `r.jina.ai` thin-content recovery disabled unless `--remote-fallback` is explicitly passed.
+- Secure Ingestion now reports WebMCP manifest advertisements as `DirectiveKind::WebMcpManifest` with `Info` severity for both HTML `<link rel="mcp">` and `/.well-known/mcp.json` manifest bodies. Default behavior remains non-blocking, while `NAB_WEBMCP_STRICT=true` refuses unopted WebMCP ingestion unless the source matches `NAB_WEBMCP_OPT_IN`; rationale: the 2026-04-25 WebMCP scope discussion is browser+human-centric, while nab is a headless agent ingestion surface.
 
 ## [0.10.3] - 2026-04-26
 

@@ -119,7 +119,10 @@ impl HtmlHandler {
     ) -> Result<ConversionResult> {
         let start = std::time::Instant::now();
         let html = String::from_utf8_lossy(bytes);
-        let markdown = html_to_markdown_with_url_and_options(&html, url, options);
+        let (sanitized_html, report) = crate::security::sanitize_with_env_policy(&html, url)?;
+        log_secure_ingestion_report(&report);
+        let markdown =
+            html_to_markdown_sanitized_with_url_and_options(&sanitized_html, url, options);
         let quality = quality::score_extraction(bytes, &markdown);
 
         Ok(ConversionResult {
@@ -158,6 +161,11 @@ pub fn html_to_markdown_with_url_and_options(
     options: HtmlConversionOptions,
 ) -> String {
     let (sanitized_html, report) = crate::security::sanitize(html);
+    log_secure_ingestion_report(&report);
+    html_to_markdown_sanitized_with_url_and_options(&sanitized_html, url, options)
+}
+
+fn log_secure_ingestion_report(report: &crate::security::DetectionReport) {
     if !report.is_clean() {
         tracing::warn!(
             total = report.total(),
@@ -166,10 +174,18 @@ pub fn html_to_markdown_with_url_and_options(
             machine_classes = report.machine_class_count,
             hidden_inline = report.hidden_inline_count,
             aria_hidden = report.aria_hidden_count,
-            "secure ingestion stripped machine-targeted HTML metadata"
+            webmcp_manifests = report.webmcp_manifest_count,
+            "secure ingestion detected or sanitized machine-targeted HTML metadata"
         );
     }
-    html_to_markdown_with_url_and_fetcher(&sanitized_html, url, options, fetch_jina_reader)
+}
+
+fn html_to_markdown_sanitized_with_url_and_options(
+    sanitized_html: &str,
+    url: Option<&str>,
+    options: HtmlConversionOptions,
+) -> String {
+    html_to_markdown_with_url_and_fetcher(sanitized_html, url, options, fetch_jina_reader)
 }
 
 fn html_to_markdown_with_url_and_fetcher<F>(
