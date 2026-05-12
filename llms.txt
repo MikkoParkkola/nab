@@ -25,7 +25,7 @@ Transport: stdio (default) or Streamable HTTP (--http HOST:PORT)
 
 ## MCP Tools (12)
 
-- fetch(url, [cookies, focus, max_tokens, session, raw_html, diff, proxy, tor]) — Fetch URL as markdown
+- fetch(url, [cookies, focus, readability, max_tokens, session, raw_html, diff, proxy, tor]) — Fetch URL as markdown
 - fetch_batch(urls, [cookies, parallel]) — Parallel multi-URL fetch with task-augmented async
 - submit(url, fields, [csrf_from, cookies]) — Submit form with CSRF + smart field extraction
 - login(url, [use_1password, save_session, cookies]) — 1Password auto-login with TOTP
@@ -50,7 +50,8 @@ Transport: stdio (default) or Streamable HTTP (--http HOST:PORT)
 nab fetch https://example.com                          # fetch as markdown
 nab fetch URL --cookies brave                          # use browser cookies
 nab fetch URL --1password                              # auto-login via 1Password
-# MCP fetch supports focus="pricing", max_tokens=2000  # query-focused extraction
+nab fetch URL --readability --max-output-tokens 2000   # article extraction with budget headroom
+# MCP fetch supports focus="pricing", readability=true, max_tokens=2000
 nab fetch --batch urls.txt --parallel 8                # batch fetch
 nab spa URL                                            # extract SPA/JS data
 nab analyze interview.mp4 --diarize                    # transcribe + speakers

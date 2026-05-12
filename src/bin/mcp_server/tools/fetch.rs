@@ -7,10 +7,11 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
 use serde::{Deserialize, Serialize};
 
-use nab::content::budget::truncate_to_budget;
+use nab::content::budget::{max_tokens_with_output_headroom, truncate_to_budget};
 use nab::content::diff::{ContentSnapshot, compute_diff};
 use nab::content::diff_format::format_diff_markdown;
 use nab::content::focus::extract_focused;
+use nab::content::html::HtmlConversionOptions;
 use nab::content::response_classifier::{
     ResponseAnalysis, ResponseClass, classify_response, classify_thin_content,
 };
@@ -18,8 +19,8 @@ use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, SafeFetchConfig};
 
 use crate::helpers::{
-    convert_body_async, fetch_safe_response, fetch_with_cookies, fetch_with_session_response,
-    resolve_cookie_header, write_body_info, write_response_summary,
+    convert_body_async_with_options, fetch_safe_response, fetch_with_cookies,
+    fetch_with_session_response, resolve_cookie_header, write_body_info, write_response_summary,
 };
 use crate::structured::{FetchStructuredParams, build_fetch_structured_v2, truncate_markdown};
 use crate::tools::client::{get_client, persist_session, resolve_session_client};
@@ -62,7 +63,9 @@ Focus mode (focus: query):
 - Diff markers are always preserved regardless of relevance
 
 Token budget (max_tokens: N):
+- Triggers readability preference for HTML when raw markdown exceeds the budget
 - Structure-aware truncation preserving headings, code, and tables
+- Caps returned markdown at 80% of the requested budget for response headroom
 - Priority: title > code/tables > headings (30% cap) > body > blockquotes
 
 Returns: Markdown-converted body with timing info (or diff when diff: true).",
@@ -107,6 +110,13 @@ pub struct FetchTool {
     /// then headings (capped at 30% of budget), then body text.
     #[serde(default)]
     max_tokens: Option<u64>,
+    /// Force readability extraction for HTML pages.
+    ///
+    /// Specialized site providers still run first. For generic HTML pages,
+    /// this prefers Mozilla-style readability extraction whenever an article
+    /// candidate exists.
+    #[serde(default)]
+    readability: bool,
     /// Named session for cookie persistence across calls.
     ///
     /// When set, nab uses an isolated per-session cookie jar so that
@@ -141,6 +151,7 @@ impl FetchTool {
             url_host = %url_host,
             has_focus = self.focus.is_some(),
             has_budget = self.max_tokens.is_some(),
+            readability = self.readability,
             has_session = self.session.is_some(),
             diff = self.diff,
             tor = self.tor,
@@ -207,7 +218,13 @@ impl FetchTool {
             );
             write_body_info(&mut output, body_bytes.len());
 
-            let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
+            let conversion = convert_body_async_with_options(
+                &body_bytes,
+                &content_type,
+                &self.url,
+                self.html_options(),
+            )
+            .await?;
             let diagnostics = trace_fetch_classification(
                 status.as_u16(),
                 &content_type,
@@ -285,7 +302,13 @@ impl FetchTool {
             );
             write_body_info(&mut output, body_bytes.len());
 
-            let conversion = convert_body_async(&body_bytes, &content_type, &self.url).await?;
+            let conversion = convert_body_async_with_options(
+                &body_bytes,
+                &content_type,
+                &self.url,
+                self.html_options(),
+            )
+            .await?;
             if let Some(pages) = conversion.page_count {
                 let _ = writeln!(
                     output,
@@ -396,7 +419,8 @@ impl FetchTool {
         // Budget: structure-aware truncation with priority scoring.
         let max_tok = self
             .max_tokens
-            .map(|t| usize::try_from(t).unwrap_or(usize::MAX));
+            .map(|t| usize::try_from(t).unwrap_or(usize::MAX))
+            .map(max_tokens_with_output_headroom);
         let budget_result = truncate_to_budget(&processed_markdown, max_tok);
 
         let structured = build_fetch_structured_v2(&FetchStructuredParams {
@@ -419,6 +443,17 @@ impl FetchTool {
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
         result.structured_content = Some(structured);
         Ok(result)
+    }
+
+    fn html_options(&self) -> HtmlConversionOptions {
+        HtmlConversionOptions {
+            allow_spa_extraction: true,
+            allow_jina_fallback: false,
+            force_readability: self.readability,
+            max_output_tokens: self
+                .max_tokens
+                .map(|tokens| usize::try_from(tokens).unwrap_or(usize::MAX)),
+        }
     }
 }
 

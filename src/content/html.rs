@@ -20,6 +20,7 @@ use anyhow::Result;
 use scraper::Selector;
 use std::sync::LazyLock;
 
+use super::budget;
 use super::quality;
 use super::readability;
 use super::spa_extract;
@@ -55,6 +56,12 @@ pub struct HtmlConversionOptions {
     pub allow_spa_extraction: bool,
     /// Opt in to remote thin-content recovery via `r.jina.ai`.
     pub allow_jina_fallback: bool,
+    /// Prefer readability extraction whenever an article candidate exists.
+    pub force_readability: bool,
+    /// Caller-provided output token envelope. When direct HTML markdown exceeds
+    /// this budget, readability is preferred to reduce boilerplate before any
+    /// final output truncation happens.
+    pub max_output_tokens: Option<usize>,
 }
 
 impl Default for HtmlConversionOptions {
@@ -62,6 +69,8 @@ impl Default for HtmlConversionOptions {
         Self {
             allow_spa_extraction: true,
             allow_jina_fallback: false,
+            force_readability: false,
+            max_output_tokens: None,
         }
     }
 }
@@ -222,29 +231,22 @@ where
 
     // Try readability extraction with real URL (or fallback placeholder)
     let effective_url = url.unwrap_or("https://example.com");
-    let readability_md =
-        readability::extract_article(&cleaned_html, effective_url).map(|article| {
-            let md = html2md::parse_html(&article.content_html);
-            let lines: Vec<&str> = md
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .collect();
-            let md_result = lines.join("\n");
-
-            // html2md sometimes truncates list-heavy content (<ol>/<li>).
-            // If the article's plain text is significantly longer than the
-            // markdown output, fall back to the plain text which preserves
-            // all content from the DOM.
-            if article.text_content.len() > md_result.len() + 100 {
-                article.text_content
-            } else {
-                md_result
-            }
-        });
+    let readability_md = readability::extract_article(&cleaned_html, effective_url)
+        .map(|article| readability::article_to_markdown(&article));
 
     // Direct html2md on cleaned HTML (preserves tables, lists, etc.)
     let direct_md = html_to_markdown(&cleaned_html);
+    let direct_exceeds_budget = options.max_output_tokens.is_some_and(|max_tokens| {
+        max_tokens > 0 && budget::estimate_tokens(&direct_md) > max_tokens
+    });
+    if direct_exceeds_budget {
+        tracing::debug!(
+            direct_tokens = budget::estimate_tokens(&direct_md),
+            max_tokens = ?options.max_output_tokens,
+            "output token budget triggered readability preference"
+        );
+    }
+    let prefer_readability = options.force_readability || direct_exceeds_budget;
 
     // Pick the better result.  Readability produces clean article content but
     // is much shorter than direct conversion (which includes navigation, CSS,
@@ -253,6 +255,7 @@ where
     // that direct_md preserves.  Only fall back to direct when readability
     // produced nearly nothing.
     let markdown = match readability_md {
+        Some(ref r_md) if prefer_readability && r_md.len() >= MIN_READABILITY_LEN => r_md.clone(),
         Some(ref r_md) if r_md.len() >= MIN_READABILITY_LEN => r_md.clone(),
         Some(ref r_md) if r_md.len() > direct_md.len() => r_md.clone(),
         _ => direct_md,
@@ -1004,6 +1007,7 @@ mod tests {
             HtmlConversionOptions {
                 allow_spa_extraction: true,
                 allow_jina_fallback: true,
+                ..HtmlConversionOptions::default()
             },
             |url| {
                 calls.set(calls.get() + 1);
@@ -1033,6 +1037,7 @@ mod tests {
             HtmlConversionOptions {
                 allow_spa_extraction: true,
                 allow_jina_fallback: true,
+                ..HtmlConversionOptions::default()
             },
             |_html| Some(code_sample.clone()),
             |url| {
@@ -1063,6 +1068,7 @@ mod tests {
             HtmlConversionOptions {
                 allow_spa_extraction: true,
                 allow_jina_fallback: false,
+                ..HtmlConversionOptions::default()
             },
             |_url| {
                 calls.set(calls.get() + 1);
@@ -1113,6 +1119,7 @@ mod tests {
             HtmlConversionOptions {
                 allow_spa_extraction: true,
                 allow_jina_fallback: false,
+                ..HtmlConversionOptions::default()
             },
             |_html| Some(code_sample.clone()),
             |_url| {
@@ -1144,12 +1151,45 @@ mod tests {
             HtmlConversionOptions {
                 allow_spa_extraction: false,
                 allow_jina_fallback: false,
+                ..HtmlConversionOptions::default()
             },
             |_url| Some("Recovered remotely".to_string()),
         );
 
         assert!(!markdown.contains(&article_body));
         assert!(markdown.contains("Loading"));
+    }
+
+    #[test]
+    fn max_output_tokens_prefers_readability_when_direct_markdown_exceeds_budget() {
+        let chrome = "Navigation Subscribe Comments Related ".repeat(200);
+        let article = "This article body is the useful content and should dominate the output after readability extraction. ".repeat(8);
+        let html = format!(
+            r"<html><body>
+                <nav>{chrome}</nav>
+                <main>
+                    <article>
+                        <h1>Budgeted Article</h1>
+                        <p>{article}</p>
+                    </article>
+                </main>
+                <footer>{chrome}</footer>
+            </body></html>"
+        );
+
+        let markdown = html_to_markdown_with_url_and_fetcher(
+            &html,
+            Some("https://example.com/post"),
+            HtmlConversionOptions {
+                max_output_tokens: Some(200),
+                ..HtmlConversionOptions::default()
+            },
+            |_url| Some("Recovered remotely".to_string()),
+        );
+
+        assert!(markdown.contains("Budgeted Article"));
+        assert!(markdown.contains("useful content"));
+        assert!(!markdown.contains("Navigation Subscribe"));
     }
 
     #[test]

@@ -105,6 +105,14 @@ enum Commands {
         #[arg(long, default_value = "0")]
         max_body: usize,
 
+        /// Force readability extraction for HTML pages
+        #[arg(long)]
+        readability: bool,
+
+        /// Maximum output token envelope; returned markdown uses 80% for headroom
+        #[arg(long)]
+        max_output_tokens: Option<usize>,
+
         /// Add custom request headers (can be repeated: --add-header "Accept: application/json")
         #[arg(long = "add-header", action = clap::ArgAction::Append)]
         add_headers: Vec<String>,
@@ -837,6 +845,8 @@ async fn main() -> Result<()> {
                 raw_html,
                 links,
                 max_body,
+                readability,
+                max_output_tokens,
                 add_headers,
                 auto_referer,
                 warmup_url,
@@ -871,6 +881,7 @@ async fn main() -> Result<()> {
                     raw_html,
                     links,
                     max_body,
+                    max_output_tokens,
                     custom_headers: add_headers,
                     auto_referer,
                     warmup_url,
@@ -892,6 +903,8 @@ async fn main() -> Result<()> {
                     html_options: nab::content::html::HtmlConversionOptions {
                         allow_spa_extraction: !no_spa,
                         allow_jina_fallback: remote_fallback && !no_fallback,
+                        force_readability: readability,
+                        max_output_tokens,
                     },
                 };
                 cmd::cmd_fetch(&cfg).await?;
