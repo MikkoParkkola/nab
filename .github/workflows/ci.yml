@@ -42,17 +42,22 @@ jobs:
           - name: ubuntu-default
             os: ubuntu-latest
             command: cargo test --locked
+            net_tests: "0"
           - name: macos-lib
             os: macos-14
             command: cargo test --locked --lib
+            net_tests: "0"
           - name: yara-engine
             os: ubuntu-latest
             command: cargo test --locked -p nab-yara-engine
+            net_tests: "0"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: ${{ matrix.command }}
+        env:
+          NAB_NET_TESTS: ${{ matrix.net_tests }}
 
   build:
     name: Build (${{ matrix.name }})
