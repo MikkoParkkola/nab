@@ -12,6 +12,14 @@ Three features that landed in 0.7.0 and unlock the multimodal local-first story.
 | [url-watch-resources.md](url-watch-resources.md) | shipped (0.7.0) | URL monitoring exposed as MCP subscribable resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. New `watch_create`/`watch_list`/`watch_remove` MCP tools. |
 | [active-reading.md](active-reading.md) | shipped (0.7.0) | Active reading via MCP `sampling/createMessage`. nab calls back to the host LLM to identify references in transcripts and inlines them as footnotes. Novel for ASR pipelines. |
 
+## Browser rendering and JS-heavy pages
+
+Keeping the default path HTTP-first while defining explicit browser-rendering escalation.
+
+| Document | Status | Summary |
+|----------|--------|---------|
+| [browser-run-interactive-mode.md](browser-run-interactive-mode.md) | research spike | Cloudflare Browser Run / Browserbase / external-CDP build-vs-buy note for `nab browser`, with live Browser Run latency and cost evidence. |
+
 ## Phase 2 — MCP spec closure
 
 Bringing nab from ~80% to 100% MCP 2025-11-25 spec compliance.
