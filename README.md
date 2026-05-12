@@ -39,7 +39,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 
 | Command | What it does |
 |---------|--------------|
-| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, fetch-time YARA-X redaction for prompt-injection/exfil signatures, 11 site providers. MCP fetch also supports query-focused extraction and token budgets. |
+| `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, fetch-time YARA-X redaction for prompt-injection/exfil signatures, 12 site providers. MCP fetch also supports query-focused extraction, readability, and token budgets. |
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
 | `nab models fetch <name>` | Persistent install of inference model binaries. Supports `fluidaudio` (default on macOS Apple Silicon), `sherpa-onnx` (cross-platform Parakeet TDT, ~30× realtime CPU), and `whisper` (universal fallback, whisper-large-v3-turbo, 99 langs). |
@@ -161,12 +161,14 @@ Common flags for `fetch`:
 | `--proxy <url>` | HTTP or SOCKS5 proxy |
 | `--format <fmt>` | `full` (default), `compact`, `json` |
 | `--raw-html` | Skip markdown conversion |
+| `--readability` | Force readability extraction for generic HTML pages |
+| `--max-output-tokens <n>` | Apply an output token envelope; returned markdown uses 80% for headroom |
 | `--remote-fallback` | Opt in to remote thin-content recovery via `r.jina.ai`; avoid for internal, authenticated, or sensitive URLs |
 | `--diff` | Show what changed since the last fetch |
 | `-X <method>` `-d <data>` | HTTP method + body |
 | `-o <path>` | Write body to file |
 
-MCP `fetch` additionally supports `focus`, `max_tokens`, and `session` parameters for query-focused extraction, structure-aware token budgets, and persistent encrypted cookie sessions.
+MCP `fetch` additionally supports `focus`, `readability`, `max_tokens`, and `session` parameters for query-focused extraction, readability extraction, structure-aware token budgets, and persistent encrypted cookie sessions.
 
 ### Analyze
 
@@ -324,7 +326,7 @@ The 12 MCP tools:
 
 ## Site providers
 
-nab detects URLs for 11 platforms and uses their APIs or structured data instead of scraping HTML.
+nab detects URLs for 12 platforms and uses APIs or stable structured page data instead of broad HTML scraping.
 
 | Provider | URL pattern | Method |
 |----------|-------------|--------|
@@ -339,6 +341,7 @@ nab detects URLs for 11 platforms and uses their APIs or structured data instead
 | Mastodon | `*/users/*/statuses/*` | ActivityPub |
 | LinkedIn | `linkedin.com/posts/*` | oEmbed |
 | Instagram | `instagram.com/p/*`, `*/reel/*` | oEmbed |
+| Substack | `*.substack.com/p/*`, `substack.com/*/p/*` | Article DOM (`.available-content`) |
 
 If no provider matches, nab falls back to standard HTML fetch + markdown conversion.
 
