@@ -79,9 +79,11 @@ Configuration should prefer env or existing config extension:
 
 ```text
 NAB_BROWSER_CDP_WS=wss://...
-NAB_BROWSER_CDP_HEADERS_ENV=NAB_BROWSER_CDP_HEADERS
+NAB_BROWSER_CDP_HEADERS='{"Authorization":"Bearer ..."}'
 NAB_BROWSER_PROVIDER=cdp
 ```
+
+The implemented CLI keeps this provider-neutral contract: `--cdp-url` overrides `NAB_BROWSER_CDP_WS`, and `--headers-env` selects the environment variable that holds either a JSON object or newline-delimited `Name: value` headers. Header values are consumed by the WebSocket handshake but are not printed in command output.
 
 The browser implementation should accept Cloudflare Browser Run, Browserbase, and a local Chrome `--remote-debugging-port` session through the same CDP adapter. Provider-specific setup belongs in docs, not in the core execution path.
 

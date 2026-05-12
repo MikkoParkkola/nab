@@ -45,6 +45,16 @@ pub struct FetchConfig {
     pub data: Option<String>,
     pub capture_cookies: bool,
     pub no_redirect: bool,
+    /// When `true`, delegate this fetch to the explicit external-CDP browser path.
+    pub render: bool,
+    /// Alias for `render`, reserved for workflows that need browser interaction.
+    pub interactive: bool,
+    /// Optional CDP endpoint override for the delegated browser path.
+    pub browser_cdp_url: Option<String>,
+    /// Environment variable containing CDP header overrides for the delegated browser path.
+    pub browser_headers_env: String,
+    /// Extra wait after browser load before extracting DOM, in milliseconds.
+    pub browser_wait_ms: u64,
     pub batch_file: Option<String>,
     pub parallel: usize,
     pub proxy: Option<String>,
@@ -126,6 +136,26 @@ impl std::str::FromStr for WafMode {
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
 pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
+    if cfg.render || cfg.interactive {
+        if cfg.batch_file.is_some() {
+            return Err(anyhow::anyhow!(
+                "--render/--interactive cannot be combined with --batch; use `nab browser <url>` for single-page browser rendering"
+            ));
+        }
+        let browser_cfg = super::browser::BrowserConfig {
+            url: cfg.url.clone(),
+            format: cfg.format,
+            output_file: cfg.output_file.clone(),
+            max_body: cfg.max_body,
+            max_output_tokens: cfg.max_output_tokens,
+            cdp_url: cfg.browser_cdp_url.clone(),
+            headers_env: cfg.browser_headers_env.clone(),
+            wait_ms: cfg.browser_wait_ms,
+            html_options: cfg.html_options,
+        };
+        return super::browser::cmd_browser(&browser_cfg).await;
+    }
+
     // Handle batch mode
     if cfg.batch_file.is_some() {
         return super::fetch_batch::cmd_fetch_batch(cfg).await;
@@ -827,7 +857,7 @@ fn build_fetch_diagnostics(
     if let Some(primary) = classification.primary() {
         let warning = match primary.class {
             ResponseClass::BotChallenge => format!(
-                "Bot or browser challenge detected (HTTP {status}). Browser challenge likely requires cookies or JavaScript.\nTry:\n1. Visit the URL in a browser first\n2. Let nab reuse your default browser cookies automatically unless you intentionally disabled them\n3. Use --cookies brave|chrome|firefox|safari only to override the default browser profile"
+                "Bot or browser challenge detected (HTTP {status}). Browser challenge likely requires cookies or JavaScript.\nTry:\n1. Visit the URL in a browser first\n2. Let nab reuse your default browser cookies automatically unless you intentionally disabled them\n3. Use --cookies brave|chrome|firefox|safari only to override the default browser profile\n4. For JS-rendered pages, configure a CDP endpoint and run: nab browser <url> or nab fetch --render <url>"
             ),
             ResponseClass::RateLimited => format!(
                 "Rate limiting detected (HTTP {status}).\nRetry later, or use an authenticated browser/session path if the site rate-limits anonymous traffic."
@@ -887,7 +917,8 @@ fn thin_content_message(diagnostic: ThinContentDiagnostic) -> String {
          Extraction confidence is low, so the main content may be missing.\n  \
          1. nab spa <url>              (extract embedded SPA data)\n  \
          2. nab fetch <url>            (uses default browser cookies automatically)\n  \
-         3. nab fetch --cookies brave <url>  (override the browser profile if needed)",
+         3. nab browser <url>          (explicit external-CDP browser rendering)\n  \
+         4. nab fetch --cookies brave <url>  (override the browser profile if needed)",
         diagnostic.markdown_chars, diagnostic.html_bytes
     )
 }
@@ -1202,6 +1233,12 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("--remote-fallback")),
             "expected remote-fallback hint, got: {warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("nab browser <url>")),
+            "expected explicit browser-rendering hint, got: {warnings:?}"
         );
     }
 

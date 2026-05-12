@@ -23,6 +23,58 @@ fn net_tests_enabled() -> bool {
     std::env::var("NAB_NET_TESTS").map_or(true, |v| v != "0" && v.to_lowercase() != "false")
 }
 
+#[test]
+fn fetch_help_includes_explicit_browser_render_flags() {
+    nab()
+        .args(["fetch", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--render"))
+        .stdout(predicate::str::contains("--interactive"))
+        .stdout(predicate::str::contains("--browser-cdp-url"));
+}
+
+#[test]
+fn fetch_render_requires_configured_cdp_endpoint() {
+    let mut cmd = nab();
+    cmd.env_remove("NAB_BROWSER_CDP_WS")
+        .env_remove("NAB_BROWSER_CDP_HEADERS")
+        .args([
+            "fetch",
+            "--render",
+            "--cookies",
+            "none",
+            "https://example.com",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("NAB_BROWSER_CDP_WS"))
+        .stderr(predicate::str::contains("never auto-launches"));
+}
+
+#[test]
+fn browser_help_lists_external_cdp_options() {
+    nab()
+        .args(["browser", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("NAB_BROWSER_CDP_WS"))
+        .stdout(predicate::str::contains("--cdp-url"))
+        .stdout(predicate::str::contains("--headers-env"));
+}
+
+#[test]
+fn browser_requires_configured_cdp_endpoint() {
+    let mut cmd = nab();
+    cmd.env_remove("NAB_BROWSER_CDP_WS")
+        .env_remove("NAB_BROWSER_CDP_HEADERS")
+        .args(["browser", "https://example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("NAB_BROWSER_CDP_WS"))
+        .stderr(predicate::str::contains("never auto-launches"));
+}
+
 // ─── Basic fetch (network) ───────────────────────────────────────────────────
 
 #[test]

@@ -40,6 +40,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 | Command | What it does |
 |---------|--------------|
 | `nab fetch <url>` | Fetch any URL as clean markdown. HTTP/3, browser cookie injection (Brave / Chrome / Firefox / Safari / Edge / Dia), 1Password auto-login, fingerprint spoofing, fetch-time YARA-X redaction for prompt-injection/exfil signatures, 12 site providers. MCP fetch also supports query-focused extraction, readability, and token budgets. |
+| `nab browser <url>` | Explicit opt-in browser rendering for JS-heavy pages through a configured Chrome DevTools Protocol WebSocket endpoint. No Chromium is bundled and default `nab fetch` never auto-launches a browser or remote provider. |
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
 | `nab models fetch <name>` | Persistent install of inference model binaries. Supports `fluidaudio` (default on macOS Apple Silicon), `sherpa-onnx` (cross-platform Parakeet TDT, ~30× realtime CPU), and `whisper` (universal fallback, whisper-large-v3-turbo, 99 langs). |
@@ -150,6 +151,10 @@ nab fetch https://example.com --format json
 
 # Batch fetch with parallelism
 nab fetch --batch urls.txt --parallel 8
+
+# Explicit browser rendering for JS-heavy pages
+NAB_BROWSER_CDP_WS=wss://... nab browser https://example.com
+nab fetch https://example.com --render --browser-cdp-url wss://...
 ```
 
 Common flags for `fetch`:
@@ -164,6 +169,7 @@ Common flags for `fetch`:
 | `--readability` | Force readability extraction for generic HTML pages |
 | `--max-output-tokens <n>` | Apply an output token envelope; returned markdown uses 80% for headroom |
 | `--remote-fallback` | Opt in to remote thin-content recovery via `r.jina.ai`; avoid for internal, authenticated, or sensitive URLs |
+| `--render` / `--interactive` | Opt in to configured CDP browser rendering for JS-heavy pages; requires `NAB_BROWSER_CDP_WS` or `--browser-cdp-url` |
 | `--diff` | Show what changed since the last fetch |
 | `-X <method>` `-d <data>` | HTTP method + body |
 | `-o <path>` | Write body to file |
@@ -439,6 +445,8 @@ This tool includes browser cookie extraction and fingerprint spoofing capabiliti
 **ASR model not found?** Run `nab models fetch fluidaudio` to download the model (~542 MB). The model directory is `~/.nab/models/`. Use `nab models list` to see what's installed.
 
 **Fetch returning HTML instead of markdown?** Some sites block automated access. Try `nab fetch URL --cookies brave` to use your browser session, or `nab fetch URL --1password` for sites that need login.
+
+**Fetch returning thin content from a JavaScript app?** Default `nab fetch` stays local-first and HTTP-only. For pages that need DOM execution, configure an external CDP endpoint with `NAB_BROWSER_CDP_WS` or `--browser-cdp-url`, then run `nab browser URL` or `nab fetch URL --render`. Remote browser providers may receive the URL and rendered page content; local browser cookies are not automatically available to remote browsers.
 
 **YARA-X guard redacted a fetch?** `nab fetch` and MCP `fetch` scan returned bodies by default before saving or returning content. `NAB_YARA_ACTION=refuse` blocks instead of redacting. `NAB_YARA_BYPASS=1` is an audited emergency opt-out.
 

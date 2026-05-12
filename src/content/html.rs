@@ -316,8 +316,9 @@ where
              The page likely uses JavaScript rendering. Try:\n  \
              1. nab spa <url>              (extract embedded SPA data)\n  \
              2. nab fetch <url>            (uses default browser cookies automatically)\n  \
-             3. nab fetch --cookies brave <url>  (override the browser profile if needed)\n  \
-             4. nab fetch --remote-fallback <url>  (public URLs only; sends the URL to r.jina.ai)",
+             3. nab browser <url>          (explicit external-CDP browser rendering)\n  \
+             4. nab fetch --cookies brave <url>  (override the browser profile if needed)\n  \
+             5. nab fetch --remote-fallback <url>  (public URLs only; sends the URL to r.jina.ai)",
             markdown.len(),
             html.len()
         );
@@ -414,7 +415,8 @@ pub fn detect_thin_content(html_len: usize, markdown_len: usize) -> Option<Strin
              the article body may be missing. Try:\n  \
              1. nab spa <url>              (extract embedded SPA data)\n  \
              2. nab fetch <url>            (uses default browser cookies automatically)\n  \
-             3. nab fetch --cookies brave <url>  (override the browser profile if needed)"
+             3. nab browser <url>          (explicit external-CDP browser rendering)\n  \
+             4. nab fetch --cookies brave <url>  (override the browser profile if needed)"
         ))
     } else {
         None
