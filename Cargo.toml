@@ -157,7 +157,12 @@ async-trait = "0.1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-nab-yara-engine = { path = "crates/nab-yara-engine" }
+yara-x = { version = "1.16", default-features = false, features = [
+    "constant-folding",
+    "exact-atoms",
+    "fast-regexp",
+    "inventory",
+] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UTILITIES

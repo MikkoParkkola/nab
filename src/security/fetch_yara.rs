@@ -2,10 +2,10 @@
 
 //! Fetch-time YARA-X guard integration.
 
-use anyhow::Result;
-pub use nab_yara_engine::{
+pub use crate::security::yara_engine::{
     FetchGuardAction, FetchGuardConfig, GuardedBody, SignatureMatch, YaraEngineError,
 };
+use anyhow::Result;
 
 /// Apply the default fetch-time YARA-X policy from environment.
 ///
@@ -32,7 +32,7 @@ pub fn guard_fetch_output_with_config(
     url: &str,
     config: &FetchGuardConfig,
 ) -> Result<String> {
-    let guarded = nab_yara_engine::guard_fetch_body(body, config)?;
+    let guarded = crate::security::yara_engine::guard_fetch_body(body, config)?;
     audit_guard_result(&guarded, surface, url);
     Ok(guarded.body)
 }

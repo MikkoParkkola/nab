@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
-use nab_yara_engine::{
+use nab::security::yara_engine::{
     FetchGuardAction, FetchGuardConfig, YaraEngine, YaraEngineError, builtin_rule_count,
     builtin_rule_ids, builtin_rule_source, guard_fetch_body,
 };
