@@ -1,0 +1,11 @@
+{
+  "name": "Fixture Docs",
+  "description": "A test WebMCP manifest exposed from /.well-known/mcp.json",
+  "serverUrl": "https://example.com/mcp",
+  "tools": [
+    {
+      "name": "search",
+      "description": "Search the fixture documentation"
+    }
+  ]
+}

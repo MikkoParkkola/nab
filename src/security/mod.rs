@@ -19,14 +19,17 @@
 //! agent reads the page. Operators can opt back in when they want the
 //! machine-readable layer.
 //!
-//! See [`ingestion_guard`] for the v0 detector + sanitiser. Future work:
-//! `WebMCP` advertisement detection (manifest discovery is in
-//! [`crate::webmcp`]) is on the same trust path; promotion of the `WebMCP`
-//! discovery output into a sanctioned/strict policy gate will land here.
+//! See [`ingestion_guard`] for the detector + sanitiser. `WebMCP`
+//! advertisement detection is informational by default and can be made
+//! strict with `NAB_WEBMCP_STRICT=true` plus an explicit
+//! `NAB_WEBMCP_OPT_IN` allow-list.
 
 pub mod fetch_yara;
 pub mod ingestion_guard;
 pub mod yara_engine;
 
 pub use fetch_yara::{guard_fetch_output, guard_fetch_output_with_config};
-pub use ingestion_guard::{DetectionReport, DirectiveKind, Sample, Severity, detect, sanitize};
+pub use ingestion_guard::{
+    DetectionReport, DirectiveKind, IngestionGuardError, IngestionPolicy, Sample, Severity, detect,
+    enforce_policy, sanitize, sanitize_with_env_policy, sanitize_with_policy,
+};
