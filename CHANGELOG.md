@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added explicit browser rendering via `nab browser <url>` plus `nab fetch --render/--interactive`. The new path connects only to a configured external CDP WebSocket endpoint (`NAB_BROWSER_CDP_WS` or `--cdp-url`/`--browser-cdp-url`), keeps default `nab fetch` on the fast HTTP path, and adds thin-content hints that suggest browser rendering without silently falling through to a remote provider.
 - Added a first-class Substack site provider for `*.substack.com/p/*` posts, generic `nab fetch --readability`, CLI `--max-output-tokens`, and MCP `fetch.readability`. HTML conversion now prefers readability when raw markdown exceeds a caller token budget, and CLI/MCP budgeted output uses 80% of `max_tokens` for response headroom.
 
 ### Security

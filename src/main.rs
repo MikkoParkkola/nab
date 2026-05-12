@@ -153,6 +153,28 @@ enum Commands {
         #[arg(long, hide = true)]
         no_fallback: bool,
 
+        /// Render through an explicitly configured external CDP browser endpoint.
+        ///
+        /// Disabled by default; set `NAB_BROWSER_CDP_WS` or pass `--browser-cdp-url`.
+        #[arg(long)]
+        render: bool,
+
+        /// Alias for --render for JS-heavy pages that need browser interaction or DOM execution.
+        #[arg(long)]
+        interactive: bool,
+
+        /// CDP WebSocket endpoint for --render/--interactive.
+        #[arg(long)]
+        browser_cdp_url: Option<String>,
+
+        /// Environment variable containing CDP header overrides as JSON or `Name: value` lines.
+        #[arg(long, default_value = "NAB_BROWSER_CDP_HEADERS")]
+        browser_headers_env: String,
+
+        /// Extra wait after browser load event before extracting DOM, in milliseconds.
+        #[arg(long, default_value = "1000")]
+        browser_wait_ms: u64,
+
         /// Batch fetch URLs from file (one per line, # comments allowed)
         #[arg(long)]
         batch: Option<String>,
@@ -211,6 +233,48 @@ enum Commands {
         /// `auto` (default) detects WAF challenges and picks the best solver.
         #[arg(long, default_value = "auto")]
         waf_mode: String,
+    },
+
+    /// Render a JavaScript-heavy URL through an explicitly configured CDP browser endpoint
+    Browser {
+        /// URL to render
+        url: String,
+
+        /// Output format: full, compact, json
+        #[arg(short, long, default_value = "full")]
+        format: OutputFormat,
+
+        /// Save markdown body to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Maximum body chars to display (0=unlimited)
+        #[arg(long, default_value = "0")]
+        max_body: usize,
+
+        /// Maximum output token envelope; returned markdown uses 80% for headroom
+        #[arg(long)]
+        max_output_tokens: Option<usize>,
+
+        /// CDP WebSocket endpoint. If omitted, `NAB_BROWSER_CDP_WS` is used.
+        #[arg(long)]
+        cdp_url: Option<String>,
+
+        /// Environment variable containing CDP header overrides as JSON or `Name: value` lines.
+        #[arg(long, default_value = "NAB_BROWSER_CDP_HEADERS")]
+        headers_env: String,
+
+        /// Extra wait after browser load event before extracting DOM, in milliseconds.
+        #[arg(long, default_value = "1000")]
+        wait_ms: u64,
+
+        /// Force readability extraction for HTML pages
+        #[arg(long)]
+        readability: bool,
+
+        /// Disable automatic SPA data extraction (Next.js, Nuxt, Redux, etc.)
+        #[arg(long)]
+        no_spa: bool,
     },
 
     /// Extract data from JavaScript-heavy SPA pages
@@ -857,6 +921,11 @@ async fn main() -> Result<()> {
                 no_spa,
                 remote_fallback,
                 no_fallback,
+                render,
+                interactive,
+                browser_cdp_url,
+                browser_headers_env,
+                browser_wait_ms,
                 batch,
                 parallel,
                 proxy,
@@ -889,6 +958,11 @@ async fn main() -> Result<()> {
                     data,
                     capture_cookies,
                     no_redirect,
+                    render,
+                    interactive,
+                    browser_cdp_url,
+                    browser_headers_env,
+                    browser_wait_ms,
                     batch_file: batch,
                     parallel,
                     proxy,
@@ -908,6 +982,36 @@ async fn main() -> Result<()> {
                     },
                 };
                 cmd::cmd_fetch(&cfg).await?;
+            }
+            Commands::Browser {
+                url,
+                format,
+                output,
+                max_body,
+                max_output_tokens,
+                cdp_url,
+                headers_env,
+                wait_ms,
+                readability,
+                no_spa,
+            } => {
+                let cfg = cmd::BrowserConfig {
+                    url,
+                    format,
+                    output_file: output,
+                    max_body,
+                    max_output_tokens,
+                    cdp_url,
+                    headers_env,
+                    wait_ms,
+                    html_options: nab::content::html::HtmlConversionOptions {
+                        allow_spa_extraction: !no_spa,
+                        allow_jina_fallback: false,
+                        force_readability: readability,
+                        max_output_tokens,
+                    },
+                };
+                cmd::cmd_browser(&cfg).await?;
             }
             Commands::Spa {
                 url,

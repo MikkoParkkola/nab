@@ -425,6 +425,10 @@ fn detect_thin_content_fires_for_js_rendered_page_shell() {
         msg.contains("34936") || msg.contains("34,936") || msg.contains("bytes"),
         "warning should include HTML size"
     );
+    assert!(
+        msg.contains("nab browser <url>"),
+        "warning should include explicit browser-rendering hint"
+    );
 }
 
 #[test]
