@@ -1,0 +1,26 @@
+{
+  "name": "nab",
+  "version": "0.10.3",
+  "description": "Auth-aware URL fetch, research, Wayback, Internet Archive, and O'Reilly workflows powered by nab MCP and Claude Elite research skills.",
+  "author": {
+    "name": "MikkoParkkola",
+    "url": "https://github.com/MikkoParkkola"
+  },
+  "homepage": "https://github.com/MikkoParkkola/nab",
+  "repository": "https://github.com/MikkoParkkola/nab",
+  "license": "MIT AND PolyForm-Noncommercial-1.0.0",
+  "keywords": [
+    "nab",
+    "claude-elite",
+    "research",
+    "archive",
+    "mcp",
+    "auth-aware-fetch"
+  ],
+  "skills": "./skills/",
+  "commands": [
+    "./commands/nab.md"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}

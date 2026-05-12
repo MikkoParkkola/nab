@@ -146,11 +146,16 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
             .await
         {
             Ok(result) => {
+                let markdown = nab::security::guard_fetch_output(
+                    &result.markdown,
+                    "cli_fetch_media",
+                    &cfg.url,
+                )?;
                 if !cfg.no_save {
-                    save_to_hebb(&cfg.url, &result.markdown, "").await;
+                    save_to_hebb(&cfg.url, &markdown, "").await;
                 }
                 output_body(
-                    &result.markdown,
+                    &markdown,
                     cfg.output_file.as_deref(),
                     cfg.links,
                     cfg.max_body,
@@ -172,8 +177,13 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         let site_router = nab::site::SiteRouter::new();
         let cookie_opt = non_empty(&cookie_header);
         if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
-            output_body(
+            let markdown = nab::security::guard_fetch_output(
                 &site_content.markdown,
+                "cli_fetch_site_provider",
+                &cfg.url,
+            )?;
+            output_body(
+                &markdown,
                 cfg.output_file.as_deref(),
                 cfg.links,
                 cfg.max_body,
@@ -390,6 +400,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     } else {
         body_text
     };
+    let body_text = nab::security::guard_fetch_output(&body_text, "cli_fetch", &cfg.url)?;
 
     // ── Auto-save to hebb kv:urls ──────────────────────────────────────────
     if !cfg.no_save {

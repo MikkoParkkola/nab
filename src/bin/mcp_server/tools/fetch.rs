@@ -229,14 +229,14 @@ impl FetchTool {
             let status_u16 = status.as_u16();
             let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
 
-            return Ok(self.finish_fetch(
+            return self.finish_fetch(
                 output,
-                markdown,
+                &markdown,
                 status_u16,
                 &content_type,
                 elapsed_ms,
                 diagnostics,
-            ));
+            );
         }
 
         // ── Standard path (no session) ────────────────────────────────────────
@@ -341,14 +341,14 @@ impl FetchTool {
             )
         };
 
-        Ok(self.finish_fetch(
+        self.finish_fetch(
             output,
-            markdown,
+            &markdown,
             status_u16,
             &content_type,
             elapsed_ms,
             diagnostics,
-        ))
+        )
     }
 
     /// Unified post-processing pipeline shared by both the session and the
@@ -356,12 +356,15 @@ impl FetchTool {
     fn finish_fetch(
         &self,
         mut output: String,
-        markdown: String,
+        markdown: &str,
         status_u16: u16,
         content_type: &str,
         elapsed_ms: f64,
         diagnostics: FetchDiagnosticMetadata,
-    ) -> CallToolResult {
+    ) -> Result<CallToolResult, CallToolError> {
+        let markdown = nab::security::guard_fetch_output(markdown, "mcp_fetch", &self.url)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+
         // Unified post-processing pipeline: diff → focus → budget
         let has_diff = if self.diff {
             let (diff_output, had_diff) = apply_diff(&self.url, &markdown);
@@ -415,7 +418,7 @@ impl FetchTool {
 
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
         result.structured_content = Some(structured);
-        result
+        Ok(result)
     }
 }
 
