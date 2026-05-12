@@ -191,6 +191,11 @@ async fn fetch_one_batch_url(url: String, params: &BatchRequestParams) -> serde_
                     |r| r.markdown,
                 )
             };
+            let markdown =
+                match nab::security::guard_fetch_output(&markdown, "cli_fetch_batch", &url) {
+                    Ok(markdown) => markdown,
+                    Err(e) => return serde_json::json!({"url": url, "error": e.to_string()}),
+                };
 
             let title = extract_title_from_bytes(&body_bytes);
             let metadata = serde_json::json!({
