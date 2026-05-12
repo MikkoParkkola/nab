@@ -4,7 +4,7 @@ Thank you for your interest in contributing to nab, an ultra-minimal browser eng
 
 ## Prerequisites
 
-- **Rust 1.93+**: `rustup update`
+- **Rust 1.95+**: `rustup update`
 - **ffmpeg** (optional, for streaming/analysis): `brew install ffmpeg` / `apt install ffmpeg`
 - **1Password CLI** (optional, for credential integration): [Install guide](https://developer.1password.com/docs/cli/get-started/)
 
