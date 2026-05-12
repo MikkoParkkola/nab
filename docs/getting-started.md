@@ -19,7 +19,7 @@ brew install nab
 cargo install nab
 ```
 
-Requires Rust 1.93 or newer. Install Rust via [rustup.rs](https://rustup.rs/) if you don't already have it.
+Requires Rust 1.95 or newer. Install Rust via [rustup.rs](https://rustup.rs/) if you don't already have it.
 
 ### Pre-built binary
 

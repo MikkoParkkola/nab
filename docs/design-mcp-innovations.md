@@ -453,7 +453,7 @@ Add a `session` parameter to `fetch`, `submit`, and `login`. Named sessions pers
 
 ### Problem
 
-nab has 11 hardcoded site providers in `src/site/` (Twitter, Reddit, HackerNews, GitHub, Google Workspace, Instagram, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn). Adding a new provider requires writing Rust code, rebuilding, and redeploying. Users who need custom extraction for internal sites or niche platforms cannot extend nab without forking.
+nab has 12 hardcoded site providers in `src/site/` (Twitter, Reddit, HackerNews, GitHub, Google Workspace, Instagram, YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, Substack). Adding a new provider requires writing Rust code, rebuilding, and redeploying. Users who need custom extraction for internal sites or niche platforms cannot extend nab without forking.
 
 ### Solution
 
@@ -616,7 +616,7 @@ Processing: session client → fetch → diff (full, markers tagged) → focus (
 
 ### Phase 0: Pipeline Unification (prerequisite)
 
-Refactor `FetchTool::run()` so site provider output enters the same post-processing pipeline as standard fetches. Currently providers return early at `tools.rs:109-131`, bypassing all new features. Also extend `SiteProvider::extract()` signature with `prefetched_html: Option<&[u8]>` (mechanical update to 11 providers).
+Refactor `FetchTool::run()` so site provider output enters the same post-processing pipeline as standard fetches. Currently providers return early at `tools.rs:109-131`, bypassing all new features. Also extend `SiteProvider::extract()` signature with `prefetched_html: Option<&[u8]>` (mechanical update to 12 providers).
 
 **Deliverables**:
 - Refactored `FetchTool::run()` (~30 LOC)

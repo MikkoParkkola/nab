@@ -7,6 +7,7 @@ use anyhow::Result;
 use reqwest::header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderName, HeaderValue, REFERER};
 use serde_json::json;
 
+use nab::content::budget::{max_tokens_with_output_headroom, truncate_to_budget};
 use nab::content::diff::ContentSnapshot;
 use nab::content::diff_format::format_diff_terminal;
 use nab::content::ocr::fetch_integration::FetchOcrEnricher;
@@ -36,6 +37,7 @@ pub struct FetchConfig {
     pub raw_html: bool,
     pub links: bool,
     pub max_body: usize,
+    pub max_output_tokens: Option<usize>,
     pub custom_headers: Vec<String>,
     pub auto_referer: bool,
     pub warmup_url: Option<String>,
@@ -146,11 +148,17 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
             .await
         {
             Ok(result) => {
+                let markdown = nab::security::guard_fetch_output(
+                    &result.markdown,
+                    "cli_fetch_media",
+                    &cfg.url,
+                )?;
+                let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
                 if !cfg.no_save {
-                    save_to_hebb(&cfg.url, &result.markdown, "").await;
+                    save_to_hebb(&cfg.url, &markdown, "").await;
                 }
                 output_body(
-                    &result.markdown,
+                    &markdown,
                     cfg.output_file.as_deref(),
                     cfg.links,
                     cfg.max_body,
@@ -172,8 +180,14 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         let site_router = nab::site::SiteRouter::new();
         let cookie_opt = non_empty(&cookie_header);
         if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
-            output_body(
+            let markdown = nab::security::guard_fetch_output(
                 &site_content.markdown,
+                "cli_fetch_site_provider",
+                &cfg.url,
+            )?;
+            let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
+            output_body(
+                &markdown,
                 cfg.output_file.as_deref(),
                 cfg.links,
                 cfg.max_body,
@@ -390,11 +404,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     } else {
         body_text
     };
-
-    // ── Auto-save to hebb kv:urls ──────────────────────────────────────────
-    if !cfg.no_save {
-        save_to_hebb(&cfg.url, &body_text, &raw_text).await;
-    }
+    let body_text = nab::security::guard_fetch_output(&body_text, "cli_fetch", &cfg.url)?;
 
     for warning in build_fetch_diagnostics(
         status.as_u16(),
@@ -406,6 +416,13 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         cfg.html_options.allow_jina_fallback,
     ) {
         eprintln!("⚠️  {warning}");
+    }
+
+    let body_text = apply_output_token_budget(&body_text, cfg.max_output_tokens);
+
+    // ── Auto-save to hebb kv:urls ──────────────────────────────────────────
+    if !cfg.no_save {
+        save_to_hebb(&cfg.url, &body_text, &raw_text).await;
     }
 
     if cfg.show_diff {
@@ -732,6 +749,14 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn apply_output_token_budget(markdown: &str, max_output_tokens: Option<usize>) -> String {
+    let Some(max_tokens) = max_output_tokens else {
+        return markdown.to_string();
+    };
+    let content_budget = max_tokens_with_output_headroom(max_tokens);
+    truncate_to_budget(markdown, Some(content_budget)).markdown
 }
 
 /// Load the previous snapshot, compute diff, print it, then save new snapshot.

@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a first-class Substack site provider for `*.substack.com/p/*` posts, generic `nab fetch --readability`, CLI `--max-output-tokens`, and MCP `fetch.readability`. HTML conversion now prefers readability when raw markdown exceeds a caller token budget, and CLI/MCP budgeted output uses 80% of `max_tokens` for response headroom.
+
 ### Security
 
+- Added `nab-yara-engine`, a YARA-X fetch-time signature guard wired into CLI `nab fetch`, batch fetch, media fetch output, site-provider output, and MCP `fetch`. It is default-on, redacts matched sections with a clear `NAB YARA SANITIZED` marker, supports `NAB_YARA_ACTION=refuse`, and supports audited emergency bypass with `NAB_YARA_BYPASS=1`.
 - Safe fetch now uses the SSRF-validated socket address for the actual request connection, strips credential-bearing headers across cross-origin redirects, keeps MCP Tor fetches on the configured SOCKS proxy for manually validated redirect hops, and leaves remote `r.jina.ai` thin-content recovery disabled unless `--remote-fallback` is explicitly passed.
 
 ## [0.10.3] - 2026-04-26

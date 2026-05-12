@@ -12,6 +12,7 @@ use rust_mcp_sdk::schema::schema_utils::CallToolError;
 use url::Url;
 
 use nab::content::ContentRouter;
+use nab::content::html::HtmlConversionOptions;
 use nab::{AcceleratedClient, SafeFetchConfig, SafeRequestOptions};
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
@@ -184,10 +185,26 @@ pub(crate) async fn convert_body_async(
     content_type: &str,
     url: &str,
 ) -> Result<nab::content::ConversionResult, CallToolError> {
+    convert_body_async_with_options(
+        body_bytes,
+        content_type,
+        url,
+        HtmlConversionOptions::default(),
+    )
+    .await
+}
+
+/// Convert body bytes to markdown asynchronously with explicit HTML options.
+pub(crate) async fn convert_body_async_with_options(
+    body_bytes: &bytes::Bytes,
+    content_type: &str,
+    url: &str,
+    html_options: HtmlConversionOptions,
+) -> Result<nab::content::ConversionResult, CallToolError> {
     let bytes_clone = body_bytes.to_vec();
     let ct_clone = content_type.to_string();
     let url_clone = url.to_string();
-    let router = ContentRouter::new();
+    let router = ContentRouter::with_html_options(html_options);
     tokio::task::spawn_blocking(move || {
         router.convert_with_url(&bytes_clone, &ct_clone, Some(&url_clone))
     })

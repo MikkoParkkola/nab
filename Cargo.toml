@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Mikko Parkkola"]
 description = "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown"
 license-file = "LICENSE.md"
-rust-version = "1.93"
+rust-version = "1.95"
 repository = "https://github.com/MikkoParkkola/nab"
 homepage = "https://github.com/MikkoParkkola/nab"
 documentation = "https://docs.rs/nab"
@@ -128,7 +128,7 @@ urlencoding = "2"                   # URL encoding for forms
 readability = { version = "0.3", default-features = false }  # Mozilla-style article extraction
 
 # OOXML parsing (Google Docs/Sheets/Slides export)
-zip = { version = "8.4", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
 
 # PDF extraction (optional - requires pdfium dynamic library)
@@ -157,6 +157,12 @@ async-trait = "0.1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+yara-x = { version = "1.16", default-features = false, features = [
+    "constant-folding",
+    "exact-atoms",
+    "fast-regexp",
+    "inventory",
+] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UTILITIES
@@ -290,3 +296,7 @@ missing_panics_doc = "allow"
 # today but reserved for future error returns). The Result is part of the
 # stable API; rewriting it would force every caller to match a new shape.
 unnecessary_wraps = "allow"
+
+[workspace]
+members = [".", "crates/nab-core", "crates/nab-yara-engine"]
+resolver = "3"
