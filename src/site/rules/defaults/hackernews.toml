@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 # Hacker News item extraction via Algolia HN Search API.
 #
 # Matches individual item pages (item?id=NNN).

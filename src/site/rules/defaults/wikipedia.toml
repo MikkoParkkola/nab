@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 [site]
 name = "wikipedia"
 patterns = ["(?i)[a-z]{2,3}\\.wikipedia\\.org/wiki/"]

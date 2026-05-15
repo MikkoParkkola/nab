@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
 [![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
 [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg?logo=rust)](https://www.rust-lang.org)
-[![License: MIT + PolyForm NC](https://img.shields.io/badge/License-MIT%20%2B%20PolyForm%20NC-yellow.svg)](LICENSE.md)
+[![License: MIT + PolyForm NC](https://img.shields.io/badge/License-MIT%20%2B%20PolyForm%20NC-yellow.svg)](LICENSE)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
 [![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_MCP-0078d4?logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=nab&config=%7B%22command%22%3A%22nab-mcp%22%7D)
@@ -458,10 +458,10 @@ nab is **dual-licensed** as of v0.9.0:
 
 | Scope | License | File |
 |-------|---------|------|
-| Core fetch / analyze / watch / MCP server / public web fetching | MIT | [LICENSE](LICENSE) |
+| Core fetch / analyze / watch / MCP server / public web fetching | MIT | [LICENSE-MIT](LICENSE-MIT) |
 | Designated Enterprise Edition modules (authenticated reach + anti-bot) | PolyForm Noncommercial 1.0.0 | [LICENSE-EE.md](LICENSE-EE.md) |
 
-EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`):
+EE-designated paths:
 
 - `src/auth/` — 1Password, WebAuthn, and browser-cookie injection (premium authenticated reach)
 - `src/fingerprint/` — browser fingerprint spoofing (anti-bot evasion)
@@ -469,8 +469,12 @@ EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-No
 - `src/site/` — per-site provider integrations (proprietary domain knowledge)
 - `src/security/` — Secure Ingestion guard for stripping machine-targeted HTML directives and hidden metadata
 - `crates/nab-yara-engine/` — fetch-time YARA-X signature guard for prompt injection, exfiltration, secrets, and obfuscation
+- `examples/scan_html.rs` — Secure Ingestion demonstration and sanitizer example
+
+Rust, TOML, and YARA files in EE paths carry `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`. Non-commentable data files, such as JSON, are covered by the EE path scope in [LICENSE-EE.md](LICENSE-EE.md).
 
 **What this means in practice**:
 - Free for noncommercial use, modification, redistribution.
 - Commercial use of EE modules requires a separate commercial license — contact `mikko.parkkola@iki.fi`.
+- Derivative works that include EE-designated components must preserve the Required Notice and attribution in [NOTICE](NOTICE).
 - All releases prior to v0.9.0 remain entirely MIT and stay MIT forever.

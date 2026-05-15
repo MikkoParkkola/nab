@@ -152,4 +152,10 @@ nab is optimized for speed and token efficiency:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree to the licensing terms for the files you modify:
+
+- Contributions to MIT-licensed files are submitted under the MIT License in `LICENSE-MIT`.
+- Contributions to Enterprise Edition files or paths listed in `LICENSE-EE.md` are submitted under PolyForm Noncommercial 1.0.0 and include a grant to the project maintainer to offer those contributions under separate commercial licenses.
+- If a pull request touches both scopes, each changed file follows its file or path scope.
+
+Do not submit EE-path changes unless you are authorized to grant these rights. If your employer owns the contribution, get written permission before opening the pull request.

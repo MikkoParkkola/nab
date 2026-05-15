@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 # Stack Overflow question extraction via Stack Exchange API v2.3.
 #
 # Primary fetch: question metadata and body.
