@@ -9,16 +9,20 @@
 //! ## IPv4
 //! | CIDR | RFC | Description |
 //! |------|-----|-------------|
-//! | `0.0.0.0/32` | 1122 | Unspecified |
+//! | `0.0.0.0/8` | 1122 | "This" network / unspecified |
 //! | `10.0.0.0/8` | 1918 | Private |
 //! | `100.64.0.0/10` | 6598 | Carrier-Grade NAT (CGN) |
 //! | `127.0.0.0/8` | 1122 | Loopback |
+//! | `168.63.129.16/32` | Microsoft | Azure Wireserver |
 //! | `169.254.0.0/16` | 3927 | Link-local (includes AWS metadata) |
 //! | `172.16.0.0/12` | 1918 | Private |
 //! | `192.0.0.0/24` | 6890 | IETF Protocol Assignments |
 //! | `192.0.2.0/24` | 5737 | Documentation (TEST-NET-1) |
+//! | `192.31.196.0/24` | 7535 | AS112 |
+//! | `192.52.193.0/24` | 7450 | Automatic Multicast Tunneling |
 //! | `192.88.99.0/24` | 7526 | 6to4 Relay Anycast (deprecated) |
 //! | `192.168.0.0/16` | 1918 | Private |
+//! | `192.175.48.0/24` | 7535 | AS112 |
 //! | `198.18.0.0/15` | 2544 | Benchmarking |
 //! | `198.51.100.0/24` | 5737 | Documentation (TEST-NET-2) |
 //! | `203.0.113.0/24` | 5737 | Documentation (TEST-NET-3) |
@@ -32,13 +36,16 @@
 //! | `::/128` | 4291 | Unspecified |
 //! | `::1/128` | 4291 | Loopback |
 //! | `::ffff:0:0/96` | 4291 | IPv4-mapped (delegated to IPv4 check) |
-//! | `64:ff9b::/96` | 6052 | NAT64 well-known (embedded IPv4 checked) |
+//! | `64:ff9b::/96` | 6052 | NAT64 well-known |
 //! | `64:ff9b:1::/48` | 8215 | NAT64 local-use |
 //! | `100::/64` | 6666 | Discard-Only |
-//! | `2001::/32` | 4380 | Teredo tunneling |
+//! | `100:0:0:1::/64` | 6666 | Dummy |
+//! | `2001::/23` | 6890 | IETF Protocol Assignments |
 //! | `2001:20::/28` | 7343 | ORCHID v2 |
-//! | `2001:db8::/32` | 3849 | Documentation |
-//! | `2002::/16` | 3056 | 6to4 (deprecated, embedded IPv4 checked) |
+//! | `2001:db8::/32`, `3fff::/20` | 3849/9637 | Documentation |
+//! | `2002::/16` | 3056 | 6to4 (deprecated translation prefix) |
+//! | `2620:4f:8000::/48` | 7535 | AS112 |
+//! | `5f00::/16` | 9602 | SRv6 SIDs |
 //! | `fc00::/7` | 4193 | Unique Local Address (ULA) |
 //! | `fe80::/10` | 4291 | Link-local |
 //! | `fec0::/10` | 3879 | Site-local (deprecated) |
@@ -76,18 +83,26 @@ pub const DEFAULT_MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 ///
 /// See module-level docs for the full CIDR table.
 pub fn is_denied_ipv4(ip: Ipv4Addr) -> bool {
-    ip.is_loopback()
+    is_ipv4_this_network(ip)
+        || ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_broadcast()
-        || ip.is_unspecified()
         || ip.is_multicast()
         || is_ipv4_documentation(ip)
         || is_ipv4_benchmarking(ip)
         || is_ipv4_cgn(ip)
         || is_ipv4_protocol_assignments(ip)
         || is_ipv4_6to4_relay(ip)
+        || is_ipv4_wireserver(ip)
+        || is_ipv4_amt(ip)
+        || is_ipv4_as112(ip)
         || is_ipv4_reserved(ip)
+}
+
+/// `0.0.0.0/8` -- "this" network (RFC 1122 / IANA special-purpose).
+fn is_ipv4_this_network(ip: Ipv4Addr) -> bool {
+    ip.octets()[0] == 0
 }
 
 /// `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (RFC 5737).
@@ -127,6 +142,24 @@ fn is_ipv4_protocol_assignments(ip: Ipv4Addr) -> bool {
 fn is_ipv4_6to4_relay(ip: Ipv4Addr) -> bool {
     let octets = ip.octets();
     octets[0] == 192 && octets[1] == 88 && octets[2] == 99
+}
+
+/// `168.63.129.16/32` -- Azure Wireserver.
+fn is_ipv4_wireserver(ip: Ipv4Addr) -> bool {
+    ip.octets() == [168, 63, 129, 16]
+}
+
+/// `192.52.193.0/24` -- Automatic Multicast Tunneling (RFC 7450).
+fn is_ipv4_amt(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 192 && octets[1] == 52 && octets[2] == 193
+}
+
+/// AS112 anycast service ranges (RFC 7535).
+fn is_ipv4_as112(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    (octets[0] == 192 && octets[1] == 31 && octets[2] == 196)
+        || (octets[0] == 192 && octets[1] == 175 && octets[2] == 48)
 }
 
 /// `240.0.0.0/4` -- Reserved for future use (RFC 1112, Class E).
@@ -173,8 +206,8 @@ pub fn is_denied_ipv6(ip: Ipv6Addr) -> bool {
         return true;
     }
 
-    // Documentation (2001:db8::/32)
-    if segments[0] == 0x2001 && segments[1] == 0x0db8 {
+    // Documentation (2001:db8::/32 and 3fff::/20)
+    if (segments[0] == 0x2001 && segments[1] == 0x0db8) || (segments[0] & 0xfff0) == 0x3ff0 {
         return true;
     }
 
@@ -183,16 +216,14 @@ pub fn is_denied_ipv6(ip: Ipv6Addr) -> bool {
         return true;
     }
 
-    // Teredo (2001::/32) -- RFC 4380
-    // Teredo tunnels IPv4 inside IPv6; the embedded server/client IPs could be
-    // private. Block the entire prefix since it is a tunneling mechanism.
-    if segments[0] == 0x2001 && segments[1] == 0x0000 {
+    // Dummy (100:0:0:1::/64) -- RFC 6666
+    if segments[0] == 0x0100 && segments[1..4] == [0, 0, 1] {
         return true;
     }
 
-    // ORCHID v2 (2001:20::/28) -- RFC 7343
-    // Overlay Routable Cryptographic Hash Identifiers (non-routable experiment).
-    if segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0020 {
+    // IETF Protocol Assignments (2001::/23), including Teredo, benchmarking,
+    // AMT, AS112, deprecated ORCHID, ORCHIDv2, and DET prefixes.
+    if segments[0] == 0x2001 && (segments[1] & 0xfe00) == 0x0000 {
         return true;
     }
 
@@ -203,21 +234,21 @@ pub fn is_denied_ipv6(ip: Ipv6Addr) -> bool {
         return true;
     }
 
-    // NAT64 well-known prefix (64:ff9b::/96) -- RFC 6052
-    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
-        // Embedded IPv4 in last 32 bits
-        let embedded = Ipv4Addr::new(
-            (segments[6] >> 8) as u8,
-            (segments[6] & 0xff) as u8,
-            (segments[7] >> 8) as u8,
-            (segments[7] & 0xff) as u8,
-        );
-        return is_denied_ipv4(embedded);
+    // NAT64 translation prefixes (64:ff9b::/96, 64:ff9b:1::/48)
+    if segments[0] == 0x0064
+        && segments[1] == 0xff9b
+        && (segments[2..6] == [0, 0, 0, 0] || segments[2] == 0x0001)
+    {
+        return true;
     }
 
-    // NAT64 local-use prefix (64:ff9b:1::/48) -- RFC 8215
-    // Entire prefix is for local NAT64 deployment; not globally routable.
-    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001 {
+    // AS112 (2620:4f:8000::/48) -- RFC 7535
+    if segments[0] == 0x2620 && segments[1] == 0x004f && segments[2] == 0x8000 {
+        return true;
+    }
+
+    // Segment Routing SIDs (5f00::/16) -- RFC 9602
+    if segments[0] == 0x5f00 {
         return true;
     }
 

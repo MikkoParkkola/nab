@@ -64,6 +64,8 @@ fn denies_ipv4_broadcast() {
 #[test]
 fn denies_ipv4_unspecified() {
     assert!(is_denied_ipv4(Ipv4Addr::UNSPECIFIED));
+    assert!(is_denied_ipv4(Ipv4Addr::new(0, 1, 2, 3)));
+    assert!(is_denied_ipv4(Ipv4Addr::new(0, 255, 255, 255)));
 }
 
 #[test]
@@ -91,6 +93,14 @@ fn denies_ipv4_6to4_relay() {
     assert!(is_denied_ipv4(Ipv4Addr::new(192, 88, 99, 0)));
     assert!(is_denied_ipv4(Ipv4Addr::new(192, 88, 99, 1)));
     assert!(is_denied_ipv4(Ipv4Addr::new(192, 88, 99, 255)));
+}
+
+#[test]
+fn denies_ipv4_antissrf_cloud_and_infra_ranges() {
+    assert!(is_denied_ipv4(Ipv4Addr::new(168, 63, 129, 16)));
+    assert!(is_denied_ipv4(Ipv4Addr::new(192, 31, 196, 1)));
+    assert!(is_denied_ipv4(Ipv4Addr::new(192, 52, 193, 1)));
+    assert!(is_denied_ipv4(Ipv4Addr::new(192, 175, 48, 1)));
 }
 
 #[test]
@@ -214,10 +224,10 @@ fn denies_ipv6_nat64_well_known_private() {
 }
 
 #[test]
-fn allows_ipv6_nat64_with_public_embedded() {
-    // 64:ff9b::/96 with public embedded IPv4 should be allowed
+fn denies_ipv6_nat64_well_known_public() {
+    // Microsoft AntiSSRF recommended ranges block the translation prefix itself.
     let ip: Ipv6Addr = "64:ff9b::8.8.8.8".parse().unwrap();
-    assert!(!is_denied_ipv6(ip));
+    assert!(is_denied_ipv6(ip));
 }
 
 #[test]
@@ -232,6 +242,23 @@ fn denies_ipv6_discard() {
     // 100::/64 -- Discard-Only (RFC 6666)
     let ip: Ipv6Addr = "100::1".parse().unwrap();
     assert!(is_denied_ipv6(ip));
+}
+
+#[test]
+fn denies_ipv6_antissrf_recommended_ranges() {
+    let samples = [
+        "100:0:0:1::1",    // dummy
+        "2001:2::1",       // benchmarking under IETF protocol assignments
+        "2001:3::1",       // AMT under IETF protocol assignments
+        "2001:4:112::1",   // AS112 under IETF protocol assignments
+        "3fff::1",         // documentation
+        "5f00::1",         // SRv6 SIDs
+        "2620:4f:8000::1", // AS112
+    ];
+    for sample in samples {
+        let ip: Ipv6Addr = sample.parse().unwrap();
+        assert!(is_denied_ipv6(ip), "{sample} should be denied");
+    }
 }
 
 #[test]
@@ -393,6 +420,14 @@ fn validate_url_blocks_aws_metadata() {
 }
 
 #[test]
+fn validate_url_blocks_antissrf_cloud_ranges() {
+    let url = Url::parse("http://168.63.129.16/metadata/").unwrap();
+    assert!(validate_url(&url).is_err());
+    let url = Url::parse("http://0.1.2.3/").unwrap();
+    assert!(validate_url(&url).is_err());
+}
+
+#[test]
 fn validate_url_blocks_multicast() {
     let url = Url::parse("http://224.0.0.1/").unwrap();
     assert!(validate_url(&url).is_err());
@@ -419,6 +454,12 @@ fn validate_url_blocks_teredo_ipv6() {
 #[test]
 fn validate_url_blocks_nat64_private() {
     let url = Url::parse("http://[64:ff9b::10.0.0.1]/").unwrap();
+    assert!(validate_url(&url).is_err());
+}
+
+#[test]
+fn validate_url_blocks_nat64_public_translation_prefix() {
+    let url = Url::parse("http://[64:ff9b::8.8.8.8]/").unwrap();
     assert!(validate_url(&url).is_err());
 }
 
