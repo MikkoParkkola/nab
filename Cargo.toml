@@ -73,7 +73,7 @@ rustls-native-certs = "0.8"
 # HTML PARSING (Browser-grade, from Servo)
 # ═══════════════════════════════════════════════════════════════════════════════
 # markup5ever_rcdom removed - scraper provides DOM manipulation
-scraper = "0.26"                    # CSS selectors + DOM manipulation
+scraper = "0.27"                    # CSS selectors + DOM manipulation
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # JAVASCRIPT ENGINE (QuickJS - 1MB, ES2020)
