@@ -336,9 +336,7 @@ fn materialize_sample(rule_id: &str, sample: &str) -> String {
             debug_assert_eq!(sample, "__NAB_FIXTURE_SLACK_BOT_TOKEN__");
             // Regex: xox[baprs]-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{20,}
             let prefix = ["xo", "xb"].concat();
-            format!(
-                "SLACK_BOT_TOKEN={prefix}-{zeros10}-{zeros10}-{marker_alnum}0"
-            )
+            format!("SLACK_BOT_TOKEN={prefix}-{zeros10}-{zeros10}-{marker_alnum}0")
         }
         "secret_openai_key" => {
             debug_assert_eq!(sample, "__NAB_FIXTURE_OPENAI_API_KEY__");

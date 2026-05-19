@@ -83,9 +83,8 @@ fn cmd_cookies_export(domain: &str, browser: &str) -> Result<()> {
 /// residual case where cookies live on other subdomains the user must specify
 /// explicitly.
 fn bare_domain_thin_result_warning(domain: &str, cookie_count: usize) -> Option<String> {
-    let is_bare_domain = !domain.starts_with('.')
-        && !domain.starts_with("www.")
-        && domain.split('.').count() == 2;
+    let is_bare_domain =
+        !domain.starts_with('.') && !domain.starts_with("www.") && domain.split('.').count() == 2;
     if is_bare_domain && cookie_count < THIN_COOKIE_RESULT_THRESHOLD {
         Some(format!(
             "⚠️  Only {cookie_count} cookies found for bare domain '{domain}'. \
