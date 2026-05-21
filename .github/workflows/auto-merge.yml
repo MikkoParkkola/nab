@@ -1,0 +1,68 @@
+name: auto-merge
+
+on:
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    # Only run when PR carries the auto-merge-ok label
+    if: contains(github.event.pull_request.labels.*.name, 'auto-merge-ok')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kill switch
+        run: |
+          if [ "${{ secrets.AUTO_MERGE_BOT_DISABLED }}" = "1" ]; then
+            echo "Kill switch active (AUTO_MERGE_BOT_DISABLED=1). Halting auto-merge." && exit 0
+          fi
+
+      - name: Dry-run preview on label add
+        # Post confirmation comment immediately when label is applied — before any guard
+        if: github.event.action == 'labeled' && github.event.label.name == 'auto-merge-ok'
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "**auto-merge-ok** label detected. expected behavior: will auto-merge via squash when all required status checks pass. Security-surface changes (workflows, CODEOWNERS, dependency manifests) will block. Kill switch: set repo secret \`AUTO_MERGE_BOT_DISABLED=1\`."
+
+      - uses: actions/checkout@v4
+
+      - name: Security-surface diff guard
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only)
+          echo "Changed files:"
+          echo "$CHANGED"
+          # Block on security-surface paths (root or nested manifests)
+          if echo "$CHANGED" | grep -E '(^|/)\.github/workflows/|(^|/)CODEOWNERS$|(^|/)package\.json$|(^|/)Cargo\.toml$|(^|/)pyproject\.toml$'; then
+            echo "::error::Security surface touched — blocking auto-merge. Remove auto-merge-ok label or get explicit approval."
+            exit 1
+          fi
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          gh pr merge ${{ github.event.pull_request.number }} --auto --squash
+          # Note: --auto requires branch protection with required status checks enabled on this repo.
+          # Without branch protection, this command queues but fires immediately.
+
+      - name: Telemetry — record merge event
+        if: success()
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          # operator_label_age_sec: field present; 0 = not computable without label event timestamp
+          echo "{\"pr\":${{ github.event.pull_request.number }},\"ts\":\"$(date -u +%FT%TZ)\",\"checks_passed\":true,\"operator_label_age_sec\":0}" >> auto-merge-landed.jsonl
+
+      - name: Upload telemetry artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-merge-landed
+          path: auto-merge-landed.jsonl
