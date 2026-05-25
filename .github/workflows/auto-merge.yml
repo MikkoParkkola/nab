@@ -62,7 +62,7 @@ jobs:
 
       - name: Upload telemetry artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: auto-merge-landed
           path: auto-merge-landed.jsonl
