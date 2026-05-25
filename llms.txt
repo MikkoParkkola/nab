@@ -45,7 +45,7 @@ Transport: stdio (default) or Streamable HTTP (--http HOST:PORT)
 - authenticated-fetch(url) — Auth-aware fetch with 1Password
 - match-speakers-with-hebb(audio) — Match nab speaker embeddings against hebb voiceprints
 
-## CLI (14 commands)
+## CLI
 
 nab fetch https://example.com                          # fetch as markdown
 nab fetch URL --cookies brave                          # use browser cookies
@@ -63,9 +63,9 @@ nab mcp                                                # start MCP server (stdio
 nab mcp install                                        # auto-configure AI client
 nab mcp install --client cursor --dry-run              # preview config changes
 
-## Site Providers (11)
+## Site Providers (12)
 
-Twitter/X, Reddit, Hacker News, GitHub, Google Workspace (Docs/Sheets/Slides), YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, Instagram.
+Twitter/X, Reddit, Hacker News, GitHub, Google Workspace (Docs/Sheets/Slides), YouTube, Wikipedia, StackOverflow, Mastodon, LinkedIn, Instagram, Substack.
 
 ## Detailed docs
 
