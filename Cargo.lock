@@ -3195,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "nab"
-version = "0.10.3"
+version = "0.11.0"
 dependencies = [
  "addr",
  "aes 0.9.0",
