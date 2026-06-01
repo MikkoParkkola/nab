@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `nab doctor`, an environment diagnostic that lists every `nab` binary on `PATH` in precedence order with versions, and warns when an older install shadows a newer one (the duplicate Homebrew + `cargo install` case from #105). The warning names the install channel that wins `PATH` (`brew uninstall nab` / `cargo uninstall nab`) so the fix is unambiguous.
+
 ## [0.11.0] - 2026-05-25
 
 ### Added
