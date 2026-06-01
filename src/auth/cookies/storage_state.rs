@@ -124,7 +124,11 @@ pub fn chromium_expiry_to_unix(expires_utc: i64) -> f64 {
     // Integer-divide microseconds → seconds before the epoch shift to avoid
     // float precision loss on the ~13-quadrillion magnitude.
     let unix_secs = expires_utc / 1_000_000 - WINDOWS_TO_UNIX_EPOCH_SECS;
-    if unix_secs <= 0 { -1.0 } else { unix_secs as f64 }
+    if unix_secs <= 0 {
+        -1.0
+    } else {
+        unix_secs as f64
+    }
 }
 
 /// Map a Chromium `samesite` integer to the Playwright [`SameSite`] enum.
@@ -166,7 +170,10 @@ mod tests {
         // THEN the result is the exact Unix-seconds value, not an approximation.
         // 13_437_022_686_718_487 / 1_000_000 = 13_437_022_686
         // 13_437_022_686 - 11_644_473_600 = 1_792_549_086
-        assert_eq!(chromium_expiry_to_unix(13_437_022_686_718_487), 1_792_549_086.0);
+        assert_eq!(
+            chromium_expiry_to_unix(13_437_022_686_718_487),
+            1_792_549_086.0
+        );
     }
 
     #[test]
@@ -184,7 +191,10 @@ mod tests {
     fn samesite_serializes_to_playwright_enum_strings() {
         // Playwright rejects anything other than Strict/Lax/None — assert the
         // exact JSON spellings.
-        assert_eq!(serde_json::to_string(&SameSite::Strict).unwrap(), "\"Strict\"");
+        assert_eq!(
+            serde_json::to_string(&SameSite::Strict).unwrap(),
+            "\"Strict\""
+        );
         assert_eq!(serde_json::to_string(&SameSite::Lax).unwrap(), "\"Lax\"");
         assert_eq!(serde_json::to_string(&SameSite::None).unwrap(), "\"None\"");
     }

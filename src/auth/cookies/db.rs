@@ -127,7 +127,10 @@ pub(super) fn query_cookie_db_rich(
         "SELECT name, value, hex(encrypted_value), host_key, path, expires_utc, \
          is_httponly, is_secure, samesite FROM cookies WHERE {where_clause}"
     );
-    debug!("Rich cookie SQL query for '{}': WHERE {}", domain, where_clause);
+    debug!(
+        "Rich cookie SQL query for '{}': WHERE {}",
+        domain, where_clause
+    );
 
     let temp_db_str = temp_db
         .to_str()
