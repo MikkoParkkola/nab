@@ -295,6 +295,51 @@ impl PostRecord {
     }
 }
 
+/// Bits the snowflake id is shifted right by to recover Unix-millisecond time.
+/// LinkedIn activity ids are Twitter-style snowflakes: the high 41 bits encode
+/// Unix milliseconds, the low 22 bits are worker id + sequence.
+const SNOWFLAKE_TIMESTAMP_SHIFT: u32 = 22;
+
+/// Lower sanity bound (2010-01-01T00:00:00Z) in Unix milliseconds.
+const SNOWFLAKE_MIN_MS: u64 = 1_262_304_000_000;
+
+/// Upper sanity bound (2100-01-01T00:00:00Z) in Unix milliseconds.
+const SNOWFLAKE_MAX_MS: u64 = 4_102_444_800_000;
+
+/// Derive the post creation time (RFC-3339 UTC, second precision) from a
+/// `urn:li:activity:NUMBER` URN.
+///
+/// LinkedIn activity ids are Twitter-style snowflakes whose high 41 bits encode
+/// Unix milliseconds. The timestamp is therefore intrinsic to the URN — no
+/// separate `createdAt` field is required, which is why this works on both the
+/// XHR and embedded-`<code>` paths.
+///
+/// Returns `None` when the URN is malformed, the numeric id does not parse, or
+/// the derived instant falls outside a sane window — guarding against non-
+/// snowflake ids leaking a 1970 / far-future date.
+///
+/// ```
+/// # use nab::site::linkedin::timestamp_from_activity_urn;
+/// let ts = timestamp_from_activity_urn("urn:li:activity:7451014806356230146");
+/// assert_eq!(ts.as_deref(), Some("2026-04-17T21:12:42Z"));
+/// assert!(timestamp_from_activity_urn("urn:li:activity:not-a-number").is_none());
+/// ```
+#[must_use]
+pub fn timestamp_from_activity_urn(activity_urn: &str) -> Option<String> {
+    let id: u64 = activity_urn
+        .strip_prefix("urn:li:activity:")?
+        .parse()
+        .ok()?;
+    let unix_ms = id >> SNOWFLAKE_TIMESTAMP_SHIFT;
+    if !(SNOWFLAKE_MIN_MS..SNOWFLAKE_MAX_MS).contains(&unix_ms) {
+        return None;
+    }
+    #[allow(clippy::cast_possible_wrap)]
+    let secs = (unix_ms / 1000) as i64;
+    chrono::DateTime::<chrono::Utc>::from_timestamp_secs(secs)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
 /// Extract `urn:li:activity:NUMBER` from `urn:li:fsd_update:(urn:li:activity:NUMBER,...)`.
 ///
 /// LinkedIn's compound URN syntax is `(child_urn,tag1,tag2,...)`; the activity
@@ -463,7 +508,13 @@ fn fmt_engagement(c: &SocialCounts) -> String {
 /// `expected_actor_name` flags posts whose author does not match the resolved
 /// profile name as reshares (defence in depth — `resharedUpdate` is the
 /// primary signal but is occasionally absent on quote-shares).
-fn render_voyager_body(body: &str, expected_actor_name: &str) -> String {
+///
+/// Exposed to the `<code>`-JSON path (`auth.rs`): when `/recent-activity/all/`
+/// embeds a pre-fetched Voyager feed envelope inside a hidden `<code>` element,
+/// that path routes the envelope body through this same walker so the embedded
+/// and XHR paths produce byte-identical structured output (author, urn,
+/// timestamp, engagement) instead of the text-only commentary fallback.
+pub(super) fn render_voyager_body(body: &str, expected_actor_name: &str) -> String {
     if let Ok(typed) = serde_json::from_str::<VoyagerActivityResponse>(body) {
         let md = parse_voyager_activity(&typed);
         if !md.trim().is_empty() {
@@ -506,6 +557,9 @@ fn render_voyager_body(body: &str, expected_actor_name: &str) -> String {
 
         let _ = writeln!(md, "---");
         let _ = writeln!(md, "**[{tag}]** · <{}>", post.url());
+        if let Some(ts) = timestamp_from_activity_urn(&post.activity_urn) {
+            let _ = writeln!(md, "_{ts}_");
+        }
         let engagement = fmt_engagement(&post.counts);
         if !engagement.is_empty() {
             let _ = writeln!(md, "_{engagement}_");
@@ -699,6 +753,45 @@ mod tests {
         let body = r#"{"elements":[]}"#;
         let md = render_voyager_body(body, "Mikko Parkkola");
         assert!(md.trim().is_empty());
+    }
+
+    #[test]
+    fn timestamp_from_known_activity_urn_decodes_snowflake() {
+        // GIVEN: a real-shaped activity URN whose snowflake decodes to 2026-04-17.
+        // WHEN / THEN: the high 41 bits yield the correct UTC instant.
+        assert_eq!(
+            timestamp_from_activity_urn("urn:li:activity:7451014806356230146").as_deref(),
+            Some("2026-04-17T21:12:42Z")
+        );
+    }
+
+    #[test]
+    fn timestamp_rejects_non_numeric_and_out_of_range_ids() {
+        // Malformed numeric component → None (no panic).
+        assert!(timestamp_from_activity_urn("urn:li:activity:not-a-number").is_none());
+        // Wrong prefix → None.
+        assert!(timestamp_from_activity_urn("urn:li:comment:7451014806356230146").is_none());
+        // A tiny id decodes to ~1970 (below the sanity window) → None rather
+        // than inventing a 1970 timestamp.
+        assert!(timestamp_from_activity_urn("urn:li:activity:1").is_none());
+    }
+
+    #[test]
+    fn render_includes_snowflake_timestamp_line() {
+        // GIVEN: a feed envelope with one Update whose URN decodes to 2026-04-17.
+        let body = r#"{"data":{},"included":[
+            {"$type":"com.linkedin.voyager.dash.feed.Update",
+             "entityUrn":"urn:li:fsd_update:(urn:li:activity:7451014806356230146,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+             "actor":{"name":{"text":"Mikko Parkkola"}},
+             "commentary":{"text":{"text":"timestamped post"}}}
+        ]}"#;
+        // WHEN
+        let md = render_voyager_body(body, "Mikko Parkkola");
+        // THEN: the derived timestamp is rendered.
+        assert!(
+            md.contains("2026-04-17T21:12:42Z"),
+            "missing snowflake timestamp: {md}"
+        );
     }
 
     #[test]

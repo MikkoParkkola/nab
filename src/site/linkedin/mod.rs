@@ -46,6 +46,8 @@ pub use types::{
     VoyagerActivityResponse, VoyagerCommentary, VoyagerFeedElement, VoyagerText, VoyagerUpdateValue,
 };
 pub use url::{LinkedInUrlKind, classify_linkedin_url};
+#[cfg(feature = "impersonate")]
+pub use voyager::timestamp_from_activity_urn;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
