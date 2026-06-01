@@ -24,7 +24,7 @@ const CORP_HOST: Ipv4Addr = Ipv4Addr::new(10, 252, 24, 131); // genai.booking.co
 const PRIVATE_192: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 50);
 const PRIVATE_172: Ipv4Addr = Ipv4Addr::new(172, 16, 5, 5);
 const CGN: Ipv4Addr = Ipv4Addr::new(100, 64, 0, 1);
-const LOOPBACK: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
+const LOOPBACK: Ipv4Addr = Ipv4Addr::LOCALHOST;
 const AWS_METADATA: Ipv4Addr = Ipv4Addr::new(169, 254, 169, 254);
 const PUBLIC: Ipv4Addr = Ipv4Addr::new(93, 184, 216, 34); // example.com
 
@@ -189,10 +189,7 @@ fn allow_private_does_not_affect_public_or_documentation() {
         &policy
     ));
     // Broadcast stays blocked.
-    assert!(is_denied_ipv4_with_policy(
-        Ipv4Addr::new(255, 255, 255, 255),
-        &policy
-    ));
+    assert!(is_denied_ipv4_with_policy(Ipv4Addr::BROADCAST, &policy));
 }
 
 // ─── CIDR parsing / matching edge cases (boundaries) ───────────────────────────

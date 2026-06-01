@@ -63,6 +63,12 @@ enum OverlayStyleArg {
 }
 
 #[derive(Subcommand)]
+// `Commands` is a parse-once CLI singleton: built from argv, destructured
+// immediately in `main`, never stored in a collection or hot path. The size
+// disparity the lint guards against (small variants paying for a large sibling
+// in a `Vec`/`Box`) does not apply here, and clippy's `Box<Vec<_>>` suggestion
+// would add a pointless indirection over an already heap-backed `Vec`.
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Fetch a URL (token-optimized output available)
     Fetch {
