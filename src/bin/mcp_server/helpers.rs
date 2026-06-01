@@ -62,11 +62,16 @@ pub(crate) async fn read_response_capped(
         .map_err(|e| CallToolError::from_message(e.to_string()))
 }
 
-/// Fetch via `fetch_safe` and return the response components.
+/// Fetch via `request_safe` (no cookies) and return the response components.
+///
+/// `ssrf_policy` governs SSRF validation for the request and any redirects.
+/// Callers pass [`nab::SsrfPolicy::deny_all`] for the default locked-down path
+/// or a relaxed policy when the per-call private-IP opt-out is enabled.
 pub(crate) async fn fetch_safe_response(
     client: &AcceleratedClient,
     url: &str,
     config: &SafeFetchConfig,
+    ssrf_policy: &nab::SsrfPolicy,
     start: Instant,
 ) -> Result<
     (
@@ -79,7 +84,14 @@ pub(crate) async fn fetch_safe_response(
     CallToolError,
 > {
     let safe_resp = client
-        .fetch_safe(url, config)
+        .request_safe(
+            url,
+            SafeRequestOptions {
+                config: config.clone(),
+                ssrf_policy: ssrf_policy.clone(),
+                ..SafeRequestOptions::default()
+            },
+        )
         .await
         .map_err(|e| CallToolError::from_message(e.to_string()))?;
     let elapsed = start.elapsed();
@@ -93,11 +105,14 @@ pub(crate) async fn fetch_safe_response(
 }
 
 /// Fetch with a cookie header and return the response components.
+///
+/// `ssrf_policy` governs SSRF validation for the request and any redirects.
 pub(crate) async fn fetch_with_cookies(
     client: &AcceleratedClient,
     url: &str,
     cookie_header: &str,
     profile: &nab::fingerprint::BrowserProfile,
+    ssrf_policy: &nab::SsrfPolicy,
     start: Instant,
 ) -> Result<
     (
@@ -122,6 +137,7 @@ pub(crate) async fn fetch_with_cookies(
             SafeRequestOptions {
                 headers,
                 config: SafeFetchConfig::default(),
+                ssrf_policy: ssrf_policy.clone(),
                 ..SafeRequestOptions::default()
             },
         )

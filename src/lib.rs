@@ -105,8 +105,11 @@ pub use mfa::{MfaHandler, MfaResult, MfaType, NotificationConfig, detect_mfa_typ
 pub use prefetch::{EarlyHintLink, EarlyHints, PrefetchManager, extract_link_hints};
 pub use session::{MAX_SESSIONS, SessionStore, get_session_dir};
 pub use ssrf::{
-    DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS, extract_mapped_ipv4, is_denied_ipv4,
-    is_denied_ipv6, validate_ip, validate_redirect_target, validate_url,
+    ALLOW_PRIVATE_ENV, ALLOWLIST_ENV, DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS, IpCidr,
+    SsrfPolicy, extract_mapped_ipv4, is_denied_ipv4, is_denied_ipv4_with_policy, is_denied_ipv6,
+    is_denied_ipv6_with_policy, resolve_and_validate, resolve_and_validate_with_policy, validate_ip,
+    validate_ip_with_policy, validate_redirect_target, validate_redirect_target_with_policy,
+    validate_url, validate_url_with_policy,
 };
 pub use stream::{StreamBackend, StreamInfo, StreamProvider};
 pub use watch::{AddOptions, Watch, WatchEvent, WatchId, WatchManager, WatchOptions};
