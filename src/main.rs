@@ -357,6 +357,9 @@ enum Commands {
     /// Run all validation tests against real websites
     Validate,
 
+    /// Diagnose the environment (e.g. multiple nab installs shadowing each other on PATH)
+    Doctor,
+
     /// Get OTP code from all available sources
     Otp {
         /// Domain or URL to get OTP for
@@ -1067,6 +1070,9 @@ async fn main() -> Result<()> {
             }
             Commands::Validate => {
                 cmd::cmd_validate().await?;
+            }
+            Commands::Doctor => {
+                cmd::cmd_doctor()?;
             }
             Commands::Otp { domain } => {
                 cmd::cmd_otp(&domain)?;

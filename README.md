@@ -88,6 +88,27 @@ cd nab
 cargo install --path .
 ```
 
+### Avoiding duplicate installs
+
+If you install `nab` through more than one channel (for example a Homebrew tap
+**and** `cargo install`), the copy that wins depends on `PATH` order. On many
+setups `/opt/homebrew/bin` comes before `~/.cargo/bin`, so a Homebrew binary can
+shadow a newer cargo-installed one — and `nab --version` then reports the older
+version.
+
+Run the built-in diagnostic to see every `nab` on your `PATH`, which one wins,
+and their versions:
+
+```bash
+nab doctor
+```
+
+If the binary on your `PATH` is the stale one, its `doctor` may predate this
+command; invoke the newer install by full path to diagnose, e.g.
+`~/.cargo/bin/nab doctor`. To resolve, keep a single install channel
+(`brew uninstall nab` or `cargo uninstall nab`), or reorder `PATH` so the
+directory of the install you want comes first.
+
 ## MCP Configuration
 
 Add to your MCP client config (Claude Desktop, Cursor, Windsurf, etc.):
