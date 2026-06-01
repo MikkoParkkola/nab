@@ -79,6 +79,10 @@ pub struct FetchConfig {
     pub detect_labyrinth: bool,
     /// WAF challenge handling strategy. See [`WafMode`].
     pub waf_mode: WafMode,
+    /// SSRF policy controlling whether private/internal addresses may be
+    /// fetched. Defaults to [`nab::SsrfPolicy::deny_all`] — the locked-down
+    /// behaviour that blocks all private ranges (issue #107).
+    pub ssrf_policy: nab::SsrfPolicy,
 }
 
 /// Strategy for handling detected WAF challenges (AWS WAF, Cloudflare
@@ -256,6 +260,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
                 SafeRequestOptions {
                     headers,
                     config: SafeFetchConfig::default(),
+                    ssrf_policy: cfg.ssrf_policy.clone(),
                     ..SafeRequestOptions::default()
                 },
             )
@@ -273,7 +278,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let (status, version, set_cookies, content_type, response_headers, body_bytes) =
         if is_simple_get {
-            execute_safe_get(&client, &cfg.url, cfg.show_headers).await?
+            execute_safe_get(&client, &cfg.url, cfg.show_headers, &cfg.ssrf_policy).await?
         } else {
             execute_manual_request(&client, cfg, &profile, &cookie_header).await?
         };
@@ -509,11 +514,12 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     Ok(())
 }
 
-/// Execute a safe GET request via `fetch_safe`.
+/// Execute a safe GET request, honouring the supplied SSRF policy.
 async fn execute_safe_get(
     client: &AcceleratedClient,
     url: &str,
     show_headers: bool,
+    ssrf_policy: &nab::SsrfPolicy,
 ) -> Result<(
     reqwest::StatusCode,
     String,
@@ -523,7 +529,16 @@ async fn execute_safe_get(
     bytes::Bytes,
 )> {
     let config = SafeFetchConfig::default();
-    let safe_resp = client.fetch_safe(url, &config).await?;
+    let safe_resp = client
+        .request_safe(
+            url,
+            SafeRequestOptions {
+                config,
+                ssrf_policy: ssrf_policy.clone(),
+                ..SafeRequestOptions::default()
+            },
+        )
+        .await?;
 
     let set_cookies: Vec<String> = safe_resp
         .headers
@@ -622,6 +637,7 @@ async fn execute_manual_request(
                 headers,
                 body: cfg.data.clone().map(bytes::Bytes::from),
                 config,
+                ssrf_policy: cfg.ssrf_policy.clone(),
             },
         )
         .await?;

@@ -63,6 +63,12 @@ enum OverlayStyleArg {
 }
 
 #[derive(Subcommand)]
+// `Commands` is a parse-once CLI singleton: built from argv, destructured
+// immediately in `main`, never stored in a collection or hot path. The size
+// disparity the lint guards against (small variants paying for a large sibling
+// in a `Vec`/`Box`) does not apply here, and clippy's `Box<Vec<_>>` suggestion
+// would add a pointless indirection over an already heap-backed `Vec`.
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Fetch a URL (token-optimized output available)
     Fetch {
@@ -233,6 +239,29 @@ enum Commands {
         /// `auto` (default) detects WAF challenges and picks the best solver.
         #[arg(long, default_value = "auto")]
         waf_mode: String,
+
+        /// DANGER — allow fetching private/internal IPs (RFC 1918, IPv6 ULA,
+        /// CGN). OFF by default; SSRF protection stays on.
+        ///
+        /// nab blocks private/internal addresses by default to prevent
+        /// Server-Side Request Forgery (SSRF). Enable this only on a trusted
+        /// workstation where you legitimately need to reach a corporate
+        /// intranet dashboard. Loopback (127.x) and cloud-metadata endpoints
+        /// (169.254.169.254) stay blocked even with this flag. Prefer the
+        /// scoped `--allow-private-ip <CIDR>` allowlist over this blanket flag.
+        /// Can also be enabled via `NAB_SSRF_ALLOW_PRIVATE=1`.
+        #[arg(long)]
+        allow_private_ips: bool,
+
+        /// Scoped allowlist entry permitting one private CIDR/IP
+        /// (repeatable, e.g. `--allow-private-ip 10.252.0.0/16`).
+        ///
+        /// Preferred over `--allow-private-ips`: only addresses inside a listed
+        /// range bypass the private-IP block. Listing a dangerous address
+        /// (loopback, cloud metadata) has no effect. Can also be supplied via
+        /// `NAB_SSRF_ALLOWLIST=10.252.0.0/16,192.168.1.5`.
+        #[arg(long = "allow-private-ip", action = clap::ArgAction::Append)]
+        allow_private_ip: Vec<String>,
     },
 
     /// Render a JavaScript-heavy URL through an explicitly configured CDP browser endpoint
@@ -940,8 +969,13 @@ async fn main() -> Result<()> {
                 language,
                 detect_labyrinth,
                 waf_mode,
+                allow_private_ips,
+                allow_private_ip,
                 ..
             } => {
+                let ssrf_policy = nab::SsrfPolicy::from_env()
+                    .with_allow_private(allow_private_ips)
+                    .with_allowlist_entries(allow_private_ip.iter());
                 let cfg = cmd::FetchConfig {
                     url,
                     show_headers: headers,
@@ -977,6 +1011,7 @@ async fn main() -> Result<()> {
                     language,
                     detect_labyrinth,
                     waf_mode: waf_mode.parse().unwrap_or_default(),
+                    ssrf_policy,
                     html_options: nab::content::html::HtmlConversionOptions {
                         allow_spa_extraction: !no_spa,
                         allow_jina_fallback: remote_fallback && !no_fallback,
