@@ -99,7 +99,10 @@ fn allowlist_host_route_is_exact() {
     let policy = SsrfPolicy::deny_all().with_allowlist_entries(["192.168.1.50"]);
     assert!(!is_denied_ipv4_with_policy(PRIVATE_192, &policy));
     // Neighbour address not covered by the /32 host route.
-    assert!(is_denied_ipv4_with_policy(Ipv4Addr::new(192, 168, 1, 51), &policy));
+    assert!(is_denied_ipv4_with_policy(
+        Ipv4Addr::new(192, 168, 1, 51),
+        &policy
+    ));
 }
 
 #[test]
@@ -114,8 +117,12 @@ fn allowlist_ipv6_cidr_scopes() {
 #[test]
 fn allowlist_skips_malformed_entries() {
     // Malformed entries are dropped; the valid one still applies.
-    let policy = SsrfPolicy::deny_all()
-        .with_allowlist_entries(["not-an-ip", "10.0.0.0/99", "", "10.252.0.0/16"]);
+    let policy = SsrfPolicy::deny_all().with_allowlist_entries([
+        "not-an-ip",
+        "10.0.0.0/99",
+        "",
+        "10.252.0.0/16",
+    ]);
     assert!(!is_denied_ipv4_with_policy(CORP_HOST, &policy));
 }
 
@@ -136,7 +143,10 @@ fn allow_private_never_unblocks_cloud_metadata() {
     let policy = allow_private();
     assert!(is_denied_ipv4_with_policy(AWS_METADATA, &policy));
     // Whole link-local /16 stays blocked.
-    assert!(is_denied_ipv4_with_policy(Ipv4Addr::new(169, 254, 0, 1), &policy));
+    assert!(is_denied_ipv4_with_policy(
+        Ipv4Addr::new(169, 254, 0, 1),
+        &policy
+    ));
 }
 
 #[test]
@@ -174,9 +184,15 @@ fn allow_private_does_not_affect_public_or_documentation() {
     // Public stays allowed (it always was).
     assert!(!is_denied_ipv4_with_policy(PUBLIC, &policy));
     // Documentation range stays blocked (not relaxable).
-    assert!(is_denied_ipv4_with_policy(Ipv4Addr::new(192, 0, 2, 1), &policy));
+    assert!(is_denied_ipv4_with_policy(
+        Ipv4Addr::new(192, 0, 2, 1),
+        &policy
+    ));
     // Broadcast stays blocked.
-    assert!(is_denied_ipv4_with_policy(Ipv4Addr::new(255, 255, 255, 255), &policy));
+    assert!(is_denied_ipv4_with_policy(
+        Ipv4Addr::new(255, 255, 255, 255),
+        &policy
+    ));
 }
 
 // ─── CIDR parsing / matching edge cases (boundaries) ───────────────────────────
@@ -212,7 +228,10 @@ fn cidr_full_prefix_is_host_route() {
 #[test]
 fn cidr_masks_host_bits_at_parse_time() {
     // 10.1.2.3/8 and 10.0.0.0/8 must be equal after canonicalisation.
-    assert_eq!(IpCidr::parse("10.1.2.3/8").unwrap(), IpCidr::parse("10.0.0.0/8").unwrap());
+    assert_eq!(
+        IpCidr::parse("10.1.2.3/8").unwrap(),
+        IpCidr::parse("10.0.0.0/8").unwrap()
+    );
 }
 
 #[test]
@@ -240,5 +259,9 @@ fn deny_all_is_not_relaxed() {
 #[test]
 fn allow_private_and_allowlist_are_relaxed() {
     assert!(allow_private().is_relaxed());
-    assert!(SsrfPolicy::deny_all().with_allowlist_entries(["10.0.0.0/8"]).is_relaxed());
+    assert!(
+        SsrfPolicy::deny_all()
+            .with_allowlist_entries(["10.0.0.0/8"])
+            .is_relaxed()
+    );
 }

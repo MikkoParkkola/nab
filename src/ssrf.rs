@@ -174,12 +174,20 @@ impl IpCidr {
     #[must_use]
     pub fn contains(&self, ip: IpAddr) -> bool {
         match (self, ip) {
-            (Self::V4 { network, prefix_len }, IpAddr::V4(v4)) => {
-                mask_u32(u32::from(v4), *prefix_len) == *network
-            }
-            (Self::V6 { network, prefix_len }, IpAddr::V6(v6)) => {
-                mask_u128(u128::from(v6), *prefix_len) == *network
-            }
+            (
+                Self::V4 {
+                    network,
+                    prefix_len,
+                },
+                IpAddr::V4(v4),
+            ) => mask_u32(u32::from(v4), *prefix_len) == *network,
+            (
+                Self::V6 {
+                    network,
+                    prefix_len,
+                },
+                IpAddr::V6(v6),
+            ) => mask_u128(u128::from(v6), *prefix_len) == *network,
             _ => false,
         }
     }
