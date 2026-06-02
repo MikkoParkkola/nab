@@ -152,4 +152,11 @@ nab is optimized for speed and token efficiency:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree your contributions will be licensed under the license that applies to the files you modify:
+
+- MIT for core files.
+- PolyForm Noncommercial 1.0.0 for Enterprise Edition files marked with `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`.
+
+If a pull request adds a new Enterprise Edition file, include the PolyForm Noncommercial SPDX header. If it adds a new core file, use the MIT license boundary unless the maintainer explicitly marks the feature as Enterprise Edition.
+
+Maintainers may designate new files as Enterprise Edition when the feature is primarily valuable for authenticated access, anti-bot handling, WAF challenge handling, browser-cookie workflows, site-specific commercial integrations, secure ingestion, hosted operations, multi-tenant service operation, or commercial platform integration. Existing MIT releases and core files that remain MIT are not retroactively relicensed.
