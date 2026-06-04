@@ -17,6 +17,17 @@ Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 com
 
 nab is a single Rust binary that does three things very well: it **fetches** any URL as clean markdown (with your real browser cookies and anti-bot evasion), it **analyzes** any audio or video file with on-device multilingual ASR and speaker diarization, and it **watches** any URL for changes and pushes notifications when content moves. Everything runs locally. There are no API keys to set up by default. The output is shaped for LLM context windows.
 
+## Prompt-injection defense (on by default)
+
+Web pages increasingly carry instructions written **for the AI, not for you** — concealed in HTML comments, `display:none` / `aria-hidden` text, `data-ai` / `data-mcp` / `data-agent` attribute payloads, or WebMCP manifests. Fetch such a page with a naive tool and those hidden instructions land straight in your model's context, where they can be acted on. This is the [prompt-injection-as-phishing](https://www.theregister.com/research/2026/05/29/chatgpt-prompt-injection-turns-web-pages-into-phishing-lures/5248137) class of attack.
+
+nab treats every fetched page as hostile input and runs two local, non-networked guards **before any content reaches your agent** — no flag, no setup:
+
+- **Secure Ingestion guard** — detects and strips machine-targeted markup that is invisible to humans (AI-addressed comments, hidden `display:none` / `aria-hidden` text, agent-only `data-*` payloads, WebMCP advertisements) and **reports** each detection at `Info` / `Warn` / `Block` severity, so you see what a page *tried* to tell your agent instead of it being silently executed.
+- **YARA-X signature guard** — scans every returned body for prompt-injection, exfiltration, secret-leak, and obfuscation signatures, redacting matched sections by default. Set `NAB_YARA_ACTION=refuse` to block the fetch outright (or `NAB_YARA_BYPASS=1` as an audited emergency opt-out).
+
+The net effect: hidden instructions become **visible to you, not executed by your model**. That is the single biggest reason to point your agent at `nab fetch` instead of a built-in web-fetch tool.
+
 ## Quick start
 
 **Tell your AI assistant** (recommended):
