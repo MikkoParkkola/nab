@@ -28,6 +28,8 @@ nab treats every fetched page as hostile input and runs two local, non-networked
 
 The net effect: hidden instructions become **visible to you, not executed by your model**. That is the single biggest reason to point your agent at `nab fetch` instead of a built-in web-fetch tool.
 
+> **Licensing:** both guards are Enterprise Edition modules — **free for personal and non-commercial use** under [PolyForm Noncommercial 1.0.0](LICENSE-EE.md); **commercial / business use requires a commercial license** (see [COMMERCIAL.md](COMMERCIAL.md) and the [License](#license) section).
+
 ## Quick start
 
 **Tell your AI assistant** (recommended):
@@ -67,29 +69,44 @@ brew tap MikkoParkkola/tap
 brew install nab
 ```
 
-### From crates.io
+### Pre-built binary (no Rust toolchain required)
 
-```bash
-cargo install nab
-```
+**Most users want this path** — these are ready-to-run binaries; nothing is compiled on your machine.
 
-Requires Rust 1.95 or newer.
-
-### Pre-built binary
+If you have `cargo-binstall`, it fetches the right pre-built binary automatically:
 
 ```bash
 cargo binstall nab
 ```
 
-Or download directly from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases):
+Otherwise download directly from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases/latest). Both the `nab` CLI and the `nab-mcp` server ship for every platform below, alongside `checksums-sha256.txt`:
 
-| Platform | Binary |
-|----------|--------|
-| macOS Apple Silicon | `nab-aarch64-apple-darwin` |
-| macOS Intel | `nab-x86_64-apple-darwin` |
-| Linux x86_64 | `nab-x86_64-unknown-linux-gnu` |
-| Linux ARM64 | `nab-aarch64-unknown-linux-gnu` |
-| Windows x64 | `nab-x86_64-pc-windows-msvc.exe` |
+| Platform | CLI binary | MCP server binary |
+|----------|------------|-------------------|
+| macOS Apple Silicon | `nab-aarch64-apple-darwin` | `nab-mcp-aarch64-apple-darwin` |
+| macOS Intel | `nab-x86_64-apple-darwin` | `nab-mcp-x86_64-apple-darwin` |
+| Linux x86_64 (glibc) | `nab-x86_64-unknown-linux-gnu` | `nab-mcp-x86_64-unknown-linux-gnu` |
+| Linux x86_64 (static musl) | `nab-x86_64-unknown-linux-musl` | `nab-mcp-x86_64-unknown-linux-musl` |
+| Linux ARM64 (glibc) | `nab-aarch64-unknown-linux-gnu` | `nab-mcp-aarch64-unknown-linux-gnu` |
+| Linux ARM64 (static musl) | `nab-aarch64-unknown-linux-musl` | `nab-mcp-aarch64-unknown-linux-musl` |
+| Windows x64 | `nab-x86_64-pc-windows-msvc.exe` | `nab-mcp-x86_64-pc-windows-msvc.exe` |
+
+Example install for macOS Apple Silicon (substitute the filename for your platform):
+
+```bash
+shasum -a 256 -c checksums-sha256.txt --ignore-missing
+chmod +x nab-aarch64-apple-darwin
+mv nab-aarch64-apple-darwin /usr/local/bin/nab
+xattr -d com.apple.quarantine /usr/local/bin/nab 2>/dev/null || true
+```
+
+### From crates.io (compiles from source)
+
+Builds nab locally — requires the Rust toolchain (1.95 or newer) and takes a few minutes:
+
+```bash
+cargo install nab
+```
 
 ### From source
 
