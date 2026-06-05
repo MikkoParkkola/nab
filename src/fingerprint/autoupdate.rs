@@ -319,24 +319,29 @@ impl Default for BrowserVersions {
         BrowserVersions {
             last_updated: now,
             safari_last_checked: now,
+            // Bundled fallback used only when offline / before the first
+            // successful API refresh. Kept fresh automatically by the
+            // `bump-fingerprint` CI workflow (see .github/workflows/) so the
+            // defaults never drift far from the live stable channel between
+            // releases. Last refreshed: 2026-06-02.
             chrome: vec![
-                ("131".into(), "131.0.0.0".into()),
-                ("130".into(), "130.0.0.0".into()),
-                ("129".into(), "129.0.0.0".into()),
-                ("128".into(), "128.0.0.0".into()),
-                ("127".into(), "127.0.0.0".into()),
+                ("149".into(), "149.0.7827.48".into()),
+                ("148".into(), "148.0.7778.216".into()),
+                ("147".into(), "147.0.7727.138".into()),
+                ("146".into(), "146.0.7680.178".into()),
+                ("145".into(), "145.0.7632.161".into()),
             ],
             firefox: vec![
-                "134.0".into(),
-                "133.0".into(),
-                "132.0".into(),
-                "131.0".into(),
+                "151.0".into(),
+                "150.0".into(),
+                "149.0".into(),
+                "148.0".into(),
             ],
             safari: vec![
+                ("18.5".into(), "620.1.16".into()),
+                ("18.4".into(), "620.1.16".into()),
+                ("18.3".into(), "619.1.26".into()),
                 ("18.2".into(), "619.1.15".into()),
-                ("18.1".into(), "619.1.15".into()),
-                ("18.0".into(), "618.1.15".into()),
-                ("17.6".into(), "605.1.15".into()),
             ],
         }
     }
@@ -346,6 +351,74 @@ impl Default for BrowserVersions {
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    /// Floor for the bundled-default Chrome major version.
+    ///
+    /// The runtime auto-updater refreshes versions from Google's API, but when
+    /// nab runs fully offline (or before the first successful fetch) the
+    /// `Default` impl is the only fingerprint source. A bundled major that lags
+    /// the real stable channel by many releases is a detection signal, so this
+    /// floor guards against the defaults silently rotting between manual bumps.
+    ///
+    /// Keep this in lockstep with the `bump-fingerprint` CI workflow, which
+    /// refreshes the defaults and is the mechanism that keeps this test passing
+    /// without hand edits.
+    const MIN_BUNDLED_CHROME_MAJOR: u32 = 140;
+    const MIN_BUNDLED_FIREFOX_MAJOR: u32 = 140;
+
+    fn highest_major<'a>(versions: impl IntoIterator<Item = &'a str>) -> u32 {
+        versions
+            .into_iter()
+            .filter_map(|v| v.split('.').next())
+            .filter_map(|m| m.parse::<u32>().ok())
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn bundled_chrome_default_is_not_stale() {
+        let defaults = BrowserVersions::default();
+        let newest = highest_major(defaults.chrome.iter().map(|(major, _)| major.as_str()));
+        assert!(
+            newest >= MIN_BUNDLED_CHROME_MAJOR,
+            "bundled Chrome default major {newest} is below floor {MIN_BUNDLED_CHROME_MAJOR}; \
+             refresh src/fingerprint/autoupdate.rs Default impl (the bump-fingerprint workflow does this automatically)"
+        );
+    }
+
+    #[test]
+    fn bundled_firefox_default_is_not_stale() {
+        let defaults = BrowserVersions::default();
+        let newest = highest_major(defaults.firefox.iter().map(String::as_str));
+        assert!(
+            newest >= MIN_BUNDLED_FIREFOX_MAJOR,
+            "bundled Firefox default major {newest} is below floor {MIN_BUNDLED_FIREFOX_MAJOR}; \
+             refresh src/fingerprint/autoupdate.rs Default impl"
+        );
+    }
+
+    #[test]
+    fn bundled_defaults_are_internally_consistent() {
+        let defaults = BrowserVersions::default();
+        // Chrome: every full version string starts with its declared major.
+        for (major, full) in &defaults.chrome {
+            assert!(
+                full.starts_with(major),
+                "Chrome full version {full} should start with major {major}"
+            );
+        }
+        // Chrome majors are strictly descending (newest first, no duplicates).
+        let majors: Vec<u32> = defaults
+            .chrome
+            .iter()
+            .filter_map(|(m, _)| m.parse::<u32>().ok())
+            .collect();
+        assert_eq!(majors.len(), defaults.chrome.len(), "all majors parse");
+        assert!(
+            majors.windows(2).all(|w| w[0] > w[1]),
+            "Chrome majors must be strictly descending and unique: {majors:?}"
+        );
+    }
 
     #[test]
     fn test_staleness() {

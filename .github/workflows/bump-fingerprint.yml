@@ -1,0 +1,156 @@
+name: bump-fingerprint
+
+# Automatically refreshes the bundled browser-version fallback in
+# src/fingerprint/autoupdate.rs so the Default impl never drifts more than
+# ~4 weeks behind the live stable channel.
+#
+# How it works:
+#   1. Fetch current stable Chrome + Firefox versions from their official APIs.
+#   2. Patch the Default impl in-place via a Python script passed the JSON as files.
+#   3. If anything changed, open a PR labelled auto-merge-ok so it lands without
+#      manual review once CI passes.
+#
+# No cloud dependency is added to the runtime or build path — the fetch runs
+# only inside this CI job and writes static string literals into source code.
+# The runtime auto-updater (load_or_update) remains the primary mechanism;
+# these defaults are the offline / first-boot fallback only.
+
+on:
+  schedule:
+    # Every Monday at 06:00 UTC — Chrome releases typically ship on Tuesdays.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Refresh bundled browser-version defaults
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Fetch latest browser versions
+        run: |
+          curl -sf \
+            'https://versionhistory.googleapis.com/v1/chrome/platforms/all/channels/stable/versions' \
+            > /tmp/chrome.json || echo '{"versions":[]}' > /tmp/chrome.json
+          curl -sf \
+            'https://product-details.mozilla.org/1.0/firefox_versions.json' \
+            > /tmp/firefox.json || echo '{"LATEST_FIREFOX_VERSION":"0.0"}' > /tmp/firefox.json
+
+      - name: Patch autoupdate.rs
+        run: |
+          python3 - src/fingerprint/autoupdate.rs /tmp/chrome.json /tmp/firefox.json <<'PYEOF'
+          import json, re, sys
+          from datetime import datetime, timezone
+
+          source_path, chrome_path, ff_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+          chrome_data = json.loads(open(chrome_path).read())
+          ff_data = json.loads(open(ff_path).read())
+          today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+
+          # Build Chrome tuples: top-5 unique majors, newest first
+          seen: dict = {}
+          for v in chrome_data.get("versions", []):
+              full = v.get("version", "")
+              major = full.split(".")[0]
+              if major and major not in seen:
+                  seen[major] = full
+          majors = sorted(seen, key=int, reverse=True)[:5]
+          if not majors:
+              print("WARNING: no Chrome versions found, skipping patch")
+              sys.exit(0)
+          chrome_block = "\n".join(
+              f'                ("{m}".into(), "{seen[m]}".into()),'
+              for m in majors
+          )
+
+          # Build Firefox lines: latest 4 major versions
+          latest_str = ff_data.get("LATEST_FIREFOX_VERSION", "0.0")
+          latest = int(latest_str.split(".")[0])
+          if latest == 0:
+              print("WARNING: no Firefox version found, skipping patch")
+              sys.exit(0)
+          ff_block = "\n".join(
+              f'                "{latest - i}.0".into(),'
+              for i in range(4)
+          )
+
+          src = open(source_path).read()
+
+          # Update the "Last refreshed" date in the comment
+          src = re.sub(
+              r'(// Last refreshed: )\d{4}-\d{2}-\d{2}',
+              rf'\g<1>{today}',
+              src,
+          )
+
+          # Replace chrome vec! body — match lines between vec![ and the closing ],
+          # anchored so we only touch the chrome field inside the Default impl.
+          def replace_chrome(m):
+              return f'{m.group(1)}\n{chrome_block}\n{m.group(2)}'
+
+          def replace_ff(m):
+              return f'{m.group(1)}\n{ff_block}\n{m.group(2)}'
+
+          src = re.sub(
+              r'(            chrome: vec!\[)\n(?:[ \t]+[^\n]+\n)+(            \],)',
+              replace_chrome,
+              src,
+          )
+          src = re.sub(
+              r'(            firefox: vec!\[)\n(?:[ \t]+[^\n]+\n)+(            \],)',
+              replace_ff,
+              src,
+          )
+
+          open(source_path, "w").write(src)
+          print(f"Patched {source_path} — Chrome {majors[0]}, Firefox {latest}, date {today}")
+          PYEOF
+
+      - name: Check for changes
+        id: check
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          echo "today=$TODAY" >> "$GITHUB_OUTPUT"
+          if git diff --quiet src/fingerprint/autoupdate.rs; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Bundled defaults are already current — no PR needed."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff src/fingerprint/autoupdate.rs
+          fi
+
+      - name: Commit and open PR
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TODAY: ${{ steps.check.outputs.today }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="chore/bump-fingerprint-${TODAY}"
+          git checkout -b "$BRANCH"
+          git add src/fingerprint/autoupdate.rs
+          git commit -m "chore(fingerprint): refresh bundled browser-version defaults ${TODAY}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore(fingerprint): refresh bundled browser-version defaults ${TODAY}" \
+            --body "Automated weekly refresh of the bundled fallback in \`src/fingerprint/autoupdate.rs\`.
+
+          The runtime auto-updater handles live refresh from Google's API; this PR keeps the static offline fallback current so \`bundled_chrome_default_is_not_stale\` and \`bundled_firefox_default_is_not_stale\` remain green between releases.
+
+          Sources:
+          - Chrome: \`versionhistory.googleapis.com\` (official Google API, no key required)
+          - Firefox: \`product-details.mozilla.org\` (official Mozilla API, no key required)
+
+          🤖 Generated by [bump-fingerprint workflow](../.github/workflows/bump-fingerprint.yml)" \
+            --label "auto-merge-ok" \
+            --base main \
+            --head "$BRANCH"
