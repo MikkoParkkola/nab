@@ -1,12 +1,13 @@
 # cargo-audit configuration (read by `cargo audit` in CI and locally).
-# These advisories are acknowledged and tracked in GitHub issue #134.
-# Neither is fixable by a lockfile bump today; both are transitive.
+# Tracked in GitHub issue #134.
 [advisories]
 ignore = [
-    # bincode 2.x is unmaintained. Transitive dependency; no drop-in
-    # maintained replacement wired yet. Tracked in #134.
+    # bincode 2.x is unmaintained (RUSTSEC-2025-0141). Transitive dependency;
+    # no drop-in maintained replacement wired yet. No upstream patch exists
+    # (informational/unmaintained advisory). Tracked in #134.
     "RUSTSEC-2025-0141",
-    # lru 0.13 `IterMut` unsoundness. Pinned by wreq 5.3 (`lru = "^0.13"`);
-    # the only fix is wreq 6.0.0-rc (pre-release we will not ship). #134.
-    "RUSTSEC-2026-0002",
+    # NOTE: the lru RUSTSEC-2026-0002 ignore was removed once main moved to
+    # wreq 6.0.0-rc.29 (lru >= 0.18.0, past the 0.16.3 fix). The advisory no
+    # longer applies, so suppressing it would be dead config. See Cargo.toml
+    # (wreq pin rationale) and #134.
 ]
