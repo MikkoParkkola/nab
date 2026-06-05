@@ -15,6 +15,7 @@ pub use crypto::{decrypt_cookie_value, derive_cookie_key};
 
 mod crypto;
 mod db;
+pub mod fallback;
 #[cfg(test)]
 mod tests;
 
@@ -30,7 +31,7 @@ use db::{copy_db_to_temp, decrypt_rows, domain_candidates, has_domain_tag, query
 // ─── CookieSource ─────────────────────────────────────────────────────────────
 
 /// Cookie source for browser cookie extraction.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CookieSource {
     Brave,
     Chrome,
