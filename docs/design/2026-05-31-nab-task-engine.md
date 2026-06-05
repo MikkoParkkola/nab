@@ -1,6 +1,6 @@
 # nab — API-first web-task engine + single LLM contact point (DESIGN DRAFT)
 
-Status: DRAFT, awaiting operator ratification of the vision one-liner change.
+Status: RATIFIED 2026-06-05 by operator (Mikko Parkkola). Direction approved; implementation phased per §7. Ratified decisions recorded in §8.
 Date: 2026-05-31 · Ticket: MIK-5359 · Author: claude-elite session
 
 ## 1. Vision delta
@@ -18,7 +18,7 @@ bundle Chromium on the default path. When a task truly needs a browser, nab
 chromiumoxide feature — "no Chromium bundled"). nab is the **conductor**, not the
 instrument.
 
-One-liner amendment (for ratification):
+One-liner amendment (RATIFIED 2026-06-05; propagation to public copy deferred until `nab task` ships):
 `multimodal web microfetch` → `multimodal web microfetch + API-first web-task completion`.
 
 ## 2. nab as the single contact point (router architecture)
@@ -139,13 +139,18 @@ otherwise nab returns `delegate_to_browser` for the host skill to handle.
 3. route.1 + bench.1 gate; only then promote `nab task` to default MCP surface.
 4. rung 3 (browser orchestration) behind the existing opt-in `browser` feature.
 
-## 8. Open questions for operator
+## 8. Operator decisions (ratified 2026-06-05)
 
-- Ratify the vision one-liner amendment (§1)?
-- Single contact point via nab-mcp `task` tool — CLI + MCP, or MCP-tool-only first?
-- Rung-3 model: nab-orchestrates-CDP (true single contact point) vs delegate to
-  host `webwright-elite` skill (simpler, but LLM touches two surfaces)?
-- Bench target subset — which 20 sites? (prefer auth-gated + API-backed — nab's moat)
+- **Vision one-liner amendment (§1): RATIFIED.** Direction approved. Public-facing
+  positioning copy (README, GitHub About, CLAUDE.md) is NOT changed until `nab task`
+  actually ships — the product leads the marketing, not the reverse (Rams #6 honest).
+- **Single contact point: MCP-tool-first.** Expose `task` via nab-mcp first; the CLI
+  surface follows once the loop is proven.
+- **Rung-3 model: nab-orchestrates-CDP (chromiumoxide).** nab drives an external
+  browser itself; the `webwright-elite` skill is Phase-1 scaffold only and is retired
+  once rung 3 lands (§10). The LLM only ever talks to nab.
+- **Bench target subset: deferred to the Phase-3 bench.1 gate.** Prefer auth-gated +
+  API-backed sites (nab's moat); the exact 20-site list is chosen when bench.1 is built.
 
 ## 9. Self-contained via MCP (the LLM installs ONLY nab)
 
