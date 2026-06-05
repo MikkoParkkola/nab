@@ -79,6 +79,10 @@ pub struct FetchConfig {
     pub detect_labyrinth: bool,
     /// WAF challenge handling strategy. See [`WafMode`].
     pub waf_mode: WafMode,
+    /// SSRF policy controlling whether private/internal addresses may be
+    /// fetched. Defaults to [`nab::SsrfPolicy::deny_all`] — the locked-down
+    /// behaviour that blocks all private ranges (issue #107).
+    pub ssrf_policy: nab::SsrfPolicy,
 }
 
 /// Strategy for handling detected WAF challenges (AWS WAF, Cloudflare
@@ -256,6 +260,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
                 SafeRequestOptions {
                     headers,
                     config: SafeFetchConfig::default(),
+                    ssrf_policy: cfg.ssrf_policy.clone(),
                     ..SafeRequestOptions::default()
                 },
             )
@@ -273,10 +278,32 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let (status, version, set_cookies, content_type, response_headers, body_bytes) =
         if is_simple_get {
-            execute_safe_get(&client, &cfg.url, cfg.show_headers).await?
+            execute_safe_get(&client, &cfg.url, cfg.show_headers, &cfg.ssrf_policy).await?
         } else {
             execute_manual_request(&client, cfg, &profile, &cookie_header).await?
         };
+
+    // ── `--cookies auto` browser-profile fallback (issue #117) ────────────
+    // When `auto` picked one browser whose cookies were absent/stale for this
+    // domain, the response may be a Cloudflare/bot challenge. Retry with the
+    // remaining available browser profiles and adopt the first clean response.
+    // No-op for explicit `--cookies <browser>` and for non-challenge responses.
+    let (status, version, set_cookies, content_type, response_headers, body_bytes) =
+        maybe_fallback_cookie_profiles(
+            &client,
+            cfg,
+            &profile,
+            &domain,
+            (
+                status,
+                version,
+                set_cookies,
+                content_type,
+                response_headers,
+                body_bytes,
+            ),
+        )
+        .await?;
 
     let elapsed = start.elapsed();
     let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
@@ -487,11 +514,12 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     Ok(())
 }
 
-/// Execute a safe GET request via `fetch_safe`.
+/// Execute a safe GET request, honouring the supplied SSRF policy.
 async fn execute_safe_get(
     client: &AcceleratedClient,
     url: &str,
     show_headers: bool,
+    ssrf_policy: &nab::SsrfPolicy,
 ) -> Result<(
     reqwest::StatusCode,
     String,
@@ -501,7 +529,16 @@ async fn execute_safe_get(
     bytes::Bytes,
 )> {
     let config = SafeFetchConfig::default();
-    let safe_resp = client.fetch_safe(url, &config).await?;
+    let safe_resp = client
+        .request_safe(
+            url,
+            SafeRequestOptions {
+                config,
+                ssrf_policy: ssrf_policy.clone(),
+                ..SafeRequestOptions::default()
+            },
+        )
+        .await?;
 
     let set_cookies: Vec<String> = safe_resp
         .headers
@@ -600,6 +637,7 @@ async fn execute_manual_request(
                 headers,
                 body: cfg.data.clone().map(bytes::Bytes::from),
                 config,
+                ssrf_policy: cfg.ssrf_policy.clone(),
             },
         )
         .await?;
@@ -625,6 +663,124 @@ async fn execute_manual_request(
         resp_headers,
         safe_resp.body,
     ))
+}
+
+/// The six-field response payload threaded through the fetch pipeline.
+type FetchResponseTuple = (
+    reqwest::StatusCode,
+    String,
+    Vec<String>,
+    String,
+    Vec<(String, String)>,
+    bytes::Bytes,
+);
+
+/// Browser-profile fallback for `--cookies auto` (issue #117).
+///
+/// When `auto` selects a single browser profile and the resulting response is
+/// a bot / Cloudflare challenge, retry with the remaining available browser
+/// profiles (Brave → Chrome → Firefox → Safari, minus the auto-picked one) and
+/// return the first non-challenge response.
+///
+/// Bounded: each remaining profile is attempted at most once, and only when it
+/// actually holds cookies for the domain. Cheap: the loop never runs on a clean
+/// initial response, nor for explicit `--cookies <browser>`. On exhaustion the
+/// original response is returned unchanged with a warning naming the profiles
+/// tried (AC NAB.COOKIE.3).
+async fn maybe_fallback_cookie_profiles(
+    client: &AcceleratedClient,
+    cfg: &FetchConfig,
+    profile: &nab::fingerprint::BrowserProfile,
+    domain: &str,
+    initial: FetchResponseTuple,
+) -> Result<FetchResponseTuple> {
+    use nab::auth::cookies::fallback::{
+        AttemptOutcome, FallbackResult, fallback_candidates, fallback_over_profiles, is_challenge,
+    };
+
+    // Gate 1: only the `auto` default escalates. Explicit profiles are honoured.
+    if !cfg.cookies.eq_ignore_ascii_case("auto") {
+        return Ok(initial);
+    }
+    // Gate 2: only escalate on a detected challenge.
+    let initial_is_challenge =
+        is_challenge(initial.0.as_u16(), &String::from_utf8_lossy(&initial.5));
+    if !initial_is_challenge {
+        return Ok(initial);
+    }
+
+    // The profile `auto` already used — exclude it from the candidate set so it
+    // is not re-attempted.
+    let auto_source = nab::detect_default_browser().map_or(nab::CookieSource::Chrome, |b| {
+        nab::CookieSource::from_browser_name(b.as_str())
+    });
+    let candidates = fallback_candidates(auto_source);
+
+    tracing::info!(
+        domain = %domain,
+        ?candidates,
+        "cookies=auto profile returned a challenge; trying fallback browser profiles"
+    );
+
+    // Capture each attempt's full response so the winning profile does not need
+    // a second network round-trip. The loop awaits attempts sequentially, so the
+    // `RefCell` is never borrowed concurrently.
+    let last_response: std::cell::RefCell<Option<FetchResponseTuple>> =
+        std::cell::RefCell::new(None);
+
+    let outcome = fallback_over_profiles(candidates, |source| {
+        // Per-profile attempt: resolve that profile's cookies and, if present,
+        // re-issue the request with them. Empty cookies ⇒ profile unavailable.
+        let cookie_header = source.get_cookie_header(domain).unwrap_or_default();
+        let last_response = &last_response;
+        async move {
+            if cookie_header.is_empty() {
+                return AttemptOutcome::Unavailable;
+            }
+            tracing::info!(?source, "retrying fetch with fallback browser cookies");
+            match execute_manual_request(client, cfg, profile, &cookie_header).await {
+                Ok(resp) => {
+                    let status = resp.0.as_u16();
+                    let body = String::from_utf8_lossy(&resp.5).to_string();
+                    *last_response.borrow_mut() = Some(resp);
+                    AttemptOutcome::Available { status, body }
+                }
+                Err(e) => {
+                    tracing::warn!(?source, error = %e, "fallback profile request failed");
+                    AttemptOutcome::Unavailable
+                }
+            }
+        }
+    })
+    .await;
+
+    match outcome {
+        FallbackResult::Resolved { source, .. } => {
+            tracing::info!(?source, "fallback browser profile cleared the challenge");
+            // The winning response was captured during the attempt; reuse it
+            // rather than issuing a redundant request.
+            last_response.into_inner().map_or_else(|| Ok(initial), Ok)
+        }
+        FallbackResult::Exhausted { tried } => {
+            let names: Vec<&str> = tried.iter().copied().map(cookie_source_name).collect();
+            tracing::warn!(
+                tried = ?names,
+                "all fallback browser profiles still returned a challenge; \
+                 returning the original response"
+            );
+            Ok(initial)
+        }
+    }
+}
+
+/// Human-readable name for a [`nab::CookieSource`], used in fallback warnings.
+fn cookie_source_name(source: nab::CookieSource) -> &'static str {
+    match source {
+        nab::CookieSource::Brave => "brave",
+        nab::CookieSource::Chrome => "chrome",
+        nab::CookieSource::Firefox => "firefox",
+        nab::CookieSource::Safari => "safari",
+    }
 }
 
 /// Attempt to recover article content from Next.js webpack content chunks.

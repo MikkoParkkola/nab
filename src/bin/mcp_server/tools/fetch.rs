@@ -138,9 +138,42 @@ pub struct FetchTool {
     /// server must not be able to correlate the request to your IP address.
     #[serde(default)]
     tor: bool,
+    /// Allow fetching **private/internal** IP addresses (RFC 1918, IPv6 ULA,
+    /// CGN). **OFF by default — SSRF protection stays on.**
+    ///
+    /// nab blocks private/internal addresses by default to prevent
+    /// Server-Side Request Forgery. Enable this only on trusted workstations
+    /// where you legitimately need to reach corporate intranet dashboards.
+    ///
+    /// Even when enabled, loopback (`127.0.0.1`), link-local cloud-metadata
+    /// endpoints (`169.254.169.254`), and every other dangerous range remain
+    /// blocked. Prefer the narrowly-scoped `allow_private_ip` allowlist over
+    /// this blanket flag. Audit logs are emitted whenever a private address is
+    /// allowed through.
+    #[serde(default)]
+    allow_private_ips: bool,
+    /// Scoped allowlist of private addresses / CIDR blocks to permit
+    /// (e.g. `["10.252.0.0/16", "192.168.1.5"]`). **Empty by default.**
+    ///
+    /// Preferred over `allow_private_ips`: only addresses inside a listed range
+    /// bypass the private-IP block, and only those ranges. Listing a dangerous
+    /// address (loopback, cloud metadata) has no effect — those stay blocked.
+    #[serde(default)]
+    allow_private_ip: Vec<String>,
 }
 
 impl FetchTool {
+    /// Builds the SSRF policy for this call: the env-derived default
+    /// ([`nab::SsrfPolicy::from_env`]) layered with the per-call MCP params.
+    ///
+    /// The default is fully locked down; relaxation is additive and only ever
+    /// touches the relaxable (private/ULA/CGN) subset.
+    fn ssrf_policy(&self) -> nab::SsrfPolicy {
+        nab::SsrfPolicy::from_env()
+            .with_allow_private(self.allow_private_ips)
+            .with_allowlist_entries(self.allow_private_ip.iter())
+    }
+
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self) -> Result<CallToolResult, CallToolError> {
         let url_host = url::Url::parse(&self.url)
@@ -288,12 +321,21 @@ impl FetchTool {
             )
         } else {
             let config = SafeFetchConfig::default();
+            let ssrf_policy = self.ssrf_policy();
 
             let (status, content_type, response_headers, body_bytes, elapsed) =
                 if cookie_header.is_empty() {
-                    fetch_safe_response(client, &self.url, &config, start).await?
+                    fetch_safe_response(client, &self.url, &config, &ssrf_policy, start).await?
                 } else {
-                    fetch_with_cookies(client, &self.url, &cookie_header, &profile, start).await?
+                    fetch_with_cookies(
+                        client,
+                        &self.url,
+                        &cookie_header,
+                        &profile,
+                        &ssrf_policy,
+                        start,
+                    )
+                    .await?
                 };
             let raw_text = String::from_utf8_lossy(&body_bytes).into_owned();
 

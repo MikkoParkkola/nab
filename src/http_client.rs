@@ -27,7 +27,7 @@ use tracing::{debug, info, instrument, warn};
 use url::Url;
 
 use crate::fingerprint::{BrowserProfile, random_profile};
-use crate::ssrf::{self, DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS};
+use crate::ssrf::{self, DEFAULT_MAX_BODY_SIZE, DEFAULT_MAX_REDIRECTS, SsrfPolicy};
 
 /// `SOCKS5h` proxy URL for the Tor anonymity network.
 ///
@@ -359,14 +359,12 @@ impl AcceleratedClient {
         url: &str,
         config: &SafeFetchConfig,
     ) -> Result<SafeFetchResponse> {
-        self.request_safe_with_validators(
+        self.request_safe(
             url,
             SafeRequestOptions {
                 config: config.clone(),
                 ..SafeRequestOptions::default()
             },
-            ssrf::validate_url,
-            validate_redirect_target_and_pin,
         )
         .await
     }
@@ -375,17 +373,24 @@ impl AcceleratedClient {
     ///
     /// Unlike [`Self::fetch_safe`], this supports non-GET methods, additional
     /// headers, and request bodies while preserving the same safety guarantees.
+    ///
+    /// The SSRF policy in [`SafeRequestOptions::ssrf_policy`] governs both the
+    /// initial URL and every redirect hop. It defaults to
+    /// [`SsrfPolicy::deny_all`]; callers that opt in to private addresses
+    /// (issue #107) supply a relaxed policy here.
     #[instrument(skip(self, options), fields(url = %url, method = %options.method))]
     pub async fn request_safe(
         &self,
         url: &str,
         options: SafeRequestOptions,
     ) -> Result<SafeFetchResponse> {
+        let initial_policy = options.ssrf_policy.clone();
+        let redirect_policy = options.ssrf_policy.clone();
         self.request_safe_with_validators(
             url,
             options,
-            ssrf::validate_url,
-            validate_redirect_target_and_pin,
+            move |u: &Url| ssrf::validate_url_with_policy(u, &initial_policy),
+            move |u: &Url| validate_redirect_target_and_pin_with_policy(u, &redirect_policy),
         )
         .await
     }
@@ -531,8 +536,9 @@ impl AcceleratedClient {
     }
 }
 
-fn validate_redirect_target_and_pin(
+fn validate_redirect_target_and_pin_with_policy(
     url: &Url,
+    policy: &SsrfPolicy,
 ) -> std::result::Result<SocketAddr, crate::error::NabError> {
     match url.scheme() {
         "http" | "https" => {}
@@ -543,7 +549,7 @@ fn validate_redirect_target_and_pin(
         }
     }
 
-    ssrf::validate_url(url)
+    ssrf::validate_url_with_policy(url, policy)
 }
 
 fn should_redirect_with_get(status: StatusCode, method: &Method) -> bool {
@@ -605,6 +611,13 @@ pub struct SafeRequestOptions {
     pub body: Option<Bytes>,
     /// Shared redirect/body/accept behavior.
     pub config: SafeFetchConfig,
+    /// SSRF policy applied to the initial URL and every redirect hop.
+    ///
+    /// Defaults to [`SsrfPolicy::deny_all`] — the locked-down behaviour that
+    /// blocks all private/internal ranges. The fetch boundary (CLI / MCP)
+    /// replaces this with an env-/flag-derived policy when the user opts in to
+    /// reaching private addresses (issue #107).
+    pub ssrf_policy: SsrfPolicy,
 }
 
 impl Default for SafeRequestOptions {
@@ -614,6 +627,7 @@ impl Default for SafeRequestOptions {
             headers: HeaderMap::new(),
             body: None,
             config: SafeFetchConfig::default(),
+            ssrf_policy: SsrfPolicy::deny_all(),
         }
     }
 }
