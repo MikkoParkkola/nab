@@ -155,6 +155,17 @@ jobs:
       - name: Run cargo audit
         run: cargo audit
 
+  # License-boundary enforcement always runs: a PR can add a new EE file
+  # needing the PolyForm-NC SPDX header without changing any Rust code.
+  # Fast, no build.
+  license-boundary:
+    name: License boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Validate MIT / PolyForm-NC boundary
+        run: python3 scripts/check_license_boundary.py
+
   # Single required status check. Passes when every upstream job either
   # succeeded or was skipped (documentation-only change); fails if any
   # upstream job failed or was cancelled. Make THIS the required check in
@@ -162,7 +173,7 @@ jobs:
   ci-gate:
     name: CI Gate
     if: always()
-    needs: [changes, fmt, clippy, test, build, package, secrets-scan, audit]
+    needs: [changes, fmt, clippy, test, build, package, secrets-scan, audit, license-boundary]
     runs-on: ubuntu-latest
     steps:
       - name: Verify no required job failed
