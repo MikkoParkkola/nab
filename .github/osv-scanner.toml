@@ -1,0 +1,45 @@
+# osv-scanner allowlist — the pressure valve for the release security gate.
+#
+# The gate fails the build on ANY known, fixable vulnerability in the
+# dependency tree. It runs in the release path:
+#   - release.yml `security-gate` job -> backstop that blocks the release
+#     (GitHub release + crates.io publish) if a known fixable vuln is present
+#     at tag time.
+#
+# Scope (verified by local run 2026-06-05): crates.io packages — osv-scanner
+# reads Cargo.lock and checks every locked dependency against OSV/RustSec. This
+# is BROADER than the `cargo audit` job in ci.yml's CI Gate, which by default
+# treats RustSec "unsound"/"unmaintained"/"yanked" advisories as warnings
+# (exit 0) and only hard-fails on vulnerability-class advisories. osv-scanner
+# fails on any fixable advisory regardless of class — so it catches fixable
+# items (e.g. lru RUSTSEC-2026-0002, an unsoundness advisory with a patched
+# release) that cargo audit lets through. cargo audit stays as the fast PR-path
+# signal; this gate is the release backstop.
+#
+# NOT covered: github-actions advisories (our actions are SHA-pinned, which is
+# itself the mitigation, and osv-scanner does not map SHA pins to advisory
+# versions) and Docker base-image OS-layer CVEs (osv-scanner reads lockfiles,
+# not image layers — that needs a separate trivy image scan, which is NOT wired
+# here because the release path does not build or push a Docker image; the
+# repo's Dockerfile is a local/build convenience only). This covers the primary
+# attack surface: the Cargo dependency tree that .github/dependabot.yml's cargo
+# updater watches.
+#
+# Failing on any fixable vuln is intentional: a new release must include the
+# security fixes that are available. Dependabot PROPOSES the bump PR; this gate
+# DISPOSES — it refuses to ship until the fix is merged.
+#
+# When a vulnerability has NO upstream fix yet, or is verified unreachable, it
+# would otherwise block every release indefinitely. Add a time-boxed exception
+# here instead of weakening the gate. Each entry MUST carry a reason and an
+# ignoreUntil review date — expired entries re-trigger the gate automatically.
+#
+# Format (https://google.github.io/osv-scanner/configuration/):
+#
+#   [[IgnoredVulns]]
+#   id = "RUSTSEC-2025-1234"
+#   ignoreUntil = 2026-07-01   # review by this date; after it the gate fires again
+#   reason = "No patched release upstream yet; tracked. Reviewed 2026-06-05 by <who>."
+#
+# Keep this list EMPTY unless a vuln genuinely has no fix. The right fix for a
+# fixable vuln is to bump the dependency, not to ignore it.
