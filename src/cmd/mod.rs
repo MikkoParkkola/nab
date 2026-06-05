@@ -30,7 +30,7 @@ pub use auth::cmd_auth;
 pub use bench::cmd_bench;
 pub use browser::{BrowserConfig, cmd_browser};
 pub use context::cmd_context;
-pub use cookies::cmd_cookies;
+pub use cookies::cmd_cookies_export;
 pub use doctor::cmd_doctor;
 pub use export_rules::{cmd_export_rules, cmd_list_rules};
 pub use fetch::{FetchConfig, cmd_fetch};

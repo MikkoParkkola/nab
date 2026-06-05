@@ -1,4 +1,6 @@
-use anyhow::Result;
+use std::path::Path;
+
+use anyhow::{Context, Result};
 
 use super::{resolve_browser_name, resolve_cookie_source};
 
@@ -6,18 +8,81 @@ use super::{resolve_browser_name, resolve_cookie_source};
 /// likely to be missing auth cookies that live on a sibling subdomain.
 const THIN_COOKIE_RESULT_THRESHOLD: usize = 5;
 
-pub async fn cmd_cookies(subcommand: &str, domain: &str, browser: &str) -> Result<()> {
-    match subcommand {
-        "export" => cmd_cookies_export(domain, browser),
-        _ => anyhow::bail!("Unknown cookies subcommand: {subcommand}. Use 'export'."),
+/// Entry point for `nab cookies export`.
+///
+/// Dispatches on `format` (`"netscape"` | `"playwright"`) and writes either to
+/// `output` (when `Some`) or stdout. Reuses the same `--cookies` browser
+/// selection as the rest of nab via [`resolve_browser_name`].
+///
+/// # Errors
+/// Fails on unrecognised formats, missing browser selection, or I/O errors
+/// writing the chosen output path.
+pub async fn cmd_cookies_export(
+    domain: &str,
+    browser: &str,
+    format: &str,
+    output: Option<&Path>,
+) -> Result<()> {
+    match format.to_lowercase().as_str() {
+        "netscape" => cmd_cookies_export_netscape(domain, browser, output),
+        "playwright" | "storage_state" | "storage-state" => {
+            cmd_cookies_export_playwright(domain, browser, output)
+        }
+        other => anyhow::bail!(
+            "Unrecognised cookies export format: '{other}'. Use 'netscape' or 'playwright'."
+        ),
     }
 }
 
-/// Export cookies for a domain in Netscape format
-fn cmd_cookies_export(domain: &str, browser: &str) -> Result<()> {
-    let browser_name = resolve_browser_name(browser)
-        .ok_or_else(|| anyhow::anyhow!("No browser specified. Use --cookies to select one."))?;
+/// Resolve the selected browser name, erroring when cookies are disabled.
+fn resolve_export_browser(browser: &str) -> Result<String> {
+    resolve_browser_name(browser)
+        .ok_or_else(|| anyhow::anyhow!("No browser specified. Use --cookies to select one."))
+}
 
+/// Write `content` to `output` (file) or stdout, with a success note on stderr.
+fn emit(content: &str, output: Option<&Path>, count: usize) -> Result<()> {
+    if let Some(path) = output {
+        std::fs::write(path, content)
+            .with_context(|| format!("Failed to write export to {}", path.display()))?;
+        eprintln!("\n✅ Exported {count} cookies to {}", path.display());
+    } else {
+        println!("{content}");
+        eprintln!("\n✅ Exported {count} cookies");
+    }
+    Ok(())
+}
+
+/// Export cookies for a domain as a Playwright/CDP `storage_state` JSON document.
+///
+/// Implements MIK-5359 `export.1`. The artifact seeds a logged-in browser
+/// context later (see the nab task-engine browser-modes ADR).
+fn cmd_cookies_export_playwright(domain: &str, browser: &str, output: Option<&Path>) -> Result<()> {
+    let browser_name = resolve_export_browser(browser)?;
+    let source = resolve_cookie_source(&browser_name);
+
+    eprintln!("🍪 Exporting Playwright storage_state for '{domain}' from {browser_name}");
+
+    let cookies = source.get_cookies_rich(domain)?;
+    if cookies.is_empty() {
+        eprintln!("No cookies found for domain: {domain}");
+    }
+    if let Some(msg) = bare_domain_thin_result_warning(domain, cookies.len()) {
+        eprintln!("{msg}");
+    }
+
+    let count = cookies.len();
+    let state = nab::auth::cookies::storage_state::StorageState::from_cookies(cookies);
+    let json = state
+        .to_json()
+        .context("Failed to serialize storage_state JSON")?;
+
+    emit(&json, output, count)
+}
+
+/// Export cookies for a domain in Netscape format.
+fn cmd_cookies_export_netscape(domain: &str, browser: &str, output: Option<&Path>) -> Result<()> {
+    let browser_name = resolve_export_browser(browser)?;
     let source = resolve_cookie_source(&browser_name);
 
     eprintln!("🍪 Exporting cookies for '{domain}' from {browser_name}");
@@ -36,39 +101,46 @@ fn cmd_cookies_export(domain: &str, browser: &str) -> Result<()> {
         eprintln!("{msg}");
     }
 
-    // Output in Netscape cookie format
-    // Format: domain\tinclude_subdomains\tpath\tsecure\texpiry\tname\tvalue
-    println!("# Netscape HTTP Cookie File");
-    println!("# Exported by nab from {browser_name}");
-    println!("# Domain: {domain}");
-    println!();
+    let body = render_netscape(domain, &browser_name, &cookies);
+    emit(&body, output, cookies.len())
+}
 
-    for (name, value) in &cookies {
-        let include_subdomains = if domain.starts_with('.') {
-            "TRUE"
-        } else {
-            "FALSE"
-        };
-        // Use a far-future expiry for session cookies (we don't have the actual expiry)
-        let expiry = "0";
-        let secure = "FALSE";
-        let path = "/";
+/// Render a Netscape cookie file body for the given cookies.
+///
+/// Format: `domain\tinclude_subdomains\tpath\tsecure\texpiry\tname\tvalue`.
+fn render_netscape(
+    domain: &str,
+    browser_name: &str,
+    cookies: &std::collections::HashMap<String, String>,
+) -> String {
+    use std::fmt::Write as _;
 
-        // Ensure domain starts with . for subdomain matching (Netscape convention)
-        let cookie_domain = if domain.starts_with('.') {
-            domain.to_string()
-        } else {
-            format!(".{domain}")
-        };
+    let mut out = String::new();
+    let _ = writeln!(out, "# Netscape HTTP Cookie File");
+    let _ = writeln!(out, "# Exported by nab from {browser_name}");
+    let _ = writeln!(out, "# Domain: {domain}");
+    let _ = writeln!(out);
 
-        println!(
-            "{cookie_domain}\t{include_subdomains}\t{path}\t{secure}\t{expiry}\t{name}\t{value}"
+    let include_subdomains = if domain.starts_with('.') {
+        "TRUE"
+    } else {
+        "FALSE"
+    };
+    // Ensure domain starts with . for subdomain matching (Netscape convention).
+    let cookie_domain = if domain.starts_with('.') {
+        domain.to_string()
+    } else {
+        format!(".{domain}")
+    };
+
+    for (name, value) in cookies {
+        // Far-future expiry sentinel for session cookies (no real expiry known).
+        let _ = writeln!(
+            out,
+            "{cookie_domain}\t{include_subdomains}\t/\tFALSE\t0\t{name}\t{value}"
         );
     }
-
-    eprintln!("\n✅ Exported {} cookies", cookies.len());
-
-    Ok(())
+    out
 }
 
 /// Return a warning string when a bare-domain export looks thin, else `None`.
@@ -128,5 +200,35 @@ mod tests {
     #[test]
     fn warning_silent_on_dotted_leading_domain() {
         assert!(bare_domain_thin_result_warning(".linkedin.com", 1).is_none());
+    }
+
+    #[test]
+    fn render_netscape_emits_header_and_tab_rows() {
+        // GIVEN one cookie for a bare domain
+        // WHEN rendered to Netscape format
+        // THEN the header lines and a tab-separated row are present.
+        let mut cookies = std::collections::HashMap::new();
+        cookies.insert("session".to_string(), "abc123".to_string());
+        let out = render_netscape("example.com", "brave", &cookies);
+        assert!(out.contains("# Netscape HTTP Cookie File"));
+        assert!(out.contains(".example.com\tFALSE\t/\tFALSE\t0\tsession\tabc123"));
+    }
+
+    #[test]
+    fn unrecognised_format_is_rejected() {
+        // GIVEN an unsupported export format
+        // WHEN dispatched
+        // THEN the command errors rather than silently defaulting.
+        let err = tokio_test_block(cmd_cookies_export("example.com", "none", "yaml", None));
+        assert!(err.is_err());
+    }
+
+    /// Minimal blocking executor for the single async-fn error-path test, so the
+    /// crate's existing tokio dev-dependency configuration is not assumed here.
+    fn tokio_test_block<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("failed to build current-thread runtime")
+            .block_on(fut)
     }
 }

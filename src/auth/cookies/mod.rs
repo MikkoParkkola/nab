@@ -16,6 +16,7 @@ pub use crypto::{decrypt_cookie_value, derive_cookie_key};
 mod crypto;
 mod db;
 pub mod fallback;
+pub mod storage_state;
 #[cfg(test)]
 mod tests;
 
@@ -27,6 +28,8 @@ use tracing::{debug, info, warn};
 
 use super::{Credential, OnePasswordAuth};
 use db::{copy_db_to_temp, decrypt_rows, domain_candidates, has_domain_tag, query_cookie_db};
+use db::{decrypt_rich_rows, query_cookie_db_rich};
+use storage_state::{PlaywrightCookie, SameSite};
 
 // ─── CookieSource ─────────────────────────────────────────────────────────────
 
@@ -231,6 +234,83 @@ except Exception as e:
             .collect::<Vec<_>>()
             .join("; ");
         Ok(header)
+    }
+
+    /// Extract cookies for a domain as faithful Playwright `storage_state`
+    /// cookies — with real `domain`/`path`/`expires`/`httpOnly`/`secure`/
+    /// `sameSite` metadata.
+    ///
+    /// Chromium-family browsers (Brave/Chrome/Edge/…) get full fidelity from the
+    /// native `SQLite` path: every row is preserved individually, so two same-named
+    /// cookies on different host keys both survive (unlike [`Self::get_cookies`],
+    /// which collapses by name for the fetch hot path).
+    ///
+    /// Firefox/Safari and the Python fallback currently surface only name/value;
+    /// those are returned with safe defaults (`domain` = the queried domain,
+    /// `path` = `/`, session expiry, `secure`, `Lax`) — best-effort, as recorded
+    /// in `docs/design/2026-06-01-nab-task-engine-browser-modes.md`.
+    ///
+    /// # Errors
+    /// Propagates filesystem/Keychain errors from the native extraction path.
+    pub fn get_cookies_rich(&self, domain: &str) -> Result<Vec<PlaywrightCookie>> {
+        debug!("Getting rich cookies for {} from {:?}", domain, self);
+
+        match self.get_cookies_rich_native(domain) {
+            Ok(cookies) if !cookies.is_empty() => {
+                info!("Native rich extraction: {} cookies", cookies.len());
+                return Ok(cookies);
+            }
+            Ok(_) => debug!("Native rich extraction empty, falling back to name/value"),
+            Err(e) => debug!("Native rich extraction failed: {e}, falling back to name/value"),
+        }
+
+        // Fallback: name/value only (Firefox/Safari/Python). Synthesize safe
+        // metadata defaults so the storage_state is still schema-valid.
+        let flat = self.get_cookies(domain)?;
+        Ok(flat
+            .into_iter()
+            .map(|(name, value)| synthesize_cookie(name, value, domain))
+            .collect())
+    }
+
+    /// Native Rust rich extraction from the Chromium `SQLite` database.
+    fn get_cookies_rich_native(self, domain: &str) -> Result<Vec<PlaywrightCookie>> {
+        let cookie_path = self
+            .cookie_path()
+            .context("Could not determine cookie path")?;
+        if !cookie_path.exists() {
+            warn!("Cookie database not found: {:?}", cookie_path);
+            return Ok(Vec::new());
+        }
+
+        let temp_db = copy_db_to_temp(&cookie_path)?;
+        let domain_tag = has_domain_tag(&temp_db);
+        let rows = query_cookie_db_rich(&temp_db, domain)?;
+        if let Some(parent) = temp_db.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+
+        let key = self.get_keychain_key().ok();
+        Ok(decrypt_rich_rows(rows, key.as_deref(), domain_tag))
+    }
+}
+
+/// Build a best-effort Playwright cookie from a bare name/value pair.
+///
+/// Used for sources that surface only name/value (Firefox, Safari, the Python
+/// `browser_cookie3` fallback). Defaults are conservative: the queried `domain`
+/// (leading dot preserved if present), root `path`, session expiry, `secure`,
+/// and `Lax` sameSite. Documented as best-effort in the browser-modes ADR.
+fn synthesize_cookie(name: String, value: String, domain: &str) -> PlaywrightCookie {
+    PlaywrightCookie {
+        name,
+        value,
+        domain: domain.to_string(),
+        path: "/".to_string(),
+        expires: -1.0,
+        http_only: false,
+        secure: true,
+        same_site: SameSite::Lax,
     }
 }
 

@@ -784,7 +784,7 @@ enum McpAction {
 
 #[derive(Subcommand)]
 enum CookiesAction {
-    /// Export cookies for a domain in Netscape format
+    /// Export cookies for a domain (Netscape by default; Playwright `storage_state` with --format)
     Export {
         /// Domain to export cookies for (e.g., "github.com"). Bare domains also include www. variants.
         domain: String,
@@ -792,6 +792,14 @@ enum CookiesAction {
         /// Browser to export from (auto, brave, chrome, firefox, safari, edge)
         #[arg(short, long, default_value = "auto")]
         cookies: String,
+
+        /// Output format: "netscape" (default) or "playwright" (CDP `storage_state` JSON)
+        #[arg(long, default_value = "netscape")]
+        format: String,
+
+        /// Write to this path instead of stdout
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
     },
 }
 
@@ -1230,8 +1238,13 @@ async fn main() -> Result<()> {
                 cmd::cmd_context(&urls, &cookies, max_tokens).await?;
             }
             Commands::Cookies { action } => match action {
-                CookiesAction::Export { domain, cookies } => {
-                    cmd::cmd_cookies("export", &domain, &cookies).await?;
+                CookiesAction::Export {
+                    domain,
+                    cookies,
+                    format,
+                    output,
+                } => {
+                    cmd::cmd_cookies_export(&domain, &cookies, &format, output.as_deref()).await?;
                 }
             },
             Commands::Rules { action } => match action {
