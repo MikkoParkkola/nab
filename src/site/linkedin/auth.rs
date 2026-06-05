@@ -136,6 +136,11 @@ fn extract_code_json(document: &Html, url: &str, kind: LinkedInUrlKind) -> Optio
 
     let mut profile: Option<VoyagerProfileResponse> = None;
     let mut posts: Vec<String> = Vec::new();
+    // Rich structured activity-feed markdown extracted from an embedded Voyager
+    // feed envelope (`{data, included:[…]}`). Preferred over the text-only
+    // `posts` fallback because it carries author, urn, timestamp, and
+    // engagement per post. See `extract_activity_envelope`.
+    let mut activity_md: Option<String> = None;
     for element in document.select(&selector) {
         // scraper's .text() strips HTML comment nodes — use inner_html() which
         // preserves the raw "<!--{...}-->" content that LinkedIn embeds.
@@ -148,6 +153,15 @@ fn extract_code_json(document: &Html, url: &str, kind: LinkedInUrlKind) -> Optio
         let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) else {
             continue;
         };
+
+        // Priority for activity pages: a hidden <code> may carry the pre-fetched
+        // Voyager feed envelope LinkedIn would otherwise load over XHR. Route it
+        // through the shared rich walker so embedded and XHR paths agree.
+        if activity_md.is_none()
+            && let Some(md) = extract_activity_envelope(&value, json_str, profile.as_ref())
+        {
+            activity_md = Some(md);
+        }
 
         // Walk every JSON value recursively looking for profile and post data.
         scan_json_value(&value, &mut profile, &mut posts);
@@ -162,11 +176,55 @@ fn extract_code_json(document: &Html, url: &str, kind: LinkedInUrlKind) -> Optio
             && !body_str.is_empty()
             && let Ok(body_json) = serde_json::from_str::<serde_json::Value>(body_str)
         {
+            if activity_md.is_none()
+                && let Some(md) = extract_activity_envelope(&body_json, body_str, profile.as_ref())
+            {
+                activity_md = Some(md);
+            }
             scan_json_value(&body_json, &mut profile, &mut posts);
         }
     }
 
-    build_code_json_content(url, kind, profile.as_ref(), &posts)
+    build_code_json_content(url, kind, profile.as_ref(), &posts, activity_md.as_deref())
+}
+
+/// Detect and render a pre-fetched Voyager activity-feed envelope embedded in a
+/// hidden `<code>` element on `/recent-activity/all/`.
+///
+/// `LinkedIn`'s SPA inlines the first feed XHR response (`{data, included:[…]}`)
+/// into the SSR HTML to avoid a client round-trip. When that envelope is
+/// present, this routes the raw JSON through the shared
+/// [`super::voyager::render_voyager_body`] walker — the same code the live XHR
+/// path uses — so the embedded path yields fully structured posts (author,
+/// activity URN, snowflake-derived timestamp, engagement counts) instead of the
+/// text-only commentary fallback.
+///
+/// `value` is the parsed JSON; `raw` is the original string passed straight to
+/// the walker (which re-parses internally). `profile` supplies the expected
+/// author name used to flag reshares. Returns `None` when no `included[]` feed
+/// array with `feed.Update` entities is present.
+fn extract_activity_envelope(
+    value: &serde_json::Value,
+    raw: &str,
+    profile: Option<&VoyagerProfileResponse>,
+) -> Option<String> {
+    // Cheap structural gate before the expensive walker: must have an
+    // `included` array carrying at least one feed Update entity.
+    let included = value.get("included")?.as_array()?;
+    let has_update = included.iter().any(|e| {
+        e.get("$type").and_then(serde_json::Value::as_str)
+            == Some("com.linkedin.voyager.dash.feed.Update")
+    });
+    if !has_update {
+        return None;
+    }
+
+    let expected_actor = profile
+        .and_then(|p| build_full_name(p.first_name.as_deref(), p.last_name.as_deref()))
+        .unwrap_or_default();
+
+    let md = super::voyager::render_voyager_body(raw, &expected_actor);
+    if md.trim().is_empty() { None } else { Some(md) }
 }
 
 /// Recursively walk a JSON value tree looking for `LinkedIn` data objects.
@@ -336,12 +394,18 @@ pub(super) fn extract_post_text(
 
 /// Build `SiteContent` from extracted `<code>` JSON data.
 ///
-/// Returns `None` when neither a profile nor any posts were found.
+/// `activity_md`, when present, is the richly structured activity-feed markdown
+/// rendered from an embedded Voyager envelope (see `extract_activity_envelope`).
+/// It is preferred over the text-only `posts` fallback so activity pages surface
+/// author, urn, timestamp, and engagement per post.
+///
+/// Returns `None` when no profile, structured activity, or post text was found.
 fn build_code_json_content(
     url: &str,
     kind: LinkedInUrlKind,
     profile: Option<&VoyagerProfileResponse>,
     posts: &[String],
+    activity_md: Option<&str>,
 ) -> Option<SiteContent> {
     let mut md = String::new();
 
@@ -373,7 +437,12 @@ fn build_code_json_content(
         (None, None)
     };
 
-    if !posts.is_empty() {
+    // Prefer the structured activity envelope when present; otherwise fall back
+    // to the text-only commentary collection.
+    if let Some(activity) = activity_md.map(str::trim).filter(|s| !s.is_empty()) {
+        let _ = writeln!(md, "### Recent Activity\n");
+        let _ = writeln!(md, "{activity}");
+    } else if !posts.is_empty() {
         if profile.is_some() {
             let _ = writeln!(md, "### Recent Activity\n");
         }

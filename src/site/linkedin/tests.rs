@@ -871,3 +871,143 @@ fn code_tag_profile_without_industry_still_renders() {
     assert!(content.markdown.contains("Engineer"));
     assert!(!content.markdown.contains("Industry:"));
 }
+
+// ── /recent-activity/all/ embedded <code> feed envelope ─────────────────────
+//
+// MIK-3059: LinkedIn's activity-feed SPA inlines the first Voyager feed XHR
+// response (`{data, included:[…]}`) inside a hidden `<code>` element on
+// `/recent-activity/all/`. These tests exercise the routing of that embedded
+// envelope through the shared rich walker, yielding structured posts with
+// author, activity URN, snowflake-derived timestamp, and engagement.
+//
+// The fixtures are synthetic but use LinkedIn's documented decorator-envelope
+// field shapes (`$type`, compound `entityUrn`, `SocialActivityCounts`) — the
+// same shapes the live XHR path in `voyager.rs` parses against captured data.
+
+#[cfg(feature = "impersonate")]
+#[test]
+fn activity_code_envelope_extracts_structured_post() {
+    use super::auth::parse_linkedin_html;
+
+    // GIVEN: an activity page whose <code> block carries a Voyager feed
+    // envelope with one Update + its engagement counts. The activity URN
+    // 7451014806356230146 decodes to 2026-04-17T21:12:42Z.
+    let envelope = r#"{"data":{},"included":[
+        {"$type":"com.linkedin.voyager.dash.feed.Update",
+         "entityUrn":"urn:li:fsd_update:(urn:li:activity:7451014806356230146,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+         "actor":{"name":{"text":"Mikko Parkkola"}},
+         "commentary":{"text":{"text":"Shipped the LinkedIn activity-feed parser."}}},
+        {"$type":"com.linkedin.voyager.dash.feed.SocialActivityCounts",
+         "urn":"urn:li:activity:7451014806356230146",
+         "numLikes":12,"numComments":3,"numShares":1,"numImpressions":1500}
+    ]}"#;
+    let html = format!(
+        r#"<!DOCTYPE html><html><head></head><body>
+        <code style="display:none" id="bpr-guid-1"><!--{envelope}--></code>
+        </body></html>"#
+    );
+
+    // WHEN
+    let content = parse_linkedin_html(
+        &html,
+        "https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/",
+        LinkedInUrlKind::Activity,
+    )
+    .unwrap();
+    let md = &content.markdown;
+
+    // THEN: post text, URN-derived link, timestamp, and engagement all surface.
+    assert!(
+        md.contains("Shipped the LinkedIn activity-feed parser."),
+        "missing post text: {md}"
+    );
+    assert!(
+        md.contains("urn:li:activity:7451014806356230146"),
+        "missing activity URN / post URL: {md}"
+    );
+    assert!(
+        md.contains("2026-04-17T21:12:42Z"),
+        "missing snowflake timestamp: {md}"
+    );
+    assert!(md.contains("1500 impressions"), "missing impressions: {md}");
+    assert!(md.contains("12 reactions"), "missing reactions: {md}");
+    assert!(md.contains("[POST]"), "missing POST tag: {md}");
+    assert_eq!(content.metadata.platform, "LinkedIn (Activity)");
+}
+
+#[cfg(feature = "impersonate")]
+#[test]
+fn activity_code_envelope_via_prefetch_body_wrapper() {
+    use super::auth::parse_linkedin_html;
+
+    // GIVEN: the feed envelope wrapped in a pre-fetched API response shape
+    // ({status:200, body:"<json string>"}) — the Type-2 embedding LinkedIn
+    // also uses. The inner body must still be routed through the rich walker.
+    let inner = r#"{\"data\":{},\"included\":[{\"$type\":\"com.linkedin.voyager.dash.feed.Update\",\"entityUrn\":\"urn:li:fsd_update:(urn:li:activity:7451014806356230146,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)\",\"actor\":{\"name\":{\"text\":\"Mikko Parkkola\"}},\"commentary\":{\"text\":{\"text\":\"Body-wrapped post.\"}}}]}"#;
+    let html = format!(
+        r#"<!DOCTYPE html><html><head></head><body>
+        <code><!--{{"status":200,"body":"{inner}"}}--></code>
+        </body></html>"#
+    );
+
+    // WHEN
+    let content = parse_linkedin_html(
+        &html,
+        "https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/",
+        LinkedInUrlKind::Activity,
+    )
+    .unwrap();
+
+    // THEN: the wrapped envelope is rendered with timestamp + per-post URL.
+    assert!(
+        content.markdown.contains("Body-wrapped post."),
+        "missing body-wrapped post: {}",
+        content.markdown
+    );
+    assert!(
+        content.markdown.contains("2026-04-17T21:12:42Z"),
+        "missing timestamp from wrapped envelope: {}",
+        content.markdown
+    );
+}
+
+#[cfg(feature = "impersonate")]
+#[test]
+fn activity_code_envelope_does_not_leak_comment_entities() {
+    use super::auth::parse_linkedin_html;
+
+    // GIVEN: the envelope mixes a real Update with a Comment entity. Only the
+    // Update should surface as a post (structural filter, not text scraping).
+    let envelope = r#"{"data":{},"included":[
+        {"$type":"com.linkedin.voyager.dash.feed.Update",
+         "entityUrn":"urn:li:fsd_update:(urn:li:activity:7451014806356230146,MEMBER_FEED,DEBUG_REASON,DEFAULT,false)",
+         "actor":{"name":{"text":"Mikko Parkkola"}},
+         "commentary":{"text":{"text":"real post body"}}},
+        {"$type":"com.linkedin.voyager.dash.social.Comment",
+         "entityUrn":"urn:li:fsd_comment:(activity:7451014806356230146,1)",
+         "commentary":{"text":{"text":"a stray comment that must not appear"}}}
+    ]}"#;
+    let html = format!(
+        r"<!DOCTYPE html><html><head></head><body>
+        <code><!--{envelope}--></code>
+        </body></html>"
+    );
+
+    let content = parse_linkedin_html(
+        &html,
+        "https://www.linkedin.com/in/mikko-parkkola/recent-activity/all/",
+        LinkedInUrlKind::Activity,
+    )
+    .unwrap();
+
+    assert!(
+        content.markdown.contains("real post body"),
+        "missing real post: {}",
+        content.markdown
+    );
+    assert!(
+        !content.markdown.contains("stray comment"),
+        "leaked Comment entity into activity output: {}",
+        content.markdown
+    );
+}
