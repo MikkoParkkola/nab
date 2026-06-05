@@ -46,14 +46,22 @@ h3 = { version = "0.0.8", optional = true }
 h3-quinn = { version = "0.0.10", optional = true }
 bytes = "1"                         # Required for h3
 
-# TLS fingerprint impersonation (Chrome/Safari/Firefox via BoringSSL)
+# TLS fingerprint impersonation (Chrome/Safari/Firefox)
 # Bypasses anti-bot TLS fingerprinting (LinkedIn HTTP 999, etc.)
 #
-# `rquest` was renamed to `wreq` upstream. Signatures are unchanged on the 5.x
-# line, so we alias via Cargo's `package` renaming: source keeps saying
-# `rquest` / `rquest_util`, Cargo resolves them to the renamed crates.
-# Upstream issue: MikkoParkkola/nab#59
-rquest = { package = "wreq", version = "5.3", optional = true, default-features = false, features = [
+# `rquest` was renamed to `wreq` upstream, so we alias via Cargo's `package`
+# renaming: source keeps saying `rquest` / `rquest_util`, Cargo resolves them
+# to the renamed crates. Upstream issue: MikkoParkkola/nab#59
+#
+# Pinned to wreq 6.0.0-rc.x: the entire wreq 5.x line pins `lru = "^0.13"`,
+# which is affected by RUSTSEC-2026-0002 (an unsoundness advisory whose only
+# fix is lru >= 0.16.3). lru is freed only in wreq 6.0.0-rc.29 (lru ^0.18), so
+# the release security gate (osv-scanner) requires this bump. wreq 6.x also
+# moved the async runtime behind the `tokio-rt` feature (was always-on in 5.x)
+# and reworked the emulation API in wreq-util 3.x (`EmulationOption` ->
+# `Emulation` builder taking a `Profile`); see src/impersonate_client.rs.
+rquest = { package = "wreq", version = "6.0.0-rc.29", optional = true, default-features = false, features = [
+    "tokio-rt",
     "cookies",
     "brotli",
     "zstd",
@@ -61,7 +69,7 @@ rquest = { package = "wreq", version = "5.3", optional = true, default-features 
     "deflate",
     "webpki-roots",
 ] }
-rquest-util = { package = "wreq-util", version = "2.2.6", optional = true }
+rquest-util = { package = "wreq-util", version = "3.0.0-rc.12", optional = true }
 
 # WebSocket support
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
