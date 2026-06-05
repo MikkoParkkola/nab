@@ -4,6 +4,12 @@
 
 This file describes the license terms that apply to designated **Enterprise Edition (EE)** files within the `nab` repository. The Path C dual-license refactor landed in v0.9.0.
 
+## Required Notice
+
+Distributions, modified versions, forks, and derivative works that include Enterprise Edition components must preserve the following attribution (see `NOTICE`):
+
+> Required Notice: Includes nab Enterprise Edition components by Mikko Parkkola, https://github.com/MikkoParkkola/nab. Commercial use requires a separate license.
+
 ## Scope
 
 Files marked with the SPDX header
