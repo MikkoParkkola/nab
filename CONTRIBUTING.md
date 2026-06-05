@@ -128,6 +128,25 @@ Key modules:
 - **Breaking changes**: Clearly mark and explain in PR description
 - **Keep PRs focused**: One feature or fix per PR
 
+## Continuous integration
+
+CI is **docs-aware**. A `changes` job classifies each PR: when it touches a
+code path (`src/`, `crates/`, `Cargo.toml`, `Cargo.lock`, `build.rs`,
+`tests/`, `benches/`, `.github/workflows/`, `.cargo/`, `rust-toolchain*`)
+the full Rust matrix runs (format, clippy, tests, builds, package, audit).
+Documentation-only PRs (`*.md`, `docs/**`, licenses) **skip** that matrix and
+merge in seconds.
+
+Two checks are required by branch protection and always report:
+
+- **CI Gate** — aggregates the matrix; it passes when every upstream job
+  finished as success/skipped, and fails on any failure/cancellation.
+- **Secrets scan** — runs on every PR, including docs, since a doc can still
+  leak a credential.
+
+To force the full matrix for a new code path, extend the `code` filter in
+`.github/workflows/ci.yml`.
+
 ## Performance Considerations
 
 nab is optimized for speed and token efficiency:
@@ -152,4 +171,11 @@ nab is optimized for speed and token efficiency:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree your contributions will be licensed under the license that applies to the files you modify:
+
+- MIT for core files.
+- PolyForm Noncommercial 1.0.0 for Enterprise Edition files marked with `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`.
+
+If a pull request adds a new Enterprise Edition file, include the PolyForm Noncommercial SPDX header. If it adds a new core file, use the MIT license boundary unless the maintainer explicitly marks the feature as Enterprise Edition.
+
+Maintainers may designate new files as Enterprise Edition when the feature is primarily valuable for authenticated access, anti-bot handling, WAF challenge handling, browser-cookie workflows, site-specific commercial integrations, secure ingestion, hosted operations, multi-tenant service operation, or commercial platform integration. Existing MIT releases and core files that remain MIT are not retroactively relicensed.

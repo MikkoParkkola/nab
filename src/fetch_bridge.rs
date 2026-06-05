@@ -103,8 +103,12 @@ impl FetchClient {
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid URL '{full_url}': {e}"))?;
 
-        // SSRF validation: Validate initial URL
-        ssrf::validate_url(&current_url)?;
+        // SSRF validation: Validate initial URL.
+        // Secondary (synchronous plugin/SPA) fetch path honours the env-level
+        // opt-out (NAB_SSRF_ALLOW_PRIVATE / NAB_SSRF_ALLOWLIST); the per-call
+        // MCP/CLI param routes through AcceleratedClient, not this bridge.
+        let ssrf_policy = ssrf::SsrfPolicy::from_env();
+        ssrf::validate_url_with_policy(&current_url, &ssrf_policy)?;
 
         // Log the fetch for discovery
         self.lock_fetch_log().push(current_url.to_string());
@@ -145,8 +149,8 @@ impl FetchClient {
                     .join(location)
                     .map_err(|e| anyhow::anyhow!("Invalid redirect URL '{location}': {e}"))?;
 
-                // SSRF validation: Validate redirect target
-                ssrf::validate_url(&next_url)?;
+                // SSRF validation: Validate redirect target (same policy).
+                ssrf::validate_url_with_policy(&next_url, &ssrf_policy)?;
 
                 current_url = next_url;
                 continue;

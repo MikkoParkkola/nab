@@ -506,6 +506,13 @@ fn looks_like_cloudflare_challenge(body_lower: &str) -> bool {
             "cf-browser-verification",
             "cf-chl-",
             "cf-challenge",
+            // Cloudflare "managed challenge" interstitials center on this DOM
+            // hook plus the "enable javascript and cookies" copy rather than the
+            // legacy `cf-browser-verification` / "just a moment" markup. Issue
+            // #117: a Brave profile with no clearance cookie hit exactly this
+            // page, so the auto-fallback must recognise it.
+            "challenge-error-text",
+            "enable javascript and cookies to continue",
             "checking your browser before accessing",
             "just a moment...",
             "cloudflare ray id",
@@ -686,6 +693,39 @@ mod tests {
     fn classify_http_response_detects_cloudflare_challenge() {
         let body = "<div id='cf-browser-verification'>Please wait...</div>";
         let diagnostic = classify_http_response(403, body).expect("cloudflare classification");
+        assert_eq!(
+            diagnostic.kind,
+            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Cloudflare)
+        );
+    }
+
+    /// Issue #117 — the repro Medium URL returns a Cloudflare *managed
+    /// challenge* whose body carries `challenge-error-text` and the "enable
+    /// javascript and cookies" copy rather than the legacy
+    /// `cf-browser-verification` markup. The `--cookies auto` fallback hinges on
+    /// this 403 being classified as a `BrowserChallenge`, so lock the
+    /// real-world marker text into the regression suite.
+    #[test]
+    fn classify_http_response_detects_cloudflare_managed_challenge_from_issue_117() {
+        let body = "<!DOCTYPE html><html><head><title>Just a moment...</title></head>\
+             <body><div id=\"challenge-error-text\">\
+             Enable JavaScript and cookies to continue</div></body></html>";
+        let diagnostic =
+            classify_http_response(403, body).expect("managed-challenge classification");
+        assert_eq!(
+            diagnostic.kind,
+            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Cloudflare)
+        );
+    }
+
+    /// The same marker text, stripped of `Just a moment`, still classifies —
+    /// proving the fix does not lean on the legacy title string.
+    #[test]
+    fn classify_http_response_detects_challenge_error_text_without_legacy_markers() {
+        let body = "<html><body><div id=\"challenge-error-text\">\
+             Enable JavaScript and cookies to continue</div></body></html>";
+        let diagnostic =
+            classify_http_response(403, body).expect("challenge-error-text classification");
         assert_eq!(
             diagnostic.kind,
             ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Cloudflare)

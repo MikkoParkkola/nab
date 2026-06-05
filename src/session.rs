@@ -56,7 +56,7 @@ use tempfile::NamedTempFile;
 use tokio::sync::RwLock;
 
 use crate::fingerprint::{BrowserProfile, random_profile};
-use crate::ssrf::{DEFAULT_MAX_REDIRECTS, validate_redirect_target};
+use crate::ssrf::{DEFAULT_MAX_REDIRECTS, validate_redirect_target_with_policy};
 
 #[cfg(not(test))]
 const NAB_STATE_DIR: &str = ".nab";
@@ -493,7 +493,11 @@ fn build_reqwest_client(profile: &BrowserProfile, jar: Arc<SessionJar>) -> Resul
                     "too many redirects (>{DEFAULT_MAX_REDIRECTS}) in session request"
                 ));
             }
-            if let Err(error) = validate_redirect_target(attempt.url()) {
+            // Session redirects honour the env-level SSRF opt-out
+            // (NAB_SSRF_ALLOW_PRIVATE / NAB_SSRF_ALLOWLIST). Per-call MCP/CLI
+            // overrides do not flow through this reqwest redirect closure.
+            let ssrf_policy = crate::ssrf::SsrfPolicy::from_env();
+            if let Err(error) = validate_redirect_target_with_policy(attempt.url(), &ssrf_policy) {
                 return attempt.error(error.to_string());
             }
             attempt.follow()

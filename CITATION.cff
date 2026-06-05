@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If nab helps your work, please cite it and retain the project attribution notices."
+title: "nab"
+authors:
+  - family-names: "Parkkola"
+    given-names: "Mikko"
+repository-code: "https://github.com/MikkoParkkola/nab"
+license: "MIT AND LicenseRef-PolyForm-Noncommercial-1.0.0"
+date-released: "2026-04-25"
+abstract: "Multimodal web microfetch for LLM agents, with MIT core components and PolyForm Noncommercial Enterprise Edition components."
