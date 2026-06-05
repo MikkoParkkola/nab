@@ -560,23 +560,30 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     Ok(())
 }
 
-/// Fetch a URL and return the YARA-screened, token-budgeted markdown as a
-/// VALUE (instead of printing it like [`cmd_fetch`]).
+/// Screened fetch result carrying both the LLM-shaped markdown and the raw
+/// wire body, so later task rungs (e.g. API discovery) can inspect the HTML.
+pub struct FetchedContent {
+    /// YARA-screened, token-budgeted markdown — what the model consumes.
+    pub markdown: String,
+    /// Raw wire body (HTML/JSON). Used internally (e.g. API discovery); not
+    /// surfaced to the model. Empty for site-provider results (already structured).
+    pub raw_html: String,
+}
+
+/// Fetch a URL and return the screened content as a VALUE (instead of printing
+/// it like [`cmd_fetch`]). The rung-0 primitive for `nab task`.
 ///
-/// This is the rung-0 primitive for `nab task`: the task loop needs the
-/// screened content as a string to feed the model, not stdout. It reuses the
-/// same moat helpers as [`cmd_fetch`] — `build_client` (HTTP/3 + fingerprint),
-/// browser-cookie resolution, the issue-#117 cookie-profile fallback, site
-/// providers, markdown conversion, and the `guard_fetch_output` YARA screen —
-/// but omits the display-only / interactive side-effects (`print_output`,
-/// WAF interactive solving, OCR enrichment, media transcription, hebb-save,
-/// diff). Those belong to later task-engine slices.
+/// Reuses the moat helpers from [`cmd_fetch`] — `build_client` (HTTP/3 +
+/// fingerprint), browser-cookie resolution, the issue-#117 cookie-profile
+/// fallback, site providers, markdown conversion, the `guard_fetch_output`
+/// YARA screen — but omits the display-only / interactive side-effects
+/// (`print_output`, WAF interactive solving, OCR, media transcription,
+/// hebb-save, diff). Those belong to later task-engine slices.
 ///
-/// Slice-1 scaffolding: the ~40-line orchestration here is intentionally a
-/// focused subset of `cmd_fetch` rather than a risky rewrite of the flagship.
-/// Consolidate into a shared `FetchResult`-returning core when slice 1b lands
+/// Slice 1/2 scaffolding: a focused subset of `cmd_fetch` rather than a risky
+/// rewrite of the flagship. Consolidate into a shared core when slice 1b lands
 /// (tracked in docs/design/2026-05-31-nab-task-engine.md §11).
-pub async fn fetch_to_markdown(cfg: &FetchConfig) -> Result<String> {
+pub async fn fetch_screened(cfg: &FetchConfig) -> Result<FetchedContent> {
     let client = build_client(cfg.no_redirect, cfg.proxy.as_deref(), cfg.tor)?;
     let profile = client.profile().await;
     let domain = super::extract_domain(&cfg.url);
@@ -592,7 +599,10 @@ pub async fn fetch_to_markdown(cfg: &FetchConfig) -> Result<String> {
                 "task_fetch_site_provider",
                 &cfg.url,
             )?;
-            return Ok(apply_output_token_budget(&md, cfg.max_output_tokens));
+            return Ok(FetchedContent {
+                markdown: apply_output_token_budget(&md, cfg.max_output_tokens),
+                raw_html: String::new(),
+            });
         }
     }
 
@@ -611,8 +621,9 @@ pub async fn fetch_to_markdown(cfg: &FetchConfig) -> Result<String> {
     let (_status, _version, _set_cookies, content_type, _response_headers, body_bytes) =
         maybe_fallback_cookie_profiles(&client, cfg, &profile, &domain, fetched).await?;
 
-    let body_text = if cfg.raw_html {
-        String::from_utf8_lossy(&body_bytes).to_string()
+    let raw = String::from_utf8_lossy(&body_bytes).to_string();
+    let markdown = if cfg.raw_html {
+        raw.clone()
     } else {
         convert_body_to_markdown(
             &body_bytes,
@@ -625,8 +636,11 @@ pub async fn fetch_to_markdown(cfg: &FetchConfig) -> Result<String> {
         .markdown
     };
 
-    let body_text = nab::security::guard_fetch_output(&body_text, "task_fetch", &cfg.url)?;
-    Ok(apply_output_token_budget(&body_text, cfg.max_output_tokens))
+    let markdown = nab::security::guard_fetch_output(&markdown, "task_fetch", &cfg.url)?;
+    Ok(FetchedContent {
+        markdown: apply_output_token_budget(&markdown, cfg.max_output_tokens),
+        raw_html: raw,
+    })
 }
 
 async fn execute_safe_get(
