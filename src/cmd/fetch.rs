@@ -89,6 +89,10 @@ impl FetchConfig {
     /// Construct a config for a programmatic single-URL fetch (used by
     /// `nab task` rung 0): browser cookies on (the auth moat), OCR / media
     /// transcription / hebb-save off, SSRF policy from env, WAF handling Auto.
+    ///
+    /// Gated to the `task` feature: it has no consumer in the default build, so
+    /// shipping it there would be dead code (CI runs `-D warnings`).
+    #[cfg(feature = "task")]
     pub fn for_url(url: String, format: OutputFormat) -> Self {
         Self {
             url,
@@ -562,6 +566,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
 /// Screened fetch result carrying both the LLM-shaped markdown and the raw
 /// wire body, so later task rungs (e.g. API discovery) can inspect the HTML.
+#[cfg(feature = "task")]
 pub struct FetchedContent {
     /// YARA-screened, token-budgeted markdown — what the model consumes.
     pub markdown: String,
@@ -583,6 +588,7 @@ pub struct FetchedContent {
 /// Slice 1/2 scaffolding: a focused subset of `cmd_fetch` rather than a risky
 /// rewrite of the flagship. Consolidate into a shared core when slice 1b lands
 /// (tracked in docs/design/2026-05-31-nab-task-engine.md §11).
+#[cfg(feature = "task")]
 pub async fn fetch_screened(cfg: &FetchConfig) -> Result<FetchedContent> {
     let client = build_client(cfg.no_redirect, cfg.proxy.as_deref(), cfg.tor)?;
     let profile = client.profile().await;
