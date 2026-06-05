@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use rquest::StatusCode;
-use rquest_util::{Emulation, EmulationOption};
+use rquest_util::{Emulation, Profile};
 use std::time::Duration;
 
 /// Domains that require TLS fingerprint impersonation.
@@ -34,11 +34,11 @@ pub fn needs_impersonation(url: &str) -> bool {
 
 /// Select the browser emulation profile for the given URL.
 ///
-/// Chrome 137 is chosen as the default: highest version available in
-/// `wreq-util` 2.2.6 = highest probability of matching `LinkedIn`'s browser
+/// Chrome 137 is chosen as the default: a recent, widely-deployed Chrome
+/// `Profile` in `wreq-util` = high probability of matching `LinkedIn`'s browser
 /// whitelist. Older profiles (e.g. Chrome 136) get rejected with HTTP 999.
-fn select_emulation(_url: &str) -> Emulation {
-    Emulation::Chrome137
+fn select_emulation(_url: &str) -> Profile {
+    Profile::Chrome137
 }
 
 /// Response from an impersonated fetch.
@@ -81,9 +81,9 @@ pub async fn request_impersonated(
     extra_headers: Option<&[(String, String)]>,
     body: Option<Vec<u8>>,
 ) -> Result<ImpersonatedResponse> {
-    let emulation = select_emulation(url);
+    let profile = select_emulation(url);
 
-    let emulation_option = EmulationOption::builder().emulation(emulation).build();
+    let emulation_option = Emulation::builder().profile(profile).build();
 
     let client = rquest::Client::builder()
         .emulation(emulation_option)
@@ -182,6 +182,6 @@ mod tests {
     #[test]
     fn selects_chrome_137() {
         let emulation = select_emulation("https://www.linkedin.com/in/user");
-        assert_eq!(emulation, Emulation::Chrome137);
+        assert_eq!(emulation, Profile::Chrome137);
     }
 }

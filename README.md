@@ -17,6 +17,16 @@ Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 com
 
 nab is a single Rust binary that does three things very well: it **fetches** any URL as clean markdown (with your real browser cookies and anti-bot evasion), it **analyzes** any audio or video file with on-device multilingual ASR and speaker diarization, and it **watches** any URL for changes and pushes notifications when content moves. Everything runs locally. There are no API keys to set up by default. The output is shaped for LLM context windows.
 
+## Why nab
+
+- **Token-lean by design.** nab returns only what an LLM actually needs — clean markdown, BM25-lite query-focused extraction, and structure-aware token budgets — cutting the token cost of web research instead of dumping raw HTML into your context window.
+- **Multimodal, fully on-device.** Transcribe and diarize any audio or video (FluidAudio / Parakeet TDT v3 on the Apple Neural Engine — 131× realtime on a 2-hour clip, 25 EU languages, word-level timestamps, optional Qwen3-ASR for zh/ja/ko/vi) and OCR images via Apple Vision (15 languages, ~10–50 ms). No cloud, no API keys.
+- **Authenticated reach.** Real browser cookies, 1Password auto-login with TOTP/MFA, WebAuthn passkeys, fingerprint spoofing and WAF evasion — reach internal dashboards, SaaS apps, and paywalled research with the same command as a public URL.
+- **Watch the web.** Subscribe to any URL via MCP resources — conditional GETs, semantic diff, adaptive backoff. RSS for the entire web.
+- **Prompt-injection defense, on by default.** Hidden instructions addressed to your AI are surfaced to you, not silently executed by your model — see [Security](#security-prompt-injection-defense).
+
+Everything is a single local Rust binary. No cloud backend, no API keys by default, output shaped for LLM context windows.
+
 ## Quick start
 
 **Tell your AI assistant** (recommended):
@@ -47,6 +57,19 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 | `nab-mcp` | MCP 2025-11-25 server. stdio + Streamable HTTP. 12 tools, 4 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
 | `nab::content::ocr` | Apple Vision OCR engine. 15 languages. Apple Neural Engine accelerated. ~10-50 ms per image. macOS only. |
 
+## Security: prompt-injection defense
+
+Web pages increasingly carry instructions written **for the AI, not for you** — concealed in HTML comments, `display:none` / `aria-hidden` text, `data-ai` / `data-mcp` / `data-agent` attribute payloads, or WebMCP manifests. Fetch such a page with a naive tool and those hidden instructions land straight in your model's context, where they can be acted on. This is the [prompt-injection-as-phishing](https://www.theregister.com/research/2026/05/29/chatgpt-prompt-injection-turns-web-pages-into-phishing-lures/5248137) class of attack.
+
+nab treats every fetched page as hostile input and runs two local, non-networked guards **before any content reaches your agent** — on by default, no flag, no setup:
+
+- **Secure Ingestion guard** — detects and strips machine-targeted markup that is invisible to humans (AI-addressed comments, hidden `display:none` / `aria-hidden` text, agent-only `data-*` payloads, WebMCP advertisements) and **reports** each detection at `Info` / `Warn` / `Block` severity, so you see what a page *tried* to tell your agent instead of it being silently executed.
+- **YARA-X signature guard** — scans every returned body for prompt-injection, exfiltration, secret-leak, and obfuscation signatures, redacting matched sections by default. Set `NAB_YARA_ACTION=refuse` to block the fetch outright (or `NAB_YARA_BYPASS=1` as an audited emergency opt-out).
+
+The net effect: hidden instructions become **visible to you, not executed by your model** — a strong reason to point your agent at `nab fetch` instead of a built-in web-fetch tool.
+
+> **Licensing:** both guards are Enterprise Edition modules — **free for personal and non-commercial use** under [PolyForm Noncommercial 1.0.0](LICENSE-EE.md); **commercial / business use requires a commercial license** (see [COMMERCIAL.md](COMMERCIAL.md) and the [License](#license) section).
+
 ## Installation
 
 ### Homebrew (macOS, recommended)
@@ -56,29 +79,44 @@ brew tap MikkoParkkola/tap
 brew install nab
 ```
 
-### From crates.io
+### Pre-built binary (no Rust toolchain required)
 
-```bash
-cargo install nab
-```
+**Most users want this path** — these are ready-to-run binaries; nothing is compiled on your machine.
 
-Requires Rust 1.95 or newer.
-
-### Pre-built binary
+If you have `cargo-binstall`, it fetches the right pre-built binary automatically:
 
 ```bash
 cargo binstall nab
 ```
 
-Or download directly from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases):
+Otherwise download directly from [GitHub Releases](https://github.com/MikkoParkkola/nab/releases/latest). Both the `nab` CLI and the `nab-mcp` server ship for every platform below, alongside `checksums-sha256.txt`:
 
-| Platform | Binary |
-|----------|--------|
-| macOS Apple Silicon | `nab-aarch64-apple-darwin` |
-| macOS Intel | `nab-x86_64-apple-darwin` |
-| Linux x86_64 | `nab-x86_64-unknown-linux-gnu` |
-| Linux ARM64 | `nab-aarch64-unknown-linux-gnu` |
-| Windows x64 | `nab-x86_64-pc-windows-msvc.exe` |
+| Platform | CLI binary | MCP server binary |
+|----------|------------|-------------------|
+| macOS Apple Silicon | `nab-aarch64-apple-darwin` | `nab-mcp-aarch64-apple-darwin` |
+| macOS Intel | `nab-x86_64-apple-darwin` | `nab-mcp-x86_64-apple-darwin` |
+| Linux x86_64 (glibc) | `nab-x86_64-unknown-linux-gnu` | `nab-mcp-x86_64-unknown-linux-gnu` |
+| Linux x86_64 (static musl) | `nab-x86_64-unknown-linux-musl` | `nab-mcp-x86_64-unknown-linux-musl` |
+| Linux ARM64 (glibc) | `nab-aarch64-unknown-linux-gnu` | `nab-mcp-aarch64-unknown-linux-gnu` |
+| Linux ARM64 (static musl) | `nab-aarch64-unknown-linux-musl` | `nab-mcp-aarch64-unknown-linux-musl` |
+| Windows x64 | `nab-x86_64-pc-windows-msvc.exe` | `nab-mcp-x86_64-pc-windows-msvc.exe` |
+
+Example install for macOS Apple Silicon (substitute the filename for your platform):
+
+```bash
+shasum -a 256 -c checksums-sha256.txt --ignore-missing
+chmod +x nab-aarch64-apple-darwin
+mv nab-aarch64-apple-darwin /usr/local/bin/nab
+xattr -d com.apple.quarantine /usr/local/bin/nab 2>/dev/null || true
+```
+
+### From crates.io (compiles from source)
+
+Builds nab locally — requires the Rust toolchain (1.95 or newer) and takes a few minutes:
+
+```bash
+cargo install nab
+```
 
 ### From source
 
@@ -504,5 +542,7 @@ EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-No
 
 **What this means in practice**:
 - Free for noncommercial use, modification, redistribution.
-- Commercial use of EE modules requires a separate commercial license — contact `mikko.parkkola@iki.fi`.
+- Commercial use of EE modules requires a separate commercial license.
+- Companies can buy a standard commercial-use license via [GitHub Sponsors](https://github.com/sponsors/MikkoParkkola) at EUR 500/month per named project.
+- See [COMMERCIAL.md](COMMERCIAL.md) for business use, forks, wrappers, shared services, and managed-service deployments.
 - All releases prior to v0.9.0 remain entirely MIT and stay MIT forever.
