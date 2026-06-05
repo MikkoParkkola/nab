@@ -252,3 +252,36 @@ containment alternative would be shelling to a Playwright sidecar — which brea
 "the LLM installs only nab." chromiumoxide keeps that promise; that decides it.
 
 
+
+## 11. Slice-1 implementation scoping (2026-06-05, mapped against live source)
+
+Concrete integration points for the first build slice (`task` feature flag,
+action schema, `nab task` wired to rung 0). Verified against the current tree.
+
+**CLI wiring**
+- `enum Commands` — `src/main.rs:72`. Add a `Task { goal: String, url: String, ... }` variant.
+- dispatch `match cli.command` — `src/main.rs:940`. Add the `Commands::Task { .. }` arm.
+- `pub mod task;` in `src/cmd/mod.rs` (or a new top-level `src/task/`).
+- New `task` feature in `Cargo.toml [features]` (gate the command + module like
+  `analyze`/`browser`); keep it OUT of `default` until the loop is proven.
+
+**The regression-sensitive prerequisite (do FIRST, with care)**
+- Rung 0 needs the screened markdown as a RETURNED VALUE. Today there is none:
+  - `cmd_fetch(cfg: &FetchConfig) -> Result<()>` (`src/cmd/fetch.rs:142`) prints to stdout.
+  - `convert_body_to_markdown(..)` (`src/cmd/fetch.rs:823`) is private/async.
+  - `guard_fetch_output(body, surface, url) -> Result<String>` (`src/security/fetch_yara.rs:19`) is the YARA screen.
+- Extract `fetch_to_screened_markdown(cfg: &FetchConfig) -> Result<String>` from
+  `cmd_fetch`; make `cmd_fetch` a thin printer over it. This touches nab's hot
+  path (`nab fetch`), so: the full existing fetch test suite MUST stay green, and
+  add tests asserting the extracted core returns the same bytes the printer emits.
+
+**Schema (self-contained, fully tested)**
+- `src/task/schema.rs`: the §4 action enum as serde types —
+  `{ kind: api_call | js_eval | submit | extract | needs_browser | done, url,
+  method, headers, body, extract_query }` + a `TaskOutcome` result type.
+
+**Slice-1 acceptance**
+- `nab task "<goal>" <url>` (feature-gated) fetches via the extracted core, YARA-
+  screens, returns shaped markdown as a `TaskOutcome`. Bounded (single step at rung 0).
+- No regression to `nab fetch`. New unit tests for schema + the extraction parity.
+- Rungs 1-2 (API/submit) + the sampling loop land in slices 2-3 (see §7).
