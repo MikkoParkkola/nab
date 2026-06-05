@@ -228,6 +228,9 @@ default = ["cli", "http3", "impersonate", "analyze", "browser-launcher", "js-dom
 # https://github.com/FluidInference/FluidAudio
 analyze = []
 cli = []
+# Experimental API-first web-task engine (`nab task`). Opt-in until rungs 1-3
+# land; slice 1 is rung-0 only (fetch -> screened markdown -> TaskOutcome).
+task = []
 # HTTP/3 + QUIC - enabled by default for maximum performance
 # Disable with: cargo build --no-default-features --features cli
 http3 = ["quinn", "h3", "h3-quinn"]

@@ -85,6 +85,56 @@ pub struct FetchConfig {
     pub ssrf_policy: nab::SsrfPolicy,
 }
 
+impl FetchConfig {
+    /// Construct a config for a programmatic single-URL fetch (used by
+    /// `nab task` rung 0): browser cookies on (the auth moat), OCR / media
+    /// transcription / hebb-save off, SSRF policy from env, WAF handling Auto.
+    ///
+    /// Gated to the `task` feature: it has no consumer in the default build, so
+    /// shipping it there would be dead code (CI runs `-D warnings`).
+    #[cfg(feature = "task")]
+    pub fn for_url(url: String, format: OutputFormat) -> Self {
+        Self {
+            url,
+            show_headers: false,
+            show_body: false,
+            format,
+            output_file: None,
+            cookies: "auto".to_string(),
+            use_1password: false,
+            raw_html: false,
+            links: false,
+            max_body: 0,
+            max_output_tokens: None,
+            custom_headers: Vec::new(),
+            auto_referer: false,
+            warmup_url: None,
+            method: "GET".to_string(),
+            data: None,
+            capture_cookies: false,
+            no_redirect: false,
+            render: false,
+            interactive: false,
+            browser_cdp_url: None,
+            browser_headers_env: String::new(),
+            browser_wait_ms: 0,
+            batch_file: None,
+            parallel: 1,
+            proxy: None,
+            tor: false,
+            show_diff: false,
+            html_options: nab::content::html::HtmlConversionOptions::default(),
+            no_save: true,
+            no_ocr: true,
+            no_transcribe: true,
+            language: None,
+            detect_labyrinth: false,
+            waf_mode: WafMode::Auto,
+            ssrf_policy: nab::SsrfPolicy::from_env(),
+        }
+    }
+}
+
 /// Strategy for handling detected WAF challenges (AWS WAF, Cloudflare
 /// Turnstile, `DataDome`, …).
 ///
@@ -514,7 +564,91 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     Ok(())
 }
 
-/// Execute a safe GET request, honouring the supplied SSRF policy.
+/// Screened fetch result carrying both the LLM-shaped markdown and the raw
+/// wire body, so later task rungs (e.g. API discovery) can inspect the HTML.
+#[cfg(feature = "task")]
+pub struct FetchedContent {
+    /// YARA-screened, token-budgeted markdown — what the model consumes.
+    pub markdown: String,
+    /// Raw wire body (HTML/JSON). Used internally (e.g. API discovery); not
+    /// surfaced to the model. Empty for site-provider results (already structured).
+    pub raw_html: String,
+}
+
+/// Fetch a URL and return the screened content as a VALUE (instead of printing
+/// it like [`cmd_fetch`]). The rung-0 primitive for `nab task`.
+///
+/// Reuses the moat helpers from [`cmd_fetch`] — `build_client` (HTTP/3 +
+/// fingerprint), browser-cookie resolution, the issue-#117 cookie-profile
+/// fallback, site providers, markdown conversion, the `guard_fetch_output`
+/// YARA screen — but omits the display-only / interactive side-effects
+/// (`print_output`, WAF interactive solving, OCR, media transcription,
+/// hebb-save, diff). Those belong to later task-engine slices.
+///
+/// Slice 1/2 scaffolding: a focused subset of `cmd_fetch` rather than a risky
+/// rewrite of the flagship. Consolidate into a shared core when slice 1b lands
+/// (tracked in docs/design/2026-05-31-nab-task-engine.md §11).
+#[cfg(feature = "task")]
+pub async fn fetch_screened(cfg: &FetchConfig) -> Result<FetchedContent> {
+    let client = build_client(cfg.no_redirect, cfg.proxy.as_deref(), cfg.tor)?;
+    let profile = client.profile().await;
+    let domain = super::extract_domain(&cfg.url);
+    let cookie_header = super::resolve_cookie_header(&cfg.cookies, &domain);
+
+    // Site providers (official APIs / structured data) when not asked for raw HTML.
+    if !cfg.raw_html {
+        let site_router = nab::site::SiteRouter::new();
+        let cookie_opt = non_empty(&cookie_header);
+        if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
+            let md = nab::security::guard_fetch_output(
+                &site_content.markdown,
+                "task_fetch_site_provider",
+                &cfg.url,
+            )?;
+            return Ok(FetchedContent {
+                markdown: apply_output_token_budget(&md, cfg.max_output_tokens),
+                raw_html: String::new(),
+            });
+        }
+    }
+
+    let is_simple_get = cfg.method.eq_ignore_ascii_case("GET")
+        && cookie_header.is_empty()
+        && cfg.custom_headers.is_empty()
+        && cfg.data.is_none()
+        && !cfg.auto_referer
+        && !cfg.no_redirect;
+
+    let fetched = if is_simple_get {
+        execute_safe_get(&client, &cfg.url, cfg.show_headers, &cfg.ssrf_policy).await?
+    } else {
+        execute_manual_request(&client, cfg, &profile, &cookie_header).await?
+    };
+    let (_status, _version, _set_cookies, content_type, _response_headers, body_bytes) =
+        maybe_fallback_cookie_profiles(&client, cfg, &profile, &domain, fetched).await?;
+
+    let raw = String::from_utf8_lossy(&body_bytes).to_string();
+    let markdown = if cfg.raw_html {
+        raw.clone()
+    } else {
+        convert_body_to_markdown(
+            &body_bytes,
+            &content_type,
+            &cfg.url,
+            cfg.format,
+            cfg.html_options,
+        )
+        .await?
+        .markdown
+    };
+
+    let markdown = nab::security::guard_fetch_output(&markdown, "task_fetch", &cfg.url)?;
+    Ok(FetchedContent {
+        markdown: apply_output_token_budget(&markdown, cfg.max_output_tokens),
+        raw_html: raw,
+    })
+}
+
 async fn execute_safe_get(
     client: &AcceleratedClient,
     url: &str,
