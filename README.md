@@ -17,18 +17,15 @@ Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 com
 
 nab is a single Rust binary that does three things very well: it **fetches** any URL as clean markdown (with your real browser cookies and anti-bot evasion), it **analyzes** any audio or video file with on-device multilingual ASR and speaker diarization, and it **watches** any URL for changes and pushes notifications when content moves. Everything runs locally. There are no API keys to set up by default. The output is shaped for LLM context windows.
 
-## Prompt-injection defense (on by default)
+## Why nab
 
-Web pages increasingly carry instructions written **for the AI, not for you** — concealed in HTML comments, `display:none` / `aria-hidden` text, `data-ai` / `data-mcp` / `data-agent` attribute payloads, or WebMCP manifests. Fetch such a page with a naive tool and those hidden instructions land straight in your model's context, where they can be acted on. This is the [prompt-injection-as-phishing](https://www.theregister.com/research/2026/05/29/chatgpt-prompt-injection-turns-web-pages-into-phishing-lures/5248137) class of attack.
+- **Token-lean by design.** nab returns only what an LLM actually needs — clean markdown, BM25-lite query-focused extraction, and structure-aware token budgets — cutting the token cost of web research instead of dumping raw HTML into your context window.
+- **Multimodal, fully on-device.** Transcribe and diarize any audio or video (FluidAudio / Parakeet TDT v3 on the Apple Neural Engine — 131× realtime on a 2-hour clip, 25 EU languages, word-level timestamps, optional Qwen3-ASR for zh/ja/ko/vi) and OCR images via Apple Vision (15 languages, ~10–50 ms). No cloud, no API keys.
+- **Authenticated reach.** Real browser cookies, 1Password auto-login with TOTP/MFA, WebAuthn passkeys, fingerprint spoofing and WAF evasion — reach internal dashboards, SaaS apps, and paywalled research with the same command as a public URL.
+- **Watch the web.** Subscribe to any URL via MCP resources — conditional GETs, semantic diff, adaptive backoff. RSS for the entire web.
+- **Prompt-injection defense, on by default.** Hidden instructions addressed to your AI are surfaced to you, not silently executed by your model — see [Security](#security-prompt-injection-defense).
 
-nab treats every fetched page as hostile input and runs two local, non-networked guards **before any content reaches your agent** — no flag, no setup:
-
-- **Secure Ingestion guard** — detects and strips machine-targeted markup that is invisible to humans (AI-addressed comments, hidden `display:none` / `aria-hidden` text, agent-only `data-*` payloads, WebMCP advertisements) and **reports** each detection at `Info` / `Warn` / `Block` severity, so you see what a page *tried* to tell your agent instead of it being silently executed.
-- **YARA-X signature guard** — scans every returned body for prompt-injection, exfiltration, secret-leak, and obfuscation signatures, redacting matched sections by default. Set `NAB_YARA_ACTION=refuse` to block the fetch outright (or `NAB_YARA_BYPASS=1` as an audited emergency opt-out).
-
-The net effect: hidden instructions become **visible to you, not executed by your model**. That is the single biggest reason to point your agent at `nab fetch` instead of a built-in web-fetch tool.
-
-> **Licensing:** both guards are Enterprise Edition modules — **free for personal and non-commercial use** under [PolyForm Noncommercial 1.0.0](LICENSE-EE.md); **commercial / business use requires a commercial license** (see [COMMERCIAL.md](COMMERCIAL.md) and the [License](#license) section).
+Everything is a single local Rust binary. No cloud backend, no API keys by default, output shaped for LLM context windows.
 
 ## Quick start
 
@@ -59,6 +56,19 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 | `nab models fetch <name>` | Persistent install of inference model binaries. Supports `fluidaudio` (default on macOS Apple Silicon), `sherpa-onnx` (cross-platform Parakeet TDT, ~30× realtime CPU), and `whisper` (universal fallback, whisper-large-v3-turbo, 99 langs). |
 | `nab-mcp` | MCP 2025-11-25 server. stdio + Streamable HTTP. 12 tools, 4 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
 | `nab::content::ocr` | Apple Vision OCR engine. 15 languages. Apple Neural Engine accelerated. ~10-50 ms per image. macOS only. |
+
+## Security: prompt-injection defense
+
+Web pages increasingly carry instructions written **for the AI, not for you** — concealed in HTML comments, `display:none` / `aria-hidden` text, `data-ai` / `data-mcp` / `data-agent` attribute payloads, or WebMCP manifests. Fetch such a page with a naive tool and those hidden instructions land straight in your model's context, where they can be acted on. This is the [prompt-injection-as-phishing](https://www.theregister.com/research/2026/05/29/chatgpt-prompt-injection-turns-web-pages-into-phishing-lures/5248137) class of attack.
+
+nab treats every fetched page as hostile input and runs two local, non-networked guards **before any content reaches your agent** — on by default, no flag, no setup:
+
+- **Secure Ingestion guard** — detects and strips machine-targeted markup that is invisible to humans (AI-addressed comments, hidden `display:none` / `aria-hidden` text, agent-only `data-*` payloads, WebMCP advertisements) and **reports** each detection at `Info` / `Warn` / `Block` severity, so you see what a page *tried* to tell your agent instead of it being silently executed.
+- **YARA-X signature guard** — scans every returned body for prompt-injection, exfiltration, secret-leak, and obfuscation signatures, redacting matched sections by default. Set `NAB_YARA_ACTION=refuse` to block the fetch outright (or `NAB_YARA_BYPASS=1` as an audited emergency opt-out).
+
+The net effect: hidden instructions become **visible to you, not executed by your model** — a strong reason to point your agent at `nab fetch` instead of a built-in web-fetch tool.
+
+> **Licensing:** both guards are Enterprise Edition modules — **free for personal and non-commercial use** under [PolyForm Noncommercial 1.0.0](LICENSE-EE.md); **commercial / business use requires a commercial license** (see [COMMERCIAL.md](COMMERCIAL.md) and the [License](#license) section).
 
 ## Installation
 
