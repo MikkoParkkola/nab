@@ -677,6 +677,26 @@ enum Commands {
         #[arg(long, value_name = "ORIGIN")]
         http_allow_origin: Option<String>,
     },
+
+    /// Complete a web task (experimental API-first web-task engine).
+    ///
+    /// `nab task "<goal>" <url>` fetches the seed URL through the moat
+    /// (browser cookies, fingerprint, HTTP/3), YARA-screens it, and returns the
+    /// shaped markdown. Slice 1 implements rung 0 (fetch); build with
+    /// `--features task`.
+    #[cfg(feature = "task")]
+    Task {
+        /// Natural-language goal for the task.
+        goal: String,
+        /// Seed URL to start from.
+        url: String,
+        /// Output format for the fetched content.
+        #[arg(short, long, default_value = "full")]
+        format: OutputFormat,
+        /// Emit the full `TaskOutcome` as JSON instead of just the content.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1119,6 +1139,15 @@ async fn main() -> Result<()> {
             }
             Commands::Otp { domain } => {
                 cmd::cmd_otp(&domain)?;
+            }
+            #[cfg(feature = "task")]
+            Commands::Task {
+                goal,
+                url,
+                format,
+                json,
+            } => {
+                cmd::task::cmd_task(&goal, &url, format, json).await?;
             }
             Commands::Stream {
                 source,

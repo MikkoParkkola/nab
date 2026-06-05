@@ -20,6 +20,8 @@ pub mod provider;
 pub mod spa;
 pub mod stream;
 pub mod submit;
+#[cfg(feature = "task")]
+pub mod task;
 pub mod upgrade;
 pub mod validate;
 pub mod watch;
