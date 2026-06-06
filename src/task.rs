@@ -600,6 +600,92 @@ pub async fn run_task_loop<S: Sampler, F: TaskFetcher>(
     finish(LoopStop::MaxSteps, TaskStatus::Incomplete, steps)
 }
 
+// ── bench.1 measurement primitive (the kill-gate's token axis) ───────────────
+
+/// The token cost of one API-backed task, measured two ways: nab's API-first
+/// path vs. a DOM-dumping browser agent's path. The unit underlying the
+/// `bench.1` kill-gate (design §6).
+///
+/// IMPORTANT — what this is and is NOT:
+/// * This is the **token axis** of the gate, measured against a **conservative
+///   browser baseline**: the raw page HTML a DOM-dumping agent feeds its LLM.
+///   Real browser agents (Webwright/Playwright) feed MORE than raw HTML —
+///   accessibility trees and screenshots on top, and a fresh DOM dump per step —
+///   so `browser_tokens` here is a LOWER bound favorable to the browser.
+/// * It is NOT the full `bench.1` pass. The kill-gate also requires beating a
+///   live browser agent on median **latency**, over a 20-task corpus. That
+///   head-to-head needs a running Webwright + an LLM brain + per-site auth and
+///   is neither deterministic nor CI-runnable; it is the documented remaining
+///   step (see `docs/design/2026-05-31-nab-task-engine.md` §6.1). This primitive
+///   provides the deterministic, CI-runnable token-axis evidence that the moat
+///   thesis holds, nothing more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenGap {
+    /// Tokens nab feeds the host LLM: shaped seed (readability markdown) + the
+    /// discovered API's JSON response.
+    pub nab_tokens: usize,
+    /// Tokens a DOM-dumping browser agent feeds its LLM: the raw page HTML
+    /// (single dump — a conservative lower bound).
+    pub browser_tokens: usize,
+}
+
+impl TokenGap {
+    /// `browser_tokens / nab_tokens` — how many times more tokens the browser
+    /// baseline costs. `> 1.0` means nab is cheaper. Returns `f64::INFINITY` when
+    /// nab somehow costs zero tokens (degenerate empty task).
+    #[must_use]
+    pub fn ratio(&self) -> f64 {
+        if self.nab_tokens == 0 {
+            return f64::INFINITY;
+        }
+        self.browser_tokens as f64 / self.nab_tokens as f64
+    }
+
+    /// Whether nab's path is strictly cheaper than the browser baseline.
+    #[must_use]
+    pub fn nab_wins(&self) -> bool {
+        self.nab_tokens < self.browser_tokens
+    }
+}
+
+/// Measure the [`TokenGap`] for one API-backed task from its recorded inputs: the
+/// raw seed-page HTML and the discovered API's response body.
+///
+/// nab's side runs the REAL shaping pipeline — readability markdown on the seed
+/// (`nab::content::html::html_to_markdown_with_readability`, the `nab fetch`
+/// default for article HTML) plus the API JSON returned as-is — so the
+/// measurement reflects nab's actual moat, not an idealisation. The browser side
+/// is the raw HTML token count (conservative, see [`TokenGap`]).
+#[must_use]
+pub fn token_gap(seed_html: &str, api_response: &str) -> TokenGap {
+    let nab_seed = crate::content::html::html_to_markdown_with_readability(seed_html);
+    let nab_tokens = crate::content::budget::estimate_tokens(&nab_seed)
+        + crate::content::budget::estimate_tokens(api_response);
+    let browser_tokens = crate::content::budget::estimate_tokens(seed_html);
+    TokenGap {
+        nab_tokens,
+        browser_tokens,
+    }
+}
+
+/// The median token-reduction ratio across a corpus of [`TokenGap`]s — the
+/// summary statistic the `bench.1` token axis reports (design §6 uses median, not
+/// mean, to resist outlier pages). Returns `None` for an empty corpus.
+#[must_use]
+pub fn median_ratio(gaps: &[TokenGap]) -> Option<f64> {
+    if gaps.is_empty() {
+        return None;
+    }
+    let mut ratios: Vec<f64> = gaps.iter().map(TokenGap::ratio).collect();
+    ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = ratios.len() / 2;
+    Some(if ratios.len().is_multiple_of(2) {
+        f64::midpoint(ratios[mid - 1], ratios[mid])
+    } else {
+        ratios[mid]
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1180,5 +1266,94 @@ mod tests {
         let fetcher = MockFetcher::ok("x");
         let out = run_task_loop("g", "s", &[], &sampler, &fetcher, &LoopBounds::default()).await;
         assert_eq!(out.stop, LoopStop::SamplerError);
+    }
+
+    // ── bench.1 token-gap primitive ──────────────────────────────────────────
+
+    /// A chrome-heavy page: a small article buried under a large `<script>` blob,
+    /// `<style>`, and nav. Markdown conversion always drops script/style, so the
+    /// shaped output is guaranteed smaller than the raw HTML regardless of
+    /// readability's exact heuristics — a robust fixture for the measurement.
+    fn chrome_heavy_html() -> String {
+        let junk_script = "var x=0;".repeat(400); // ~3.2 KB of non-content
+        let junk_style = "a{color:red}".repeat(100);
+        format!(
+            "<html><head><style>{junk_style}</style>\
+             <script>{junk_script}</script></head><body>\
+             <nav><a href=/>home</a><a href=/about>about</a></nav>\
+             <article><h1>The Answer</h1>\
+             <p>The result you asked for is forty-two.</p></article>\
+             <footer>(c) 2026 example</footer></body></html>"
+        )
+    }
+
+    #[test]
+    fn token_gap_nab_beats_raw_dom_on_chrome_heavy_page() {
+        let html = chrome_heavy_html();
+        let gap = token_gap(&html, r#"{"answer":42}"#);
+        assert!(
+            gap.nab_wins(),
+            "nab ({}) should cost fewer tokens than the raw DOM ({})",
+            gap.nab_tokens,
+            gap.browser_tokens
+        );
+        assert!(gap.ratio() > 1.0, "ratio {} should exceed 1", gap.ratio());
+        assert!(gap.browser_tokens > gap.nab_tokens);
+    }
+
+    #[test]
+    fn token_gap_includes_the_api_response_additively() {
+        let html = chrome_heavy_html();
+        let base = token_gap(&html, "");
+        let with_api = token_gap(&html, "0123456789"); // 10 chars → +3 tokens (ceil)
+        assert_eq!(
+            with_api.nab_tokens,
+            base.nab_tokens + crate::content::budget::estimate_tokens("0123456789"),
+            "api response tokens must add to nab_tokens"
+        );
+        // The browser baseline (raw HTML) is unaffected by the API response.
+        assert_eq!(with_api.browser_tokens, base.browser_tokens);
+    }
+
+    #[test]
+    fn ratio_is_infinite_for_zero_nab_tokens() {
+        let gap = TokenGap {
+            nab_tokens: 0,
+            browser_tokens: 5,
+        };
+        assert!(gap.ratio().is_infinite());
+    }
+
+    #[test]
+    fn median_ratio_handles_empty_odd_and_even() {
+        assert!(median_ratio(&[]).is_none());
+        // Controlled ratios: 2.0, 4.0, 8.0 → median 4.0.
+        let odd = [
+            TokenGap {
+                nab_tokens: 10,
+                browser_tokens: 20,
+            },
+            TokenGap {
+                nab_tokens: 10,
+                browser_tokens: 40,
+            },
+            TokenGap {
+                nab_tokens: 10,
+                browser_tokens: 80,
+            },
+        ];
+        assert!((median_ratio(&odd).unwrap() - 4.0).abs() < f64::EPSILON);
+        // Even count → average of the two middles (2.0, 4.0) = 3.0.
+        let even = [
+            TokenGap {
+                nab_tokens: 10,
+                browser_tokens: 20,
+            },
+            TokenGap {
+                nab_tokens: 10,
+                browser_tokens: 40,
+            },
+        ];
+        assert!((median_ratio(&even).unwrap() - 3.0).abs() < f64::EPSILON);
     }
 }

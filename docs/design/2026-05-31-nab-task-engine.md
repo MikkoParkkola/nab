@@ -132,6 +132,54 @@ otherwise nab returns `delegate_to_browser` for the host skill to handle.
   tokens AND latency. **KILL-GATE: if it cannot beat a browser agent on the
   API-backed subset, it is just a worse browser agent — stop.**
 
+### 6.1 bench.1 protocol (how the kill-gate is actually run)
+
+The gate has two axes and two halves of evidence. Do not conflate them.
+
+**Metrics (both required to pass).** Over the 20-task corpus, compute the
+*median* (not mean — resists outlier pages) of:
+1. **Tokens** — total tokens fed to the LLM across the whole task (every step's
+   ingested context + the final answer). nab must have the lower median.
+2. **Latency** — wall-clock from task start to a correct answer. nab must have
+   the lower median.
+
+**Corpus (20 tasks).** Auth-gated and/or API-backed sites — nab's moat. Each
+task is `{ goal, seed_url, success_check }`; the API endpoint nab should discover
+is recorded for analysis but NOT given to either agent (both must discover it).
+Tasks are chosen when the gate is run; bias toward sites with a clean JSON API
+behind a heavy HTML page (the gap is widest there) and toward auth-gated flows a
+fresh browser cannot reach without nab's cookie/1Password/WebAuthn path.
+
+**nab measurement.** `nab task "<goal>" <seed_url>` driven by a host LLM over MCP
+sampling (the self-contained loop). Record the LLM's total prompt+completion
+tokens and wall-clock. No per-site API keys — auth is browser cookies + nab's
+login path.
+
+**Webwright baseline.** Vanilla `microsoft/Webwright` (Playwright backend) driven
+by the SAME LLM model on the SAME tasks. Record the same two numbers. This is a
+live run — it needs a browser, the LLM, and per-site credentials, so it is
+neither deterministic nor CI-runnable.
+
+**Pass/fail.** Pass iff `median(nab_tokens) < median(ww_tokens)` AND
+`median(nab_latency) < median(ww_latency)`. Any other outcome trips the
+kill-gate: stop and reconsider the thesis.
+
+#### Evidence shipped vs. remaining
+
+- **Shipped (deterministic, CI-runnable): the token-axis proxy.**
+  `nab::task::token_gap` / `median_ratio` measure nab's REAL shaping output
+  (readability markdown + API JSON) against a **conservative browser baseline**:
+  the raw page HTML a DOM-dumping agent feeds its LLM. The baseline is favorable
+  to the browser — real agents add accessibility trees, screenshots, and a fresh
+  DOM dump per step, none of which are counted here. Unit-proven that nab's path
+  is strictly cheaper on chrome-heavy pages. This is the moat *mechanism* shown
+  to hold, not the gate.
+- **Remaining (the actual kill-gate): the live head-to-head.** A real
+  20-task corpus, a running Webwright + LLM brain, per-site auth, and the
+  **latency** axis — none of which the token-axis proxy covers. Until that run
+  exists, **bench.1 is NOT cleared** and `nab task` does NOT graduate to the
+  default MCP surface (per §7 phasing).
+
 ## 7. Phasing
 
 1. export.1 (small, standalone-useful, aligned today).
