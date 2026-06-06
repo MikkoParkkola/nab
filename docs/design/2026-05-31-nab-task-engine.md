@@ -285,3 +285,90 @@ action schema, `nab task` wired to rung 0). Verified against the current tree.
   screens, returns shaped markdown as a `TaskOutcome`. Bounded (single step at rung 0).
 - No regression to `nab fetch`. New unit tests for schema + the extraction parity.
 - Rungs 1-2 (API/submit) + the sampling loop land in slices 2-3 (see §7).
+
+## 12. Slices 2-3 shipped + Slice-4 scoping (2026-06-06, mapped against live source)
+
+**Shipped on `main`:**
+- **Slice 2** (#148): rung-1 API *discovery* — `discover_apis` surfaces
+  `DiscoveredApi` leads in `TaskOutcome` (the host LLM sees callable endpoints).
+- **Slice 3** (#150): rung-1 API *execution* — `execute_action(action, format)
+  -> ActionObservation` runs a `TaskAction::ApiCall` via `fetch_screened`
+  (`fetch_config_for_api_call` maps method/headers/body onto `FetchConfig`).
+  CLI: `nab task <goal> <url> --action '<json>'` drives one step (§9.2
+  host-driven). `submit`/`extract` return an honest `Incomplete` (deferred);
+  `cmd_fetch` untouched.
+
+### 12.1 The binary-boundary constraint (load-bearing — verified 2026-06-06)
+
+The task engine today lives entirely in **`src/cmd/task.rs` + `src/cmd/fetch.rs`**,
+which compile **only into the `nab` CLI binary** (`src/cmd/` is not in `src/lib.rs`).
+`fetch_screened` and `execute_action` are therefore **unreachable from the
+`nab-mcp` binary**.
+
+Critically, `nab-mcp` already has its **own** fetch path: `FetchTool`
+(`src/bin/mcp_server/tools/fetch.rs`) builds directly on **library** primitives —
+`nab::AcceleratedClient`, `nab::content::*`, `nab::security::guard_fetch_output`,
+`nab::SafeFetchConfig` — and never calls `cmd::fetch`. The two binaries run
+**parallel fetch implementations** over a shared library substrate.
+
+This decides slice 4. The self-contained sampling loop (§9.1) can only live in
+`nab-mcp` (only it holds a client runtime to call `sampling/createMessage`, via
+the existing `src/bin/mcp_server/sampling.rs` — `is_supported` + `create_message`
++ a `MockRuntime` test harness). That loop **cannot** call
+`cmd::task::execute_action` across the binary boundary, and moving the flagship
+`cmd_fetch` stack into the library to make it reachable is exactly the
+zero-flagship-regression line we will not cross.
+
+### 12.2 Decision — promote the task core to `nab::task` (library)
+
+Build slice 4 on the **library substrate the MCP fetch tool already uses**, not
+on `cmd::fetch`:
+
+1. **Schema → lib (pure, zero-risk).** Move `TaskAction`, `TaskOutcome`,
+   `ActionObservation`, `DiscoveredApi`, `TaskStatus` from `src/cmd/task.rs` to a
+   new `src/task/` library module (`nab::task`), behind the `task` feature. These
+   are plain serde types — the move is mechanical and both binaries then share one
+   schema (today the schema is binary-only, so `nab-mcp` would otherwise have to
+   duplicate it).
+2. **Lib executor on shared primitives.** A `nab::task::execute_action` built on
+   `nab::AcceleratedClient` + cookie resolution (`nab::util::resolve_cookie_header_for_url`)
+   + `nab::ApiDiscovery` + `nab::security::guard_fetch_output` + `nab::content`
+   budget/focus. This gives the loop the core moat (HTTP/3 + fingerprint + browser
+   cookies + YARA screen + token budget) **without** depending on `cmd_fetch`.
+   The CLI's `cmd::task` becomes a thin wrapper over the lib core (or keeps its
+   `fetch_screened` path — both are acceptable; the lib core is the SSOT the loop uses).
+3. **Loop = pure, mock-tested.** `run_task_loop(goal, seed, sampler, bounds)`
+   where `sampler` is a trait abstracting `create_message` — testable with a
+   scripted mock sampler (the `MockRuntime` pattern), no real LLM. Bounded by max
+   steps / token budget / wall-clock (§4). Seeds with the lib fetch + `discover_apis`,
+   then: sample → parse `TaskAction` → `execute_action` → append trajectory →
+   check done/bounds.
+4. **MCP tool = thin wiring.** A `task` tool in `src/bin/mcp_server/tools/` that
+   calls `run_task_loop` with a real sampler over `sampling.rs`; falls back to
+   one-action-per-call when `is_supported` is false (§9.2).
+
+### 12.3 Slice-4 DoR — open items to resolve before building
+
+- **Moat scope of the lib executor.** `cmd_fetch` carries extras the lib executor
+  would NOT inherit for free: `SiteRouter` providers (lib — reusable), the
+  issue-#117 cookie-profile fallback, and WAF handling (some binary-local). Decide
+  per-extra: reuse from lib, promote, or accept a thinner rung-1 path for the loop.
+  Rung-1 `api_call` needs little of this (direct JSON endpoints); document what is
+  intentionally out.
+- **`submit` (rung 2)** still needs its own value-returning extraction from
+  `cmd_submit` (which prints + returns `Result<()>`), mirroring the `fetch_screened`
+  carve-out. Scope it as its own regression-sensitive step, not a free add.
+- **`route.1` + `bench.1` kill-gates** (§6/§7 Phase 3) become assertable once the
+  loop exists: `route.1` proves the router stops at the lowest rung (telemetry the
+  `ActionObservation.rung` field already carries); `bench.1` is the 20-task
+  median-tokens-AND-latency gate vs a browser agent — **KILL-GATE**.
+
+### 12.4 Slice-4 acceptance
+
+- `nab::task` library module (schema + executor + loop), `task`-feature-gated;
+  default `-Dwarnings` build clean (no dead-code leak), `cmd_fetch` untouched.
+- `nab-mcp` exposes a `task` tool: sampling-capable clients get the self-contained
+  loop; non-sampling clients get host-driven one-action-per-call (§9.2).
+- Loop is bounded and mock-sampler-tested end-to-end (no real LLM in CI).
+- `task.1` (3-step API-backed goal, host-driven, default build, authenticated) and
+  `route.1` (rung telemetry proves lowest-rung stop) demonstrated.
