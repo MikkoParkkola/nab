@@ -1,5 +1,17 @@
 # cargo-audit configuration (read by `cargo audit` in CI and locally).
 # Tracked in GitHub issue #134.
+#
+# Yanked-crate status (cargo audit prints these as non-failing warnings; the
+# CI `cargo audit` step has no `--deny yanked`, so it stays exit-0 / honest-green):
+#   * gimli 0.32.3 (yanked) — transitive via yara-x 1.16 -> walrus 0.26.1, which
+#     requires `gimli = "^0.32"` and so cannot accept the non-yanked 0.33.1.
+#     yara-x is already latest in its `^1.16` line; clearing this would mean
+#     bumping the security-critical YARA engine past its pin solely for a
+#     non-failing cosmetic warning — out of scope per #134's fail-fast. A second,
+#     non-yanked gimli 0.33.1 already coexists in the tree for the other consumers.
+#   * aes / lru — previously flagged in #134, now RESOLVED (no longer in the tree).
+# cargo-audit ignores RUSTSEC IDs, not yanked-by-crate, so gimli is documented
+# here rather than listed below.
 [advisories]
 ignore = [
     # bincode 2.x is unmaintained (RUSTSEC-2025-0141). Transitive dependency;
