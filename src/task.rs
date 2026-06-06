@@ -16,11 +16,29 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ApiEndpoint;
+use crate::{ApiDiscovery, ApiEndpoint};
 use std::fmt::Write as _;
 
 fn default_get_method() -> String {
     "GET".to_string()
+}
+
+/// Discover candidate API endpoints in a raw HTML body. Returns an empty vec
+/// when discovery is unavailable or finds nothing (never fails). Shared by the
+/// `nab` CLI (`cmd::task`) and the `nab-mcp` `task` tool.
+#[must_use]
+pub fn discover_apis(raw_html: &str) -> Vec<DiscoveredApi> {
+    if raw_html.is_empty() {
+        return Vec::new();
+    }
+    match ApiDiscovery::new() {
+        Ok(d) => d
+            .discover_from_html(raw_html)
+            .into_iter()
+            .map(DiscoveredApi::from)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// One action the task loop can take at a given rung (§4 of the design).
@@ -527,6 +545,20 @@ mod tests {
         assert!(!s.contains("error"));
         let back: ActionObservation = serde_json::from_str(&s).unwrap();
         assert_eq!(obs, back);
+    }
+
+    #[test]
+    fn discover_apis_finds_endpoints_and_skips_empty() {
+        assert!(discover_apis("").is_empty());
+        let html = r#"<html><body>
+            <script>fetch("/api/v1/users")</script>
+            <a href="/graphql">gql</a>
+        </body></html>"#;
+        let found = discover_apis(html);
+        assert!(
+            found.iter().any(|a| a.url.contains("/api/v1/users")),
+            "expected the /api/v1/users endpoint, got {found:?}"
+        );
     }
 
     /// A scripted fetcher — no network — for executor routing tests.
