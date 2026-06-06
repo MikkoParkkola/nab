@@ -17,6 +17,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ApiEndpoint;
+use std::fmt::Write as _;
 
 fn default_get_method() -> String {
     "GET".to_string()
@@ -219,6 +220,218 @@ fn deferred(rung: u8, why: &str) -> ActionObservation {
         content: String::new(),
         error: Some(why.to_string()),
     }
+}
+
+/// Bounds on a [`run_task_loop`] run — the loop stops at the first limit hit.
+#[derive(Debug, Clone)]
+pub struct LoopBounds {
+    /// Hard cap on the number of executed steps.
+    pub max_steps: usize,
+    /// Wall-clock cap across the whole run.
+    pub max_wall_clock: std::time::Duration,
+    /// Crude token proxy: cap on total observation content carried forward, so
+    /// the prompt cannot grow unbounded.
+    pub max_total_content_chars: usize,
+}
+
+impl Default for LoopBounds {
+    fn default() -> Self {
+        Self {
+            max_steps: 12,
+            max_wall_clock: std::time::Duration::from_mins(2),
+            max_total_content_chars: 32_000,
+        }
+    }
+}
+
+/// The loop's brain: given a prompt (goal + trajectory + discovered APIs), return
+/// the next action as JSON text. `nab-mcp` wraps `sampling/createMessage`; tests
+/// script a fixed sequence. `?Send` for the same reason as [`TaskFetcher`].
+#[async_trait::async_trait(?Send)]
+pub trait Sampler {
+    /// Return the next action as a JSON object (optionally fenced in markdown).
+    async fn next_action(&self, prompt: &str) -> anyhow::Result<String>;
+}
+
+/// One executed step of a task run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrajectoryStep {
+    pub action: TaskAction,
+    pub observation: ActionObservation,
+}
+
+/// Why a [`run_task_loop`] stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopStop {
+    /// The brain emitted a `done` action.
+    Done,
+    /// The `max_steps` bound was hit.
+    MaxSteps,
+    /// The `max_wall_clock` bound was hit.
+    Timeout,
+    /// The `max_total_content_chars` bound was hit.
+    Budget,
+    /// The sampler (brain) returned an error.
+    SamplerError,
+    /// The sampler's reply could not be parsed as a `TaskAction`.
+    ParseError,
+}
+
+/// The result of a bounded task loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopOutcome {
+    pub goal: String,
+    pub stop: LoopStop,
+    pub status: TaskStatus,
+    pub steps: Vec<TrajectoryStep>,
+    pub final_content: String,
+}
+
+/// Parse a sampler reply into a [`TaskAction`], tolerating a ```` ```json ````
+/// (or bare ```` ``` ````) markdown fence around the JSON object.
+fn parse_action(reply: &str) -> anyhow::Result<TaskAction> {
+    let trimmed = reply.trim();
+    let body = if let Some(rest) = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+    {
+        rest.trim()
+            .strip_suffix("```")
+            .map_or(rest, str::trim)
+            .trim()
+    } else {
+        trimmed
+    };
+    serde_json::from_str(body).map_err(|e| anyhow::anyhow!("could not parse action JSON: {e}"))
+}
+
+/// Build the brain prompt from the goal, seed content, discovered APIs, and the
+/// trajectory so far. The seed is truncated so the prompt stays bounded.
+fn build_prompt(
+    goal: &str,
+    seed: &str,
+    discovered: &[DiscoveredApi],
+    steps: &[TrajectoryStep],
+) -> String {
+    let mut p = String::new();
+    p.push_str("Goal: ");
+    p.push_str(goal);
+    p.push_str("\n\n");
+    p.push_str("Seed page (markdown, truncated):\n");
+    let seed_cap = 4000;
+    if seed.len() > seed_cap {
+        p.push_str(&seed[..seed_cap]);
+        p.push_str("\n…(truncated)\n\n");
+    } else {
+        p.push_str(seed);
+        p.push_str("\n\n");
+    }
+    if !discovered.is_empty() {
+        p.push_str("Discovered API endpoints (rung-1 leads):\n");
+        for d in discovered {
+            writeln!(p, "- {} {}", d.method.as_deref().unwrap_or("GET"), d.url).unwrap();
+        }
+        p.push('\n');
+    }
+    if !steps.is_empty() {
+        p.push_str("Trajectory so far:\n");
+        for (i, s) in steps.iter().enumerate() {
+            writeln!(
+                p,
+                "Step {}: rung {} {:?}",
+                i + 1,
+                s.observation.rung,
+                s.observation.status
+            )
+            .unwrap();
+        }
+        p.push('\n');
+    }
+    p.push_str(
+        "Reply with the NEXT action as a single JSON object (TaskAction schema), e.g.\n\
+         {\"kind\":\"api_call\",\"url\":\"https://...\",\"method\":\"GET\"} \
+         or {\"kind\":\"done\",\"summary\":\"...\"}.\n",
+    );
+    p
+}
+
+/// Run the bounded brain-driven loop (§4 steps 2-6 / §9.1): seed context →
+/// sample the next action → execute it via the injected `fetcher` → observe →
+/// repeat, until a `done` action, a bound, or an error. Pure logic over the
+/// injected `sampler` + `fetcher`, so it is fully testable without an LLM or a
+/// network. The host LLM is the brain (via `sampler`); nab supplies execution.
+pub async fn run_task_loop<S: Sampler, F: TaskFetcher>(
+    goal: &str,
+    seed: &str,
+    discovered: &[DiscoveredApi],
+    sampler: &S,
+    fetcher: &F,
+    bounds: &LoopBounds,
+) -> LoopOutcome {
+    let start = std::time::Instant::now();
+    let mut steps: Vec<TrajectoryStep> = Vec::new();
+    let mut content_chars: usize = 0;
+
+    let finish = |stop: LoopStop, status: TaskStatus, steps: Vec<TrajectoryStep>| {
+        let final_content = steps
+            .last()
+            .map(|s| s.observation.content.clone())
+            .unwrap_or_default();
+        LoopOutcome {
+            goal: goal.to_string(),
+            stop,
+            status,
+            steps,
+            final_content,
+        }
+    };
+
+    while steps.len() < bounds.max_steps {
+        if start.elapsed() > bounds.max_wall_clock {
+            return finish(LoopStop::Timeout, TaskStatus::Incomplete, steps);
+        }
+        let prompt = build_prompt(goal, seed, discovered, &steps);
+        let Ok(reply) = sampler.next_action(&prompt).await else {
+            return finish(LoopStop::SamplerError, TaskStatus::Incomplete, steps);
+        };
+        let Ok(action) = parse_action(&reply) else {
+            return finish(LoopStop::ParseError, TaskStatus::Incomplete, steps);
+        };
+        if let TaskAction::Done { summary } = &action {
+            let final_content = summary.clone().unwrap_or_else(|| {
+                steps
+                    .last()
+                    .map(|s| s.observation.content.clone())
+                    .unwrap_or_default()
+            });
+            return LoopOutcome {
+                goal: goal.to_string(),
+                stop: LoopStop::Done,
+                status: TaskStatus::Done,
+                steps,
+                final_content,
+            };
+        }
+        let observation =
+            execute_action(&action, fetcher)
+                .await
+                .unwrap_or_else(|e| ActionObservation {
+                    rung: 0,
+                    status: TaskStatus::Incomplete,
+                    content: String::new(),
+                    error: Some(e.to_string()),
+                });
+        content_chars += observation.content.len();
+        steps.push(TrajectoryStep {
+            action,
+            observation,
+        });
+        if content_chars > bounds.max_total_content_chars {
+            return finish(LoopStop::Budget, TaskStatus::Incomplete, steps);
+        }
+    }
+    finish(LoopStop::MaxSteps, TaskStatus::Incomplete, steps)
 }
 
 #[cfg(test)]
@@ -435,5 +648,101 @@ mod tests {
             .unwrap();
         assert_eq!(obs.status, TaskStatus::Done);
         assert!(obs.error.is_none());
+    }
+
+    /// A scripted sampler — returns a fixed sequence of replies, then errors.
+    struct ScriptedSampler {
+        replies: Vec<String>,
+        idx: std::sync::Mutex<usize>,
+    }
+
+    impl ScriptedSampler {
+        fn new(replies: &[&str]) -> Self {
+            Self {
+                replies: replies.iter().map(|s| (*s).to_string()).collect(),
+                idx: std::sync::Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl Sampler for ScriptedSampler {
+        async fn next_action(&self, _prompt: &str) -> anyhow::Result<String> {
+            let mut i = self.idx.lock().unwrap();
+            if *i >= self.replies.len() {
+                anyhow::bail!("script exhausted");
+            }
+            let r = self.replies[*i].clone();
+            *i += 1;
+            Ok(r)
+        }
+    }
+
+    #[test]
+    fn parse_action_strips_json_fences() {
+        let a = parse_action("```json\n{\"kind\":\"done\",\"summary\":\"ok\"}\n```").unwrap();
+        assert!(matches!(a, TaskAction::Done { .. }));
+        let b = parse_action("{\"kind\":\"api_call\",\"url\":\"https://x\"}").unwrap();
+        assert!(matches!(b, TaskAction::ApiCall { .. }));
+        assert!(parse_action("not json").is_err());
+    }
+
+    #[tokio::test]
+    async fn loop_runs_api_call_then_done() {
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"api_call\",\"url\":\"https://api/x\",\"method\":\"GET\"}",
+            "```json\n{\"kind\":\"done\",\"summary\":\"found it\"}\n```",
+        ]);
+        let fetcher = MockFetcher::ok("{\"result\":42}");
+        let out = run_task_loop(
+            "find the answer",
+            "seed page",
+            &[],
+            &sampler,
+            &fetcher,
+            &LoopBounds::default(),
+        )
+        .await;
+        assert_eq!(out.stop, LoopStop::Done);
+        assert_eq!(out.status, TaskStatus::Done);
+        assert_eq!(out.steps.len(), 1, "one api_call executed before done");
+        assert_eq!(out.steps[0].observation.content, "{\"result\":42}");
+        assert_eq!(out.final_content, "found it");
+    }
+
+    #[tokio::test]
+    async fn loop_stops_at_max_steps() {
+        // Sampler always asks for another api_call; never done.
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"api_call\",\"url\":\"https://a\"}",
+            "{\"kind\":\"api_call\",\"url\":\"https://b\"}",
+            "{\"kind\":\"api_call\",\"url\":\"https://c\"}",
+        ]);
+        let fetcher = MockFetcher::ok("x");
+        let bounds = LoopBounds {
+            max_steps: 2,
+            ..LoopBounds::default()
+        };
+        let out = run_task_loop("g", "s", &[], &sampler, &fetcher, &bounds).await;
+        assert_eq!(out.stop, LoopStop::MaxSteps);
+        assert_eq!(out.status, TaskStatus::Incomplete);
+        assert_eq!(out.steps.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn loop_reports_parse_error_on_garbage_reply() {
+        let sampler = ScriptedSampler::new(&["this is not json"]);
+        let fetcher = MockFetcher::ok("x");
+        let out = run_task_loop("g", "s", &[], &sampler, &fetcher, &LoopBounds::default()).await;
+        assert_eq!(out.stop, LoopStop::ParseError);
+        assert!(out.steps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn loop_reports_sampler_error_when_brain_fails() {
+        let sampler = ScriptedSampler::new(&[]); // exhausted immediately → error
+        let fetcher = MockFetcher::ok("x");
+        let out = run_task_loop("g", "s", &[], &sampler, &fetcher, &LoopBounds::default()).await;
+        assert_eq!(out.stop, LoopStop::SamplerError);
     }
 }
