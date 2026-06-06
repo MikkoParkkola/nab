@@ -744,6 +744,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn route_1_stays_at_lowest_rung_when_api_completes() {
+        // route.1 (design §6): when an API path completes the goal, the router
+        // must stay at the lowest rung — rung 3 (browser) must never fire. Brain
+        // solves via one rung-1 api_call then done.
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"api_call\",\"url\":\"https://api/x\"}",
+            "{\"kind\":\"done\",\"summary\":\"ok\"}",
+        ]);
+        let fetcher = MockFetcher::ok("data");
+        let out = run_task_loop("g", "seed", &[], &sampler, &fetcher, &LoopBounds::default()).await;
+        assert_eq!(out.stop, LoopStop::Done);
+        // Every executed step stayed at the lowest rung (≤ 1); the browser rung
+        // (3) never fired because an API path existed. This is the route.1 gate:
+        // the rung telemetry on each step is the proof.
+        assert!(
+            out.steps.iter().all(|s| s.observation.rung <= 1),
+            "router escalated above rung 1 when an API path completed: {:?}",
+            out.steps
+        );
+        assert!(
+            !out.steps.iter().any(|s| s.observation.rung == 3),
+            "rung 3 (browser) fired despite an available API path"
+        );
+    }
+
+    #[tokio::test]
     async fn loop_stops_at_max_steps() {
         // Sampler always asks for another api_call; never done.
         let sampler = ScriptedSampler::new(&[
