@@ -169,6 +169,22 @@ pub struct FetchRequest {
 pub trait TaskFetcher {
     /// Execute the request through the moat and return screened, shaped content.
     async fn fetch(&self, req: FetchRequest) -> anyhow::Result<String>;
+
+    /// Fetch a page as screened but **unconverted** HTML — used by the `submit`
+    /// rung, which must parse `<form>` markup that markdown conversion would
+    /// strip. The default delegates to [`fetch`](Self::fetch), which is correct
+    /// only for backends whose `fetch` already returns raw HTML (the CLI's
+    /// `raw_html=true` path). Backends that convert to markdown (the `nab-mcp`
+    /// fetcher) MUST override this to return the raw body so form parsing works.
+    async fn fetch_raw(&self, url: &str) -> anyhow::Result<String> {
+        self.fetch(FetchRequest {
+            url: url.to_string(),
+            method: "GET".to_string(),
+            headers: Vec::new(),
+            body: None,
+        })
+        .await
+    }
 }
 
 /// Execute ONE [`TaskAction`] at its rung and return the [`ActionObservation`]
@@ -176,10 +192,11 @@ pub trait TaskFetcher {
 /// modes call — the host-driven CLI turn and the slice-4 sampling loop — with
 /// the fetch backend injected as a [`TaskFetcher`].
 ///
-/// Executes rung-1 `api_call`. `submit` (rung 2) and `extract` (needs trajectory
-/// state) are forward API; `needs_browser` (rung 3) is the opt-in CDP backend;
-/// `done` is terminal. Deferred variants return an honest `Incomplete`
-/// observation rather than panicking, so a driver can route around them.
+/// Executes rung-1 `api_call` and rung-2 `submit`. `extract` (needs trajectory
+/// state) is handled in [`run_task_loop`]; `js_eval` and `needs_browser` (rung 3,
+/// opt-in CDP) are forward API; `done` is terminal. Deferred variants return an
+/// honest `Incomplete` observation rather than panicking, so a driver can route
+/// around them.
 pub async fn execute_action<F: TaskFetcher>(
     action: &TaskAction,
     fetcher: &F,
@@ -219,7 +236,7 @@ pub async fn execute_action<F: TaskFetcher>(
             content: String::new(),
             error: None,
         }),
-        TaskAction::Submit { .. } => Ok(deferred(2, "submit (rung 2) lands in a later slice")),
+        TaskAction::Submit { url, fields } => Ok(submit_form(url, fields, fetcher).await),
         TaskAction::JsEval { .. } => Ok(deferred(1, "js_eval lands in a later slice")),
         TaskAction::Extract { .. } => Ok(deferred(
             0,
@@ -241,6 +258,98 @@ fn deferred(rung: u8, why: &str) -> ActionObservation {
         status: TaskStatus::Incomplete,
         content: String::new(),
         error: Some(why.to_string()),
+    }
+}
+
+/// Build the submission [`FetchRequest`] from a fetched form page (raw HTML), the
+/// page URL (for relative-action resolution), and the caller's field values.
+///
+/// Pure logic over [`nab::Form`](crate::Form), so it is unit-testable on a
+/// fixture HTML string with no network. It parses the FIRST form on the page,
+/// merges the caller's fields over the form's existing fields (which already
+/// include hidden inputs, so an in-form hidden CSRF token is carried
+/// automatically), resolves the action URL against `page_url`, and encodes the
+/// body. A `GET` form becomes a query-string request; any other method becomes a
+/// urlencoded POST with the right `Content-Type`.
+///
+/// Limitation (documented, not a bug): a CSRF token that lives OUTSIDE the form
+/// (e.g. a `<meta>` tag, reached via the CLI's `--csrf-from` selector) is not
+/// handled at this rung. The common in-form hidden-input case is. This rung also
+/// handles urlencoded forms only — like `cmd_submit`, it pairs an urlencoded body
+/// with the form's declared `Content-Type`, so `multipart/form-data` (file
+/// upload) is out of scope.
+///
+/// # Errors
+/// Returns an error when the page has no form or the action URL cannot resolve.
+pub fn plan_form_submission(
+    page_html: &str,
+    page_url: &str,
+    fields: &[(String, String)],
+) -> anyhow::Result<FetchRequest> {
+    use std::collections::HashMap;
+
+    let mut forms = crate::Form::parse_all(page_html)?;
+    if forms.is_empty() {
+        anyhow::bail!("no forms found on page");
+    }
+    let mut form = forms.remove(0);
+
+    let user: HashMap<String, String> = fields.iter().cloned().collect();
+    form.merge_fields(&user);
+
+    let action_url = form.resolve_action(page_url)?;
+    let encoded = form.encode_urlencoded();
+
+    if form.method.eq_ignore_ascii_case("GET") {
+        let url = if action_url.contains('?') {
+            format!("{action_url}&{encoded}")
+        } else {
+            format!("{action_url}?{encoded}")
+        };
+        Ok(FetchRequest {
+            url,
+            method: "GET".to_string(),
+            headers: Vec::new(),
+            body: None,
+        })
+    } else {
+        Ok(FetchRequest {
+            url: action_url,
+            method: "POST".to_string(),
+            headers: vec![("Content-Type".to_string(), form.content_type().to_string())],
+            body: Some(encoded),
+        })
+    }
+}
+
+/// Execute a rung-2 `submit`: fetch the form page as raw HTML through the moat,
+/// [`plan_form_submission`] the submission, then send it through the moat and
+/// return the screened response. Two moat round-trips (page GET, then submit),
+/// both via the injected [`TaskFetcher`]; the form logic between them is pure and
+/// lib-side. Maps every failure to an honest `Incomplete` observation (mirroring
+/// the `api_call` arm) rather than propagating an error, so a driver can route
+/// around a failed submit.
+async fn submit_form<F: TaskFetcher>(
+    url: &str,
+    fields: &[(String, String)],
+    fetcher: &F,
+) -> ActionObservation {
+    let page = match fetcher.fetch_raw(url).await {
+        Ok(p) => p,
+        Err(e) => return deferred(2, &format!("submit: fetching the form page failed: {e}")),
+    };
+    let req = match plan_form_submission(&page, url, fields) {
+        Ok(r) => r,
+        Err(e) => return deferred(2, &format!("submit: {e}")),
+    };
+    match fetcher.fetch(req).await {
+        Ok(content) => ActionObservation {
+            rung: 2,
+            status: TaskStatus::Done,
+            content,
+            error: None,
+        },
+        Err(e) => deferred(2, &format!("submit: posting the form failed: {e}")),
     }
 }
 
@@ -604,6 +713,9 @@ mod tests {
     struct MockFetcher {
         reply: anyhow::Result<String>,
         last: std::sync::Mutex<Option<FetchRequest>>,
+        /// Form-page HTML returned by `fetch_raw` (the submit-rung page GET). When
+        /// `None`, `fetch_raw` falls back to the default (delegates to `fetch`).
+        form_page: Option<String>,
     }
 
     impl MockFetcher {
@@ -611,13 +723,21 @@ mod tests {
             Self {
                 reply: Ok(body.to_string()),
                 last: std::sync::Mutex::new(None),
+                form_page: None,
             }
         }
         fn err(msg: &str) -> Self {
             Self {
                 reply: Err(anyhow::anyhow!("{msg}")),
                 last: std::sync::Mutex::new(None),
+                form_page: None,
             }
+        }
+        /// Make `fetch_raw` (the submit page GET) return `html`, so the submit
+        /// send (`fetch`) reply stays distinct and is the one recorded in `last`.
+        fn with_form_page(mut self, html: &str) -> Self {
+            self.form_page = Some(html.to_string());
+            self
         }
     }
 
@@ -628,6 +748,20 @@ mod tests {
                 Ok(s) => Ok(s.clone()),
                 Err(e) => Err(anyhow::anyhow!("{e}")),
             }
+        }
+        async fn fetch_raw(&self, url: &str) -> anyhow::Result<String> {
+            // The page GET does NOT record `last`; the submit send (`fetch`) does,
+            // so `last` reflects the submission request the executor built.
+            if let Some(page) = &self.form_page {
+                return Ok(page.clone());
+            }
+            self.fetch(FetchRequest {
+                url: url.to_string(),
+                method: "GET".to_string(),
+                headers: Vec::new(),
+                body: None,
+            })
+            .await
         }
     }
 
@@ -686,18 +820,11 @@ mod tests {
         let f = MockFetcher::ok("unused");
         let cases = vec![
             (
-                TaskAction::Submit {
-                    url: "https://x".into(),
-                    fields: vec![],
-                },
-                2u8,
-            ),
-            (
                 TaskAction::JsEval {
                     url: "https://x".into(),
                     script: "1".into(),
                 },
-                1,
+                1u8,
             ),
             (
                 TaskAction::Extract {
@@ -725,6 +852,114 @@ mod tests {
             .unwrap();
         assert_eq!(obs.status, TaskStatus::Done);
         assert!(obs.error.is_none());
+    }
+
+    /// A POST form with a hidden CSRF input plus two user fields.
+    const POST_FORM_HTML: &str = r#"<html><body>
+        <form method="post" action="/login">
+          <input type="hidden" name="csrf" value="tok123">
+          <input type="text" name="email">
+          <input type="password" name="password">
+        </form></body></html>"#;
+
+    #[test]
+    fn plan_form_submission_builds_post_with_merged_and_carried_fields() {
+        let req = plan_form_submission(
+            POST_FORM_HTML,
+            "https://site.test/login-page",
+            &[
+                ("email".to_string(), "a@b.com".to_string()),
+                ("password".to_string(), "pw".to_string()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(req.method, "POST");
+        assert!(req.url.contains("site.test"), "url: {}", req.url);
+        assert!(
+            req.url.ends_with("/login"),
+            "action not resolved: {}",
+            req.url
+        );
+        assert_eq!(
+            req.headers
+                .iter()
+                .find(|(n, _)| n == "Content-Type")
+                .map(|(_, v)| v.as_str()),
+            Some("application/x-www-form-urlencoded")
+        );
+        let body = req.body.as_deref().unwrap();
+        // Hidden CSRF carried automatically; user fields merged in.
+        assert!(body.contains("csrf=tok123"), "csrf not carried: {body}");
+        assert!(
+            body.contains("password=pw"),
+            "user field not merged: {body}"
+        );
+        assert!(body.contains("email="), "email field missing: {body}");
+    }
+
+    #[test]
+    fn plan_form_submission_builds_get_query() {
+        let html = r#"<form method="get" action="/search"><input name="q"></form>"#;
+        let req = plan_form_submission(
+            html,
+            "https://site.test/",
+            &[("q".to_string(), "rust".to_string())],
+        )
+        .unwrap();
+        assert_eq!(req.method, "GET");
+        assert!(req.body.is_none(), "GET must not carry a body");
+        assert!(
+            req.url.contains("q=rust"),
+            "query not appended: {}",
+            req.url
+        );
+        assert!(req.url.contains("/search"), "action missing: {}", req.url);
+    }
+
+    #[test]
+    fn plan_form_submission_errors_on_no_form() {
+        let err = plan_form_submission("<html>nothing here</html>", "https://x/", &[]).unwrap_err();
+        assert!(err.to_string().contains("no forms"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn execute_action_submit_posts_form_through_fetcher() {
+        // fetch_raw returns the form page; fetch returns the post-submit response
+        // and records the submission request the executor built.
+        let f = MockFetcher::ok("welcome back").with_form_page(POST_FORM_HTML);
+        let action = TaskAction::Submit {
+            url: "https://site.test/login-page".into(),
+            fields: vec![
+                ("email".into(), "a@b.com".into()),
+                ("password".into(), "pw".into()),
+            ],
+        };
+        let obs = execute_action(&action, &f).await.unwrap();
+        assert_eq!(obs.rung, 2, "submit is rung 2");
+        assert_eq!(obs.status, TaskStatus::Done);
+        assert_eq!(obs.content, "welcome back");
+        assert!(obs.error.is_none());
+        // The recorded request is the SUBMISSION (not the page GET).
+        let req = f.last.lock().unwrap().clone().unwrap();
+        assert_eq!(req.method, "POST");
+        assert!(req.url.ends_with("/login"));
+        let body = req.body.as_deref().unwrap();
+        assert!(body.contains("csrf=tok123"));
+        assert!(body.contains("password=pw"));
+    }
+
+    #[tokio::test]
+    async fn execute_action_submit_incomplete_on_no_form() {
+        let f = MockFetcher::ok("unused").with_form_page("<html>no form here</html>");
+        let action = TaskAction::Submit {
+            url: "https://x/".into(),
+            fields: vec![],
+        };
+        let obs = execute_action(&action, &f).await.unwrap();
+        assert_eq!(obs.rung, 2);
+        assert_eq!(obs.status, TaskStatus::Incomplete);
+        assert!(obs.content.is_empty());
+        assert!(obs.error.unwrap().contains("no forms"));
     }
 
     /// A scripted sampler — returns a fixed sequence of replies, then errors.

@@ -75,6 +75,35 @@ impl TaskFetcher for McpFetcher {
             nab::security::guard_fetch_output(&conversion.markdown, "mcp_task_api", &req.url)?;
         Ok(screened)
     }
+
+    async fn fetch_raw(&self, url: &str) -> anyhow::Result<String> {
+        // The submit rung needs the form page as raw `<form>` HTML — markdown
+        // conversion (the `fetch` path) would strip it. Same moat (client,
+        // fingerprint, cookies, SSRF, YARA screen), but no markdown conversion.
+        let client: &AcceleratedClient = get_client().await;
+        let profile = client.profile().await;
+        let mut headers = profile.to_headers();
+        let cookie_header = resolve_cookie_header(url, None);
+        if !cookie_header.is_empty() {
+            headers.insert(COOKIE, HeaderValue::from_str(&cookie_header)?);
+        }
+        let resp = client
+            .request_safe(
+                url,
+                SafeRequestOptions {
+                    method: Method::GET,
+                    headers,
+                    body: None,
+                    config: SafeFetchConfig::default(),
+                    ssrf_policy: SsrfPolicy::from_env(),
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let raw = String::from_utf8_lossy(&resp.body);
+        let screened = nab::security::guard_fetch_output(&raw, "mcp_task_submit", url)?;
+        Ok(screened)
+    }
 }
 
 /// The loop's brain over MCP sampling: forwards the prompt to the connected
