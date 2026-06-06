@@ -690,6 +690,11 @@ enum Commands {
         goal: String,
         /// Seed URL to start from.
         url: String,
+        /// Execute one task action (JSON) instead of the seed fetch — the
+        /// host-driven control turn. Currently supports rung-1 `api_call`, e.g.
+        /// `--action '{"kind":"api_call","url":"https://api/x","method":"GET"}'`.
+        #[arg(long)]
+        action: Option<String>,
         /// Output format for the fetched content.
         #[arg(short, long, default_value = "full")]
         format: OutputFormat,
@@ -1144,10 +1149,11 @@ async fn main() -> Result<()> {
             Commands::Task {
                 goal,
                 url,
+                action,
                 format,
                 json,
             } => {
-                cmd::task::cmd_task(&goal, &url, format, json).await?;
+                cmd::task::cmd_task(&goal, &url, action.as_deref(), format, json).await?;
             }
             Commands::Stream {
                 source,
