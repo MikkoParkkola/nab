@@ -221,9 +221,11 @@ pub async fn execute_action<F: TaskFetcher>(
         }),
         TaskAction::Submit { .. } => Ok(deferred(2, "submit (rung 2) lands in a later slice")),
         TaskAction::JsEval { .. } => Ok(deferred(1, "js_eval lands in a later slice")),
-        TaskAction::Extract { .. } => {
-            Ok(deferred(1, "extract needs trajectory state (loop slice)"))
-        }
+        TaskAction::Extract { .. } => Ok(deferred(
+            0,
+            "extract is a loop-level action (shapes trajectory state); \
+             not available in stateless single-action mode",
+        )),
         TaskAction::NeedsBrowser { reason } => Ok(deferred(
             3,
             &format!("browser rung is opt-in and lands in a later slice: {reason}"),
@@ -239,6 +241,30 @@ fn deferred(rung: u8, why: &str) -> ActionObservation {
         status: TaskStatus::Incomplete,
         content: String::new(),
         error: Some(why.to_string()),
+    }
+}
+
+/// Apply query-focused extraction (the BM25-lite content pipeline) to the
+/// CURRENT response — the loop-level `extract` action (§4). Unlike the rung
+/// actions in [`execute_action`], `extract` performs no network work; it reshapes
+/// content already in the trajectory, so it lives in the loop (which owns that
+/// state) and is classified rung 0. Returns an honest `Incomplete` when there is
+/// no content to shape rather than a misleading empty `Done`.
+fn extract_from_content(prior: &str, extract_query: &str) -> ActionObservation {
+    if prior.is_empty() {
+        return ActionObservation {
+            rung: 0,
+            status: TaskStatus::Incomplete,
+            content: String::new(),
+            error: Some("extract: no prior content available to shape".to_string()),
+        };
+    }
+    let focused = crate::content::focus::extract_focused(prior, extract_query);
+    ActionObservation {
+        rung: 0,
+        status: TaskStatus::Done,
+        content: focused.markdown,
+        error: None,
     }
 }
 
@@ -434,7 +460,16 @@ pub async fn run_task_loop<S: Sampler, F: TaskFetcher>(
                 final_content,
             };
         }
-        let observation =
+        // `extract` is a loop-level action: it shapes the CURRENT response, so it
+        // needs trajectory state `execute_action` (stateless) does not have. The
+        // current response is the most recent step's content, or the seed page
+        // before any step has run. Pure content shaping, no network → rung 0.
+        let observation = if let TaskAction::Extract { extract_query } = &action {
+            let prior = steps
+                .last()
+                .map_or(seed, |s| s.observation.content.as_str());
+            extract_from_content(prior, extract_query)
+        } else {
             execute_action(&action, fetcher)
                 .await
                 .unwrap_or_else(|e| ActionObservation {
@@ -442,7 +477,8 @@ pub async fn run_task_loop<S: Sampler, F: TaskFetcher>(
                     status: TaskStatus::Incomplete,
                     content: String::new(),
                     error: Some(e.to_string()),
-                });
+                })
+        };
         content_chars += observation.content.len();
         steps.push(TrajectoryStep {
             action,
@@ -595,6 +631,13 @@ mod tests {
         }
     }
 
+    /// The URL of the last request a [`MockFetcher`] saw, or `None` if it was
+    /// never called — used to assert that loop-level actions (`extract`) do not
+    /// touch the network.
+    fn f_last_url(f: &MockFetcher) -> Option<String> {
+        f.last.lock().unwrap().as_ref().map(|r| r.url.clone())
+    }
+
     #[tokio::test]
     async fn execute_action_routes_api_call_through_the_fetcher() {
         let f = MockFetcher::ok("{\"ok\":true}");
@@ -660,7 +703,7 @@ mod tests {
                 TaskAction::Extract {
                     extract_query: "t".into(),
                 },
-                1,
+                0,
             ),
             (
                 TaskAction::NeedsBrowser {
@@ -767,6 +810,105 @@ mod tests {
             !out.steps.iter().any(|s| s.observation.rung == 3),
             "rung 3 (browser) fired despite an available API path"
         );
+    }
+
+    /// A 6-section markdown doc the focus pipeline can actually filter
+    /// (`extract_focused` passes through ≤3 sections unchanged).
+    const MULTI_SECTION_MD: &str = "# Intro\n\nWelcome.\n\n## Auth\n\nBearer tokens and \
+        authentication flow.\n\n## Styling\n\nCSS rules.\n\n## Deploy\n\nDocker deploy.\n\n\
+        ## Logging\n\nJSON logs.\n\n## Metrics\n\nProm metrics.";
+
+    #[tokio::test]
+    async fn loop_extract_shapes_prior_step_content() {
+        // api_call → extract → done. `extract` is loop-level: it reshapes the
+        // CURRENT response (the api_call's content) via the focus pipeline, at
+        // rung 0 (no network), without a fetcher round-trip.
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"api_call\",\"url\":\"https://api/doc\"}",
+            "{\"kind\":\"extract\",\"extract_query\":\"authentication bearer tokens\"}",
+            "{\"kind\":\"done\"}",
+        ]);
+        let fetcher = MockFetcher::ok(MULTI_SECTION_MD);
+        let out = run_task_loop("g", "seed", &[], &sampler, &fetcher, &LoopBounds::default()).await;
+        assert_eq!(out.stop, LoopStop::Done);
+        assert_eq!(
+            out.steps.len(),
+            2,
+            "api_call + extract executed before done"
+        );
+        let extract_step = &out.steps[1];
+        assert!(
+            matches!(extract_step.action, TaskAction::Extract { .. }),
+            "second step should be the extract action"
+        );
+        assert_eq!(extract_step.observation.rung, 0, "extract is rung 0");
+        assert_eq!(extract_step.observation.status, TaskStatus::Done);
+        assert!(extract_step.observation.error.is_none());
+        // Relevant section kept; the doc was actually filtered (omitted marker).
+        assert!(
+            extract_step.observation.content.contains("## Auth"),
+            "extract dropped the relevant section: {}",
+            extract_step.observation.content
+        );
+        assert!(
+            extract_step.observation.content.contains("omitted —"),
+            "extract did not filter — no omitted-section marker"
+        );
+        assert!(
+            extract_step.observation.content.len() < MULTI_SECTION_MD.len(),
+            "focused content should be shorter than the source"
+        );
+        // No fetch happened for the extract step (fetcher only saw the api_call).
+        assert_eq!(
+            f_last_url(&fetcher),
+            Some("https://api/doc".to_string()),
+            "extract must not hit the fetcher"
+        );
+    }
+
+    #[tokio::test]
+    async fn loop_extract_falls_back_to_seed_when_no_prior_step() {
+        // extract as the FIRST action shapes the seed page (the current response
+        // before any step has run).
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"extract\",\"extract_query\":\"authentication bearer tokens\"}",
+            "{\"kind\":\"done\"}",
+        ]);
+        let fetcher = MockFetcher::ok("unused");
+        let out = run_task_loop(
+            "g",
+            MULTI_SECTION_MD,
+            &[],
+            &sampler,
+            &fetcher,
+            &LoopBounds::default(),
+        )
+        .await;
+        assert_eq!(out.stop, LoopStop::Done);
+        assert_eq!(out.steps.len(), 1);
+        let obs = &out.steps[0].observation;
+        assert_eq!(obs.rung, 0);
+        assert_eq!(obs.status, TaskStatus::Done);
+        assert!(obs.content.contains("## Auth"));
+        assert!(obs.content.contains("omitted —"));
+        // The fetcher was never called — extract shaped the seed directly.
+        assert!(f_last_url(&fetcher).is_none());
+    }
+
+    #[tokio::test]
+    async fn loop_extract_incomplete_when_no_content_to_shape() {
+        // extract first, with an EMPTY seed → honest Incomplete, not empty Done.
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"extract\",\"extract_query\":\"anything\"}",
+            "{\"kind\":\"done\"}",
+        ]);
+        let fetcher = MockFetcher::ok("unused");
+        let out = run_task_loop("g", "", &[], &sampler, &fetcher, &LoopBounds::default()).await;
+        assert_eq!(out.stop, LoopStop::Done);
+        let obs = &out.steps[0].observation;
+        assert_eq!(obs.status, TaskStatus::Incomplete);
+        assert!(obs.content.is_empty());
+        assert!(obs.error.as_deref().unwrap().contains("no prior content"));
     }
 
     #[tokio::test]
