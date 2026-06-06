@@ -70,6 +70,10 @@ pub mod session;
 pub mod site;
 pub mod ssrf;
 pub mod stream;
+/// Task-engine schema (experimental). Feature-gated; shared by the `nab` CLI
+/// executor and the `nab-mcp` self-contained loop.
+#[cfg(feature = "task")]
+pub mod task;
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]
 pub mod util;

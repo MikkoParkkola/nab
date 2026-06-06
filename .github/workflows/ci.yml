@@ -91,7 +91,7 @@ jobs:
             net_tests: "0"
           - name: task-feature
             os: ubuntu-latest
-            command: cargo test --locked --features task --bin nab cmd::task
+            command: cargo test --locked --features task --lib --bin nab task
             net_tests: "0"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
