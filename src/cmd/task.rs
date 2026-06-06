@@ -1,11 +1,17 @@
-//! `nab task` — API-first web-task engine (Phase 1, slice 1: rung 0).
+//! `nab task` — API-first web-task engine (Phase 1).
 //!
-//! `nab task "<goal>" <url>` is the single-contact-point entry. Slice 1
-//! implements rung 0 only: fetch the seed URL through the moat (browser
-//! cookies, fingerprint, HTTP/3), YARA-screen it, and return the shaped
-//! markdown as a [`TaskOutcome`]. Rungs 1-3 (API / form / browser) and the
-//! MCP-sampling control loop land in later slices — see
-//! `docs/design/2026-05-31-nab-task-engine.md`.
+//! `nab task "<goal>" <url>` is the single-contact-point entry. Build slices:
+//! * Slice 1 (rung 0): fetch the seed URL through the moat (browser cookies,
+//!   fingerprint, HTTP/3), YARA-screen it, return shaped markdown.
+//! * Slice 2 (rung-1 discovery): surface API endpoints found on the page as
+//!   [`DiscoveredApi`] leads the host LLM can call directly.
+//! * Slice 3 (rung-1 execution): execute one caller-chosen [`TaskAction`] —
+//!   currently `api_call` — via [`execute_action`], returning an
+//!   [`ActionObservation`]. This is the §9.2 host-driven control flow.
+//!
+//! The self-contained MCP-sampling control loop (rungs 2-3, the bounded
+//! brain-driven loop) lands in a later slice — see
+//! `docs/design/2026-05-31-nab-task-engine.md` §7/§9.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -105,12 +111,62 @@ pub struct TaskOutcome {
     pub discovered_apis: Vec<DiscoveredApi>,
 }
 
+/// The result of executing ONE [`TaskAction`] — the OBSERVE half of the loop
+/// (§4 step 4). Returned by [`execute_action`] so the host LLM (or the slice-4
+/// sampling loop) can inspect the outcome and decide the next step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionObservation {
+    /// The rung that executed the action (1 = API/JS, 2 = submit, 3 = browser).
+    pub rung: u8,
+    pub status: TaskStatus,
+    /// YARA-screened, token-budgeted content the action produced (empty on error
+    /// or when the action is not executable in the current slice).
+    pub content: String,
+    /// Set when the action failed or is deferred to a later slice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Run a web task.
 ///
-/// Slice 1: rung 0 only — fetch the seed URL (moat applied), YARA-screen, and
-/// return the shaped markdown. When `as_json` is set the full [`TaskOutcome`]
-/// is emitted as pretty JSON; otherwise just the content is printed.
-pub async fn cmd_task(goal: &str, url: &str, format: OutputFormat, as_json: bool) -> Result<()> {
+/// Two modes, both host-driven (no API key — the caller's LLM is the brain):
+///
+/// * **Seed (no `action`)** — slice 1/2: fetch the seed URL through the moat,
+///   YARA-screen, return shaped markdown plus rung-1 API leads discovered on the
+///   page. This is the loop's first turn.
+/// * **Execute (`action` set)** — slice 3: execute one caller-chosen
+///   [`TaskAction`] (currently rung-1 `api_call`) via [`execute_action`] and
+///   return its [`ActionObservation`]. This is the §9.2 host-driven control
+///   flow: a no-sampling client reads the discovered APIs, then drives nab
+///   one step per call. The slice-4 sampling loop calls `execute_action`
+///   internally instead of round-tripping through the CLI.
+///
+/// When `as_json` is set the full structured result is emitted as pretty JSON;
+/// otherwise just the content is printed.
+pub async fn cmd_task(
+    goal: &str,
+    url: &str,
+    action_json: Option<&str>,
+    format: OutputFormat,
+    as_json: bool,
+) -> Result<()> {
+    if let Some(raw) = action_json {
+        let action: TaskAction =
+            serde_json::from_str(raw).map_err(|e| anyhow::anyhow!("invalid --action JSON: {e}"))?;
+        let obs = execute_action(&action, format).await?;
+        if as_json {
+            println!("{}", serde_json::to_string_pretty(&obs)?);
+        } else {
+            if let Some(err) = &obs.error {
+                eprintln!("[task] rung {} did not complete: {err}", obs.rung);
+            }
+            if !obs.content.is_empty() {
+                println!("{}", obs.content);
+            }
+        }
+        return Ok(());
+    }
+
     let cfg = FetchConfig::for_url(url.to_string(), format);
     let fetched = fetch_screened(&cfg).await?;
 
@@ -153,6 +209,102 @@ fn discover_apis(raw_html: &str) -> Vec<DiscoveredApi> {
             .map(DiscoveredApi::from)
             .collect(),
         Err(_) => Vec::new(),
+    }
+}
+
+/// Build a [`FetchConfig`] for a rung-1 `api_call`, reusing the moat
+/// (`build_client` HTTP/3 + fingerprint, browser cookies, the YARA screen) via
+/// [`FetchConfig::for_url`]. The action's method, headers, and body are mapped
+/// onto the config so [`fetch_screened`] routes through `execute_manual_request`
+/// (cookies + custom headers + body), not the simple-GET fast path.
+///
+/// Returns `None` for non-`api_call` variants — they execute elsewhere or in a
+/// later slice. Kept separate from [`execute_action`] so the pure mapping is
+/// unit-testable without a network round-trip.
+fn fetch_config_for_api_call(action: &TaskAction, format: OutputFormat) -> Option<FetchConfig> {
+    let TaskAction::ApiCall {
+        url,
+        method,
+        headers,
+        body,
+        ..
+    } = action
+    else {
+        return None;
+    };
+    let mut cfg = FetchConfig::for_url(url.clone(), format);
+    cfg.method.clone_from(method);
+    cfg.data.clone_from(body);
+    cfg.custom_headers = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect();
+    // API responses are typically JSON/structured — return the raw screened body
+    // rather than running readability extraction tuned for article HTML.
+    cfg.raw_html = true;
+    Some(cfg)
+}
+
+/// Execute ONE [`TaskAction`] at its rung and return the [`ActionObservation`]
+/// (the ROUTE+ACT+OBSERVE of §4, steps 3-4). This is the shared executor both
+/// control modes call: the host-driven CLI turn (`nab task … --action`) and the
+/// slice-4 self-contained sampling loop.
+///
+/// Slice 3 executes rung-1 `api_call`. The remaining variants are forward API:
+/// `submit` (rung 2) and `extract` (needs trajectory state) land with the loop
+/// slice; `needs_browser` (rung 3) is the opt-in CDP backend; `done` is terminal
+/// (owned by the loop, not the executor). Deferred variants return an honest
+/// `Incomplete` observation with a reason rather than panicking, so a driver can
+/// route around them.
+pub async fn execute_action(
+    action: &TaskAction,
+    format: OutputFormat,
+) -> Result<ActionObservation> {
+    match action {
+        TaskAction::ApiCall { .. } => {
+            let cfg = fetch_config_for_api_call(action, format)
+                .expect("ApiCall always maps to a FetchConfig");
+            match fetch_screened(&cfg).await {
+                Ok(fetched) => Ok(ActionObservation {
+                    rung: 1,
+                    status: TaskStatus::Done,
+                    content: fetched.markdown,
+                    error: None,
+                }),
+                Err(e) => Ok(ActionObservation {
+                    rung: 1,
+                    status: TaskStatus::Incomplete,
+                    content: String::new(),
+                    error: Some(e.to_string()),
+                }),
+            }
+        }
+        TaskAction::Done { .. } => Ok(ActionObservation {
+            rung: 0,
+            status: TaskStatus::Done,
+            content: String::new(),
+            error: None,
+        }),
+        TaskAction::Submit { .. } => Ok(deferred(2, "submit (rung 2) lands in a later slice")),
+        TaskAction::JsEval { .. } => Ok(deferred(1, "js_eval lands in a later slice")),
+        TaskAction::Extract { .. } => {
+            Ok(deferred(1, "extract needs trajectory state (loop slice)"))
+        }
+        TaskAction::NeedsBrowser { reason } => Ok(deferred(
+            3,
+            &format!("browser rung is opt-in and lands in a later slice: {reason}"),
+        )),
+    }
+}
+
+/// An observation for an action that is valid schema but not executable in the
+/// current slice — honest `Incomplete` with the reason, never a panic.
+fn deferred(rung: u8, why: &str) -> ActionObservation {
+    ActionObservation {
+        rung,
+        status: TaskStatus::Incomplete,
+        content: String::new(),
+        error: Some(why.to_string()),
     }
 }
 
@@ -246,5 +398,114 @@ mod tests {
         let s = serde_json::to_string(&d).unwrap();
         let back: DiscoveredApi = serde_json::from_str(&s).unwrap();
         assert_eq!(d, back);
+    }
+
+    #[test]
+    fn api_call_maps_method_body_and_headers_onto_fetch_config() {
+        let action = TaskAction::ApiCall {
+            url: "https://api.example.test/v1/items".into(),
+            method: "POST".into(),
+            headers: vec![
+                ("Authorization".into(), "Bearer t0ken".into()),
+                ("Accept".into(), "application/json".into()),
+            ],
+            body: Some(r#"{"q":"rust"}"#.into()),
+            extract_query: None,
+        };
+        let cfg = fetch_config_for_api_call(&action, OutputFormat::Full)
+            .expect("api_call maps to a config");
+        assert_eq!(cfg.url, "https://api.example.test/v1/items");
+        assert_eq!(cfg.method, "POST");
+        assert_eq!(cfg.data.as_deref(), Some(r#"{"q":"rust"}"#));
+        // Headers become "Name: Value" strings (the format fetch.rs split_once parses).
+        assert!(
+            cfg.custom_headers
+                .contains(&"Authorization: Bearer t0ken".to_string())
+        );
+        assert!(
+            cfg.custom_headers
+                .contains(&"Accept: application/json".to_string())
+        );
+        // raw_html so an API/JSON body is returned screened-but-unmangled.
+        assert!(cfg.raw_html);
+    }
+
+    #[test]
+    fn fetch_config_for_api_call_is_none_for_non_api_actions() {
+        let not_api = TaskAction::Submit {
+            url: "https://x".into(),
+            fields: vec![],
+        };
+        assert!(fetch_config_for_api_call(&not_api, OutputFormat::Full).is_none());
+    }
+
+    #[tokio::test]
+    async fn execute_action_defers_unsupported_variants_without_panicking() {
+        // submit (rung 2), js_eval, extract, needs_browser (rung 3) are valid
+        // schema but not executable this slice — each returns Incomplete + reason.
+        let cases = vec![
+            (
+                TaskAction::Submit {
+                    url: "https://x".into(),
+                    fields: vec![],
+                },
+                2u8,
+            ),
+            (
+                TaskAction::JsEval {
+                    url: "https://x".into(),
+                    script: "1".into(),
+                },
+                1,
+            ),
+            (
+                TaskAction::Extract {
+                    extract_query: "title".into(),
+                },
+                1,
+            ),
+            (
+                TaskAction::NeedsBrowser {
+                    reason: "captcha".into(),
+                },
+                3,
+            ),
+        ];
+        for (action, want_rung) in cases {
+            let obs = execute_action(&action, OutputFormat::Full).await.unwrap();
+            assert_eq!(obs.rung, want_rung, "rung for {action:?}");
+            assert_eq!(obs.status, TaskStatus::Incomplete);
+            assert!(
+                obs.error.is_some(),
+                "expected a deferral reason for {action:?}"
+            );
+            assert!(obs.content.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_action_done_is_terminal() {
+        let obs = execute_action(&TaskAction::Done { summary: None }, OutputFormat::Full)
+            .await
+            .unwrap();
+        assert_eq!(obs.status, TaskStatus::Done);
+        assert!(obs.error.is_none());
+    }
+
+    #[test]
+    fn action_observation_serializes_and_omits_absent_error() {
+        let obs = ActionObservation {
+            rung: 1,
+            status: TaskStatus::Done,
+            content: "ok".into(),
+            error: None,
+        };
+        let s = serde_json::to_string(&obs).unwrap();
+        assert!(s.contains("\"rung\":1"));
+        assert!(s.contains("\"status\":\"done\""));
+        // error is None -> skipped, not serialized as null.
+        assert!(!s.contains("error"));
+        let back: ActionObservation = serde_json::from_str(&s).unwrap();
+        assert_eq!(obs, back);
     }
 }
