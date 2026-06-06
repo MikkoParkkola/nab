@@ -27,6 +27,8 @@ pub(crate) mod fetch_batch;
 pub(crate) mod fingerprint;
 pub(crate) mod login;
 pub(crate) mod submit;
+#[cfg(feature = "task")]
+pub(crate) mod task;
 pub(crate) mod validate;
 pub(crate) mod watch;
 
@@ -45,6 +47,8 @@ pub use fetch_batch::FetchBatchTool;
 pub use fingerprint::FingerprintTool;
 pub use login::LoginTool;
 pub use submit::SubmitTool;
+#[cfg(feature = "task")]
+pub use task::TaskTool;
 pub use validate::ValidateTool;
 pub use watch::{
     WatchCreateTool, WatchListTool, WatchRemoveTool, get_watch_manager, init_watch_manager,

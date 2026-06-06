@@ -59,13 +59,18 @@ use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions, tool_box};
 use nab::watch::WatchManager;
 
 use structured::server_icons;
+#[cfg(feature = "task")]
+use tools::TaskTool;
 use tools::{
     AnalyzeTool, AuthLookupTool, BenchmarkTool, FetchBatchTool, FetchTool, FingerprintTool,
     LoginTool, SubmitTool, ValidateTool, WatchCreateTool, WatchListTool, WatchRemoveTool,
     get_client, init_watch_manager,
 };
 
-// Generate the tools enum
+// Generate the tools enum. `tool_box!` does not accept `#[cfg]` on a list
+// entry, so the optional `task` tool is gated by emitting the whole macro
+// invocation twice (with / without TaskTool), mutually exclusive by feature.
+#[cfg(not(feature = "task"))]
 tool_box!(
     MicroFetchTools,
     [
@@ -81,6 +86,25 @@ tool_box!(
         WatchCreateTool,
         WatchListTool,
         WatchRemoveTool
+    ]
+);
+#[cfg(feature = "task")]
+tool_box!(
+    MicroFetchTools,
+    [
+        FetchTool,
+        FetchBatchTool,
+        SubmitTool,
+        LoginTool,
+        AuthLookupTool,
+        FingerprintTool,
+        ValidateTool,
+        BenchmarkTool,
+        AnalyzeTool,
+        WatchCreateTool,
+        WatchListTool,
+        WatchRemoveTool,
+        TaskTool
     ]
 );
 
@@ -927,6 +951,8 @@ impl ServerHandler for MicroFetchHandler {
             MicroFetchTools::WatchCreateTool(t) => t.run().await,
             MicroFetchTools::WatchListTool(t) => t.run().await,
             MicroFetchTools::WatchRemoveTool(t) => t.run().await,
+            #[cfg(feature = "task")]
+            MicroFetchTools::TaskTool(t) => t.run(&runtime).await,
         }
     }
 
