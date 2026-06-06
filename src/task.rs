@@ -159,11 +159,13 @@ pub struct FetchRequest {
 /// boundary (design §12.2). Injection (not a library-internal fetch) is what
 /// lets the moat scope stay a per-binary concern.
 ///
-/// `?Send`: the CLI's `fetch_screened` future holds a `RefCell` across an await
-/// (not `Send`), so the trait must not require `Send` futures. Backends are
-/// awaited inline (the CLI turn, the MCP tool handler), never `spawn`ed across
-/// threads, so this costs nothing.
-#[async_trait::async_trait(?Send)]
+/// Native async-fn-in-trait (not `async_trait`): the returned future inherits
+/// the concrete impl's `Send`-ness. The CLI's `fetch_screened` future holds a
+/// `RefCell` (not `Send`) and is awaited inline; the `nab-mcp` backend's future
+/// is `Send`, so `run_task_loop` over it satisfies the MCP framework's `Send`
+/// requirement. `async_trait(?Send)` would box both as non-`Send`, breaking the
+/// MCP path.
+#[allow(async_fn_in_trait)]
 pub trait TaskFetcher {
     /// Execute the request through the moat and return screened, shaped content.
     async fn fetch(&self, req: FetchRequest) -> anyhow::Result<String>;
@@ -264,8 +266,9 @@ impl Default for LoopBounds {
 
 /// The loop's brain: given a prompt (goal + trajectory + discovered APIs), return
 /// the next action as JSON text. `nab-mcp` wraps `sampling/createMessage`; tests
-/// script a fixed sequence. `?Send` for the same reason as [`TaskFetcher`].
-#[async_trait::async_trait(?Send)]
+/// script a fixed sequence. Native async-fn-in-trait for the same `Send`-inheritance
+/// reason as [`TaskFetcher`].
+#[allow(async_fn_in_trait)]
 pub trait Sampler {
     /// Return the next action as a JSON object (optionally fenced in markdown).
     async fn next_action(&self, prompt: &str) -> anyhow::Result<String>;
@@ -582,7 +585,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait(?Send)]
     impl TaskFetcher for MockFetcher {
         async fn fetch(&self, req: FetchRequest) -> anyhow::Result<String> {
             *self.last.lock().unwrap() = Some(req);
@@ -697,7 +699,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait(?Send)]
     impl Sampler for ScriptedSampler {
         async fn next_action(&self, _prompt: &str) -> anyhow::Result<String> {
             let mut i = self.idx.lock().unwrap();

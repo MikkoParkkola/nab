@@ -10,9 +10,15 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use nab::AcceleratedClient;
+use bytes::Bytes;
 use nab::content::html::HtmlConversionOptions;
-use nab::task::{TaskOutcome, TaskStatus, discover_apis};
+use nab::task::{
+    FetchRequest, LoopBounds, Sampler, TaskFetcher, TaskOutcome, TaskStatus, discover_apis,
+    run_task_loop,
+};
+use nab::{AcceleratedClient, SafeFetchConfig, SafeRequestOptions, SsrfPolicy};
+use reqwest::Method;
+use reqwest::header::{COOKIE, HeaderName, HeaderValue};
 use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use rust_mcp_sdk::schema::{CallToolResult, TextContent, schema_utils::CallToolError};
@@ -21,6 +27,67 @@ use serde::{Deserialize, Serialize};
 use crate::helpers::{convert_body_async_with_options, fetch_with_cookies, resolve_cookie_header};
 use crate::sampling;
 use crate::tools::client::get_client;
+
+/// `nab-mcp`'s fetch backend for the self-contained loop: executes a rung-1
+/// `api_call` (method + headers + body) through the moat via the library
+/// `AcceleratedClient`, then YARA-screens + shapes the response. Mirrors the
+/// CLI's `CmdFetcher` but on lib primitives (the binary boundary, design §12.2).
+struct McpFetcher;
+
+impl TaskFetcher for McpFetcher {
+    async fn fetch(&self, req: FetchRequest) -> anyhow::Result<String> {
+        let client: &AcceleratedClient = get_client().await;
+        let profile = client.profile().await;
+        let mut headers = profile.to_headers();
+        let cookie_header = resolve_cookie_header(&req.url, None);
+        if !cookie_header.is_empty() {
+            headers.insert(COOKIE, HeaderValue::from_str(&cookie_header)?);
+        }
+        for (name, value) in &req.headers {
+            headers.insert(
+                HeaderName::from_bytes(name.as_bytes())?,
+                HeaderValue::from_str(value)?,
+            );
+        }
+        let method = Method::from_bytes(req.method.as_bytes())?;
+        let resp = client
+            .request_safe(
+                &req.url,
+                SafeRequestOptions {
+                    method,
+                    headers,
+                    body: req.body.map(Bytes::from),
+                    config: SafeFetchConfig::default(),
+                    ssrf_policy: SsrfPolicy::from_env(),
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let conversion = convert_body_async_with_options(
+            &resp.body,
+            &resp.content_type,
+            &req.url,
+            HtmlConversionOptions::default(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let screened =
+            nab::security::guard_fetch_output(&conversion.markdown, "mcp_task_api", &req.url)?;
+        Ok(screened)
+    }
+}
+
+/// The loop's brain over MCP sampling: forwards the prompt to the connected
+/// client's LLM via `sampling/createMessage` and returns its reply.
+struct McpSampler<'a> {
+    runtime: &'a Arc<dyn McpServer>,
+}
+
+impl Sampler for McpSampler<'_> {
+    async fn next_action(&self, prompt: &str) -> anyhow::Result<String> {
+        sampling::create_message(self.runtime, prompt, 1024, None).await
+    }
+}
 
 #[mcp_tool(
     name = "task",
@@ -43,6 +110,11 @@ pub struct TaskTool {
     pub goal: String,
     /// Seed URL to start from.
     pub url: String,
+    /// When true AND the client supports sampling, nab runs the bounded
+    /// self-contained loop (sample → execute → observe → repeat) and returns the
+    /// full trajectory. Defaults to false (host-driven: seed + `discovered_apis`).
+    #[serde(default)]
+    pub autonomous: bool,
 }
 
 impl TaskTool {
@@ -80,6 +152,26 @@ impl TaskTool {
 
         let raw = String::from_utf8_lossy(&body_bytes);
         let discovered_apis = discover_apis(&raw);
+
+        // Self-contained mode (§9.1): when the caller opts in and the client
+        // supports sampling, nab drives the whole bounded loop itself — the host
+        // LLM is the brain (McpSampler), nab supplies execution (McpFetcher).
+        if self.autonomous && sampling::is_supported(runtime) {
+            let sampler = McpSampler { runtime };
+            let fetcher = McpFetcher;
+            let loop_outcome = run_task_loop(
+                &self.goal,
+                &markdown,
+                &discovered_apis,
+                &sampler,
+                &fetcher,
+                &LoopBounds::default(),
+            )
+            .await;
+            let json = serde_json::to_string_pretty(&loop_outcome)
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            return Ok(CallToolResult::text_content(vec![TextContent::from(json)]));
+        }
 
         let outcome = TaskOutcome {
             goal: self.goal.clone(),

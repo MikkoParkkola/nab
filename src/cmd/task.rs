@@ -4,23 +4,23 @@
 //! * Slice 1 (rung 0): fetch the seed URL through the moat (browser cookies,
 //!   fingerprint, HTTP/3), YARA-screen it, return shaped markdown.
 //! * Slice 2 (rung-1 discovery): surface API endpoints found on the page as
-//!   [`DiscoveredApi`] leads the host LLM can call directly.
+//!   [`nab::task::DiscoveredApi`] leads the host LLM can call directly.
 //! * Slice 3 (rung-1 execution): execute one caller-chosen [`TaskAction`].
 //!
-//! The schema AND the rung-routing executor ([`nab::task::execute_action`]) live
-//! in the `nab::task` LIBRARY module so the `nab-mcp` self-contained loop (slice
-//! 4) can share them across the binary boundary. This module is the `nab` CLI
-//! adapter: it supplies a [`CmdFetcher`] (the full `cmd_fetch` moat via
-//! [`fetch_screened`]) as the injected [`TaskFetcher`] backend and wires the CLI
-//! surface. See `docs/design/2026-05-31-nab-task-engine.md` §12.
+//! The schema, the rung-routing executor ([`nab::task::execute_action`]), and
+//! [`nab::task::discover_apis`] live in the `nab::task` LIBRARY module so the
+//! `nab-mcp` self-contained loop (slice 4) can share them across the binary
+//! boundary. This module is the `nab` CLI adapter: it supplies a [`CmdFetcher`]
+//! (the full `cmd_fetch` moat via [`fetch_screened`]) as the injected
+//! [`TaskFetcher`] backend and wires the CLI surface. See
+//! `docs/design/2026-05-31-nab-task-engine.md` §12.
 
 use anyhow::Result;
 
 use super::fetch::{FetchConfig, fetch_screened};
 use crate::OutputFormat;
-use nab::ApiDiscovery;
 use nab::task::{
-    DiscoveredApi, FetchRequest, TaskAction, TaskFetcher, TaskOutcome, TaskStatus, execute_action,
+    FetchRequest, TaskAction, TaskFetcher, TaskOutcome, TaskStatus, discover_apis, execute_action,
 };
 
 /// The `nab` CLI's fetch backend: maps a library [`FetchRequest`] onto a
@@ -31,7 +31,6 @@ struct CmdFetcher {
     format: OutputFormat,
 }
 
-#[async_trait::async_trait(?Send)]
 impl TaskFetcher for CmdFetcher {
     async fn fetch(&self, req: FetchRequest) -> Result<String> {
         let cfg = fetch_request_to_config(req, self.format);
@@ -132,39 +131,9 @@ pub async fn cmd_task(
     Ok(())
 }
 
-/// Discover candidate API endpoints in a raw HTML body. Returns an empty vec
-/// when discovery is unavailable or finds nothing (never fails the task).
-fn discover_apis(raw_html: &str) -> Vec<DiscoveredApi> {
-    if raw_html.is_empty() {
-        return Vec::new();
-    }
-    match ApiDiscovery::new() {
-        Ok(d) => d
-            .discover_from_html(raw_html)
-            .into_iter()
-            .map(DiscoveredApi::from)
-            .collect(),
-        Err(_) => Vec::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn discover_apis_finds_endpoints_and_skips_empty() {
-        assert!(discover_apis("").is_empty());
-        let html = r#"<html><body>
-            <script>fetch("/api/v1/users")</script>
-            <a href="/graphql">gql</a>
-        </body></html>"#;
-        let found = discover_apis(html);
-        assert!(
-            found.iter().any(|a| a.url.contains("/api/v1/users")),
-            "expected the /api/v1/users endpoint, got {found:?}"
-        );
-    }
 
     #[test]
     fn fetch_request_to_config_maps_method_body_and_headers() {
