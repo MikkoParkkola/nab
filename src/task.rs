@@ -122,6 +122,105 @@ pub struct ActionObservation {
     pub error: Option<String>,
 }
 
+/// A single fetch request the executor hands to a [`TaskFetcher`] — a rung-1
+/// `api_call` reduced to wire essentials. The fetcher owns the moat (client,
+/// cookies, fingerprint, YARA screen, budget); the library owns routing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchRequest {
+    pub url: String,
+    pub method: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<String>,
+}
+
+/// The fetch backend the task executor runs actions through. Each binary injects
+/// its own: the `nab` CLI wraps `cmd::fetch::fetch_screened` (full moat);
+/// `nab-mcp` wraps its `FetchTool` path. The library never references a
+/// binary-only fetch type, so it stays buildable on both sides of the binary
+/// boundary (design §12.2). Injection (not a library-internal fetch) is what
+/// lets the moat scope stay a per-binary concern.
+///
+/// `?Send`: the CLI's `fetch_screened` future holds a `RefCell` across an await
+/// (not `Send`), so the trait must not require `Send` futures. Backends are
+/// awaited inline (the CLI turn, the MCP tool handler), never `spawn`ed across
+/// threads, so this costs nothing.
+#[async_trait::async_trait(?Send)]
+pub trait TaskFetcher {
+    /// Execute the request through the moat and return screened, shaped content.
+    async fn fetch(&self, req: FetchRequest) -> anyhow::Result<String>;
+}
+
+/// Execute ONE [`TaskAction`] at its rung and return the [`ActionObservation`]
+/// (the ROUTE+ACT+OBSERVE of §4, steps 3-4). The shared executor both control
+/// modes call — the host-driven CLI turn and the slice-4 sampling loop — with
+/// the fetch backend injected as a [`TaskFetcher`].
+///
+/// Executes rung-1 `api_call`. `submit` (rung 2) and `extract` (needs trajectory
+/// state) are forward API; `needs_browser` (rung 3) is the opt-in CDP backend;
+/// `done` is terminal. Deferred variants return an honest `Incomplete`
+/// observation rather than panicking, so a driver can route around them.
+pub async fn execute_action<F: TaskFetcher>(
+    action: &TaskAction,
+    fetcher: &F,
+) -> anyhow::Result<ActionObservation> {
+    match action {
+        TaskAction::ApiCall {
+            url,
+            method,
+            headers,
+            body,
+            ..
+        } => {
+            let req = FetchRequest {
+                url: url.clone(),
+                method: method.clone(),
+                headers: headers.clone(),
+                body: body.clone(),
+            };
+            match fetcher.fetch(req).await {
+                Ok(content) => Ok(ActionObservation {
+                    rung: 1,
+                    status: TaskStatus::Done,
+                    content,
+                    error: None,
+                }),
+                Err(e) => Ok(ActionObservation {
+                    rung: 1,
+                    status: TaskStatus::Incomplete,
+                    content: String::new(),
+                    error: Some(e.to_string()),
+                }),
+            }
+        }
+        TaskAction::Done { .. } => Ok(ActionObservation {
+            rung: 0,
+            status: TaskStatus::Done,
+            content: String::new(),
+            error: None,
+        }),
+        TaskAction::Submit { .. } => Ok(deferred(2, "submit (rung 2) lands in a later slice")),
+        TaskAction::JsEval { .. } => Ok(deferred(1, "js_eval lands in a later slice")),
+        TaskAction::Extract { .. } => {
+            Ok(deferred(1, "extract needs trajectory state (loop slice)"))
+        }
+        TaskAction::NeedsBrowser { reason } => Ok(deferred(
+            3,
+            &format!("browser rung is opt-in and lands in a later slice: {reason}"),
+        )),
+    }
+}
+
+/// An observation for an action that is valid schema but not executable in the
+/// current slice — honest `Incomplete` with the reason, never a panic.
+fn deferred(rung: u8, why: &str) -> ActionObservation {
+    ActionObservation {
+        rung,
+        status: TaskStatus::Incomplete,
+        content: String::new(),
+        error: Some(why.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +314,126 @@ mod tests {
         assert!(!s.contains("error"));
         let back: ActionObservation = serde_json::from_str(&s).unwrap();
         assert_eq!(obs, back);
+    }
+
+    /// A scripted fetcher — no network — for executor routing tests.
+    struct MockFetcher {
+        reply: anyhow::Result<String>,
+        last: std::sync::Mutex<Option<FetchRequest>>,
+    }
+
+    impl MockFetcher {
+        fn ok(body: &str) -> Self {
+            Self {
+                reply: Ok(body.to_string()),
+                last: std::sync::Mutex::new(None),
+            }
+        }
+        fn err(msg: &str) -> Self {
+            Self {
+                reply: Err(anyhow::anyhow!("{msg}")),
+                last: std::sync::Mutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl TaskFetcher for MockFetcher {
+        async fn fetch(&self, req: FetchRequest) -> anyhow::Result<String> {
+            *self.last.lock().unwrap() = Some(req);
+            match &self.reply {
+                Ok(s) => Ok(s.clone()),
+                Err(e) => Err(anyhow::anyhow!("{e}")),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_action_routes_api_call_through_the_fetcher() {
+        let f = MockFetcher::ok("{\"ok\":true}");
+        let action = TaskAction::ApiCall {
+            url: "https://api/x".into(),
+            method: "POST".into(),
+            headers: vec![("Accept".into(), "application/json".into())],
+            body: Some("{}".into()),
+            extract_query: None,
+        };
+        let obs = execute_action(&action, &f).await.unwrap();
+        assert_eq!(obs.rung, 1);
+        assert_eq!(obs.status, TaskStatus::Done);
+        assert_eq!(obs.content, "{\"ok\":true}");
+        assert!(obs.error.is_none());
+        // The action's wire essentials reached the fetcher unchanged.
+        let req = f.last.lock().unwrap().clone().unwrap();
+        assert_eq!(req.url, "https://api/x");
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.body.as_deref(), Some("{}"));
+        assert_eq!(
+            req.headers,
+            vec![("Accept".to_string(), "application/json".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_action_maps_fetcher_error_to_incomplete() {
+        let f = MockFetcher::err("boom");
+        let action = TaskAction::ApiCall {
+            url: "https://api/x".into(),
+            method: "GET".into(),
+            headers: vec![],
+            body: None,
+            extract_query: None,
+        };
+        let obs = execute_action(&action, &f).await.unwrap();
+        assert_eq!(obs.rung, 1);
+        assert_eq!(obs.status, TaskStatus::Incomplete);
+        assert!(obs.content.is_empty());
+        assert!(obs.error.unwrap().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn execute_action_defers_unsupported_and_terminates_done() {
+        let f = MockFetcher::ok("unused");
+        let cases = vec![
+            (
+                TaskAction::Submit {
+                    url: "https://x".into(),
+                    fields: vec![],
+                },
+                2u8,
+            ),
+            (
+                TaskAction::JsEval {
+                    url: "https://x".into(),
+                    script: "1".into(),
+                },
+                1,
+            ),
+            (
+                TaskAction::Extract {
+                    extract_query: "t".into(),
+                },
+                1,
+            ),
+            (
+                TaskAction::NeedsBrowser {
+                    reason: "captcha".into(),
+                },
+                3,
+            ),
+        ];
+        for (action, want_rung) in cases {
+            let obs = execute_action(&action, &f).await.unwrap();
+            assert_eq!(obs.rung, want_rung, "rung for {action:?}");
+            assert_eq!(obs.status, TaskStatus::Incomplete);
+            assert!(obs.error.is_some());
+            assert!(obs.content.is_empty());
+        }
+        // Done is terminal.
+        let obs = execute_action(&TaskAction::Done { summary: None }, &f)
+            .await
+            .unwrap();
+        assert_eq!(obs.status, TaskStatus::Done);
+        assert!(obs.error.is_none());
     }
 }

@@ -5,22 +5,62 @@
 //!   fingerprint, HTTP/3), YARA-screen it, return shaped markdown.
 //! * Slice 2 (rung-1 discovery): surface API endpoints found on the page as
 //!   [`DiscoveredApi`] leads the host LLM can call directly.
-//! * Slice 3 (rung-1 execution): execute one caller-chosen [`TaskAction`] —
-//!   currently `api_call` — via [`execute_action`], returning an
-//!   [`ActionObservation`]. This is the §9.2 host-driven control flow.
+//! * Slice 3 (rung-1 execution): execute one caller-chosen [`TaskAction`].
 //!
-//! The schema types ([`TaskAction`], [`TaskOutcome`], [`ActionObservation`], …)
-//! live in the `nab::task` LIBRARY module so the `nab-mcp` self-contained loop
-//! (slice 4) can share them across the binary boundary; this module is the
-//! `nab` CLI executor over that schema. See
-//! `docs/design/2026-05-31-nab-task-engine.md` §12.
+//! The schema AND the rung-routing executor ([`nab::task::execute_action`]) live
+//! in the `nab::task` LIBRARY module so the `nab-mcp` self-contained loop (slice
+//! 4) can share them across the binary boundary. This module is the `nab` CLI
+//! adapter: it supplies a [`CmdFetcher`] (the full `cmd_fetch` moat via
+//! [`fetch_screened`]) as the injected [`TaskFetcher`] backend and wires the CLI
+//! surface. See `docs/design/2026-05-31-nab-task-engine.md` §12.
 
 use anyhow::Result;
 
 use super::fetch::{FetchConfig, fetch_screened};
 use crate::OutputFormat;
 use nab::ApiDiscovery;
-use nab::task::{ActionObservation, DiscoveredApi, TaskAction, TaskOutcome, TaskStatus};
+use nab::task::{
+    DiscoveredApi, FetchRequest, TaskAction, TaskFetcher, TaskOutcome, TaskStatus, execute_action,
+};
+
+/// The `nab` CLI's fetch backend: maps a library [`FetchRequest`] onto a
+/// [`FetchConfig`] and runs it through [`fetch_screened`], so a rung-1 `api_call`
+/// gets the full `cmd_fetch` moat (HTTP/3 + fingerprint, browser cookies, the
+/// issue-#117 cookie-profile fallback, the YARA screen, the token budget).
+struct CmdFetcher {
+    format: OutputFormat,
+}
+
+#[async_trait::async_trait(?Send)]
+impl TaskFetcher for CmdFetcher {
+    async fn fetch(&self, req: FetchRequest) -> Result<String> {
+        let cfg = fetch_request_to_config(req, self.format);
+        Ok(fetch_screened(&cfg).await?.markdown)
+    }
+}
+
+/// Pure mapping of a library [`FetchRequest`] onto a [`FetchConfig`] (headers →
+/// `Name: Value`, body → `data`, `raw_html=true` for JSON). Split out so it is
+/// unit-testable without a network round-trip.
+fn fetch_request_to_config(req: FetchRequest, format: OutputFormat) -> FetchConfig {
+    let FetchRequest {
+        url,
+        method,
+        headers,
+        body,
+    } = req;
+    let mut cfg = FetchConfig::for_url(url, format);
+    cfg.method = method;
+    cfg.data = body;
+    cfg.custom_headers = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect();
+    // API responses are typically JSON/structured — return the raw screened body
+    // rather than running readability extraction tuned for article HTML.
+    cfg.raw_html = true;
+    cfg
+}
 
 /// Run a web task.
 ///
@@ -30,11 +70,12 @@ use nab::task::{ActionObservation, DiscoveredApi, TaskAction, TaskOutcome, TaskS
 ///   YARA-screen, return shaped markdown plus rung-1 API leads discovered on the
 ///   page. This is the loop's first turn.
 /// * **Execute (`action` set)** — slice 3: execute one caller-chosen
-///   [`TaskAction`] (currently rung-1 `api_call`) via [`execute_action`] and
-///   return its [`ActionObservation`]. This is the §9.2 host-driven control
-///   flow: a no-sampling client reads the discovered APIs, then drives nab
-///   one step per call. The slice-4 sampling loop calls `execute_action`
-///   internally instead of round-tripping through the CLI.
+///   [`TaskAction`] (currently rung-1 `api_call`) via the library executor
+///   [`nab::task::execute_action`], with [`CmdFetcher`] as the injected backend,
+///   and return its `ActionObservation`. This is the §9.2 host-driven control
+///   flow: a no-sampling client reads the discovered APIs, then drives nab one
+///   step per call. The slice-4 sampling loop calls `execute_action` internally
+///   with its own fetcher instead of round-tripping through the CLI.
 ///
 /// When `as_json` is set the full structured result is emitted as pretty JSON;
 /// otherwise just the content is printed.
@@ -48,7 +89,7 @@ pub async fn cmd_task(
     if let Some(raw) = action_json {
         let action: TaskAction =
             serde_json::from_str(raw).map_err(|e| anyhow::anyhow!("invalid --action JSON: {e}"))?;
-        let obs = execute_action(&action, format).await?;
+        let obs = execute_action(&action, &CmdFetcher { format }).await?;
         if as_json {
             println!("{}", serde_json::to_string_pretty(&obs)?);
         } else {
@@ -107,102 +148,6 @@ fn discover_apis(raw_html: &str) -> Vec<DiscoveredApi> {
     }
 }
 
-/// Build a [`FetchConfig`] for a rung-1 `api_call`, reusing the moat
-/// (`build_client` HTTP/3 + fingerprint, browser cookies, the YARA screen) via
-/// [`FetchConfig::for_url`]. The action's method, headers, and body are mapped
-/// onto the config so [`fetch_screened`] routes through `execute_manual_request`
-/// (cookies + custom headers + body), not the simple-GET fast path.
-///
-/// Returns `None` for non-`api_call` variants — they execute elsewhere or in a
-/// later slice. Kept separate from [`execute_action`] so the pure mapping is
-/// unit-testable without a network round-trip.
-fn fetch_config_for_api_call(action: &TaskAction, format: OutputFormat) -> Option<FetchConfig> {
-    let TaskAction::ApiCall {
-        url,
-        method,
-        headers,
-        body,
-        ..
-    } = action
-    else {
-        return None;
-    };
-    let mut cfg = FetchConfig::for_url(url.clone(), format);
-    cfg.method.clone_from(method);
-    cfg.data.clone_from(body);
-    cfg.custom_headers = headers
-        .iter()
-        .map(|(name, value)| format!("{name}: {value}"))
-        .collect();
-    // API responses are typically JSON/structured — return the raw screened body
-    // rather than running readability extraction tuned for article HTML.
-    cfg.raw_html = true;
-    Some(cfg)
-}
-
-/// Execute ONE [`TaskAction`] at its rung and return the [`ActionObservation`]
-/// (the ROUTE+ACT+OBSERVE of §4, steps 3-4). This is the shared executor both
-/// control modes call: the host-driven CLI turn (`nab task … --action`) and the
-/// slice-4 self-contained sampling loop.
-///
-/// Slice 3 executes rung-1 `api_call`. The remaining variants are forward API:
-/// `submit` (rung 2) and `extract` (needs trajectory state) land with the loop
-/// slice; `needs_browser` (rung 3) is the opt-in CDP backend; `done` is terminal
-/// (owned by the loop, not the executor). Deferred variants return an honest
-/// `Incomplete` observation with a reason rather than panicking, so a driver can
-/// route around them.
-pub async fn execute_action(
-    action: &TaskAction,
-    format: OutputFormat,
-) -> Result<ActionObservation> {
-    match action {
-        TaskAction::ApiCall { .. } => {
-            let cfg = fetch_config_for_api_call(action, format)
-                .expect("ApiCall always maps to a FetchConfig");
-            match fetch_screened(&cfg).await {
-                Ok(fetched) => Ok(ActionObservation {
-                    rung: 1,
-                    status: TaskStatus::Done,
-                    content: fetched.markdown,
-                    error: None,
-                }),
-                Err(e) => Ok(ActionObservation {
-                    rung: 1,
-                    status: TaskStatus::Incomplete,
-                    content: String::new(),
-                    error: Some(e.to_string()),
-                }),
-            }
-        }
-        TaskAction::Done { .. } => Ok(ActionObservation {
-            rung: 0,
-            status: TaskStatus::Done,
-            content: String::new(),
-            error: None,
-        }),
-        TaskAction::Submit { .. } => Ok(deferred(2, "submit (rung 2) lands in a later slice")),
-        TaskAction::JsEval { .. } => Ok(deferred(1, "js_eval lands in a later slice")),
-        TaskAction::Extract { .. } => {
-            Ok(deferred(1, "extract needs trajectory state (loop slice)"))
-        }
-        TaskAction::NeedsBrowser { reason } => Ok(deferred(
-            3,
-            &format!("browser rung is opt-in and lands in a later slice: {reason}"),
-        )),
-    }
-}
-
-/// An observation for an action that is valid schema but not executable in the
-/// current slice — honest `Incomplete` with the reason, never a panic.
-fn deferred(rung: u8, why: &str) -> ActionObservation {
-    ActionObservation {
-        rung,
-        status: TaskStatus::Incomplete,
-        content: String::new(),
-        error: Some(why.to_string()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,8 +167,8 @@ mod tests {
     }
 
     #[test]
-    fn api_call_maps_method_body_and_headers_onto_fetch_config() {
-        let action = TaskAction::ApiCall {
+    fn fetch_request_to_config_maps_method_body_and_headers() {
+        let req = FetchRequest {
             url: "https://api.example.test/v1/items".into(),
             method: "POST".into(),
             headers: vec![
@@ -231,10 +176,8 @@ mod tests {
                 ("Accept".into(), "application/json".into()),
             ],
             body: Some(r#"{"q":"rust"}"#.into()),
-            extract_query: None,
         };
-        let cfg = fetch_config_for_api_call(&action, OutputFormat::Full)
-            .expect("api_call maps to a config");
+        let cfg = fetch_request_to_config(req, OutputFormat::Full);
         assert_eq!(cfg.url, "https://api.example.test/v1/items");
         assert_eq!(cfg.method, "POST");
         assert_eq!(cfg.data.as_deref(), Some(r#"{"q":"rust"}"#));
@@ -249,67 +192,5 @@ mod tests {
         );
         // raw_html so an API/JSON body is returned screened-but-unmangled.
         assert!(cfg.raw_html);
-    }
-
-    #[test]
-    fn fetch_config_for_api_call_is_none_for_non_api_actions() {
-        let not_api = TaskAction::Submit {
-            url: "https://x".into(),
-            fields: vec![],
-        };
-        assert!(fetch_config_for_api_call(&not_api, OutputFormat::Full).is_none());
-    }
-
-    #[tokio::test]
-    async fn execute_action_defers_unsupported_variants_without_panicking() {
-        // submit (rung 2), js_eval, extract, needs_browser (rung 3) are valid
-        // schema but not executable this slice — each returns Incomplete + reason.
-        let cases = vec![
-            (
-                TaskAction::Submit {
-                    url: "https://x".into(),
-                    fields: vec![],
-                },
-                2u8,
-            ),
-            (
-                TaskAction::JsEval {
-                    url: "https://x".into(),
-                    script: "1".into(),
-                },
-                1,
-            ),
-            (
-                TaskAction::Extract {
-                    extract_query: "title".into(),
-                },
-                1,
-            ),
-            (
-                TaskAction::NeedsBrowser {
-                    reason: "captcha".into(),
-                },
-                3,
-            ),
-        ];
-        for (action, want_rung) in cases {
-            let obs = execute_action(&action, OutputFormat::Full).await.unwrap();
-            assert_eq!(obs.rung, want_rung, "rung for {action:?}");
-            assert_eq!(obs.status, TaskStatus::Incomplete);
-            assert!(
-                obs.error.is_some(),
-                "expected a deferral reason for {action:?}"
-            );
-            assert!(obs.content.is_empty());
-        }
-    }
-
-    #[tokio::test]
-    async fn execute_action_done_is_terminal() {
-        let obs = execute_action(&TaskAction::Done { summary: None }, OutputFormat::Full)
-            .await
-            .unwrap();
-        assert_eq!(obs.status, TaskStatus::Done);
-        assert!(obs.error.is_none());
     }
 }
