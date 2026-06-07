@@ -1,10 +1,44 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 [site]
 name = "twitter"
-patterns = ["(?i)(?:x|twitter)\\.com/.+/status/\\d+"]
+# Host-anchored pattern.  `matches()` (provider.rs) uses `Regex::is_match`,
+# which SEARCHES (unanchored) — so an un-anchored `(?:x|twitter)\.com/...`
+# pattern matches the substring inside mirror hosts (api.fxtwitter.com,
+# vxtwitter.com, fixupx.com, …).  That caused nab to re-apply this rule to its
+# OWN rewritten FxTwitter URL (infinite-rewrite / double-fetch).  The
+# `^https?://(?:www\.|mobile\.)?` prefix pins the host to the real x.com /
+# twitter.com (optionally with www./mobile.), so mirrors never match.
+#
+# A single regex with two alternatives keeps this rule to ONE pattern entry:
+#  - `(?:x|twitter)\.com/.+/status/\d+` — status posts, handled by the
+#    FxTwitter rewrite + JSON extraction below (incl. long-form X Articles
+#    reachable via /status/).
+#  - `x\.com/i/article/\d+` — direct X Article URLs.  These have NO /status/<id>
+#    so they CANNOT be rewritten to FxTwitter (article-id != status-id;
+#    FxTwitter is keyed on status-id).  We still match them so the URL is
+#    classified as Twitter/X-family rather than falling through to a raw fetch
+#    that returns a JS shell.  The `[rewrite].from` regex deliberately does NOT
+#    cover this shape, so `rewrite_url` is a no-op and the URL is left untouched
+#    for the authenticated engine render path.  A separate Rust engine keys its
+#    render on the SAME URL shape:
+#        (?i)^https?://(?:www\.|mobile\.)?x\.com/i/article/\d+
+#    INTEGRATION NOTE: because this whole rule is engine="api" (one engine per
+#    [site]), engine_for_url() returns Api — NOT Browser — for article URLs too.
+#    If the engine render path keys on engine_for_url()==Browser it will be
+#    shadowed; it must key on the article URL regex independently (after the API
+#    provider's try_extract returns None).  The clean alternative — a separate
+#    defaults/twitter-article.toml with engine="browser" registered in
+#    mod.rs::embedded_rules() — is out of scope for this two-file change.
+patterns = [
+    "(?i)^https?://(?:www\\.|mobile\\.)?(?:(?:x|twitter)\\.com/.+/status/\\d+|x\\.com/i/article/\\d+)",
+]
 
 [rewrite]
-from = "(?i)https?://(?:x|twitter)\\.com/([^/?#]+)/status/(\\d+).*"
+# Host-anchored to match [site].patterns pattern 1 only.  `www.`/`mobile.` are
+# accepted and dropped; the handle ($1) and status-id ($2) are preserved.  This
+# regex intentionally does NOT match /i/article/<id> URLs (no FxTwitter article
+# endpoint exists), so those pass through `rewrite_url` unchanged.
+from = "(?i)^https?://(?:www\\.|mobile\\.)?(?:x|twitter)\\.com/([^/?#]+)/status/(\\d+).*"
 to = "https://api.fxtwitter.com/$1/status/$2"
 
 [request]
