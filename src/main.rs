@@ -165,6 +165,17 @@ enum Commands {
         #[arg(long)]
         render: bool,
 
+        /// Render ANY URL through the authed DOM-read path: inject the user's
+        /// existing browser session cookies into a CDP browser context before
+        /// navigation, wait for the post-hydration XHR to paint, then convert the
+        /// rendered DOM to markdown.
+        ///
+        /// X long-form Article URLs (`x.com/i/article/<id>`) take this path
+        /// automatically. Requires a build with the `browser` feature and a Chrome
+        /// running on `--remote-debugging-port=9222`.
+        #[arg(long)]
+        render_dom: bool,
+
         /// Alias for --render for JS-heavy pages that need browser interaction or DOM execution.
         #[arg(long)]
         interactive: bool,
@@ -987,6 +998,7 @@ async fn main() -> Result<()> {
                 remote_fallback,
                 no_fallback,
                 render,
+                render_dom,
                 interactive,
                 browser_cdp_url,
                 browser_headers_env,
@@ -1029,6 +1041,7 @@ async fn main() -> Result<()> {
                     capture_cookies,
                     no_redirect,
                     render,
+                    render_dom,
                     interactive,
                     browser_cdp_url,
                     browser_headers_env,

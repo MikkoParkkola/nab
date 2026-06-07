@@ -47,6 +47,11 @@ pub struct FetchConfig {
     pub no_redirect: bool,
     /// When `true`, delegate this fetch to the explicit external-CDP browser path.
     pub render: bool,
+    /// When `true`, render ANY URL through the authed DOM-render path: inject the
+    /// user's existing browser session cookies into a CDP browser context before
+    /// navigation, wait for the post-hydration XHR to paint, then convert the
+    /// rendered DOM to markdown. Requires the `browser` feature (chromiumoxide).
+    pub render_dom: bool,
     /// Alias for `render`, reserved for workflows that need browser interaction.
     pub interactive: bool,
     /// Optional CDP endpoint override for the delegated browser path.
@@ -114,6 +119,7 @@ impl FetchConfig {
             capture_cookies: false,
             no_redirect: false,
             render: false,
+            render_dom: false,
             interactive: false,
             browser_cdp_url: None,
             browser_headers_env: String::new(),
@@ -190,6 +196,37 @@ impl std::str::FromStr for WafMode {
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
 pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
+    // ── Authed DOM-render short-circuit ───────────────────────────────────
+    // Fires for `--render-dom` (any URL) and, automatically, for X long-form
+    // Article URLs whose body is painted by an authenticated post-hydration XHR
+    // and therefore exists in neither the static HTML nor the data layer.
+    //
+    // This runs BEFORE the site-router / api-rule provider so an X Article URL
+    // — which now MATCHES the engine="api" rule — does NOT trigger a doomed
+    // JSON fetch. The match is keyed on the article-URL regex directly, not on
+    // `RuleEngine::is_browser`, because the api rule shadows the browser engine
+    // for these URLs (verified by the rule-layer agent).
+    //
+    // Feature split: when built WITHOUT `browser` (the default build lacks
+    // chromiumoxide), the explicit `--render-dom` flag errors clearly, but the
+    // automatic X-Article match falls through to the normal fetch ladder so
+    // existing `nab fetch` behaviour is never broken (requirement 3).
+    let want_render_dom = cfg.render_dom || nab::browser::is_x_article_url(&cfg.url);
+    #[cfg(feature = "browser")]
+    let render_dom_active = want_render_dom;
+    #[cfg(not(feature = "browser"))]
+    let render_dom_active = cfg.render_dom; // auto-match falls through without the feature
+    if render_dom_active {
+        if cfg.batch_file.is_some() {
+            return Err(anyhow::anyhow!(
+                "--render-dom cannot be combined with --batch; render one URL at a time"
+            ));
+        }
+        return cmd_fetch_render_dom(cfg).await;
+    }
+    // Silence unused warnings in builds where the auto branch is inert.
+    let _ = want_render_dom;
+
     if cfg.render || cfg.interactive {
         if cfg.batch_file.is_some() {
             return Err(anyhow::anyhow!(
@@ -564,9 +601,68 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     Ok(())
 }
 
-/// Screened fetch result carrying both the LLM-shaped markdown and the raw
-/// wire body, so later task rungs (e.g. API discovery) can inspect the HTML.
-#[cfg(feature = "task")]
+/// Authed DOM-render path: inject the user's existing browser session cookies
+/// into a CDP browser context BEFORE navigation, wait for the post-hydration
+/// XHR to paint, convert the rendered DOM to markdown, and print it.
+///
+/// Cookies are obtained via nab's native extraction (`CookieSource::get_cookies`
+/// — the "Native cookie extraction succeeded" path) for the target host and flow
+/// in memory only; values are never printed or logged here.
+///
+/// Reached from [`cmd_fetch`] for `--render-dom` (any URL) and, automatically,
+/// for X Article URLs. Requires the `browser` feature.
+#[cfg(feature = "browser")]
+async fn cmd_fetch_render_dom(cfg: &FetchConfig) -> Result<()> {
+    let domain = super::extract_domain(&cfg.url);
+    // Resolve cookies through the native extraction path (HashMap<name,value>).
+    let flat = match super::resolve_browser_name(&cfg.cookies) {
+        Some(browser) => super::resolve_cookie_source(&browser)
+            .get_cookies(&domain)
+            .unwrap_or_default(),
+        None => std::collections::HashMap::new(),
+    };
+    let cookies = nab::browser::cookies_for_host(&cfg.url, &flat);
+    if matches!(cfg.format, OutputFormat::Full) {
+        // Count only — never the names or values.
+        write_stdout_line(&format!(
+            "🌐 Authed DOM render: {} session cookie(s) for {domain}",
+            cookies.len()
+        ))?;
+    }
+
+    let browser = nab::BrowserLogin::connect(None)
+        .await
+        .map_err(|e| anyhow::anyhow!(
+            "authed DOM render needs Chrome on --remote-debugging-port=9222: {e}"
+        ))?;
+    let markdown = browser.render_with_cookies(&cfg.url, &cookies).await?;
+    let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
+    output_body(
+        &markdown,
+        cfg.output_file.as_deref(),
+        cfg.links,
+        cfg.max_body,
+    )?;
+    Ok(())
+}
+
+/// Authed DOM-render path is unavailable without the `browser` feature.
+///
+/// The build excludes chromiumoxide, so `--render-dom` and the automatic X
+/// Article short-circuit cannot run. Surface a clear, actionable error rather
+/// than silently degrading.
+///
+/// `async` is required to match the `browser`-feature sibling's signature at the
+/// single `.await` call site; the stub has nothing to await.
+#[cfg(not(feature = "browser"))]
+#[allow(clippy::unused_async)]
+async fn cmd_fetch_render_dom(_cfg: &FetchConfig) -> Result<()> {
+    Err(anyhow::anyhow!(
+        "authed DOM render requires the `browser` feature (chromiumoxide); rebuild with `--features browser`"
+    ))
+}
+
+
 pub struct FetchedContent {
     /// YARA-screened, token-budgeted markdown — what the model consumes.
     pub markdown: String,
