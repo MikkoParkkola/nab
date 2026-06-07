@@ -1,0 +1,12 @@
+{
+  "id": "npm-version",
+  "nab_tokens": 797,
+  "seed_tokens": 298,
+  "obs_tokens": 499,
+  "nab_latency_ms": 1739,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

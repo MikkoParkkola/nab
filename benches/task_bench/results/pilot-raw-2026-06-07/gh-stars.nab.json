@@ -1,0 +1,12 @@
+{
+  "id": "gh-stars",
+  "nab_tokens": 2530,
+  "seed_tokens": 826,
+  "obs_tokens": 1704,
+  "nab_latency_ms": 1433,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

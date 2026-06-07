@@ -1,0 +1,12 @@
+{
+  "id": "stackoverflow-q",
+  "nab_tokens": 2808,
+  "seed_tokens": 2585,
+  "obs_tokens": 223,
+  "nab_latency_ms": 2825,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}
