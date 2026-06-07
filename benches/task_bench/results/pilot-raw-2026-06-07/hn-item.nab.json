@@ -1,0 +1,12 @@
+{
+  "id": "hn-item",
+  "nab_tokens": 10408,
+  "seed_tokens": 72,
+  "obs_tokens": 10336,
+  "nab_latency_ms": 2008,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

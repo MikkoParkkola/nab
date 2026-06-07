@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "name": "nab task-engine bench.1 corpus — pilot",
+    "purpose": "API-backed web tasks where a heavy HTML page has a discoverable/known JSON API. nab's moat case (design 6.1).",
+    "axes": ["tokens", "latency"],
+    "baseline": "live browser agent (webwright/Playwright) driven by the same LLM brain",
+    "note": "API endpoint is recorded for analysis only; neither agent is handed it — both must reach the answer from the seed URL."
+  },
+  "tasks": [
+    {
+      "id": "gh-stars",
+      "goal": "How many stargazers does the rust-lang/rust repository have?",
+      "seed_url": "https://github.com/rust-lang/rust",
+      "api_hint": "https://api.github.com/repos/rust-lang/rust",
+      "answer_field": "stargazers_count",
+      "success_check": "numeric stargazer count present"
+    },
+    {
+      "id": "hn-item",
+      "goal": "What is the title and author of Hacker News item 8863?",
+      "seed_url": "https://news.ycombinator.com/item?id=8863",
+      "api_hint": "https://hn.algolia.com/api/v1/items/8863",
+      "answer_field": "title,author",
+      "success_check": "title and author strings present"
+    },
+    {
+      "id": "wikipedia-summary",
+      "goal": "Give the one-sentence summary of the Rust programming language.",
+      "seed_url": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+      "api_hint": "https://en.wikipedia.org/api/rest_v1/page/summary/Rust_(programming_language)",
+      "answer_field": "extract",
+      "success_check": "summary sentence present"
+    },
+    {
+      "id": "npm-version",
+      "goal": "What is the latest published version of the npm package react?",
+      "seed_url": "https://www.npmjs.com/package/react",
+      "api_hint": "https://registry.npmjs.org/react/latest",
+      "answer_field": "version",
+      "success_check": "semver version present"
+    },
+    {
+      "id": "stackoverflow-q",
+      "goal": "How many answers does StackOverflow question 11227809 have?",
+      "seed_url": "https://stackoverflow.com/questions/11227809",
+      "api_hint": "https://api.stackexchange.com/2.3/questions/11227809?site=stackoverflow",
+      "answer_field": "answer_count",
+      "success_check": "answer count present"
+    },
+    {
+      "id": "crates-io",
+      "goal": "What is the latest version of the serde crate on crates.io?",
+      "seed_url": "https://crates.io/crates/serde",
+      "api_hint": "https://crates.io/api/v1/crates/serde",
+      "answer_field": "max_stable_version",
+      "success_check": "semver version present"
+    }
+  ]
+}

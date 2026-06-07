@@ -1,0 +1,12 @@
+{
+  "id": "wikipedia-summary",
+  "nab_tokens": 624,
+  "seed_tokens": 118,
+  "obs_tokens": 506,
+  "nab_latency_ms": 537,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

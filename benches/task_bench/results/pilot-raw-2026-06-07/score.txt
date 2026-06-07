@@ -1,0 +1,15 @@
+task                   nab_tok    br_tok  tok_x    nab_ms    br_ms  lat_x
+----------------------------------------------------------------------------
+crates-io               105347       708   0.0x      1603     4363   2.7x
+gh-stars                  2530       800   0.3x      1433     5429   3.8x
+hn-item                  10408      7240   0.7x      2008     4976   2.5x
+npm-version                797        66   0.1x      4861     4468   0.9x
+stackoverflow-q           2808        67   0.0x      2825     4447   1.6x
+wikipedia-summary          624     18434  29.5x      1289     4702   3.6x
+----------------------------------------------------------------------------
+MEDIAN                    2669       754   0.3x      1806     4585   2.5x
+
+  tokens : nab median 2669 >= browser 754  -> LOSS
+  latency: nab median 1806 < browser 4585  -> WIN
+
+  bench.1 (n=6): FAIL (both axes required)

@@ -207,7 +207,7 @@ pub async fn execute_action<F: TaskFetcher>(
             method,
             headers,
             body,
-            ..
+            extract_query,
         } => {
             let req = FetchRequest {
                 url: url.clone(),
@@ -219,7 +219,7 @@ pub async fn execute_action<F: TaskFetcher>(
                 Ok(content) => Ok(ActionObservation {
                     rung: 1,
                     status: TaskStatus::Done,
-                    content,
+                    content: shape_api_response(&content, extract_query.as_deref()),
                     error: None,
                 }),
                 Err(e) => Ok(ActionObservation {
@@ -258,6 +258,51 @@ fn deferred(rung: u8, why: &str) -> ActionObservation {
         status: TaskStatus::Incomplete,
         content: String::new(),
         error: Some(why.to_string()),
+    }
+}
+
+/// Per-response token cap for a rung-1 `api_call` observation. nab's promise is
+/// token-minimal web access; an unbounded raw API body (some endpoints return the
+/// full version history or comment tree — tens of thousands of tokens) breaks it.
+/// In the brain-driven loop every observation is read back into the prompt, so the
+/// raw body IS the token cost. We bound it and mark the truncation so the brain
+/// knows to narrow (a tighter endpoint or `extract_query`) if it needs more.
+const API_RESPONSE_TOKEN_BUDGET: usize = 4_000;
+
+/// Shape a rung-1 `api_call` response the way nab shapes every other output:
+/// honor the action's `extract_query` (the BM25-lite focus pipeline) when present,
+/// then bound the result to [`API_RESPONSE_TOKEN_BUDGET`]. Applied in the library
+/// so both binaries (CLI + `nab-mcp`) get the same token-minimal contract. The
+/// `extract_query` field has been in the [`TaskAction::ApiCall`] schema since the
+/// schema slice; this is where it finally takes effect.
+fn shape_api_response(content: &str, extract_query: Option<&str>) -> String {
+    let focused = match extract_query {
+        Some(q) if !q.is_empty() => crate::content::focus::extract_focused(content, q).markdown,
+        _ => content.to_string(),
+    };
+    let budgeted =
+        crate::content::budget::truncate_to_budget(&focused, Some(API_RESPONSE_TOKEN_BUDGET))
+            .markdown;
+    // `truncate_to_budget` is markdown-block-aware; an API body is frequently one
+    // giant structureless JSON blob it cannot split, so it can return it whole.
+    // Guarantee the bound with a hard char-level fallback (4 chars/token) so a raw
+    // response can never blow the brain's context, JSON or not.
+    let hard_cap = API_RESPONSE_TOKEN_BUDGET * 4;
+    if budgeted.len() > hard_cap {
+        // Truncate on a UTF-8 char boundary (String::truncate panics mid-char).
+        let mut end = hard_cap;
+        while end > 0 && !budgeted.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut cut = budgeted;
+        cut.truncate(end);
+        cut.push_str(
+            "\n…[Truncated: API response exceeded the token budget — \
+             narrow the request or use extract_query]",
+        );
+        cut
+    } else {
+        budgeted
     }
 }
 
@@ -882,6 +927,39 @@ mod tests {
             req.headers,
             vec![("Accept".to_string(), "application/json".to_string())]
         );
+    }
+
+    #[tokio::test]
+    async fn execute_action_caps_oversized_api_response() {
+        // A verbose endpoint (e.g. crates.io returning every version) must not be
+        // handed to the brain raw — nab's token-minimal contract bounds it.
+        let huge = "x".repeat(API_RESPONSE_TOKEN_BUDGET * 4 * 10); // ~10x the budget
+        let f = MockFetcher::ok(&huge);
+        let action = TaskAction::ApiCall {
+            url: "https://api/big".into(),
+            method: "GET".into(),
+            headers: vec![],
+            body: None,
+            extract_query: None,
+        };
+        let obs = execute_action(&action, &f).await.unwrap();
+        assert_eq!(obs.status, TaskStatus::Done);
+        let tokens = crate::content::budget::estimate_tokens(&obs.content);
+        // Bounded to roughly the budget (+ the truncation marker), not the raw 40k.
+        assert!(
+            tokens <= API_RESPONSE_TOKEN_BUDGET + 64,
+            "api response not capped: {tokens} tokens"
+        );
+        assert!(
+            obs.content.contains("Truncated"),
+            "capped response must carry the truncation marker so the brain knows"
+        );
+    }
+
+    #[test]
+    fn shape_api_response_passes_small_bodies_through() {
+        // Short responses are returned verbatim (no extract_query, under budget).
+        assert_eq!(shape_api_response("{\"ok\":true}", None), "{\"ok\":true}");
     }
 
     #[tokio::test]

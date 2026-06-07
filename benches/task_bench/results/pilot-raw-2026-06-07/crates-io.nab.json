@@ -1,0 +1,12 @@
+{
+  "id": "crates-io",
+  "nab_tokens": 105347,
+  "seed_tokens": 8,
+  "obs_tokens": 105339,
+  "nab_latency_ms": 1603,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}
