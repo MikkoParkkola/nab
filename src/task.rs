@@ -70,8 +70,13 @@ pub enum TaskAction {
     },
     /// Shape the current response to a query via the content pipeline.
     Extract { extract_query: String },
-    /// Rung 3: escalate to the opt-in external-CDP browser.
-    NeedsBrowser { reason: String },
+    /// Rung 3: escalate to the opt-in external-CDP browser. `url` is the page the
+    /// browser should render (falls back to the seed page when omitted).
+    NeedsBrowser {
+        reason: String,
+        #[serde(default)]
+        url: Option<String>,
+    },
     /// Terminal: the goal is complete.
     Done {
         #[serde(default)]
@@ -243,9 +248,12 @@ pub async fn execute_action<F: TaskFetcher>(
             "extract is a loop-level action (shapes trajectory state); \
              not available in stateless single-action mode",
         )),
-        TaskAction::NeedsBrowser { reason } => Ok(deferred(
+        TaskAction::NeedsBrowser { reason, .. } => Ok(deferred(
             3,
-            &format!("browser rung is opt-in and lands in a later slice: {reason}"),
+            &format!(
+                "browser rung is loop-level (needs an injected browser backend); \
+                 not available in stateless single-action mode: {reason}"
+            ),
         )),
     }
 }
@@ -454,6 +462,36 @@ pub trait Sampler {
     async fn next_action(&self, prompt: &str) -> anyhow::Result<String>;
 }
 
+/// Rung 3: the external-browser backend the loop drives when an API/form path
+/// cannot complete the goal (`needs_browser`). nab never bundles Chromium — each
+/// binary injects a backend that orchestrates an EXTERNAL browser over CDP (the
+/// opt-in `browser` feature), applying nab's cookies + fingerprint, and returns
+/// the rendered page already shaped to markdown. The default build injects
+/// [`NoBrowser`], so the rung is an honest deferral rather than a hard dependency.
+///
+/// Native async-fn-in-trait for the same `Send`-inheritance reason as
+/// [`TaskFetcher`]: the concrete backend's future inherits its own `Send`-ness.
+#[allow(async_fn_in_trait)]
+pub trait BrowserBackend {
+    /// Render `url` in the external browser and return screened, shaped markdown.
+    async fn render(&self, url: &str) -> anyhow::Result<String>;
+}
+
+/// The default rung-3 backend: no browser compiled in. Every `render` is an honest
+/// error so [`run_task_loop`] turns `needs_browser` into a `delegate_to_browser`
+/// deferral rather than silently failing. A binary built with the `browser`
+/// feature injects a real CDP backend via [`run_task_loop_with_browser`].
+pub struct NoBrowser;
+
+impl BrowserBackend for NoBrowser {
+    async fn render(&self, _url: &str) -> anyhow::Result<String> {
+        anyhow::bail!(
+            "browser rung unavailable: build with --features browser and inject a \
+             CDP backend (or set NAB_BROWSER_CDP_WS) to enable rung 3"
+        )
+    }
+}
+
 /// One executed step of a task run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrajectoryStep {
@@ -570,6 +608,25 @@ pub async fn run_task_loop<S: Sampler, F: TaskFetcher>(
     fetcher: &F,
     bounds: &LoopBounds,
 ) -> LoopOutcome {
+    run_task_loop_with_browser(goal, seed, discovered, sampler, fetcher, &NoBrowser, bounds).await
+}
+
+/// [`run_task_loop`] with an injected rung-3 [`BrowserBackend`]. When the brain
+/// emits `needs_browser` carrying a `url`, the loop drives the external browser
+/// (rung 3) and feeds the rendered markdown back as the observation. With no
+/// `url`, and when the backend is [`NoBrowser`], it records an honest
+/// `delegate_to_browser` deferral. Every other action routes exactly as in
+/// [`run_task_loop`]. Pure logic over the injected backends — fully testable with
+/// a mock browser, no real Chrome.
+pub async fn run_task_loop_with_browser<S: Sampler, F: TaskFetcher, B: BrowserBackend>(
+    goal: &str,
+    seed: &str,
+    discovered: &[DiscoveredApi],
+    sampler: &S,
+    fetcher: &F,
+    browser: &B,
+    bounds: &LoopBounds,
+) -> LoopOutcome {
     let start = std::time::Instant::now();
     let mut steps: Vec<TrajectoryStep> = Vec::new();
     let mut content_chars: usize = 0;
@@ -616,13 +673,17 @@ pub async fn run_task_loop<S: Sampler, F: TaskFetcher>(
         }
         // `extract` is a loop-level action: it shapes the CURRENT response, so it
         // needs trajectory state `execute_action` (stateless) does not have. The
-        // current response is the most recent step's content, or the seed page
+        // current response is the most recent step's content, else the seed page
         // before any step has run. Pure content shaping, no network → rung 0.
         let observation = if let TaskAction::Extract { extract_query } = &action {
             let prior = steps
                 .last()
                 .map_or(seed, |s| s.observation.content.as_str());
             extract_from_content(prior, extract_query)
+        } else if let TaskAction::NeedsBrowser { url, .. } = &action {
+            // Rung 3: drive the external browser for the requested page. Needs a
+            // url (the loop holds seed CONTENT, not the seed URL) plus a backend.
+            browser_step(url.as_deref(), browser).await
         } else {
             execute_action(&action, fetcher)
                 .await
@@ -643,6 +704,25 @@ pub async fn run_task_loop<S: Sampler, F: TaskFetcher>(
         }
     }
     finish(LoopStop::MaxSteps, TaskStatus::Incomplete, steps)
+}
+
+/// Execute one rung-3 `needs_browser` step: render `url` through the injected
+/// [`BrowserBackend`]. Maps a missing url plus any backend error to an honest
+/// `Incomplete` (rung 3) so the brain can `delegate_to_browser` cleanly, never a
+/// panic. The rendered markdown is bounded like an API response.
+async fn browser_step<B: BrowserBackend>(url: Option<&str>, browser: &B) -> ActionObservation {
+    let Some(url) = url.filter(|u| !u.is_empty()) else {
+        return deferred(3, "needs_browser requires a url to render");
+    };
+    match browser.render(url).await {
+        Ok(content) => ActionObservation {
+            rung: 3,
+            status: TaskStatus::Done,
+            content: shape_api_response(&content, None),
+            error: None,
+        },
+        Err(e) => deferred(3, &format!("delegate_to_browser: {e}")),
+    }
 }
 
 // ── bench.1 measurement primitive (the kill-gate's token axis) ───────────────
@@ -758,6 +838,7 @@ mod tests {
             },
             TaskAction::NeedsBrowser {
                 reason: "captcha".into(),
+                url: None,
             },
             TaskAction::Done {
                 summary: Some("ok".into()),
@@ -999,6 +1080,7 @@ mod tests {
             (
                 TaskAction::NeedsBrowser {
                     reason: "captcha".into(),
+                    url: None,
                 },
                 3,
             ),
@@ -1344,6 +1426,125 @@ mod tests {
         let fetcher = MockFetcher::ok("x");
         let out = run_task_loop("g", "s", &[], &sampler, &fetcher, &LoopBounds::default()).await;
         assert_eq!(out.stop, LoopStop::SamplerError);
+    }
+
+    // ── rung 3: browser backend ──────────────────────────────────────────────
+
+    /// A scripted browser backend — no real Chrome — for rung-3 routing tests.
+    struct MockBrowser {
+        reply: anyhow::Result<String>,
+        last: std::sync::Mutex<Option<String>>,
+    }
+    impl MockBrowser {
+        fn ok(body: &str) -> Self {
+            Self {
+                reply: Ok(body.to_string()),
+                last: std::sync::Mutex::new(None),
+            }
+        }
+        fn err(msg: &str) -> Self {
+            Self {
+                reply: Err(anyhow::anyhow!("{msg}")),
+                last: std::sync::Mutex::new(None),
+            }
+        }
+    }
+    impl BrowserBackend for MockBrowser {
+        async fn render(&self, url: &str) -> anyhow::Result<String> {
+            *self.last.lock().unwrap() = Some(url.to_string());
+            match &self.reply {
+                Ok(s) => Ok(s.clone()),
+                Err(e) => Err(anyhow::anyhow!("{e}")),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn no_browser_backend_defers_render() {
+        // The default build's backend always defers honestly.
+        assert!(NoBrowser.render("https://x").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn loop_drives_browser_on_needs_browser_with_url() {
+        // Brain: needs_browser(url) → done. The injected backend renders rung 3.
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"needs_browser\",\"reason\":\"spa\",\"url\":\"https://app/dash\"}",
+            "{\"kind\":\"done\",\"summary\":\"read the dashboard\"}",
+        ]);
+        let fetcher = MockFetcher::ok("unused");
+        let browser = MockBrowser::ok("# Dashboard\n\nBalance: 42");
+        let out = run_task_loop_with_browser(
+            "g",
+            "seed",
+            &[],
+            &sampler,
+            &fetcher,
+            &browser,
+            &LoopBounds::default(),
+        )
+        .await;
+        assert_eq!(out.stop, LoopStop::Done);
+        let step = &out.steps[0];
+        assert_eq!(step.observation.rung, 3, "browser step is rung 3");
+        assert_eq!(step.observation.status, TaskStatus::Done);
+        assert!(step.observation.content.contains("Balance: 42"));
+        // The backend received the requested url.
+        assert_eq!(
+            browser.last.lock().unwrap().clone(),
+            Some("https://app/dash".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn loop_defers_needs_browser_without_backend() {
+        // Default loop (NoBrowser): needs_browser → honest rung-3 Incomplete.
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"needs_browser\",\"reason\":\"spa\",\"url\":\"https://app/x\"}",
+            "{\"kind\":\"done\"}",
+        ]);
+        let fetcher = MockFetcher::ok("unused");
+        let out = run_task_loop("g", "seed", &[], &sampler, &fetcher, &LoopBounds::default()).await;
+        assert_eq!(out.stop, LoopStop::Done);
+        let obs = &out.steps[0].observation;
+        assert_eq!(obs.rung, 3);
+        assert_eq!(obs.status, TaskStatus::Incomplete);
+        assert!(
+            obs.error
+                .as_deref()
+                .unwrap()
+                .contains("delegate_to_browser")
+        );
+    }
+
+    #[tokio::test]
+    async fn loop_defers_needs_browser_without_url() {
+        // needs_browser with no url cannot render (the loop holds seed content,
+        // not the seed URL) → honest deferral, even with a working backend.
+        let sampler = ScriptedSampler::new(&[
+            "{\"kind\":\"needs_browser\",\"reason\":\"spa\"}",
+            "{\"kind\":\"done\"}",
+        ]);
+        let fetcher = MockFetcher::ok("unused");
+        let browser = MockBrowser::err("should not be called");
+        let out = run_task_loop_with_browser(
+            "g",
+            "seed",
+            &[],
+            &sampler,
+            &fetcher,
+            &browser,
+            &LoopBounds::default(),
+        )
+        .await;
+        let obs = &out.steps[0].observation;
+        assert_eq!(obs.rung, 3);
+        assert_eq!(obs.status, TaskStatus::Incomplete);
+        assert!(obs.error.as_deref().unwrap().contains("requires a url"));
+        assert!(
+            browser.last.lock().unwrap().is_none(),
+            "backend must not be called"
+        );
     }
 
     // ── bench.1 token-gap primitive ──────────────────────────────────────────

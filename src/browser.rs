@@ -259,6 +259,36 @@ impl BrowserLogin {
             .collect::<Vec<_>>()
             .join("; ")
     }
+
+    /// Rung 3: render `url` in the connected external browser and return screened,
+    /// LLM-shaped markdown. Opens a page, waits for navigation, gives the DOM a
+    /// brief settle window (SPAs hydrate client-side), extracts the rendered HTML,
+    /// converts it through nab's content pipeline, and runs the fetch-time YARA
+    /// screen. This is the primitive the task engine's [`nab::task::BrowserBackend`]
+    /// wraps so the brain-driven loop can escalate to a browser without nab ever
+    /// bundling Chromium — it orchestrates the user's EXTERNAL Chrome over CDP.
+    pub async fn render_markdown(&self, url: &str) -> Result<String> {
+        let page = self
+            .browser
+            .new_page(url)
+            .await
+            .context("failed to open browser page for rung-3 render")?;
+        page.wait_for_navigation()
+            .await
+            .context("failed to navigate the browser page")?;
+        // SPAs hydrate after load; give the DOM a brief settle window.
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let html = page
+            .content()
+            .await
+            .context("failed to read rendered DOM from the browser")?;
+        // Best-effort close so the orchestrated browser does not accumulate tabs.
+        let _ = page.close().await;
+        let markdown = crate::content::html::html_to_markdown_with_url(&html, Some(url));
+        let screened = crate::security::guard_fetch_output(&markdown, "task_browser", url)
+            .context("YARA screen rejected the rendered page")?;
+        Ok(screened)
+    }
 }
 
 /// Browser cookie

@@ -12,6 +12,8 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use nab::content::html::HtmlConversionOptions;
+#[cfg(feature = "browser")]
+use nab::task::run_task_loop_with_browser;
 use nab::task::{
     FetchRequest, LoopBounds, Sampler, TaskFetcher, TaskOutcome, TaskStatus, discover_apis,
     run_task_loop,
@@ -106,6 +108,22 @@ impl TaskFetcher for McpFetcher {
     }
 }
 
+/// Rung-3 backend: orchestrates the user's EXTERNAL Chrome over CDP (the opt-in
+/// `browser` feature). Connects to a running Chrome on `NAB_BROWSER_CDP_PORT`
+/// (default 9222) and renders the requested page to screened markdown. nab never
+/// bundles Chromium — this drives a browser the user already runs.
+#[cfg(feature = "browser")]
+struct CdpBrowser {
+    login: nab::BrowserLogin,
+}
+
+#[cfg(feature = "browser")]
+impl nab::task::BrowserBackend for CdpBrowser {
+    async fn render(&self, url: &str) -> anyhow::Result<String> {
+        self.login.render_markdown(url).await
+    }
+}
+
 /// The loop's brain over MCP sampling: forwards the prompt to the connected
 /// client's LLM via `sampling/createMessage` and returns its reply.
 struct McpSampler<'a> {
@@ -116,6 +134,47 @@ impl Sampler for McpSampler<'_> {
     async fn next_action(&self, prompt: &str) -> anyhow::Result<String> {
         sampling::create_message(self.runtime, prompt, 1024, None).await
     }
+}
+
+/// Run the self-contained autonomous loop. With the `browser` feature, connects
+/// to the user's running Chrome (`NAB_BROWSER_CDP_PORT`, default 9222) so the loop
+/// can escalate to rung 3; when no browser is reachable — or the feature is off —
+/// runs the rungs-0-2 loop, which defers `needs_browser` honestly.
+async fn run_autonomous_loop(
+    goal: &str,
+    seed: &str,
+    discovered: &[nab::task::DiscoveredApi],
+    sampler: &McpSampler<'_>,
+    fetcher: &McpFetcher,
+) -> nab::task::LoopOutcome {
+    #[cfg(feature = "browser")]
+    {
+        let port = std::env::var("NAB_BROWSER_CDP_PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok());
+        if let Ok(login) = nab::BrowserLogin::connect(port).await {
+            let browser = CdpBrowser { login };
+            return run_task_loop_with_browser(
+                goal,
+                seed,
+                discovered,
+                sampler,
+                fetcher,
+                &browser,
+                &LoopBounds::default(),
+            )
+            .await;
+        }
+    }
+    run_task_loop(
+        goal,
+        seed,
+        discovered,
+        sampler,
+        fetcher,
+        &LoopBounds::default(),
+    )
+    .await
 }
 
 #[mcp_tool(
@@ -188,15 +247,13 @@ impl TaskTool {
         if self.autonomous && sampling::is_supported(runtime) {
             let sampler = McpSampler { runtime };
             let fetcher = McpFetcher;
-            let loop_outcome = run_task_loop(
-                &self.goal,
-                &markdown,
-                &discovered_apis,
-                &sampler,
-                &fetcher,
-                &LoopBounds::default(),
-            )
-            .await;
+            // With the `browser` feature, try to connect to the user's running
+            // Chrome so the loop can escalate to rung 3 (`needs_browser`). If no
+            // browser is reachable, fall back to the rungs-0-2 loop (which defers
+            // `needs_browser` honestly). Without the feature, always the latter.
+            let loop_outcome =
+                run_autonomous_loop(&self.goal, &markdown, &discovered_apis, &sampler, &fetcher)
+                    .await;
             let json = serde_json::to_string_pretty(&loop_outcome)
                 .map_err(|e| CallToolError::from_message(e.to_string()))?;
             return Ok(CallToolResult::text_content(vec![TextContent::from(json)]));
