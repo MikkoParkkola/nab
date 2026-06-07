@@ -630,11 +630,9 @@ async fn cmd_fetch_render_dom(cfg: &FetchConfig) -> Result<()> {
         ))?;
     }
 
-    let browser = nab::BrowserLogin::connect(None)
-        .await
-        .map_err(|e| anyhow::anyhow!(
-            "authed DOM render needs Chrome on --remote-debugging-port=9222: {e}"
-        ))?;
+    let browser = nab::BrowserLogin::connect(None).await.map_err(|e| {
+        anyhow::anyhow!("authed DOM render needs Chrome on --remote-debugging-port=9222: {e}")
+    })?;
     let markdown = browser.render_with_cookies(&cfg.url, &cookies).await?;
     let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
     output_body(
@@ -661,7 +659,6 @@ async fn cmd_fetch_render_dom(_cfg: &FetchConfig) -> Result<()> {
         "authed DOM render requires the `browser` feature (chromiumoxide); rebuild with `--features browser`"
     ))
 }
-
 
 pub struct FetchedContent {
     /// YARA-screened, token-budgeted markdown — what the model consumes.
