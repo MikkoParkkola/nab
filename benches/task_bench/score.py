@@ -29,8 +29,13 @@ def load(side):
 def main():
     nab = load("nab")
     browser = load("browser")
-    ids = sorted(set(nab) & set(browser))
-    missing = sorted((set(nab) | set(browser)) - set(ids))
+    paired = sorted(set(nab) & set(browser))
+    # A task counts toward the verdict only if the browser capture is VALID
+    # (the answer actually rendered — not a bot-wall/shell). Invalid captures are
+    # reported, never silently scored.
+    invalid = [i for i in paired if not browser[i].get("valid_capture", True)]
+    ids = [i for i in paired if i not in invalid]
+    missing = sorted((set(nab) | set(browser)) - set(paired))
 
     print(f"{'task':<20} {'nab_tok':>9} {'br_tok':>9} {'tok_x':>6}  {'nab_ms':>8} {'br_ms':>8} {'lat_x':>6}")
     print("-" * 76)
@@ -61,6 +66,8 @@ def main():
     print(f"  latency: nab median {mnl:.0f} {'<' if latency_win else '>='} browser {mbl:.0f}  -> {'WIN' if latency_win else 'LOSS'}")
     print()
     print(f"  bench.1 (n={len(ids)}): {'PASS' if passed else 'FAIL'} (both axes required)")
+    if invalid:
+        print(f"  excluded {len(invalid)} invalid browser capture(s) (bot-wall/shell): {invalid}")
     if missing:
         print(f"  WARNING: unpaired tasks excluded from medians: {missing}")
     return 0 if passed else 1

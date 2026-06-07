@@ -1,0 +1,13 @@
+{
+  "id": "so-question-answers",
+  "nab_tokens": 4073,
+  "seed_tokens": 1000,
+  "seed_tokens_full": 2585,
+  "obs_tokens": 3073,
+  "nab_latency_ms": 1942,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

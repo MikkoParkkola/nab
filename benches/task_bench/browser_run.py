@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""bench.1 browser baseline via CDP — the agent-ingest cost of the browser path.
+"""bench.1 browser baseline v2 — validity-checked CDP capture.
 
-Launches an ISOLATED headless Chrome (own port + temp profile; does NOT touch the
-user's running browser), and for each corpus task: navigates to the seed URL,
-waits for the load event (real latency), reads document.body.innerText (the text a
-browser agent must ingest), and checks the answer field is present.
+Fixes the pilot's measurement bug: a render only counts if the page actually
+rendered the answer. Bot-walls and empty SPA shells are browser FAILURES, not
+cheap token wins.
 
-This is the conservative browser baseline (see browser_baseline.md): innerText
-only — no screenshot tokens, no a11y tree, no misclick re-reads. If nab still wins
-here, it wins by at least this much.
+Per task, against an ISOLATED headless Chrome (own port + temp profile):
+  1. navigate to seed_url
+  2. wait for the load event, then poll document.body.innerText until it stops
+     growing (SPA hydration) or a cap — this is the real "page settled" signal.
+  3. validity gate: innerText must exceed MIN_VALID_CHARS and contain none of the
+     bot-wall markers; if `browser_answer_contains` is set, it must be present.
+  4. record browser_tokens (innerText) + browser_latency_ms + answer_found.
 
-Output: results/<id>.browser.json = { id, browser_tokens, browser_latency_ms,
-         answer_found }.
+innerText only — conservative (no screenshot/a11y tokens). See browser_baseline.md.
+Output: results/<id>.browser.json.
 
-Usage: ./browser_run.py corpus.pilot.json
+Usage: ./browser_run.py corpus.v2.json
 """
 import json
 import os
@@ -26,9 +29,16 @@ import websocket  # websocket-client
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-PORT = 9333
-PROFILE = "/Users/mikko/nab-cc-tmp/chrome_bench_iso"
+PORT = 9334
+PROFILE = "/Users/mikko/nab-cc-tmp/chrome_bench_v2"
 OUT = os.path.join(HERE, "results")
+
+MIN_VALID_CHARS = 500
+BOT_WALL = re.compile(
+    r"enable javascript|just a moment|verify you are human|access denied|"
+    r"unusual traffic|are you a robot|captcha|cf-browser-verification",
+    re.I,
+)
 
 
 def toks(s):
@@ -64,7 +74,6 @@ def launch_chrome():
          "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    # wait for CDP up
     import urllib.request
     for _ in range(50):
         try:
@@ -77,7 +86,6 @@ def launch_chrome():
 
 def new_tab_ws():
     import urllib.request
-    # Chrome 111+ requires PUT (not GET) for /json/new.
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/json/new", method="PUT")
     data = json.loads(urllib.request.urlopen(req, timeout=5).read())
     ws = websocket.create_connection(data["webSocketDebuggerUrl"], max_size=64 * 1024 * 1024)
@@ -92,6 +100,16 @@ def close_tab(tab_id):
         pass
 
 
+def read_innertext(ws, mid):
+    cdp_send(ws, mid, "Runtime.evaluate",
+             {"expression": "document.body ? document.body.innerText : ''",
+              "returnByValue": True})
+    r = cdp_wait(ws, want_id=mid, timeout=20)
+    if r and "result" in r:
+        return (r["result"].get("result", {}) or {}).get("value", "") or ""
+    return ""
+
+
 def run_task(t):
     ws, tab_id = new_tab_ws()
     mid = 0
@@ -101,29 +119,36 @@ def run_task(t):
         mid += 1; cdp_send(ws, mid, "Page.navigate", {"url": t["seed_url"]})
         cdp_wait(ws, want_id=mid)
         cdp_wait(ws, want_event="Page.loadEventFired", timeout=40)
-        load_ms = int((time.time() - t0) * 1000)
-        # give SPAs time to hydrate (counted in latency). npm/crates/SO render
-        # their answer client-side; too short a wait captures an empty shell.
-        time.sleep(4.0)
-        mid += 1
-        cdp_send(ws, mid, "Runtime.evaluate",
-                 {"expression": "document.body ? document.body.innerText : ''",
-                  "returnByValue": True})
-        r = cdp_wait(ws, want_id=mid, timeout=20)
+        # Poll innerText until it stops growing (SPA hydration settled) or a cap.
+        prev, stable, text = -1, 0, ""
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            time.sleep(0.8)
+            mid += 1
+            text = read_innertext(ws, mid)
+            if len(text) == prev:
+                stable += 1
+                if stable >= 2:  # ~1.6s with no growth → settled
+                    break
+            else:
+                stable = 0
+            prev = len(text)
         total_ms = int((time.time() - t0) * 1000)
-        text = ""
-        if r and "result" in r:
-            text = (r["result"].get("result", {}) or {}).get("value", "") or ""
-        fields = [f for f in t.get("answer_field", "").split(",") if f]
-        # answer fields are API JSON keys; for the browser we check the human answer
-        # is *reachable* (page non-trivial). Mark found if the page rendered content.
-        found = len(text) > 200
+
+        # Validity gate: a real render of the answer, not a shell or a bot-wall.
+        marker = t.get("browser_answer_contains", "")
+        valid = (
+            len(text) >= MIN_VALID_CHARS
+            and not BOT_WALL.search(text)
+            and (not marker or marker.lower() in text.lower())
+        )
         return {
             "id": t["id"],
             "browser_tokens": toks(text),
             "browser_latency_ms": total_ms,
-            "answer_found": bool(found),
+            "answer_found": bool(valid),
             "innertext_chars": len(text),
+            "valid_capture": bool(valid),
         }
     finally:
         ws.close()
@@ -131,7 +156,7 @@ def run_task(t):
 
 
 def main():
-    corpus = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "corpus.pilot.json")
+    corpus = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "corpus.v2.json")
     tasks = json.load(open(corpus))["tasks"]
     os.makedirs(OUT, exist_ok=True)
     proc = launch_chrome()
@@ -142,10 +167,11 @@ def main():
                 rec = run_task(t)
             except Exception as e:
                 rec = {"id": t["id"], "browser_tokens": 0, "browser_latency_ms": 0,
-                       "answer_found": False, "error": str(e)[:120]}
+                       "answer_found": False, "valid_capture": False, "error": str(e)[:120]}
             json.dump(rec, open(f"{OUT}/{t['id']}.browser.json", "w"), indent=2)
+            flag = "" if rec.get("valid_capture") else "  [INVALID capture — bot-wall/shell]"
             print(f"  browser_tokens={rec['browser_tokens']} "
-                  f"latency_ms={rec['browser_latency_ms']} found={rec['answer_found']}")
+                  f"latency_ms={rec['browser_latency_ms']} valid={rec.get('valid_capture')}{flag}")
     finally:
         proc.terminate()
         try:

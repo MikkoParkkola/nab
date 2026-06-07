@@ -1,0 +1,13 @@
+{
+  "id": "hn-topstories",
+  "nab_tokens": 5024,
+  "seed_tokens": 1000,
+  "seed_tokens_full": 1093161,
+  "obs_tokens": 4024,
+  "nab_latency_ms": 1682,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

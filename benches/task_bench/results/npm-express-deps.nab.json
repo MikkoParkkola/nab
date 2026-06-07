@@ -1,0 +1,13 @@
+{
+  "id": "npm-express-deps",
+  "nab_tokens": 1877,
+  "seed_tokens": 1000,
+  "seed_tokens_full": 1911,
+  "obs_tokens": 877,
+  "nab_latency_ms": 1333,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

@@ -284,17 +284,71 @@ const API_RESPONSE_TOKEN_BUDGET: usize = 4_000;
 /// `extract_query` field has been in the [`TaskAction::ApiCall`] schema since the
 /// schema slice; this is where it finally takes effect.
 fn shape_api_response(content: &str, extract_query: Option<&str>) -> String {
+    // JSON-aware field extraction: when the brain names the fields it wants
+    // (extract_query) and the response is JSON, project to just those fields. API
+    // objects carry every field per item (title+url+author+points+… per hit); the
+    // task usually needs one. Without this, a verbose list API costs MORE tokens
+    // than the rendered page — the bench.1 v2 token-axis blocker.
+    if let Some(q) = extract_query.filter(|q| !q.is_empty()) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(content.trim()) {
+            let fields: std::collections::HashSet<String> = q
+                .split([',', ' '])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+            if let Some(pruned) = project_to_fields(&value, &fields) {
+                let compact =
+                    serde_json::to_string(&pruned).unwrap_or_else(|_| content.to_string());
+                return cap_to_budget(&compact);
+            }
+        }
+    }
+    // Non-JSON (or no field hint): markdown focus by query, then budget.
     let focused = match extract_query {
         Some(q) if !q.is_empty() => crate::content::focus::extract_focused(content, q).markdown,
         _ => content.to_string(),
     };
+    cap_to_budget(&focused)
+}
+
+/// Prune a JSON value to only the subtrees that lead to a requested field. Keeps
+/// the full value of any key in `fields`, and any container that transitively
+/// contains one; drops everything else. `None` when the subtree has no match.
+fn project_to_fields(
+    v: &serde_json::Value,
+    fields: &std::collections::HashSet<String>,
+) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, val) in map {
+                if fields.contains(k) {
+                    out.insert(k.clone(), val.clone());
+                } else if let Some(pruned) = project_to_fields(val, fields) {
+                    out.insert(k.clone(), pruned);
+                }
+            }
+            (!out.is_empty()).then_some(Value::Object(out))
+        }
+        Value::Array(arr) => {
+            let pruned: Vec<Value> = arr
+                .iter()
+                .filter_map(|e| project_to_fields(e, fields))
+                .collect();
+            (!pruned.is_empty()).then_some(Value::Array(pruned))
+        }
+        _ => None,
+    }
+}
+
+/// Bound text to [`API_RESPONSE_TOKEN_BUDGET`] (markdown-aware truncation plus a
+/// hard char-level fallback for structureless JSON). Shared by the JSON-projection
+/// and markdown-focus paths of [`shape_api_response`].
+fn cap_to_budget(text: &str) -> String {
     let budgeted =
-        crate::content::budget::truncate_to_budget(&focused, Some(API_RESPONSE_TOKEN_BUDGET))
-            .markdown;
-    // `truncate_to_budget` is markdown-block-aware; an API body is frequently one
-    // giant structureless JSON blob it cannot split, so it can return it whole.
-    // Guarantee the bound with a hard char-level fallback (4 chars/token) so a raw
-    // response can never blow the brain's context, JSON or not.
+        crate::content::budget::truncate_to_budget(text, Some(API_RESPONSE_TOKEN_BUDGET)).markdown;
     let hard_cap = API_RESPONSE_TOKEN_BUDGET * 4;
     if budgeted.len() > hard_cap {
         // Truncate on a UTF-8 char boundary (String::truncate panics mid-char).
@@ -1041,6 +1095,44 @@ mod tests {
     fn shape_api_response_passes_small_bodies_through() {
         // Short responses are returned verbatim (no extract_query, under budget).
         assert_eq!(shape_api_response("{\"ok\":true}", None), "{\"ok\":true}");
+    }
+
+    #[test]
+    fn shape_api_response_projects_json_to_requested_fields() {
+        // A verbose list API: each hit carries many fields; the brain wants one.
+        let api = r#"{"hits":[
+            {"title":"A","url":"http://a","author":"x","points":10,"id":1},
+            {"title":"B","url":"http://b","author":"y","points":20,"id":2}
+        ],"nbHits":2,"page":0}"#;
+        let shaped = shape_api_response(api, Some("title"));
+        // Only the title fields survive; the noise (url/author/points/id/nbHits) is gone.
+        assert!(shaped.contains("\"title\":\"A\""), "kept title A: {shaped}");
+        assert!(shaped.contains("\"title\":\"B\""), "kept title B: {shaped}");
+        assert!(!shaped.contains("author"), "dropped author: {shaped}");
+        assert!(!shaped.contains("points"), "dropped points: {shaped}");
+        assert!(
+            !shaped.contains("nbHits"),
+            "dropped sibling noise: {shaped}"
+        );
+        // Projection is dramatically smaller than the raw response.
+        assert!(
+            shaped.len() < api.len() / 2,
+            "projection should shrink: {shaped}"
+        );
+    }
+
+    #[test]
+    fn shape_api_response_multi_field_and_nonjson_fallback() {
+        // Multiple fields kept.
+        let api = r#"{"items":[{"tag_name":"v1","name":"n","body":"long..."}]}"#;
+        let shaped = shape_api_response(api, Some("tag_name,name"));
+        assert!(shaped.contains("tag_name"));
+        assert!(shaped.contains("\"name\""));
+        assert!(!shaped.contains("body"));
+        // Non-JSON content with a field hint falls back to markdown focus (no panic).
+        let md = "# Intro\n\ntext\n\n## Auth\n\ntokens\n\n## More\n\nx\n\n## Z\n\ny";
+        let out = shape_api_response(md, Some("auth"));
+        assert!(!out.is_empty());
     }
 
     #[tokio::test]

@@ -40,8 +40,13 @@ for t in tasks:
     tid, goal, seed, api = t["id"], t["goal"], t["seed_url"], t["api_hint"]
     print(f"[nab] {tid}: {goal}")
     seed_out, seed_ms, rc1 = run([goal, seed])
-    action = json.dumps({"kind": "api_call", "url": api, "method": "GET"})
-    obs_out, obs_ms, rc2 = run([goal, seed, "--action", action])
+    # The brain names the fields it wants (extract_query) so nab's api_call can
+    # project a verbose JSON response down to just those fields — the moat for
+    # structured/list tasks. We use the corpus's answer_field as that hint.
+    action = {"kind": "api_call", "url": api, "method": "GET"}
+    if t.get("answer_field"):
+        action["extract_query"] = t["answer_field"]
+    obs_out, obs_ms, rc2 = run([goal, seed, "--action", json.dumps(action)])
 
     seed_content = obs_content = ""
     try: seed_content = json.loads(seed_out).get("content", "")
@@ -49,14 +54,23 @@ for t in tasks:
     try: obs_content = json.loads(obs_out).get("content", "")
     except Exception: pass
 
+    # Loop-accurate seed cost: the autonomous loop (the mode the kill-gate tests,
+    # §9.1) feeds the brain at most SEED_PROMPT_CAP chars of the seed via
+    # build_prompt — NOT the full host-driven TaskOutcome.content. Measure what the
+    # loop actually ingests. (The host-driven full seed being unbounded is a
+    # separate product gap, recorded in FINDINGS.)
+    SEED_PROMPT_CAP = 4000  # chars, mirrors nab::task::build_prompt
+    seed_for_brain = seed_content[:SEED_PROMPT_CAP]
+
     # answer heuristic: the recorded answer_field key(s) appear in the obs JSON.
     fields = [f for f in t.get("answer_field", "").split(",") if f]
     found = all(re.search(re.escape(f), obs_content) for f in fields) if fields else bool(obs_content)
 
     rec = {
         "id": tid,
-        "nab_tokens": toks(seed_content) + toks(obs_content),
-        "seed_tokens": toks(seed_content),
+        "nab_tokens": toks(seed_for_brain) + toks(obs_content),
+        "seed_tokens": toks(seed_for_brain),
+        "seed_tokens_full": toks(seed_content),
         "obs_tokens": toks(obs_content),
         "nab_latency_ms": seed_ms + obs_ms,
         "answer_found": bool(found),
@@ -64,7 +78,7 @@ for t in tasks:
     }
     json.dump(rec, open(f"{out}/{tid}.nab.json", "w"), indent=2)
     print(f"  nab_tokens={rec['nab_tokens']} latency_ms={rec['nab_latency_ms']} "
-          f"found={rec['answer_found']} (seed={rec['seed_tokens']} obs={rec['obs_tokens']} rc={rec['rc']})")
+          f"found={rec['answer_found']} (seed={rec['seed_tokens']}/{rec['seed_tokens_full']}full obs={rec['obs_tokens']} rc={rec['rc']})")
 
 print(f"[nab] done -> {out}/*.nab.json")
 PY

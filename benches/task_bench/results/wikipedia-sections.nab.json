@@ -1,0 +1,13 @@
+{
+  "id": "wikipedia-sections",
+  "nab_tokens": 2959,
+  "seed_tokens": 118,
+  "seed_tokens_full": 118,
+  "obs_tokens": 2841,
+  "nab_latency_ms": 556,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

@@ -1,0 +1,21 @@
+task                   nab_tok    br_tok  tok_x    nab_ms    br_ms  lat_x
+----------------------------------------------------------------------------
+crates-io                 4032       708   0.2x      1510     4363   2.9x
+crates-tokio-deps         1307       835   0.6x      1183     4677   4.0x
+gh-releases               4750      7431   1.6x      2392     4494   1.9x
+gh-stars                  2530       800   0.3x       599     5429   9.1x
+hn-item                   4096      7240   1.8x      1860     4976   2.7x
+hn-topstories             5024      1064   0.2x      1682     3468   2.1x
+npm-version                797        66   0.1x      1739     4468   2.6x
+pypi-requests-releases      5021      1377   0.3x       344     3190   9.3x
+stackoverflow-q           2808        67   0.0x      2078     4447   2.1x
+wikipedia-sections        2959     18434   6.2x       556     3188   5.7x
+wikipedia-summary          624     18434  29.5x       537     4702   8.8x
+----------------------------------------------------------------------------
+MEDIAN                    2959      1064   0.4x      1510     4468   3.0x
+
+  tokens : nab median 2959 >= browser 1064  -> LOSS
+  latency: nab median 1510 < browser 4468  -> WIN
+
+  bench.1 (n=11): FAIL (both axes required)
+  excluded 3 invalid browser capture(s) (bot-wall/shell): ['npm-express-deps', 'reddit-rust-top', 'so-question-answers']

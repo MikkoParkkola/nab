@@ -1,0 +1,13 @@
+{
+  "id": "crates-tokio-deps",
+  "nab_tokens": 1307,
+  "seed_tokens": 8,
+  "seed_tokens_full": 8,
+  "obs_tokens": 1299,
+  "nab_latency_ms": 1183,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

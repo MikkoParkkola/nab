@@ -1,0 +1,13 @@
+{
+  "id": "pypi-requests-releases",
+  "nab_tokens": 5021,
+  "seed_tokens": 1000,
+  "seed_tokens_full": 6798,
+  "obs_tokens": 4021,
+  "nab_latency_ms": 344,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

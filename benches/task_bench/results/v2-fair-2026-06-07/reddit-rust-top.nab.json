@@ -1,0 +1,13 @@
+{
+  "id": "reddit-rust-top",
+  "nab_tokens": 4034,
+  "seed_tokens": 10,
+  "seed_tokens_full": 10,
+  "obs_tokens": 4024,
+  "nab_latency_ms": 1043,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}

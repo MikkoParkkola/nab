@@ -1,0 +1,75 @@
+{
+  "_meta": {
+    "name": "nab task-engine bench.1 corpus — v2 (moat: data-heavy / multi-item)",
+    "purpose": "Tasks where the answer is a LIST or structured slice of a heavy page. The browser must render+ingest the whole page (many items + chrome); nab gets a shaped API response. This is the moat case, not trivial single-fact lookups.",
+    "axes": ["tokens", "latency"],
+    "baseline": "live headless Chrome over CDP, validity-checked (browser_answer_contains must render; bot-walls/shells = browser failure)",
+    "note": "api_hint recorded for the nab runner only; the browser is never handed it."
+  },
+  "tasks": [
+    {
+      "id": "gh-releases",
+      "goal": "List the tag names of the 5 most recent releases of rust-lang/rust.",
+      "seed_url": "https://github.com/rust-lang/rust/releases",
+      "api_hint": "https://api.github.com/repos/rust-lang/rust/releases?per_page=5",
+      "answer_field": "tag_name",
+      "browser_answer_contains": "Release"
+    },
+    {
+      "id": "hn-topstories",
+      "goal": "List the titles of the current top 10 Hacker News stories.",
+      "seed_url": "https://news.ycombinator.com/",
+      "api_hint": "https://hn.algolia.com/api/v1/search?tags=front_page",
+      "answer_field": "title",
+      "browser_answer_contains": "Hacker News"
+    },
+    {
+      "id": "reddit-rust-top",
+      "goal": "List the titles of the top posts in r/rust right now.",
+      "seed_url": "https://www.reddit.com/r/rust/",
+      "api_hint": "https://www.reddit.com/r/rust/hot.json?limit=15",
+      "answer_field": "title",
+      "browser_answer_contains": "rust"
+    },
+    {
+      "id": "npm-express-deps",
+      "goal": "List the runtime dependencies of the npm package express.",
+      "seed_url": "https://www.npmjs.com/package/express?activeTab=dependencies",
+      "api_hint": "https://registry.npmjs.org/express/latest",
+      "answer_field": "dependencies",
+      "browser_answer_contains": "express"
+    },
+    {
+      "id": "crates-tokio-deps",
+      "goal": "List the dependencies of the tokio crate.",
+      "seed_url": "https://crates.io/crates/tokio/dependencies",
+      "api_hint": "https://crates.io/api/v1/crates/tokio/1.43.0/dependencies",
+      "answer_field": "dependencies",
+      "browser_answer_contains": "tokio"
+    },
+    {
+      "id": "pypi-requests-releases",
+      "goal": "List the 5 most recent release versions of the PyPI package requests.",
+      "seed_url": "https://pypi.org/project/requests/#history",
+      "api_hint": "https://pypi.org/pypi/requests/json",
+      "answer_field": "releases",
+      "browser_answer_contains": "requests"
+    },
+    {
+      "id": "wikipedia-sections",
+      "goal": "List the top-level section headings of the Rust (programming language) Wikipedia article.",
+      "seed_url": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+      "api_hint": "https://en.wikipedia.org/w/api.php?action=parse&page=Rust_(programming_language)&prop=sections&format=json",
+      "answer_field": "sections",
+      "browser_answer_contains": "Rust"
+    },
+    {
+      "id": "so-question-answers",
+      "goal": "List the score of each answer to StackOverflow question 11227809.",
+      "seed_url": "https://stackoverflow.com/questions/11227809",
+      "api_hint": "https://api.stackexchange.com/2.3/questions/11227809/answers?site=stackoverflow&sort=votes",
+      "answer_field": "score",
+      "browser_answer_contains": "Stack Overflow"
+    }
+  ]
+}

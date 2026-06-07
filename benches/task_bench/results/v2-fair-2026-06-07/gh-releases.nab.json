@@ -1,0 +1,13 @@
+{
+  "id": "gh-releases",
+  "nab_tokens": 4750,
+  "seed_tokens": 1000,
+  "seed_tokens_full": 18082,
+  "obs_tokens": 3750,
+  "nab_latency_ms": 2392,
+  "answer_found": true,
+  "rc": [
+    0,
+    0
+  ]
+}
