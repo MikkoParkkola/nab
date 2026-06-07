@@ -187,6 +187,24 @@ kill-gate: stop and reconsider the thesis.
 3. route.1 + bench.1 gate; only then promote `nab task` to default MCP surface.
 4. rung 3 (browser orchestration) behind the existing opt-in `browser` feature.
 
+### 7.1 Implementation status (2026-06-07)
+
+All four rungs are SHIPPED behind the `task` feature (rung 3 also needs
+`browser`): rung 0 fetch, rung 1 `api_call`, rung 2 `submit`, rung 3 external-CDP
+browser (`run_task_loop_with_browser` + `BrowserBackend`/`CdpBrowser`, verified
+live against an external Chrome). route.1 is gated (test). `extract` + api-response
+shaping shipped.
+
+**Honest gate status:** rung 3 was built operator-directed, *ahead* of a passing
+bench.1. The bench.1 pilot (`benches/task_bench/`, 6 tasks) is a clean **latency**
+win (2.8x median) but **inconclusive on tokens** — two browser captures were
+SPA/bot-wall shells and the corpus is trivial single-fact lookups (nab's worst
+case). So bench.1 is NOT yet passed, and `nab task` does NOT graduate to the
+default MCP surface until a fair-corpus run (auth-gated / multi-step / data-heavy,
+valid browser renders) clears both axes. The ladder is built; the kill-gate
+verdict is still pending the right corpus.
+
+
 ## 8. Operator decisions (ratified 2026-06-05)
 
 - **Vision one-liner amendment (§1): RATIFIED.** Direction approved. Public-facing
