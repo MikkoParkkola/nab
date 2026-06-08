@@ -86,7 +86,7 @@ scraper = "0.27"                    # CSS selectors + DOM manipulation
 # ═══════════════════════════════════════════════════════════════════════════════
 # JAVASCRIPT ENGINE (QuickJS - 1MB, ES2020)
 # ═══════════════════════════════════════════════════════════════════════════════
-rquickjs = { version = "0.11", features = [
+rquickjs = { version = "0.12", features = [
     "bindgen",           # Auto-generate bindings
     "classes",           # ES6 class support
     "futures",           # Async/Promise integration with Rust futures
