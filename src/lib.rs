@@ -43,7 +43,6 @@ pub mod annotate;
 pub mod api_discovery;
 pub mod arena;
 pub mod auth;
-pub mod url_class;
 #[cfg(any(feature = "browser", feature = "browser-launcher"))]
 pub mod browser;
 pub mod browser_detect;
@@ -75,6 +74,7 @@ pub mod stream;
 /// executor and the `nab-mcp` self-contained loop.
 #[cfg(feature = "task")]
 pub mod task;
+pub mod url_class;
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]
 pub mod util;
