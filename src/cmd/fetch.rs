@@ -211,7 +211,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // chromiumoxide), the explicit `--render-dom` flag errors clearly, but the
     // automatic X-Article match falls through to the normal fetch ladder so
     // existing `nab fetch` behaviour is never broken (requirement 3).
-    let want_render_dom = cfg.render_dom || nab::browser::is_x_article_url(&cfg.url);
+    let want_render_dom = cfg.render_dom || nab::url_class::is_x_article_url(&cfg.url);
     #[cfg(feature = "browser")]
     let render_dom_active = want_render_dom;
     #[cfg(not(feature = "browser"))]
@@ -660,6 +660,9 @@ async fn cmd_fetch_render_dom(_cfg: &FetchConfig) -> Result<()> {
     ))
 }
 
+/// Screened fetch result: token-budgeted markdown plus the raw wire body, so
+/// later task rungs (e.g. API discovery) can inspect the HTML.
+#[cfg(feature = "task")]
 pub struct FetchedContent {
     /// YARA-screened, token-budgeted markdown — what the model consumes.
     pub markdown: String,

@@ -43,6 +43,7 @@ pub mod annotate;
 pub mod api_discovery;
 pub mod arena;
 pub mod auth;
+pub mod url_class;
 #[cfg(any(feature = "browser", feature = "browser-launcher"))]
 pub mod browser;
 pub mod browser_detect;
