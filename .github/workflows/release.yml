@@ -29,6 +29,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Verify Cargo.toml version matches the tag
+        # Guards against tagging a release whose Cargo.toml was not bumped: that
+        # ships mis-versioned binaries and fails `cargo publish` with a
+        # "version already exists" error (regression: v0.12.0 tag vs 0.11.0 Cargo.toml).
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\1/')"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::Release tag v$tag does not match Cargo.toml version $ver. Bump Cargo.toml before tagging."
+            exit 1
+          fi
+          echo "version OK: tag v$tag == Cargo.toml $ver"
       - name: Scan Cargo dependencies against OSV
         uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
         with:
