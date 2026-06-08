@@ -701,7 +701,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "pin-project-lite",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -732,7 +732,7 @@ checksum = "edd2cc8c9431726edce9f5ceb3ca1b711dde0f818cd6fb34808a00556ce73135"
 dependencies = [
  "anyhow",
  "directories",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "thiserror 2.0.18",
  "tokio",
@@ -3165,7 +3165,7 @@ dependencies = [
  "rand 0.10.1",
  "readability",
  "regex",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "reqwest_cookie_store",
  "roxmltree",
  "rquickjs",
@@ -4344,9 +4344,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
+checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
  "base64",
  "bytes",
@@ -4397,7 +4397,7 @@ checksum = "beb98c4d52ae6ceed18a0dff0564717623dd75fae08619ae0927332f0a81abbc"
 dependencies = [
  "bytes",
  "cookie_store",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "url",
 ]
 
