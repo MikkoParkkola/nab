@@ -74,6 +74,7 @@ pub mod stream;
 /// executor and the `nab-mcp` self-contained loop.
 #[cfg(feature = "task")]
 pub mod task;
+pub mod url_class;
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]
 pub mod util;

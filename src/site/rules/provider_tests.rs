@@ -43,6 +43,62 @@ fn twitter_provider_does_not_match_profile_urls() {
 }
 
 #[test]
+fn twitter_provider_matches_www_and_mobile_subdomains() {
+    // GIVEN: the twitter provider
+    let p = twitter_provider();
+    // THEN: www. and mobile. subdomains of the real hosts must match so the
+    // FxTwitter rewrite applies to them too.
+    assert!(p.matches("https://www.x.com/u/status/123"));
+    assert!(p.matches("https://mobile.twitter.com/u/status/123"));
+    assert!(p.matches("https://www.twitter.com/u/status/123"));
+    assert!(p.matches("https://mobile.x.com/u/status/123"));
+}
+
+#[test]
+fn twitter_provider_does_not_match_mirror_hosts() {
+    // GIVEN: the twitter provider
+    let p = twitter_provider();
+    // THEN: mirror / proxy hosts that merely *contain* the substring
+    // "twitter.com" or "x.com" must NOT match.  This is the host-self-match
+    // guard: without a host anchor, nab re-applies the twitter rule to its own
+    // rewritten FxTwitter URL (api.fxtwitter.com/.../status/...), causing an
+    // infinite-rewrite / double-fetch.  See twitter.toml host-anchor comment.
+    assert!(
+        !p.matches("https://api.fxtwitter.com/u/status/123"),
+        "FxTwitter mirror (nab's own rewrite target) must NOT re-match"
+    );
+    assert!(!p.matches("https://fxtwitter.com/u/status/123"));
+    assert!(!p.matches("https://vxtwitter.com/u/status/123"));
+    assert!(!p.matches("https://api.vxtwitter.com/u/status/123"));
+    assert!(!p.matches("https://fixupx.com/u/status/123"));
+    // A path segment that merely embeds the host string must not match either.
+    assert!(!p.matches("https://evil.test/x.com/u/status/123"));
+}
+
+#[test]
+fn twitter_provider_matches_direct_article_urls() {
+    // GIVEN: the twitter provider
+    let p = twitter_provider();
+    // THEN: direct X Article URLs (x.com/i/article/<id>) are recognized as
+    // Twitter/X-family so they are classified (not treated as generic).  These
+    // have NO /status/<id>, so the FxTwitter rewrite is a no-op (article-id is
+    // not a status-id); they are destined for the authenticated engine render
+    // path keyed on the same regex.  See twitter.toml [site].patterns comment.
+    assert!(p.matches("https://x.com/i/article/1234567890"));
+    assert!(p.matches("https://www.x.com/i/article/1234567890"));
+}
+
+#[test]
+fn twitter_provider_does_not_match_mirror_article_hosts() {
+    // GIVEN: the twitter provider
+    let p = twitter_provider();
+    // THEN: the article pattern is host-anchored too — mirror hosts that embed
+    // the substring must not match the article shape.
+    assert!(!p.matches("https://api.fxtwitter.com/i/article/123"));
+    assert!(!p.matches("https://fixupx.com/i/article/123"));
+}
+
+#[test]
 fn youtube_provider_matches_watch_and_short_urls() {
     let p = youtube_provider();
     assert!(p.matches("https://youtube.com/watch?v=abc123"));
@@ -91,6 +147,41 @@ fn twitter_rewrite_works_for_twitter_com() {
     assert_eq!(
         rewritten,
         "https://api.fxtwitter.com/elonmusk/status/9876543210"
+    );
+}
+
+#[test]
+fn twitter_rewrite_works_for_www_and_mobile_subdomains() {
+    // GIVEN: the twitter provider
+    let p = twitter_provider();
+    // THEN: the host-anchored rewrite.from still captures handle + status-id
+    // for www. / mobile. subdomains (the subdomain is dropped on the way to the
+    // canonical FxTwitter API host).
+    assert_eq!(
+        p.rewrite_url("https://www.x.com/naval/status/123"),
+        "https://api.fxtwitter.com/naval/status/123"
+    );
+    assert_eq!(
+        p.rewrite_url("https://mobile.twitter.com/naval/status/123"),
+        "https://api.fxtwitter.com/naval/status/123"
+    );
+}
+
+#[test]
+fn twitter_rewrite_is_noop_for_direct_article_urls() {
+    // GIVEN: the twitter provider
+    let p = twitter_provider();
+    // WHEN: a direct X Article URL (no /status/<id>) is rewritten
+    let article = "https://x.com/i/article/1234567890";
+    let rewritten = p.rewrite_url(article);
+    // THEN: rewrite.from does not match → Regex::replace is a no-op → the URL
+    // is returned unchanged.  There is NO FxTwitter article endpoint
+    // (article-id != status-id), so the rule must never fabricate one.  The
+    // authenticated engine render path keys on this URL shape instead.
+    assert_eq!(
+        rewritten, article,
+        "article URL must be left untouched, not rewritten to a bogus \
+         FxTwitter status endpoint"
     );
 }
 
