@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "LangChain and LlamaIndex document loaders powered by nab"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 keywords = ["langchain", "llamaindex", "llm", "web-scraping", "markdown"]
 classifiers = [
     "Development Status :: 4 - Beta",
