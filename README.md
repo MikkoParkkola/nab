@@ -522,6 +522,14 @@ nab is part of a suite of MCP tools:
 | **[nab](https://github.com/MikkoParkkola/nab)** | **Web content extraction — fetch any URL with cookies + anti-bot bypass** |
 | [axterminator](https://github.com/MikkoParkkola/axterminator) | macOS GUI automation — 34 MCP tools via Accessibility API |
 
+## Related projects
+
+Independent, no-API-key tools for AI agents — each useful alone:
+
+- [trvl](https://github.com/MikkoParkkola/trvl) — travel MCP server + CLI (flights, hotels, trains, cars, ferries)
+- [mcp-gateway](https://github.com/MikkoParkkola/mcp-gateway) — one endpoint that multiplexes many MCP servers
+- [axterminator](https://github.com/MikkoParkkola/axterminator) — macOS desktop automation over the Accessibility API
+
 ## License
 
 nab is **dual-licensed** as of v0.9.0:
