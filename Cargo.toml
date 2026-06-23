@@ -142,6 +142,11 @@ roxmltree = "0.21"
 # PDF extraction (optional - requires pdfium dynamic library)
 pdfium-render = { version = "0.9", default-features = true, optional = true }
 
+# FlateDecode (zlib) inflation for the default-build light PDF extractor.
+# Already present transitively; declared direct so pdf_light can decompress
+# born-digital content streams without pdfium. (#195)
+flate2 = "1.1"
+
 # Browser automation via Chrome DevTools Protocol (optional)
 chromiumoxide = { version = "0.9", optional = true, default-features = false, features = ["rustls", "zip8"] }
 

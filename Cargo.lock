@@ -3147,6 +3147,7 @@ dependencies = [
  "criterion",
  "dirs",
  "ego-tree",
+ "flate2",
  "futures",
  "h3",
  "h3-quinn",
