@@ -647,6 +647,8 @@ fn build_markdown(text: Option<String>, page_count: usize, kind: PdfKind) -> Str
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
+
     use super::*;
 
     // ─── PDF detection ────────────────────────────────────────────────────
@@ -911,7 +913,6 @@ mod tests {
         // inflating the stream recovers the text.
         let content = b"BT\n(Hello from a compressed stream) Tj\nET";
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-        use std::io::Write as _;
         enc.write_all(content).unwrap();
         let compressed = enc.finish().unwrap();
 
@@ -943,7 +944,6 @@ mod tests {
     fn collect_stream_contents_inflates_flate_and_skips_images() {
         let text = b"BT (visible) Tj ET";
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-        use std::io::Write as _;
         enc.write_all(text).unwrap();
         let compressed = enc.finish().unwrap();
 
@@ -981,7 +981,6 @@ mod tests {
     #[test]
     fn inflate_flate_handles_corrupt_tail_gracefully() {
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-        use std::io::Write as _;
         enc.write_all(b"good text here").unwrap();
         let mut compressed = enc.finish().unwrap();
         compressed.truncate(compressed.len().saturating_sub(2)); // corrupt the tail

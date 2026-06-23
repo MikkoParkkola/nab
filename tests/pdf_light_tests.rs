@@ -3,7 +3,7 @@
 //! `ContentHandler` / `ContentRouter` API.
 //!
 //! These tests are the regression guard for issue #195: born-digital PDFs whose
-//! text lives in FlateDecode (zlib-compressed) content streams were falsely
+//! text lives in `FlateDecode` (zlib-compressed) content streams were falsely
 //! reported as "scanned" because the light extractor only scanned raw bytes.
 //!
 //! Gated on `not(feature = "pdf")` — when the pdfium feature is enabled a
@@ -21,14 +21,14 @@ use nab::content::{ContentHandler, ContentRouter};
 
 // ── Fixture builders ────────────────────────────────────────────────────────
 
-/// Zlib-compress a PDF content-stream body (what FlateDecode stores).
+/// Zlib-compress a PDF content-stream body (what `FlateDecode` stores).
 fn flate(body: &[u8]) -> Vec<u8> {
     let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
     enc.write_all(body).unwrap();
     enc.finish().unwrap()
 }
 
-/// Build a born-digital PDF whose only text lives in a FlateDecode stream.
+/// Build a born-digital PDF whose only text lives in a `FlateDecode` stream.
 /// Declares a `/Font` so it classifies as having a text layer.
 fn born_digital_flate_pdf(content_stream: &[u8]) -> Vec<u8> {
     let compressed = flate(content_stream);
@@ -46,7 +46,7 @@ fn born_digital_flate_pdf(content_stream: &[u8]) -> Vec<u8> {
     pdf
 }
 
-/// Build a genuinely image-only PDF: an image XObject, no fonts.
+/// Build a genuinely image-only PDF: an image `XObject`, no fonts.
 fn image_only_pdf() -> Vec<u8> {
     let mut pdf = Vec::new();
     pdf.extend_from_slice(b"%PDF-1.4\n");
