@@ -210,7 +210,7 @@ ego-tree = "0.11"
 which = "8"
 reqwest_cookie_store = "0.10"          # Persistent named-session cookie jars
 cookie_store = "0.22"                  # Cookie serialization for encrypted session files
-aes-gcm = "0.10.3"                     # AES-256-GCM for nab-owned session encryption
+aes-gcm = "0.11.0"                     # AES-256-GCM for nab-owned session encryption
 argon2 = "0.5.3"                       # Argon2id KDF for session data keys
 scrypt = { version = "0.11", default-features = false, features = ["std"] }  # PoW KDF for AWS WAF replay solver
 base64 = "0.22"                        # Base64 encoding for WAF challenge responses
