@@ -44,7 +44,7 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-use aes_gcm::aead::{Aead, KeyInit, OsRng, Payload, rand_core::RngCore};
+use aes_gcm::aead::{Aead, Generate, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use anyhow::{Context, Result, bail};
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -335,8 +335,9 @@ fn load_or_create_master_secret_in(state_dir: &Path) -> Result<[u8; SESSION_KEY_
         return read_master_secret_file(&key_path);
     }
 
-    let mut secret = [0u8; SESSION_KEY_LEN];
-    OsRng.fill_bytes(&mut secret);
+    // AES-256-GCM master secret: filled from the OS CSPRNG via aead 0.6 `Generate`
+    // (getrandom-backed). Same 32-byte key material as before; no crypto change.
+    let secret: [u8; SESSION_KEY_LEN] = Generate::generate();
 
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -396,12 +397,10 @@ fn encrypt_session_payload(
 ) -> Result<PersistedSessionEnvelope> {
     let master_secret = load_or_create_master_secret_in(state_dir)?;
 
-    let mut salt = [0u8; SESSION_SALT_LEN];
-    OsRng.fill_bytes(&mut salt);
+    let salt: [u8; SESSION_SALT_LEN] = Generate::generate();
     let key = derive_session_key(&master_secret, &salt)?;
 
-    let mut nonce = [0u8; SESSION_NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce);
+    let nonce: [u8; SESSION_NONCE_LEN] = Generate::generate();
 
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("AES-256-GCM key setup failed: {e}"))?;
@@ -409,7 +408,7 @@ fn encrypt_session_payload(
         serde_json::to_vec(payload).context("Failed to serialize session payload to JSON")?;
     let ciphertext = cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: &plaintext,
                 aad: session_aad(name).as_bytes(),
@@ -462,7 +461,7 @@ fn decrypt_session_payload(
         .map_err(|e| anyhow::anyhow!("AES-256-GCM key setup failed: {e}"))?;
     let plaintext = cipher
         .decrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: &ciphertext,
                 aad: session_aad(name).as_bytes(),
@@ -1058,6 +1057,60 @@ mod tests {
             .to_string();
         assert!(headers.contains("sid=abc"));
         assert!(headers.contains("token=xyz"));
+    }
+
+    // ── AES-256-GCM envelope crypto (aes-gcm 0.11 / aead 0.6 migration) ──────
+
+    fn sample_payload() -> PersistedSessionPayload {
+        PersistedSessionPayload {
+            profile: random_profile(),
+            cookies: Vec::new(),
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn encrypt_then_decrypt_session_payload_round_trips() {
+        let state_dir = tempfile::tempdir().unwrap();
+        let payload = sample_payload();
+
+        let envelope = encrypt_session_payload("roundtrip", &payload, state_dir.path()).unwrap();
+        let decrypted = decrypt_session_payload("roundtrip", &envelope, state_dir.path()).unwrap();
+
+        assert_eq!(decrypted.profile.user_agent, payload.profile.user_agent);
+        assert_eq!(
+            decrypted.profile.accept_language,
+            payload.profile.accept_language
+        );
+        assert!(decrypted.cookies.is_empty());
+        assert_eq!(envelope.cipher, SESSION_CIPHER);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn decrypt_session_payload_rejects_tampered_ciphertext() {
+        let state_dir = tempfile::tempdir().unwrap();
+        let mut envelope =
+            encrypt_session_payload("tamper", &sample_payload(), state_dir.path()).unwrap();
+
+        // Flip one ciphertext byte: the GCM authentication tag must reject it.
+        let mut bytes = hex::decode(&envelope.ciphertext_hex).unwrap();
+        bytes[0] ^= 0xFF;
+        envelope.ciphertext_hex = hex::encode(bytes);
+
+        assert!(decrypt_session_payload("tamper", &envelope, state_dir.path()).is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn decrypt_session_payload_rejects_wrong_aad_name() {
+        let state_dir = tempfile::tempdir().unwrap();
+        // Same state dir → same master secret + salt-derived key; only the AAD
+        // (session name) differs, so GCM authentication must fail.
+        let envelope =
+            encrypt_session_payload("alice", &sample_payload(), state_dir.path()).unwrap();
+
+        assert!(decrypt_session_payload("bob", &envelope, state_dir.path()).is_err());
     }
 
     #[cfg(not(windows))]
