@@ -153,7 +153,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      - uses: trufflesecurity/trufflehog@f2cd191b97098913a07522227d2b5e40e57252f4 # main
+      - uses: trufflesecurity/trufflehog@8feb77b20aeb64366d106b08f2941287755c173b # main
         with:
           # On a PR, scan only the base..head diff (fast). On a push to main,
           # base/head resolve empty and TruffleHog falls back to a full-repo
