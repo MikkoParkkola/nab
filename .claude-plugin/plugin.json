@@ -1,0 +1,15 @@
+{
+  "name": "nab",
+  "version": "0.12.0",
+  "description": "Token-lean web fetch, multilingual speech-to-text, and URL watching, exposed as an MCP server. Requires the nab CLI on PATH (brew install MikkoParkkola/tap/nab).",
+  "author": {
+    "name": "Mikko Parkkola",
+    "url": "https://github.com/MikkoParkkola"
+  },
+  "repository": "https://github.com/MikkoParkkola/nab",
+  "mcpServers": {
+    "nab": {
+      "command": "nab-mcp"
+    }
+  }
+}
