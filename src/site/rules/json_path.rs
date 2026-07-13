@@ -182,7 +182,8 @@ fn walk_indexed_path<'v>(value: &'v Value, path: &str) -> Option<&'v Value> {
             let idx: usize = after_bracket[..close].parse().ok()?;
             current = current.as_array()?.get(idx)?;
             rest = &after_bracket[close + 1..];
-        } else if let Some(after_dot) = rest.strip_prefix('.') {
+        } else {
+            let after_dot = rest.strip_prefix('.')?;
             // Parse `key` up to the next `.` or `[`
             let key_end = after_dot.find(['.', '[']).unwrap_or(after_dot.len());
             let key = &after_dot[..key_end];
@@ -191,9 +192,6 @@ fn walk_indexed_path<'v>(value: &'v Value, path: &str) -> Option<&'v Value> {
             }
             current = current.as_object()?.get(key)?;
             rest = &after_dot[key_end..];
-        } else {
-            // Unexpected character
-            return None;
         }
     }
 

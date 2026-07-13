@@ -510,7 +510,7 @@ fn result_to_json_full_includes_sources() {
 
     assert!(parsed["fields"]["title"].is_string());
     assert!(parsed["sources"]["title"].is_string());
-    assert!(parsed["missing"].as_array().unwrap().len() == 1);
+    assert_eq!(parsed["missing"].as_array().unwrap().len(), 1);
 }
 
 // ── Complex real-world-like pages ────────────────────────────────────────────

@@ -422,7 +422,7 @@ fn report_extraction_failure(html: &str, scripts_executed: usize, cfg: &SpaConfi
     eprintln!("   Scripts executed: {scripts_executed}");
     if cfg.show_html {
         eprintln!("\nHTML preview (first 500 chars):");
-        eprintln!("{}", &html.chars().take(500).collect::<String>());
+        eprintln!("{}", html.chars().take(500).collect::<String>());
     }
 }
 

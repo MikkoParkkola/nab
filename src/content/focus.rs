@@ -634,7 +634,7 @@ mod tests {
             "relevant section missing"
         );
         assert!(result.omitted_sections > 0, "nothing was omitted");
-        assert!(result.total_sections == 6);
+        assert_eq!(result.total_sections, 6);
     }
 
     #[test]
