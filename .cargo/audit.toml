@@ -18,6 +18,12 @@ ignore = [
     # no drop-in maintained replacement wired yet. No upstream patch exists
     # (informational/unmaintained advisory). Tracked in #134.
     "RUSTSEC-2025-0141",
+    # memmap2 0.9.10 unchecked-pointer-offset (RUSTSEC-2026-0204, 2026-06-20).
+    # Transitive via yara-x 1.16 -> nab-yara-engine. Advisory's fixed version
+    # (>=0.9.20) is NOT yet published to crates.io, and yara-x is already latest
+    # in its ^1.16 pin, so no bump can clear it today. Time-boxed: remove this
+    # ignore once memmap2 ships the fix and yara-x picks it up. Tracked in #134.
+    "RUSTSEC-2026-0204",
     # NOTE: the lru RUSTSEC-2026-0002 ignore was removed once main moved to
     # wreq 6.0.0-rc.29 (lru >= 0.18.0, past the 0.16.3 fix). The advisory no
     # longer applies, so suppressing it would be dead config. See Cargo.toml
