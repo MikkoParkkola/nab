@@ -38,6 +38,7 @@ Your agent will install the binary, wire itself up, and start fetching. Works in
 **Or install and try manually:**
 
 ```bash
+brew trust --tap MikkoParkkola/tap   # Homebrew 6.0+
 brew install MikkoParkkola/tap/nab                            # install
 nab fetch https://news.ycombinator.com                        # fetch as markdown
 nab models fetch fluidaudio                                   # download ASR model
