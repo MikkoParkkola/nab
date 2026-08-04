@@ -29,7 +29,7 @@ jobs:
           gh pr comment ${{ github.event.pull_request.number }} \
             --body "**auto-merge-ok** label detected. expected behavior: will auto-merge via squash when all required status checks pass. Security-surface changes (workflows, CODEOWNERS, dependency manifests) will block. Kill switch: set repo secret \`AUTO_MERGE_BOT_DISABLED=1\`."
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Security-surface diff guard
         env:
