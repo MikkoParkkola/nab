@@ -213,7 +213,7 @@ cookie_store = "0.22"                  # Cookie serialization for encrypted sess
 aes-gcm = "0.11"                       # AES-256-GCM for nab-owned session encryption
 argon2 = "0.5.3"                       # Argon2id KDF for session data keys
 scrypt = { version = "0.11", default-features = false, features = ["std"] }  # PoW KDF for AWS WAF replay solver
-base64 = "0.22"                        # Base64 encoding for WAF challenge responses
+base64 = "0.23"                        # Base64 encoding for WAF challenge responses
 webbrowser = { version = "1", optional = true }  # Cross-platform browser launcher for WAF escape hatch
 
 [target.'cfg(target_os = "macos")'.dependencies]
