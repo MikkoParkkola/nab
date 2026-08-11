@@ -9,7 +9,6 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use std::path::Path;
 use tempfile::TempDir;
 
 /// Helper: get a Command for the `nab` binary.
@@ -19,37 +18,12 @@ fn nab() -> Command {
 
 fn isolate_external_tools(command: &mut Command) -> TempDir {
     let tool_dir = tempfile::tempdir().expect("create isolated tool directory");
-    write_failing_tool(tool_dir.path(), "op");
-    write_failing_tool(tool_dir.path(), "mcp-cli");
-
-    let mut paths = vec![tool_dir.path().to_path_buf()];
-    if let Some(path) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&path));
-    }
+    command.env("NAB_OP_BIN", tool_dir.path().join("op-unavailable"));
     command.env(
-        "PATH",
-        std::env::join_paths(paths).expect("build isolated PATH"),
+        "NAB_MCP_CLI_BIN",
+        tool_dir.path().join("mcp-cli-unavailable"),
     );
     tool_dir
-}
-
-#[cfg(unix)]
-fn write_failing_tool(directory: &Path, name: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = directory.join(name);
-    std::fs::write(&path, "#!/bin/sh\nexit 1\n").expect("write failing tool stub");
-    let mut permissions = std::fs::metadata(&path)
-        .expect("read failing tool metadata")
-        .permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(path, permissions).expect("make failing tool executable");
-}
-
-#[cfg(windows)]
-fn write_failing_tool(directory: &Path, name: &str) {
-    std::fs::write(directory.join(format!("{name}.cmd")), "@exit /b 1\r\n")
-        .expect("write failing tool stub");
 }
 
 // ─── Auth command ────────────────────────────────────────────────────────────
