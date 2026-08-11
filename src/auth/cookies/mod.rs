@@ -51,8 +51,17 @@ fn keychain_interaction_from_env_value(value: Option<&str>) -> KeychainInteracti
     }
 }
 
+fn keychain_interaction_from_env_os_value(value: Option<&std::ffi::OsStr>) -> KeychainInteraction {
+    match value {
+        None => KeychainInteraction::Allow,
+        Some(value) => value.to_str().map_or(KeychainInteraction::Never, |value| {
+            keychain_interaction_from_env_value(Some(value))
+        }),
+    }
+}
+
 fn configured_keychain_interaction() -> KeychainInteraction {
-    keychain_interaction_from_env_value(std::env::var(KEYCHAIN_INTERACTION_ENV).ok().as_deref())
+    keychain_interaction_from_env_os_value(std::env::var_os(KEYCHAIN_INTERACTION_ENV).as_deref())
 }
 
 fn resolve_cookie_lookup<F>(
@@ -73,6 +82,23 @@ where
 
 #[cfg(target_os = "macos")]
 static KEYCHAIN_UI_LOCK: Mutex<()> = Mutex::new(());
+
+fn cookie_rows_need_key(rows: &[db::CookieRow]) -> bool {
+    rows.iter()
+        .any(|row| row.value.is_empty() && !row.encrypted_bytes.is_empty())
+}
+
+fn rich_cookie_rows_need_key(rows: &[db::RichCookieRow]) -> bool {
+    rows.iter()
+        .any(|row| row.value.is_empty() && !row.encrypted_bytes.is_empty())
+}
+
+fn load_cookie_key_if_needed<F>(needed: bool, load: F) -> Result<Option<Vec<u8>>>
+where
+    F: FnOnce() -> Result<Vec<u8>>,
+{
+    if needed { load().map(Some) } else { Ok(None) }
+}
 
 // ─── CookieSource ─────────────────────────────────────────────────────────────
 
@@ -148,15 +174,9 @@ impl CookieSource {
         // is still in progress. If the caller had already disabled UI, do not
         // create security-framework's RAII lock because its Drop always
         // re-enables interaction rather than restoring the previous state.
-        let _serial_guard = if interaction == KeychainInteraction::Never {
-            Some(
-                KEYCHAIN_UI_LOCK
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("Keychain interaction lock was poisoned"))?,
-            )
-        } else {
-            None
-        };
+        let _serial_guard = KEYCHAIN_UI_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Keychain interaction lock was poisoned"))?;
         let _interaction_guard = if interaction == KeychainInteraction::Never
             && SecKeychain::user_interaction_allowed()
                 .context("Could not read Keychain interaction policy")?
@@ -244,24 +264,20 @@ impl CookieSource {
 
         let temp_db = copy_db_to_temp(&cookie_path)?;
         let domain_tag = has_domain_tag(&temp_db);
-        let rows = query_cookie_db(&temp_db, domain)?;
+        let rows = query_cookie_db(&temp_db, domain);
         if let Some(parent) = temp_db.parent() {
             let _ = std::fs::remove_dir_all(parent);
         }
+        let rows = rows?;
 
         if rows.is_empty() {
             return Ok(HashMap::new());
         }
 
-        let key = self.get_keychain_key_with_interaction(interaction);
-        let cookies = decrypt_rows(rows, key.as_deref().ok(), domain_tag);
-
-        if cookies.is_empty()
-            && interaction == KeychainInteraction::Never
-            && !self.keychain_service().is_empty()
-        {
-            key?;
-        }
+        let key = load_cookie_key_if_needed(cookie_rows_need_key(&rows), || {
+            self.get_keychain_key_with_interaction(interaction)
+        })?;
+        let cookies = decrypt_rows(rows, key.as_deref(), domain_tag);
 
         if cookies.is_empty() {
             debug!("Native extraction: 0 cookies for {}", domain);
@@ -400,23 +416,20 @@ except Exception as e:
 
         let temp_db = copy_db_to_temp(&cookie_path)?;
         let domain_tag = has_domain_tag(&temp_db);
-        let rows = query_cookie_db_rich(&temp_db, domain)?;
+        let rows = query_cookie_db_rich(&temp_db, domain);
         if let Some(parent) = temp_db.parent() {
             let _ = std::fs::remove_dir_all(parent);
         }
+        let rows = rows?;
 
         if rows.is_empty() {
             return Ok(Vec::new());
         }
 
-        let key = self.get_keychain_key_with_interaction(interaction);
-        let cookies = decrypt_rich_rows(rows, key.as_deref().ok(), domain_tag);
-        if cookies.is_empty()
-            && interaction == KeychainInteraction::Never
-            && !self.keychain_service().is_empty()
-        {
-            key?;
-        }
+        let key = load_cookie_key_if_needed(rich_cookie_rows_need_key(&rows), || {
+            self.get_keychain_key_with_interaction(interaction)
+        })?;
+        let cookies = decrypt_rich_rows(rows, key.as_deref(), domain_tag);
         Ok(cookies)
     }
 }

@@ -102,11 +102,7 @@ pub(super) fn query_cookie_db(temp_db: &std::path::Path, domain: &str) -> Result
         .output()
         .context("Failed to query cookie database")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("SQLite query failed: {}", stderr);
-        return Ok(Vec::new());
-    }
+    ensure_sqlite_query_succeeded(output.status.success(), &output.stderr, "cookie")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_cookie_rows(&stdout))
@@ -140,14 +136,22 @@ pub(super) fn query_cookie_db_rich(
         .output()
         .context("Failed to query cookie database")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("SQLite rich query failed: {}", stderr);
-        return Ok(Vec::new());
-    }
+    ensure_sqlite_query_succeeded(output.status.success(), &output.stderr, "rich cookie")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_rich_cookie_rows(&stdout))
+}
+
+fn ensure_sqlite_query_succeeded(success: bool, stderr: &[u8], query_kind: &str) -> Result<()> {
+    if success {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(stderr);
+    let diagnostic = stderr.trim();
+    if diagnostic.is_empty() {
+        anyhow::bail!("SQLite {query_kind} query failed with no diagnostic");
+    }
+    anyhow::bail!("SQLite {query_kind} query failed: {diagnostic}");
 }
 
 // ─── Parsing ──────────────────────────────────────────────────────────────────
@@ -353,6 +357,21 @@ pub(super) fn has_domain_tag(temp_db: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsuccessful_sqlite_query_preserves_stderr() {
+        let err =
+            ensure_sqlite_query_succeeded(false, b"database disk image is malformed", "cookie")
+                .expect_err("nonzero sqlite3 status must not look like zero rows");
+        let message = err.to_string();
+        assert!(message.contains("cookie"));
+        assert!(message.contains("database disk image is malformed"));
+    }
+
+    #[test]
+    fn successful_sqlite_query_is_accepted() {
+        ensure_sqlite_query_succeeded(true, b"", "cookie").expect("successful sqlite3 status");
+    }
 
     #[test]
     fn parse_rich_rows_reads_all_metadata_columns_positionally() {

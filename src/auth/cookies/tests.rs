@@ -3,8 +3,9 @@
 //! Tests for browser cookie extraction, crypto, and DB parsing.
 
 use super::{
-    CookieSource, KeychainInteraction, crypto::*, db::*, keychain_interaction_from_env_value,
-    resolve_cookie_lookup,
+    CookieSource, KeychainInteraction, cookie_rows_need_key, crypto::*, db::*,
+    keychain_interaction_from_env_os_value, keychain_interaction_from_env_value,
+    load_cookie_key_if_needed, resolve_cookie_lookup, rich_cookie_rows_need_key,
 };
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -132,6 +133,70 @@ fn keychain_interaction_policy_defaults_to_allow_and_fails_closed_when_configure
             "configured value {value:?} must not unexpectedly allow UI"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_keychain_interaction_value_fails_closed() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let value = std::ffi::OsString::from_vec(vec![0xff]);
+    assert_eq!(
+        keychain_interaction_from_env_os_value(Some(value.as_os_str())),
+        KeychainInteraction::Never
+    );
+}
+
+#[test]
+fn mixed_plaintext_and_encrypted_rows_require_a_successful_key_read() {
+    let rows = vec![
+        CookieRow {
+            name: "plain".into(),
+            value: "available".into(),
+            encrypted_bytes: Vec::new(),
+        },
+        CookieRow {
+            name: "session".into(),
+            value: String::new(),
+            encrypted_bytes: vec![1, 2, 3],
+        },
+    ];
+    assert!(cookie_rows_need_key(&rows));
+
+    let err = load_cookie_key_if_needed(true, || {
+        Err(anyhow::anyhow!("Keychain interaction is not allowed"))
+    })
+    .expect_err("encrypted rows must preserve the key-read failure");
+    assert!(err.to_string().contains("interaction is not allowed"));
+}
+
+#[test]
+fn plaintext_rows_skip_keychain_loading() {
+    let rows = vec![CookieRow {
+        name: "plain".into(),
+        value: "available".into(),
+        encrypted_bytes: Vec::new(),
+    }];
+    assert!(!cookie_rows_need_key(&rows));
+    let key = load_cookie_key_if_needed(false, || panic!("plaintext rows must not read Keychain"))
+        .expect("plaintext rows should not need a key");
+    assert!(key.is_none());
+}
+
+#[test]
+fn rich_encrypted_rows_require_a_key() {
+    let rows = vec![RichCookieRow {
+        name: "session".into(),
+        value: String::new(),
+        encrypted_bytes: vec![1, 2, 3],
+        host_key: ".example.com".into(),
+        path: "/".into(),
+        expires_utc: 0,
+        is_httponly: true,
+        is_secure: true,
+        samesite: 1,
+    }];
+    assert!(rich_cookie_rows_need_key(&rows));
 }
 
 #[test]
