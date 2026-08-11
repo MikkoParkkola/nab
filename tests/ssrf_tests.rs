@@ -423,6 +423,7 @@ fn validate_url_blocks_nat64_private() {
 }
 
 #[test]
+#[ignore = "requires external DNS resolution"]
 fn validate_url_resolves_public_hostname() {
     // example.com resolves to a public IP
     let url = Url::parse("https://example.com").unwrap();

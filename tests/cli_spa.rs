@@ -8,17 +8,15 @@
 
 #![allow(deprecated)] // cargo_bin deprecation — replacement not yet stable
 
+mod common;
+
 use assert_cmd::Command;
+use common::net_tests_enabled;
 use predicates::prelude::*;
 
 /// Helper: get a Command for the `nab` binary.
 fn nab() -> Command {
     Command::cargo_bin("nab").expect("binary 'nab' should be built")
-}
-
-/// Returns `true` when network integration tests are enabled.
-fn net_tests_enabled() -> bool {
-    std::env::var("NAB_NET_TESTS").map_or(true, |v| v != "0" && v.to_lowercase() != "false")
 }
 
 // ─── Argument validation ─────────────────────────────────────────────────────

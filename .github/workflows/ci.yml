@@ -93,6 +93,10 @@ jobs:
             os: macos-14
             command: cargo test --locked --lib
             net_tests: "0"
+          - name: windows-cli-fetch
+            os: windows-latest
+            command: cargo test --locked --test cli_fetch
+            net_tests: "0"
           - name: yara-engine
             os: ubuntu-latest
             command: cargo test --locked -p nab-yara-engine

@@ -23,6 +23,16 @@ use url::Url;
 
 use crate::ssrf::{self, DEFAULT_MAX_REDIRECTS};
 
+fn resolve_fetch_url(url: String, base_url: &str) -> String {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url
+    } else if url.starts_with('/') && !base_url.is_empty() {
+        format!("{base_url}{url}")
+    } else {
+        url
+    }
+}
+
 /// HTTP client wrapper for fetch bridge
 #[derive(Clone)]
 pub struct FetchClient {
@@ -90,13 +100,7 @@ impl FetchClient {
     /// - Caps redirect chain at 5 hops
     pub fn fetch_sync(&self, url: String) -> Result<String> {
         // Resolve relative URLs against base_url
-        let full_url = if url.starts_with("http://") || url.starts_with("https://") {
-            url
-        } else if url.starts_with('/') && !self.base_url.is_empty() {
-            format!("{}{}", self.base_url, url)
-        } else {
-            url
-        };
+        let full_url = resolve_fetch_url(url, &self.base_url);
 
         // Parse URL for SSRF validation
         let mut current_url: Url = full_url
@@ -460,30 +464,19 @@ mod tests {
     #[test]
     fn fetch_sync_resolves_relative_url_with_base() {
         let client = FetchClient::new(None, Some("https://example.com".to_string()));
-        // This will fail at network level (example.com), but should pass URL resolution
-        let result = client.fetch_sync("/api/data".to_string());
-        // Check that the error is NOT about invalid URL format
-        if let Err(e) = result {
-            let err_str = e.to_string();
-            assert!(
-                !err_str.contains("Invalid URL"),
-                "Should not fail on URL parsing for relative URLs with base_url"
-            );
-        }
+        assert_eq!(
+            resolve_fetch_url("/api/data".to_owned(), &client.base_url),
+            "https://example.com/api/data"
+        );
     }
 
     #[test]
     fn fetch_sync_accepts_absolute_url() {
         let client = FetchClient::new(None, None);
-        // This will fail at network level, but URL should be valid
-        let result = client.fetch_sync("https://example.com".to_string());
-        if let Err(e) = result {
-            let err_str = e.to_string();
-            assert!(
-                !err_str.contains("Invalid URL"),
-                "Should not fail on URL parsing for absolute URLs"
-            );
-        }
+        assert_eq!(
+            resolve_fetch_url("https://example.com".to_owned(), &client.base_url),
+            "https://example.com"
+        );
     }
 
     #[test]

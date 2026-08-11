@@ -374,6 +374,7 @@ mod tests {
     // -- Integration test (network-dependent) --
 
     #[tokio::test]
+    #[ignore = "requires external echo.websocket.org"]
     async fn test_websocket_echo() {
         // Install crypto provider for rustls
         let _ = rustls::crypto::ring::default_provider().install_default();
