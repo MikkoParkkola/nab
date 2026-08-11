@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-11
+
+### Fixed
+
+- Background callers can set `NAB_KEYCHAIN_INTERACTION=never` to guarantee
+  zero macOS Keychain authorization dialogs during browser-cookie extraction.
+  Native Keychain reads temporarily disable interaction under a process-wide
+  lock, prompt-capable Python fallback is skipped, and failures return without
+  discarding recoverable plaintext cookies in the default interactive mode.
+
 ## [0.11.0] - 2026-05-25
 
 ### Added
