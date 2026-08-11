@@ -2,7 +2,14 @@
 
 //! Tests for browser cookie extraction, crypto, and DB parsing.
 
-use super::{CookieSource, crypto::*, db::*};
+#[cfg(target_os = "macos")]
+use super::lock_ignoring_poison;
+use super::{
+    CookieSource, KeychainInteraction, cookie_rows_need_key, crypto::*, db::*,
+    keychain_interaction_from_env_os_value, keychain_interaction_from_env_value,
+    load_cookie_domain_tag_if_needed, load_cookie_key_if_needed, resolve_cookie_lookup,
+    rich_cookie_rows_need_key,
+};
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -107,6 +114,233 @@ fn keychain_service_firefox_safari_are_empty() {
     assert!(CookieSource::Safari.keychain_service().is_empty());
 }
 
+#[test]
+fn keychain_interaction_policy_defaults_to_allow_and_fails_closed_when_configured() {
+    for value in [None, Some(""), Some("allow"), Some("true"), Some("1")] {
+        assert_eq!(
+            keychain_interaction_from_env_value(value),
+            KeychainInteraction::Allow,
+            "value {value:?} should preserve explicit CLI behavior"
+        );
+    }
+    for value in [
+        Some("never"),
+        Some("false"),
+        Some("0"),
+        Some("off"),
+        Some("typo"),
+    ] {
+        assert_eq!(
+            keychain_interaction_from_env_value(value),
+            KeychainInteraction::Never,
+            "configured value {value:?} must not unexpectedly allow UI"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_keychain_interaction_value_fails_closed() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let value = std::ffi::OsString::from_vec(vec![0xff]);
+    assert_eq!(
+        keychain_interaction_from_env_os_value(Some(value.as_os_str())),
+        KeychainInteraction::Never
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn keychain_serialization_recovers_after_mutex_poisoning() {
+    let mutex = std::sync::Arc::new(std::sync::Mutex::new(()));
+    let poisoner = std::sync::Arc::clone(&mutex);
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoner.lock().expect("initial lock");
+        panic!("controlled mutex poisoning");
+    })
+    .join();
+
+    let _guard = lock_ignoring_poison(&mutex);
+}
+
+#[test]
+fn mixed_plaintext_and_encrypted_rows_require_a_successful_key_read() {
+    let rows = vec![
+        CookieRow {
+            name: "plain".into(),
+            value: "available".into(),
+            encrypted_bytes: Vec::new(),
+        },
+        CookieRow {
+            name: "session".into(),
+            value: String::new(),
+            encrypted_bytes: vec![1, 2, 3],
+        },
+    ];
+    assert!(cookie_rows_need_key(&rows));
+
+    let err = load_cookie_key_if_needed(true, KeychainInteraction::Never, || {
+        Err(anyhow::anyhow!("Keychain interaction is not allowed"))
+    })
+    .expect_err("encrypted rows must preserve the key-read failure");
+    assert!(err.to_string().contains("interaction is not allowed"));
+}
+
+#[test]
+fn plaintext_rows_skip_keychain_loading() {
+    let rows = vec![CookieRow {
+        name: "plain".into(),
+        value: "available".into(),
+        encrypted_bytes: Vec::new(),
+    }];
+    assert!(!cookie_rows_need_key(&rows));
+    let key = load_cookie_key_if_needed(false, KeychainInteraction::Never, || {
+        panic!("plaintext rows must not read Keychain")
+    })
+    .expect("plaintext rows should not need a key");
+    assert!(key.is_none());
+}
+
+#[test]
+fn interactive_mixed_rows_retain_plaintext_when_key_read_fails() {
+    let rows = vec![
+        CookieRow {
+            name: "plain".into(),
+            value: "available".into(),
+            encrypted_bytes: Vec::new(),
+        },
+        CookieRow {
+            name: "session".into(),
+            value: String::new(),
+            encrypted_bytes: vec![1, 2, 3],
+        },
+    ];
+    let key = load_cookie_key_if_needed(true, KeychainInteraction::Allow, || {
+        Err(anyhow::anyhow!("interactive Keychain read failed"))
+    })
+    .expect("interactive mode should preserve recoverable plaintext rows");
+    let native = decrypt_rows(rows, key.as_deref(), false);
+    let fallback_called = std::cell::Cell::new(false);
+    let cookies = resolve_cookie_lookup(Ok(native), KeychainInteraction::Allow, || {
+        fallback_called.set(true);
+        Err(anyhow::anyhow!("Python fallback failed"))
+    })
+    .expect("plaintext native cookie should survive failed key and fallback paths");
+
+    assert_eq!(cookies.get("plain").map(String::as_str), Some("available"));
+    assert!(!cookies.contains_key("session"));
+    assert!(
+        !fallback_called.get(),
+        "usable native plaintext avoids fallback"
+    );
+}
+
+#[test]
+fn interactive_schema_failure_skips_encrypted_rows_without_losing_plaintext() {
+    let domain_tag = load_cookie_domain_tag_if_needed(true, KeychainInteraction::Allow, || {
+        Err(anyhow::anyhow!("schema query failed"))
+    })
+    .expect("interactive mode may preserve plaintext rows after schema failure");
+    assert!(domain_tag.is_none());
+
+    let rows = vec![
+        CookieRow {
+            name: "plain".into(),
+            value: "available".into(),
+            encrypted_bytes: Vec::new(),
+        },
+        CookieRow {
+            name: "session".into(),
+            value: String::new(),
+            encrypted_bytes: vec![1, 2, 3],
+        },
+    ];
+    let cookies = decrypt_rows(rows, None, domain_tag.unwrap_or(false));
+    assert_eq!(cookies.get("plain").map(String::as_str), Some("available"));
+    assert!(!cookies.contains_key("session"));
+}
+
+#[test]
+fn noninteractive_schema_failure_is_preserved() {
+    let err = load_cookie_domain_tag_if_needed(true, KeychainInteraction::Never, || {
+        Err(anyhow::anyhow!("schema query failed"))
+    })
+    .expect_err("non-interactive extraction must fail closed on unknown schema");
+    assert!(err.to_string().contains("schema query failed"));
+}
+
+#[test]
+fn rich_encrypted_rows_require_a_key() {
+    let rows = vec![RichCookieRow {
+        name: "session".into(),
+        value: String::new(),
+        encrypted_bytes: vec![1, 2, 3],
+        host_key: ".example.com".into(),
+        path: "/".into(),
+        expires_utc: 0,
+        is_httponly: true,
+        is_secure: true,
+        samesite: 1,
+    }];
+    assert!(rich_cookie_rows_need_key(&rows));
+}
+
+#[test]
+fn noninteractive_cookie_lookup_never_invokes_prompt_capable_fallback() {
+    let fallback_called = std::cell::Cell::new(false);
+    let native_error = anyhow::anyhow!("Keychain interaction is not allowed");
+
+    let err = resolve_cookie_lookup(Err(native_error), KeychainInteraction::Never, || {
+        fallback_called.set(true);
+        Ok(std::collections::HashMap::from([(
+            "session".to_string(),
+            "must-not-be-read".to_string(),
+        )]))
+    })
+    .expect_err("the native diagnostic should be preserved");
+
+    assert!(err.to_string().contains("interaction is not allowed"));
+    assert!(!fallback_called.get(), "Python fallback could prompt again");
+}
+
+#[test]
+fn noninteractive_empty_native_result_stays_empty_without_fallback() {
+    let fallback_called = std::cell::Cell::new(false);
+    let cookies = resolve_cookie_lookup(
+        Ok(std::collections::HashMap::new()),
+        KeychainInteraction::Never,
+        || {
+            fallback_called.set(true);
+            Ok(std::collections::HashMap::from([(
+                "session".to_string(),
+                "unexpected".to_string(),
+            )]))
+        },
+    )
+    .expect("an empty native store is not an error");
+
+    assert!(cookies.is_empty());
+    assert!(!fallback_called.get(), "Python fallback could prompt again");
+}
+
+#[test]
+fn interactive_lookup_retains_python_fallback() {
+    let cookies = resolve_cookie_lookup(
+        Ok(std::collections::HashMap::new()),
+        KeychainInteraction::Allow,
+        || {
+            Ok(std::collections::HashMap::from([(
+                "session".to_string(),
+                "expected".to_string(),
+            )]))
+        },
+    )
+    .expect("interactive fallback should remain available");
+
+    assert_eq!(cookies.get("session").map(String::as_str), Some("expected"));
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn cookie_paths_use_macos_locations() {
@@ -183,7 +417,7 @@ fn cookie_paths_use_windows_locations() {
 #[test]
 fn non_macos_keychain_lookup_returns_fallback_error() {
     let err = CookieSource::Chrome
-        .get_keychain_key()
+        .get_keychain_key_with_interaction(KeychainInteraction::Allow)
         .expect_err("non-macOS should not attempt native keychain lookup");
     assert!(
         err.to_string().contains("Python cookie fallback"),

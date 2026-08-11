@@ -65,22 +65,29 @@ pub(super) fn copy_db_to_temp(cookie_path: &std::path::Path) -> Result<std::path
     Ok(temp_db)
 }
 
-/// Query the `meta` table for the DB schema version (0 if unavailable).
+/// Query the `meta` table for the DB schema version.
 ///
 /// Chromium increments this monotonically; v24 added `SHA-256(host_key)` prepended
 /// to every decrypted cookie value.
-pub(super) fn query_db_schema_version(temp_db: &std::path::Path) -> u32 {
-    let Some(db_str) = temp_db.to_str() else {
-        return 0;
-    };
+pub(super) fn query_db_schema_version(temp_db: &std::path::Path) -> Result<u32> {
+    let db_str = temp_db
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid temp database path"))?;
     let output = Command::new("sqlite3")
         .args([db_str, "SELECT value FROM meta WHERE key='version';"])
-        .output();
-    let Ok(out) = output else { return 0 };
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
+        .output()
+        .context("Failed to query cookie schema version")?;
+    parse_schema_version_output(output.status.success(), &output.stdout, &output.stderr)
+}
+
+fn parse_schema_version_output(success: bool, stdout: &[u8], stderr: &[u8]) -> Result<u32> {
+    ensure_sqlite_query_succeeded(success, stderr, "cookie schema version")?;
+    let version = std::str::from_utf8(stdout)
+        .context("SQLite cookie schema version was not valid UTF-8")?
+        .trim();
+    version
         .parse()
-        .unwrap_or(0)
+        .with_context(|| format!("Invalid SQLite cookie schema version: {version:?}"))
 }
 
 /// Query the cookie database for rows matching `domain` and its parents.
@@ -102,11 +109,7 @@ pub(super) fn query_cookie_db(temp_db: &std::path::Path, domain: &str) -> Result
         .output()
         .context("Failed to query cookie database")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("SQLite query failed: {}", stderr);
-        return Ok(Vec::new());
-    }
+    ensure_sqlite_query_succeeded(output.status.success(), &output.stderr, "cookie")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_cookie_rows(&stdout))
@@ -140,14 +143,22 @@ pub(super) fn query_cookie_db_rich(
         .output()
         .context("Failed to query cookie database")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("SQLite rich query failed: {}", stderr);
-        return Ok(Vec::new());
-    }
+    ensure_sqlite_query_succeeded(output.status.success(), &output.stderr, "rich cookie")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_rich_cookie_rows(&stdout))
+}
+
+fn ensure_sqlite_query_succeeded(success: bool, stderr: &[u8], query_kind: &str) -> Result<()> {
+    if success {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(stderr);
+    let diagnostic = stderr.trim();
+    if diagnostic.is_empty() {
+        anyhow::bail!("SQLite {query_kind} query failed with no diagnostic");
+    }
+    anyhow::bail!("SQLite {query_kind} query failed: {diagnostic}");
 }
 
 // ─── Parsing ──────────────────────────────────────────────────────────────────
@@ -344,15 +355,52 @@ pub(super) fn decrypt_rich_rows(
     cookies
 }
 /// Query the schema version of `temp_db` and return whether domain tags are present.
-pub(super) fn has_domain_tag(temp_db: &std::path::Path) -> bool {
-    let version = query_db_schema_version(temp_db);
+pub(super) fn has_domain_tag(temp_db: &std::path::Path) -> Result<bool> {
+    let version = query_db_schema_version(temp_db)?;
     debug!("Cookie DB schema v{version}");
-    version >= SCHEMA_VERSION_WITH_DOMAIN_TAG
+    Ok(version >= SCHEMA_VERSION_WITH_DOMAIN_TAG)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsuccessful_sqlite_query_preserves_stderr() {
+        let err =
+            ensure_sqlite_query_succeeded(false, b"database disk image is malformed", "cookie")
+                .expect_err("nonzero sqlite3 status must not look like zero rows");
+        let message = err.to_string();
+        assert!(message.contains("cookie"));
+        assert!(message.contains("database disk image is malformed"));
+    }
+
+    #[test]
+    fn successful_sqlite_query_is_accepted() {
+        ensure_sqlite_query_succeeded(true, b"", "cookie").expect("successful sqlite3 status");
+    }
+
+    #[test]
+    fn unsuccessful_schema_query_preserves_stderr() {
+        let err = parse_schema_version_output(false, b"", b"meta table is malformed")
+            .expect_err("nonzero schema query must not become schema version zero");
+        assert!(err.to_string().contains("meta table is malformed"));
+    }
+
+    #[test]
+    fn malformed_schema_version_is_an_error() {
+        let err = parse_schema_version_output(true, b"not-a-version\n", b"")
+            .expect_err("malformed schema output must not become schema version zero");
+        assert!(err.to_string().contains("not-a-version"));
+    }
+
+    #[test]
+    fn valid_schema_version_is_parsed() {
+        assert_eq!(
+            parse_schema_version_output(true, b"24\n", b"").expect("valid schema version"),
+            24
+        );
+    }
 
     #[test]
     fn parse_rich_rows_reads_all_metadata_columns_positionally() {
