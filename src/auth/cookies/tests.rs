@@ -5,7 +5,8 @@
 use super::{
     CookieSource, KeychainInteraction, cookie_rows_need_key, crypto::*, db::*,
     keychain_interaction_from_env_os_value, keychain_interaction_from_env_value,
-    load_cookie_key_if_needed, resolve_cookie_lookup, rich_cookie_rows_need_key,
+    load_cookie_domain_tag_if_needed, load_cookie_key_if_needed, resolve_cookie_lookup,
+    rich_cookie_rows_need_key,
 };
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -163,7 +164,7 @@ fn mixed_plaintext_and_encrypted_rows_require_a_successful_key_read() {
     ];
     assert!(cookie_rows_need_key(&rows));
 
-    let err = load_cookie_key_if_needed(true, || {
+    let err = load_cookie_key_if_needed(true, KeychainInteraction::Never, || {
         Err(anyhow::anyhow!("Keychain interaction is not allowed"))
     })
     .expect_err("encrypted rows must preserve the key-read failure");
@@ -178,9 +179,79 @@ fn plaintext_rows_skip_keychain_loading() {
         encrypted_bytes: Vec::new(),
     }];
     assert!(!cookie_rows_need_key(&rows));
-    let key = load_cookie_key_if_needed(false, || panic!("plaintext rows must not read Keychain"))
-        .expect("plaintext rows should not need a key");
+    let key = load_cookie_key_if_needed(false, KeychainInteraction::Never, || {
+        panic!("plaintext rows must not read Keychain")
+    })
+    .expect("plaintext rows should not need a key");
     assert!(key.is_none());
+}
+
+#[test]
+fn interactive_mixed_rows_retain_plaintext_when_key_read_fails() {
+    let rows = vec![
+        CookieRow {
+            name: "plain".into(),
+            value: "available".into(),
+            encrypted_bytes: Vec::new(),
+        },
+        CookieRow {
+            name: "session".into(),
+            value: String::new(),
+            encrypted_bytes: vec![1, 2, 3],
+        },
+    ];
+    let key = load_cookie_key_if_needed(true, KeychainInteraction::Allow, || {
+        Err(anyhow::anyhow!("interactive Keychain read failed"))
+    })
+    .expect("interactive mode should preserve recoverable plaintext rows");
+    let native = decrypt_rows(rows, key.as_deref(), false);
+    let fallback_called = std::cell::Cell::new(false);
+    let cookies = resolve_cookie_lookup(Ok(native), KeychainInteraction::Allow, || {
+        fallback_called.set(true);
+        Err(anyhow::anyhow!("Python fallback failed"))
+    })
+    .expect("plaintext native cookie should survive failed key and fallback paths");
+
+    assert_eq!(cookies.get("plain").map(String::as_str), Some("available"));
+    assert!(!cookies.contains_key("session"));
+    assert!(
+        !fallback_called.get(),
+        "usable native plaintext avoids fallback"
+    );
+}
+
+#[test]
+fn interactive_schema_failure_skips_encrypted_rows_without_losing_plaintext() {
+    let domain_tag = load_cookie_domain_tag_if_needed(true, KeychainInteraction::Allow, || {
+        Err(anyhow::anyhow!("schema query failed"))
+    })
+    .expect("interactive mode may preserve plaintext rows after schema failure");
+    assert!(domain_tag.is_none());
+
+    let rows = vec![
+        CookieRow {
+            name: "plain".into(),
+            value: "available".into(),
+            encrypted_bytes: Vec::new(),
+        },
+        CookieRow {
+            name: "session".into(),
+            value: String::new(),
+            encrypted_bytes: vec![1, 2, 3],
+        },
+    ];
+    let cookies = decrypt_rows(rows, None, domain_tag.unwrap_or(false));
+    assert_eq!(cookies.get("plain").map(String::as_str), Some("available"));
+    assert!(!cookies.contains_key("session"));
+}
+
+#[test]
+fn noninteractive_schema_failure_is_preserved() {
+    let err = load_cookie_domain_tag_if_needed(true, KeychainInteraction::Never, || {
+        Err(anyhow::anyhow!("schema query failed"))
+    })
+    .expect_err("non-interactive extraction must fail closed on unknown schema");
+    assert!(err.to_string().contains("schema query failed"));
 }
 
 #[test]

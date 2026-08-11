@@ -93,11 +93,40 @@ fn rich_cookie_rows_need_key(rows: &[db::RichCookieRow]) -> bool {
         .any(|row| row.value.is_empty() && !row.encrypted_bytes.is_empty())
 }
 
-fn load_cookie_key_if_needed<F>(needed: bool, load: F) -> Result<Option<Vec<u8>>>
+fn load_cookie_key_if_needed<F>(
+    needed: bool,
+    interaction: KeychainInteraction,
+    load: F,
+) -> Result<Option<Vec<u8>>>
 where
     F: FnOnce() -> Result<Vec<u8>>,
 {
-    if needed { load().map(Some) } else { Ok(None) }
+    if !needed {
+        return Ok(None);
+    }
+    match load() {
+        Ok(key) => Ok(Some(key)),
+        Err(err) if interaction == KeychainInteraction::Never => Err(err),
+        Err(_) => Ok(None),
+    }
+}
+
+fn load_cookie_domain_tag_if_needed<F>(
+    needed: bool,
+    interaction: KeychainInteraction,
+    load: F,
+) -> Result<Option<bool>>
+where
+    F: FnOnce() -> Result<bool>,
+{
+    if !needed {
+        return Ok(None);
+    }
+    match load() {
+        Ok(has_domain_tag) => Ok(Some(has_domain_tag)),
+        Err(err) if interaction == KeychainInteraction::Never => Err(err),
+        Err(_) => Ok(None),
+    }
 }
 
 // ─── CookieSource ─────────────────────────────────────────────────────────────
@@ -263,21 +292,27 @@ impl CookieSource {
         }
 
         let temp_db = copy_db_to_temp(&cookie_path)?;
-        let domain_tag = has_domain_tag(&temp_db);
-        let rows = query_cookie_db(&temp_db, domain);
+        let extraction = (|| {
+            let rows = query_cookie_db(&temp_db, domain)?;
+            let needs_key = cookie_rows_need_key(&rows);
+            let domain_tag = load_cookie_domain_tag_if_needed(needs_key, interaction, || {
+                has_domain_tag(&temp_db)
+            })?;
+            Ok::<_, anyhow::Error>((domain_tag, rows))
+        })();
         if let Some(parent) = temp_db.parent() {
             let _ = std::fs::remove_dir_all(parent);
         }
-        let rows = rows?;
+        let (domain_tag, rows) = extraction?;
 
         if rows.is_empty() {
             return Ok(HashMap::new());
         }
 
-        let key = load_cookie_key_if_needed(cookie_rows_need_key(&rows), || {
+        let key = load_cookie_key_if_needed(domain_tag.is_some(), interaction, || {
             self.get_keychain_key_with_interaction(interaction)
         })?;
-        let cookies = decrypt_rows(rows, key.as_deref(), domain_tag);
+        let cookies = decrypt_rows(rows, key.as_deref(), domain_tag.unwrap_or(false));
 
         if cookies.is_empty() {
             debug!("Native extraction: 0 cookies for {}", domain);
@@ -415,21 +450,27 @@ except Exception as e:
         }
 
         let temp_db = copy_db_to_temp(&cookie_path)?;
-        let domain_tag = has_domain_tag(&temp_db);
-        let rows = query_cookie_db_rich(&temp_db, domain);
+        let extraction = (|| {
+            let rows = query_cookie_db_rich(&temp_db, domain)?;
+            let needs_key = rich_cookie_rows_need_key(&rows);
+            let domain_tag = load_cookie_domain_tag_if_needed(needs_key, interaction, || {
+                has_domain_tag(&temp_db)
+            })?;
+            Ok::<_, anyhow::Error>((domain_tag, rows))
+        })();
         if let Some(parent) = temp_db.parent() {
             let _ = std::fs::remove_dir_all(parent);
         }
-        let rows = rows?;
+        let (domain_tag, rows) = extraction?;
 
         if rows.is_empty() {
             return Ok(Vec::new());
         }
 
-        let key = load_cookie_key_if_needed(rich_cookie_rows_need_key(&rows), || {
+        let key = load_cookie_key_if_needed(domain_tag.is_some(), interaction, || {
             self.get_keychain_key_with_interaction(interaction)
         })?;
-        let cookies = decrypt_rich_rows(rows, key.as_deref(), domain_tag);
+        let cookies = decrypt_rich_rows(rows, key.as_deref(), domain_tag.unwrap_or(false));
         Ok(cookies)
     }
 }
