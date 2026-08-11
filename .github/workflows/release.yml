@@ -65,6 +65,8 @@ jobs:
           key: test-${{ matrix.os }}
       - name: Run tests
         run: cargo test --locked --workspace
+        env:
+          NAB_NET_TESTS: "0"
 
   build:
     name: Build ${{ matrix.target }}

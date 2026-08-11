@@ -940,9 +940,32 @@ enum ModelsAction {
     Verify,
 }
 
+#[cfg(not(windows))]
 #[tokio::main]
-#[allow(clippy::too_many_lines)] // Main function dispatches to all commands; cannot be split
 async fn main() -> Result<()> {
+    run_cli().await
+}
+
+#[cfg(windows)]
+fn main() -> Result<()> {
+    const WINDOWS_CLI_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+    std::thread::Builder::new()
+        .name("nab-cli".to_string())
+        .stack_size(WINDOWS_CLI_STACK_SIZE)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(run_cli())
+        })
+        .map_err(|error| anyhow::anyhow!("Failed to start Nab CLI thread: {error}"))?
+        .join()
+        .map_err(|_| anyhow::anyhow!("Nab CLI thread panicked"))?
+}
+
+#[allow(clippy::too_many_lines)] // Main command dispatcher; splitting obscures exhaustive routing.
+async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging. `nab context` defaults to ERROR-only for clean

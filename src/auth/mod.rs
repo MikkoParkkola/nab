@@ -13,11 +13,23 @@ pub mod cookies;
 
 pub use cookies::{CookieSource, CredentialRetriever, CredentialSource};
 
+use std::ffi::OsString;
 use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+
+pub(crate) const OP_BIN_ENV: &str = "NAB_OP_BIN";
+pub(crate) const MCP_CLI_BIN_ENV: &str = "NAB_MCP_CLI_BIN";
+
+pub(crate) fn op_command() -> OsString {
+    std::env::var_os(OP_BIN_ENV).unwrap_or_else(|| OsString::from("op"))
+}
+
+fn mcp_cli_command() -> OsString {
+    std::env::var_os(MCP_CLI_BIN_ENV).unwrap_or_else(|| OsString::from("mcp-cli"))
+}
 
 /// OTP (One-Time Password) with source information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +124,7 @@ impl OnePasswordAuth {
     /// Check if 1Password CLI is available and authenticated.
     #[must_use]
     pub fn is_available() -> bool {
-        Command::new("op")
+        Command::new(op_command())
             .args(["account", "list"])
             .output()
             .is_ok_and(|o| o.status.success())
@@ -127,7 +139,7 @@ impl OnePasswordAuth {
 
         debug!("Searching 1Password for domain: {}", domain);
 
-        let mut cmd = Command::new("op");
+        let mut cmd = Command::new(op_command());
         cmd.args(["item", "list", "--format=json"]);
         if let Some(ref vault) = self.vault {
             cmd.args(["--vault", vault]);
@@ -172,7 +184,7 @@ impl OnePasswordAuth {
 
         debug!("Listing all 1Password credentials for domain: {}", domain);
 
-        let mut cmd = Command::new("op");
+        let mut cmd = Command::new(op_command());
         cmd.args(["item", "list", "--format=json"]);
         if let Some(ref vault) = self.vault {
             cmd.args(["--vault", vault]);
@@ -208,7 +220,7 @@ impl OnePasswordAuth {
     fn get_item_details(item_id: &str) -> Result<Option<Credential>> {
         debug!("Getting 1Password item details: {}", item_id);
 
-        let output = Command::new("op")
+        let output = Command::new(op_command())
             .args(["item", "get", item_id, "--format=json"])
             .output()
             .context("Failed to run 'op item get'")?;
@@ -278,7 +290,7 @@ impl OnePasswordAuth {
 
     /// Get current TOTP code for an item.
     fn get_totp_code(item_id: &str) -> Result<Option<String>> {
-        let output = Command::new("op")
+        let output = Command::new(op_command())
             .args(["item", "get", item_id, "--otp"])
             .output()
             .context("Failed to get TOTP")?;
@@ -309,7 +321,7 @@ impl OnePasswordAuth {
 
     /// Get TOTP directly by item title.
     pub fn get_totp_by_title(&self, title: &str) -> Result<Option<OtpCode>> {
-        let output = Command::new("op")
+        let output = Command::new(op_command())
             .args(["item", "get", title, "--otp"])
             .output()
             .context("Failed to get TOTP")?;
@@ -330,7 +342,7 @@ impl OnePasswordAuth {
 
     /// List all available passkeys.
     pub fn list_passkeys(&self) -> Result<Vec<Credential>> {
-        let mut cmd = Command::new("op");
+        let mut cmd = Command::new(op_command());
         cmd.args(["item", "list", "--categories=Passkey", "--format=json"]);
         if let Some(ref vault) = self.vault {
             cmd.args(["--vault", vault]);
@@ -386,7 +398,7 @@ impl OtpRetriever {
 
     #[allow(clippy::unnecessary_wraps)]
     fn get_sms_otp(domain: &str) -> Result<Option<OtpCode>> {
-        let output = Command::new("mcp-cli")
+        let output = Command::new(mcp_cli_command())
             .args([
                 "beeper/search_messages",
                 &format!(r#"{{"query": "{domain} code OR {domain} verification", "limit": 5}}"#),
@@ -411,7 +423,7 @@ impl OtpRetriever {
 
     #[allow(clippy::unnecessary_wraps)]
     fn get_email_otp(domain: &str) -> Result<Option<OtpCode>> {
-        let output = Command::new("mcp-cli")
+        let output = Command::new(mcp_cli_command())
             .args([
                 "gmail/search_emails",
                 &format!(
@@ -469,14 +481,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn op_available_check_does_not_panic() {
-        let available = OnePasswordAuth::is_available();
-        println!("1Password CLI available: {available}");
+    fn otp_extraction_recognizes_common_code_formats() {
+        assert_eq!(
+            OtpRetriever::extract_otp_from_text("verification code: 123456"),
+            Some("123456".to_owned())
+        );
+        assert_eq!(
+            OtpRetriever::extract_otp_from_text("OTP 123-456"),
+            Some("123456".to_owned())
+        );
     }
 
     #[test]
-    fn otp_extraction_compiles_and_does_not_panic() {
-        // Verifies the regex patterns compile correctly
-        let _ = OnePasswordAuth::is_available();
+    fn otp_extraction_rejects_unrelated_text() {
+        assert_eq!(
+            OtpRetriever::extract_otp_from_text("there is no code here"),
+            None
+        );
     }
 }

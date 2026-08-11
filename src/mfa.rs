@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::auth::{OnePasswordAuth, OtpRetriever, OtpSource};
+use crate::auth::{OnePasswordAuth, OtpRetriever, OtpSource, op_command};
 
 /// Type of MFA challenge detected
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -241,7 +241,7 @@ impl MfaHandler {
 
         // Try using op CLI to sign (if supported)
         debug!("Attempting passkey sign via 1Password CLI");
-        let output = Command::new("op")
+        let output = Command::new(op_command())
             .args(["item", "list", "--categories=Passkey", "--format=json"])
             .output();
 

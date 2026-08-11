@@ -89,18 +89,30 @@ jobs:
             os: ubuntu-latest
             command: cargo test --locked
             net_tests: "0"
+            rustflags: -Dwarnings
           - name: macos-lib
             os: macos-14
             command: cargo test --locked --lib
             net_tests: "0"
+            rustflags: -Dwarnings
+          - name: windows-cli-hermetic
+            os: windows-latest
+            command: cargo test --locked --test cli_fetch --test cli_auth
+            net_tests: "0"
+            # Session persistence is intentionally disabled on Windows until
+            # per-user ACL hardening lands, leaving its helpers dormant there.
+            # Keep their warnings visible without blocking these integration tests.
+            rustflags: ""
           - name: yara-engine
             os: ubuntu-latest
             command: cargo test --locked -p nab-yara-engine
             net_tests: "0"
+            rustflags: -Dwarnings
           - name: task-feature
             os: ubuntu-latest
             command: cargo test --locked --features task --lib --bin nab task
             net_tests: "0"
+            rustflags: -Dwarnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -108,6 +120,7 @@ jobs:
       - run: ${{ matrix.command }}
         env:
           NAB_NET_TESTS: ${{ matrix.net_tests }}
+          RUSTFLAGS: ${{ matrix.rustflags }}
 
   build:
     name: Build (${{ matrix.name }})
