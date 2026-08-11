@@ -22,6 +22,8 @@ mod tests;
 
 use std::collections::HashMap;
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
@@ -30,6 +32,47 @@ use super::{Credential, OnePasswordAuth};
 use db::{copy_db_to_temp, decrypt_rows, domain_candidates, has_domain_tag, query_cookie_db};
 use db::{decrypt_rich_rows, query_cookie_db_rich};
 use storage_state::{PlaywrightCookie, SameSite};
+
+/// Controls whether browser-cookie extraction may ask macOS to authorize a
+/// Keychain read. Automated callers should set this to `never` so a background
+/// fetch cannot open GUI dialogs.
+pub const KEYCHAIN_INTERACTION_ENV: &str = "NAB_KEYCHAIN_INTERACTION";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeychainInteraction {
+    Allow,
+    Never,
+}
+
+fn keychain_interaction_from_env_value(value: Option<&str>) -> KeychainInteraction {
+    match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        None | Some("" | "allow" | "true" | "1" | "yes" | "on") => KeychainInteraction::Allow,
+        Some(_) => KeychainInteraction::Never,
+    }
+}
+
+fn configured_keychain_interaction() -> KeychainInteraction {
+    keychain_interaction_from_env_value(std::env::var(KEYCHAIN_INTERACTION_ENV).ok().as_deref())
+}
+
+fn resolve_cookie_lookup<F>(
+    native: Result<HashMap<String, String>>,
+    interaction: KeychainInteraction,
+    fallback: F,
+) -> Result<HashMap<String, String>>
+where
+    F: FnOnce() -> Result<HashMap<String, String>>,
+{
+    match native {
+        Ok(cookies) if !cookies.is_empty() => Ok(cookies),
+        Err(err) if interaction == KeychainInteraction::Never => Err(err),
+        Ok(cookies) if interaction == KeychainInteraction::Never => Ok(cookies),
+        Ok(_) | Err(_) => fallback(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+static KEYCHAIN_UI_LOCK: Mutex<()> = Mutex::new(());
 
 // ─── CookieSource ─────────────────────────────────────────────────────────────
 
@@ -79,12 +122,15 @@ impl CookieSource {
     ///
     /// On macOS, uses `security-framework` to query the system Keychain.
     /// On Linux, returns an error — only GNOME Keyring is supported there (TODO).
-    fn get_keychain_key(self) -> Result<Vec<u8>> {
+    fn get_keychain_key_with_interaction(
+        self,
+        interaction: KeychainInteraction,
+    ) -> Result<Vec<u8>> {
         let service = self.keychain_service();
         if service.is_empty() {
             anyhow::bail!("Browser does not use Keychain encryption");
         }
-        let password = Self::read_keychain_password(service)?;
+        let password = Self::read_keychain_password(service, interaction)?;
         crypto::derive_cookie_key(&password)
     }
 
@@ -93,8 +139,35 @@ impl CookieSource {
     /// Uses `security-framework` on macOS. Other platforms intentionally return an
     /// error so cookie extraction can fall back to Python `browser_cookie3`.
     #[cfg(target_os = "macos")]
-    fn read_keychain_password(service: &str) -> Result<Vec<u8>> {
+    fn read_keychain_password(service: &str, interaction: KeychainInteraction) -> Result<Vec<u8>> {
+        use security_framework::os::macos::keychain::SecKeychain;
         use security_framework::passwords::get_generic_password;
+
+        // SecKeychainSetUserInteractionAllowed is process-global. Serialize
+        // non-interactive reads so one lookup cannot restore UI while another
+        // is still in progress. If the caller had already disabled UI, do not
+        // create security-framework's RAII lock because its Drop always
+        // re-enables interaction rather than restoring the previous state.
+        let _serial_guard = if interaction == KeychainInteraction::Never {
+            Some(
+                KEYCHAIN_UI_LOCK
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Keychain interaction lock was poisoned"))?,
+            )
+        } else {
+            None
+        };
+        let _interaction_guard = if interaction == KeychainInteraction::Never
+            && SecKeychain::user_interaction_allowed()
+                .context("Could not read Keychain interaction policy")?
+        {
+            Some(
+                SecKeychain::disable_user_interaction()
+                    .context("Could not disable Keychain interaction")?,
+            )
+        } else {
+            None
+        };
 
         let account = service.strip_suffix(" Safe Storage").unwrap_or(service);
         get_generic_password(service, account)
@@ -103,7 +176,10 @@ impl CookieSource {
 
     /// Non-macOS platforms do not have native keychain support in `nab` yet.
     #[cfg(not(target_os = "macos"))]
-    fn read_keychain_password(_service: &str) -> Result<Vec<u8>> {
+    fn read_keychain_password(
+        _service: &str,
+        _interaction: KeychainInteraction,
+    ) -> Result<Vec<u8>> {
         anyhow::bail!(
             "Native keychain lookup is only supported on macOS; using Python cookie fallback"
         )
@@ -111,23 +187,39 @@ impl CookieSource {
 
     /// Get cookies for a domain from the specified browser.
     ///
-    /// Tries native Rust extraction first, falls back to Python `browser_cookie3`.
+    /// Tries native Rust extraction first and normally falls back to Python
+    /// `browser_cookie3`. When [`KEYCHAIN_INTERACTION_ENV`] forbids UI, the
+    /// Python fallback is skipped because it can perform a second Keychain read.
     pub fn get_cookies(&self, domain: &str) -> Result<HashMap<String, String>> {
+        self.get_cookies_with_interaction(domain, configured_keychain_interaction())
+    }
+
+    fn get_cookies_with_interaction(
+        self,
+        domain: &str,
+        interaction: KeychainInteraction,
+    ) -> Result<HashMap<String, String>> {
         debug!("Getting cookies for {} from {:?}", domain, self);
 
-        match self.get_cookies_native(domain) {
+        let native = self.get_cookies_native(domain, interaction);
+        match &native {
             Ok(cookies) if !cookies.is_empty() => {
                 info!(
                     "Native cookie extraction succeeded: {} cookies",
                     cookies.len()
                 );
-                return Ok(cookies);
+            }
+            Ok(_) if interaction == KeychainInteraction::Never => {
+                debug!("Native extraction returned empty; prompt-capable fallback disabled");
             }
             Ok(_) => debug!("Native extraction returned empty, trying Python fallback"),
-            Err(e) => debug!("Native extraction failed: {}, trying Python fallback", e),
+            Err(e) if interaction == KeychainInteraction::Never => {
+                debug!("Native extraction failed; prompt-capable fallback disabled: {e}");
+            }
+            Err(e) => debug!("Native extraction failed: {e}, trying Python fallback"),
         }
 
-        self.get_cookies_via_python(domain)
+        resolve_cookie_lookup(native, interaction, || self.get_cookies_via_python(domain))
     }
 
     /// Native Rust cookie extraction from the browser `SQLite` database.
@@ -137,7 +229,11 @@ impl CookieSource {
     ///
     /// For DB schema v24+, the decrypted plaintext has a 32-byte `SHA-256(host_key)`
     /// prefix that is stripped automatically.
-    fn get_cookies_native(self, domain: &str) -> Result<HashMap<String, String>> {
+    fn get_cookies_native(
+        self,
+        domain: &str,
+        interaction: KeychainInteraction,
+    ) -> Result<HashMap<String, String>> {
         let cookie_path = self
             .cookie_path()
             .context("Could not determine cookie path")?;
@@ -153,8 +249,19 @@ impl CookieSource {
             let _ = std::fs::remove_dir_all(parent);
         }
 
-        let key = self.get_keychain_key().ok();
-        let cookies = decrypt_rows(rows, key.as_deref(), domain_tag);
+        if rows.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let key = self.get_keychain_key_with_interaction(interaction);
+        let cookies = decrypt_rows(rows, key.as_deref().ok(), domain_tag);
+
+        if cookies.is_empty()
+            && interaction == KeychainInteraction::Never
+            && !self.keychain_service().is_empty()
+        {
+            key?;
+        }
 
         if cookies.is_empty() {
             debug!("Native extraction: 0 cookies for {}", domain);
@@ -255,12 +362,16 @@ except Exception as e:
     pub fn get_cookies_rich(&self, domain: &str) -> Result<Vec<PlaywrightCookie>> {
         debug!("Getting rich cookies for {} from {:?}", domain, self);
 
-        match self.get_cookies_rich_native(domain) {
+        let interaction = configured_keychain_interaction();
+
+        match self.get_cookies_rich_native(domain, interaction) {
             Ok(cookies) if !cookies.is_empty() => {
                 info!("Native rich extraction: {} cookies", cookies.len());
                 return Ok(cookies);
             }
+            Ok(cookies) if interaction == KeychainInteraction::Never => return Ok(cookies),
             Ok(_) => debug!("Native rich extraction empty, falling back to name/value"),
+            Err(e) if interaction == KeychainInteraction::Never => return Err(e),
             Err(e) => debug!("Native rich extraction failed: {e}, falling back to name/value"),
         }
 
@@ -274,7 +385,11 @@ except Exception as e:
     }
 
     /// Native Rust rich extraction from the Chromium `SQLite` database.
-    fn get_cookies_rich_native(self, domain: &str) -> Result<Vec<PlaywrightCookie>> {
+    fn get_cookies_rich_native(
+        self,
+        domain: &str,
+        interaction: KeychainInteraction,
+    ) -> Result<Vec<PlaywrightCookie>> {
         let cookie_path = self
             .cookie_path()
             .context("Could not determine cookie path")?;
@@ -290,8 +405,19 @@ except Exception as e:
             let _ = std::fs::remove_dir_all(parent);
         }
 
-        let key = self.get_keychain_key().ok();
-        Ok(decrypt_rich_rows(rows, key.as_deref(), domain_tag))
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let key = self.get_keychain_key_with_interaction(interaction);
+        let cookies = decrypt_rich_rows(rows, key.as_deref().ok(), domain_tag);
+        if cookies.is_empty()
+            && interaction == KeychainInteraction::Never
+            && !self.keychain_service().is_empty()
+        {
+            key?;
+        }
+        Ok(cookies)
     }
 }
 

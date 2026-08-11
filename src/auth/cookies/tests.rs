@@ -2,7 +2,10 @@
 
 //! Tests for browser cookie extraction, crypto, and DB parsing.
 
-use super::{CookieSource, crypto::*, db::*};
+use super::{
+    CookieSource, KeychainInteraction, crypto::*, db::*, keychain_interaction_from_env_value,
+    resolve_cookie_lookup,
+};
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -107,6 +110,85 @@ fn keychain_service_firefox_safari_are_empty() {
     assert!(CookieSource::Safari.keychain_service().is_empty());
 }
 
+#[test]
+fn keychain_interaction_policy_defaults_to_allow_and_fails_closed_when_configured() {
+    for value in [None, Some(""), Some("allow"), Some("true"), Some("1")] {
+        assert_eq!(
+            keychain_interaction_from_env_value(value),
+            KeychainInteraction::Allow,
+            "value {value:?} should preserve explicit CLI behavior"
+        );
+    }
+    for value in [
+        Some("never"),
+        Some("false"),
+        Some("0"),
+        Some("off"),
+        Some("typo"),
+    ] {
+        assert_eq!(
+            keychain_interaction_from_env_value(value),
+            KeychainInteraction::Never,
+            "configured value {value:?} must not unexpectedly allow UI"
+        );
+    }
+}
+
+#[test]
+fn noninteractive_cookie_lookup_never_invokes_prompt_capable_fallback() {
+    let fallback_called = std::cell::Cell::new(false);
+    let native_error = anyhow::anyhow!("Keychain interaction is not allowed");
+
+    let err = resolve_cookie_lookup(Err(native_error), KeychainInteraction::Never, || {
+        fallback_called.set(true);
+        Ok(std::collections::HashMap::from([(
+            "session".to_string(),
+            "must-not-be-read".to_string(),
+        )]))
+    })
+    .expect_err("the native diagnostic should be preserved");
+
+    assert!(err.to_string().contains("interaction is not allowed"));
+    assert!(!fallback_called.get(), "Python fallback could prompt again");
+}
+
+#[test]
+fn noninteractive_empty_native_result_stays_empty_without_fallback() {
+    let fallback_called = std::cell::Cell::new(false);
+    let cookies = resolve_cookie_lookup(
+        Ok(std::collections::HashMap::new()),
+        KeychainInteraction::Never,
+        || {
+            fallback_called.set(true);
+            Ok(std::collections::HashMap::from([(
+                "session".to_string(),
+                "unexpected".to_string(),
+            )]))
+        },
+    )
+    .expect("an empty native store is not an error");
+
+    assert!(cookies.is_empty());
+    assert!(!fallback_called.get(), "Python fallback could prompt again");
+}
+
+#[test]
+fn interactive_lookup_retains_python_fallback() {
+    let cookies = resolve_cookie_lookup(
+        Ok(std::collections::HashMap::new()),
+        KeychainInteraction::Allow,
+        || {
+            Ok(std::collections::HashMap::from([(
+                "session".to_string(),
+                "expected".to_string(),
+            )]))
+        },
+    )
+    .expect("interactive fallback should remain available");
+
+    assert_eq!(cookies.get("session").map(String::as_str), Some("expected"));
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn cookie_paths_use_macos_locations() {
@@ -183,7 +265,7 @@ fn cookie_paths_use_windows_locations() {
 #[test]
 fn non_macos_keychain_lookup_returns_fallback_error() {
     let err = CookieSource::Chrome
-        .get_keychain_key()
+        .get_keychain_key_with_interaction(KeychainInteraction::Allow)
         .expect_err("non-macOS should not attempt native keychain lookup");
     assert!(
         err.to_string().contains("Python cookie fallback"),

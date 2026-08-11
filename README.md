@@ -465,6 +465,7 @@ Optional plugin configuration at `~/.config/nab/plugins.toml`. See [docs/getting
 | `HTTP_PROXY` / `http_proxy` | HTTP proxy URL |
 | `ALL_PROXY` / `all_proxy` | Proxy for all protocols |
 | `RUST_LOG` | Logging level (e.g., `nab=debug`) |
+| `NAB_KEYCHAIN_INTERACTION` | Set to `never` for background automation: macOS Keychain reads cannot open UI, and prompt-capable Python cookie fallback is disabled |
 | `PUSHOVER_USER` / `PUSHOVER_TOKEN` | Pushover notifications for MFA |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram notifications for MFA |
 
@@ -500,7 +501,7 @@ This tool includes browser cookie extraction and fingerprint spoofing capabiliti
 
 **MCP server not connecting?** Run `nab-mcp` directly in your terminal to see errors. Verify the binary exists with `which nab-mcp`. If installed via `cargo install nab`, both `nab` and `nab-mcp` should be on your `$PATH`.
 
-**Cookie extraction failing?** Grant Full Disk Access to your terminal in **System Settings > Privacy & Security > Full Disk Access** (macOS). Browser cookies are stored in protected directories. Use `--cookies brave` to target a specific browser.
+**Cookie extraction failing?** Grant Full Disk Access to your terminal in **System Settings > Privacy & Security > Full Disk Access** (macOS). Browser cookies are stored in protected directories. Use `--cookies brave` to target a specific browser. Background tools that must never show a Keychain authorization dialog can run `NAB_KEYCHAIN_INTERACTION=never nab ...`; this fails closed instead of invoking a prompt-capable fallback.
 
 **ASR model not found?** Run `nab models fetch fluidaudio` to download the model (~542 MB). The model directory is `~/.nab/models/`. Use `nab models list` to see what's installed.
 

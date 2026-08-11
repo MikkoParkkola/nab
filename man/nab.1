@@ -149,6 +149,10 @@ HTTP proxy URL.
 .B HTTPS_PROXY
 HTTPS proxy URL.
 .TP
+.B NAB_KEYCHAIN_INTERACTION
+Set to \fBnever\fR for background automation. macOS Keychain reads cannot open
+authorization UI, and the prompt-capable Python cookie fallback is disabled.
+.TP
 .B ANTHROPIC_API_KEY
 Claude API key for video vision analysis (\fBanalyze\fR command).
 .SH FILES
