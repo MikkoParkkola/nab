@@ -18,16 +18,9 @@ ignore = [
     # no drop-in maintained replacement wired yet. No upstream patch exists
     # (informational/unmaintained advisory). Tracked in #134.
     "RUSTSEC-2025-0141",
-    # memmap2 0.9.10 unchecked-pointer-offset (RUSTSEC-2026-0204, 2026-06-20).
-    # Transitive via yara-x 1.16 -> nab-yara-engine. Advisory's fixed version
-    # (>=0.9.20) is NOT yet published to crates.io, and yara-x is already latest
-    # in its ^1.16 pin, so no bump can clear it today. Time-boxed: remove this
-    # ignore once memmap2 ships the fix and yara-x picks it up. Tracked in #134.
-    "RUSTSEC-2026-0204",
     # wasmtime "stores can mix up type indices between engines"
-    # (RUSTSEC-2026-0222 / GHSA-hgjw-h833-99q9, 2026-07-31). Present TWICE in the
-    # tree: wasmtime 43.0.2 (transitive, via yara-x -> the YARA rule compiler) and
-    # wasmtime 44.0.3 (our own optional `wasm-providers` dep).
+    # (RUSTSEC-2026-0222 / GHSA-hgjw-h833-99q9, 2026-07-31). The remaining
+    # affected version is wasmtime 43.0.2, transitive through yara-x.
     #
     # Why this cannot be bumped away today: the advisory's patched lines are
     # >=24.0.12, >=36.0.13, >=46.0.2 and >=47.0.3. There is NO patched 43.x.
@@ -38,9 +31,10 @@ ignore = [
     # Why suppressing it is defensible rather than lazy: CVSS 3.8 LOW, vector
     # AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:L/A:L -- local access, high attack complexity,
     # high privileges AND user interaction required, all impacts low. The bug needs
-    # multiple wasmtime Engines to confuse type indices between them; yara-x
-    # constructs its engine internally to execute rules WE compile from our own
-    # built-in ruleset. There is no path by which fetched remote content reaches it.
+    # multiple wasmtime Engines to confuse embedder-managed type indices between
+    # them. Fetched remote content is scanned by yara-x, but it is only rule input:
+    # it cannot create Engines or mix embedder objects between them. Nab compiles
+    # its own built-in rules into yara-x's internally managed engine.
     #
     # Why we are not dropping yara-x to remove wasmtime: it is the fetch-time
     # prompt-injection firewall (src/security/yara_engine.rs, 30 built-in rules
@@ -54,12 +48,10 @@ ignore = [
     # including the security bumps. The security gate was blocking the security
     # fixes.
     #
-    # TIME-BOXED. Remove this ignore when EITHER holds:
-    #   * yara-x releases a version requiring wasmtime >=46.0.2, or
-    #   * our own `wasm-providers` wasmtime is the only remaining consumer and has
-    #     been bumped to >=47.0.3 (tracked separately -- a major upgrade needing a
-    #     verified build, deliberately not bundled with this unblock).
-    # Re-check on every yara-x release. Tracked in #134.
+    # Remove this cargo-audit ignore when yara-x releases a version requiring a
+    # patched wasmtime line. Cargo-audit cannot expire ignores itself; the
+    # corresponding OSV exception enforces a 2026-09-01 review deadline.
+    # Re-check on every yara-x release. Tracked in #267.
     "RUSTSEC-2026-0222",
     # NOTE: the lru RUSTSEC-2026-0002 ignore was removed once main moved to
     # wreq 6.0.0-rc.29 (lru >= 0.18.0, past the 0.16.3 fix). The advisory no
