@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-08-12
+
+### Fixed
+
+- macOS browser-cookie extraction now caches each Chrome or Brave derived key
+  once per Nab process and serializes concurrent first access. Repeated calls
+  no longer repeat Keychain authorization prompts, browser services remain
+  isolated, and the native reader is authoritative so a Python fallback cannot
+  trigger a second prompt. Profile discovery is deterministic across stable,
+  Beta, Dev, Canary, and Nightly installs.
+- Default CLI tests are hermetic and cannot open real 1Password or other
+  credential-provider UI. Live network probes are explicit opt-ins, protocol
+  coverage uses bounded loopback fixtures, and the Windows CLI dispatcher uses
+  an 8 MiB stack to prevent startup stack overflow.
+
+### Security
+
+- Updated Nab's optional Wasmtime runtime to 46.0.2 and refreshed vulnerable
+  transitive dependencies. The remaining Wasmtime 43 advisory is inherited
+  from `yara-x`, has no patched compatible release, and is tracked by #267 with
+  an exception that expires on 2026-09-01.
+
 ## [0.12.1] - 2026-08-11
 
 ### Fixed
