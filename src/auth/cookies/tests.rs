@@ -2,6 +2,8 @@
 
 //! Tests for browser cookie extraction, crypto, and DB parsing.
 
+#[cfg(target_os = "macos")]
+use super::lock_ignoring_poison;
 use super::{
     CookieSource, KeychainInteraction, cookie_rows_need_key, crypto::*, db::*,
     keychain_interaction_from_env_os_value, keychain_interaction_from_env_value,
@@ -146,6 +148,20 @@ fn non_utf8_keychain_interaction_value_fails_closed() {
         keychain_interaction_from_env_os_value(Some(value.as_os_str())),
         KeychainInteraction::Never
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn keychain_serialization_recovers_after_mutex_poisoning() {
+    let mutex = std::sync::Arc::new(std::sync::Mutex::new(()));
+    let poisoner = std::sync::Arc::clone(&mutex);
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoner.lock().expect("initial lock");
+        panic!("controlled mutex poisoning");
+    })
+    .join();
+
+    let _guard = lock_ignoring_poison(&mutex);
 }
 
 #[test]

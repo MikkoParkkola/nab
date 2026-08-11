@@ -83,6 +83,13 @@ where
 #[cfg(target_os = "macos")]
 static KEYCHAIN_UI_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(target_os = "macos")]
+fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn cookie_rows_need_key(rows: &[db::CookieRow]) -> bool {
     rows.iter()
         .any(|row| row.value.is_empty() && !row.encrypted_bytes.is_empty())
@@ -203,9 +210,7 @@ impl CookieSource {
         // is still in progress. If the caller had already disabled UI, do not
         // create security-framework's RAII lock because its Drop always
         // re-enables interaction rather than restoring the previous state.
-        let _serial_guard = KEYCHAIN_UI_LOCK
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Keychain interaction lock was poisoned"))?;
+        let _serial_guard = lock_ignoring_poison(&KEYCHAIN_UI_LOCK);
         let _interaction_guard = if interaction == KeychainInteraction::Never
             && SecKeychain::user_interaction_allowed()
                 .context("Could not read Keychain interaction policy")?
