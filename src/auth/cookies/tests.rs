@@ -6,12 +6,14 @@
 use super::lock_ignoring_poison;
 #[cfg(target_os = "macos")]
 use super::macos_chromium_roots;
+#[cfg(target_os = "macos")]
+use super::resolve_cookie_lookup_for_source;
 use super::{
     CookieSource, KeychainInteraction, KeychainKeyCache, chromium_cookie_paths_under,
     cookie_rows_need_key, crypto::*, db::*, keychain_interaction_from_env_os_value,
     keychain_interaction_from_env_value, load_cookie_domain_tag_if_needed, load_cookie_key_cached,
     load_cookie_key_if_needed, load_first_usable_cookie_store, resolve_cookie_lookup,
-    resolve_cookie_lookup_for_source, rich_cookie_rows_need_key,
+    rich_cookie_rows_need_key,
 };
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────

@@ -277,15 +277,7 @@ impl CookieSource {
     }
 
     fn native_cookie_result_is_authoritative(self) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            !self.keychain_service().is_empty()
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            false
-        }
+        cfg!(target_os = "macos") && matches!(self, Self::Brave | Self::Chrome)
     }
 
     /// Get the raw Keychain password for this browser and derive the AES key.
