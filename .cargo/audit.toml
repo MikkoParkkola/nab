@@ -51,7 +51,7 @@ ignore = [
     # Remove this cargo-audit ignore when yara-x releases a version requiring a
     # patched wasmtime line. Cargo-audit cannot expire ignores itself; the
     # corresponding OSV exception enforces a 2026-09-01 review deadline.
-    # Re-check on every yara-x release. Tracked in #262.
+    # Re-check on every yara-x release. Tracked in #267.
     "RUSTSEC-2026-0222",
     # NOTE: the lru RUSTSEC-2026-0002 ignore was removed once main moved to
     # wreq 6.0.0-rc.29 (lru >= 0.18.0, past the 0.16.3 fix). The advisory no

@@ -52,4 +52,4 @@ reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unm
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0222"
 ignoreUntil = 2026-09-01
-reason = "wasmtime 43.0.2 is transitive through yara-x; current yara-x 1.19.0 still requires ^43.0.2 and no patched 43.x exists. The CVSS 3.8 issue requires multiple engines, local high-privilege access and user interaction; Nab compiles its own built-in YARA rules in yara-x's internal engine. Nab's direct optional wasmtime is upgraded to patched 46.0.2. Recheck every yara-x release. Tracked in #262. Reviewed 2026-08-11 by Mikko/Codex."
+reason = "wasmtime 43.0.2 is transitive through yara-x; current yara-x 1.19.0 still requires ^43.0.2 and no patched 43.x exists. The CVSS 3.8 issue requires multiple engines, local high-privilege access and user interaction; Nab compiles its own built-in YARA rules in yara-x's internal engine. Nab's direct optional wasmtime is upgraded to patched 46.0.2. Recheck every yara-x release. Tracked in #267. Reviewed 2026-08-11 by Mikko/Codex."
