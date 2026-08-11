@@ -501,7 +501,7 @@ This tool includes browser cookie extraction and fingerprint spoofing capabiliti
 
 **MCP server not connecting?** Run `nab-mcp` directly in your terminal to see errors. Verify the binary exists with `which nab-mcp`. If installed via `cargo install nab`, both `nab` and `nab-mcp` should be on your `$PATH`.
 
-**Cookie extraction failing?** Grant Full Disk Access to your terminal in **System Settings > Privacy & Security > Full Disk Access** (macOS). Browser cookies are stored in protected directories. Use `--cookies brave` to target a specific browser. Background tools that must never show a Keychain authorization dialog can run `NAB_KEYCHAIN_INTERACTION=never nab ...`; this fails closed instead of invoking a prompt-capable fallback.
+**Cookie extraction failing?** Grant Full Disk Access to your terminal in **System Settings > Privacy & Security > Full Disk Access** (macOS). Browser cookies are stored in protected directories. Use `--cookies brave` to target a specific browser. Background tools that must never show a Keychain authorization dialog can run `NAB_KEYCHAIN_INTERACTION=never nab ...`. Plaintext cookies and credentials that macOS can provide silently still work; credentials that require approval are unavailable, and Nab fails closed instead of invoking a prompt-capable fallback.
 
 **ASR model not found?** Run `nab models fetch fluidaudio` to download the model (~542 MB). The model directory is `~/.nab/models/`. Use `nab models list` to see what's installed.
 
