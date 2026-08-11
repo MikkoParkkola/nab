@@ -4,11 +4,14 @@
 
 #[cfg(target_os = "macos")]
 use super::lock_ignoring_poison;
+#[cfg(target_os = "macos")]
+use super::macos_chromium_roots;
 use super::{
-    CookieSource, KeychainInteraction, cookie_rows_need_key, crypto::*, db::*,
-    keychain_interaction_from_env_os_value, keychain_interaction_from_env_value,
-    load_cookie_domain_tag_if_needed, load_cookie_key_if_needed, resolve_cookie_lookup,
-    rich_cookie_rows_need_key,
+    CookieSource, KeychainInteraction, KeychainKeyCache, chromium_cookie_paths_under,
+    cookie_rows_need_key, crypto::*, db::*, keychain_interaction_from_env_os_value,
+    keychain_interaction_from_env_value, load_cookie_domain_tag_if_needed, load_cookie_key_cached,
+    load_cookie_key_if_needed, load_first_usable_cookie_store, resolve_cookie_lookup,
+    resolve_cookie_lookup_for_source, rich_cookie_rows_need_key,
 };
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -112,6 +115,270 @@ fn keychain_service_brave_and_chrome_are_nonempty() {
 fn keychain_service_firefox_safari_are_empty() {
     assert!(CookieSource::Firefox.keychain_service().is_empty());
     assert!(CookieSource::Safari.keychain_service().is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn completed_chromium_native_lookup_is_authoritative_on_macos() {
+    assert!(
+        CookieSource::Chrome.native_cookie_result_is_authoritative(),
+        "Chrome must not retry through a second prompt-capable implementation"
+    );
+    assert!(
+        CookieSource::Brave.native_cookie_result_is_authoritative(),
+        "Brave must not retry through a second prompt-capable implementation"
+    );
+    assert!(!CookieSource::Firefox.native_cookie_result_is_authoritative());
+    assert!(!CookieSource::Safari.native_cookie_result_is_authoritative());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn repeated_chromium_native_errors_never_launch_python_fallback() {
+    let fallback_calls = std::cell::Cell::new(0);
+
+    for _ in 0..2 {
+        let error = resolve_cookie_lookup_for_source(
+            CookieSource::Chrome,
+            Err(anyhow::anyhow!("database unavailable before Keychain read")),
+            KeychainInteraction::Allow,
+            || {
+                fallback_calls.set(fallback_calls.get() + 1);
+                Ok(std::collections::HashMap::new())
+            },
+        )
+        .expect_err("the native diagnostic must remain authoritative");
+        assert!(error.to_string().contains("database unavailable"));
+    }
+
+    assert_eq!(fallback_calls.get(), 0, "Python could prompt on every call");
+}
+
+#[test]
+fn chromium_paths_cover_default_network_and_named_profiles() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let root = temp.path().join("Chrome");
+    for relative in [
+        "Default/Cookies",
+        "Default/Network/Cookies",
+        "Profile 1/Cookies",
+        "Profile 2/Network/Cookies",
+        "Guest Profile/Cookies",
+    ] {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().expect("cookie parent")).expect("profile dir");
+        std::fs::write(path, b"sqlite placeholder").expect("cookie db placeholder");
+    }
+    std::fs::create_dir_all(root.join("System Profile")).expect("unrelated profile dir");
+
+    let paths = chromium_cookie_paths_under(std::slice::from_ref(&root));
+    for relative in [
+        "Default/Cookies",
+        "Default/Network/Cookies",
+        "Profile 1/Cookies",
+        "Profile 2/Network/Cookies",
+        "Guest Profile/Cookies",
+    ] {
+        assert!(paths.contains(&root.join(relative)), "missing {relative}");
+    }
+    assert_eq!(paths.len(), 5, "only real cookie databases are returned");
+    assert_eq!(paths[0], root.join("Default/Cookies"));
+    assert_eq!(paths[1], root.join("Default/Network/Cookies"));
+    assert_eq!(paths[2], root.join("Guest Profile/Cookies"));
+    assert_eq!(paths[3], root.join("Profile 1/Cookies"));
+    assert_eq!(paths[4], root.join("Profile 2/Network/Cookies"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_chromium_roots_cover_supported_channels_in_priority_order() {
+    let app_support = std::path::Path::new("/Library/Application Support");
+
+    assert_eq!(
+        macos_chromium_roots(app_support, CookieSource::Chrome),
+        [
+            "Google/Chrome",
+            "Google/Chrome Beta",
+            "Google/Chrome Dev",
+            "Google/Chrome Canary",
+            "Chromium",
+        ]
+        .map(|path| app_support.join(path))
+    );
+    assert_eq!(
+        macos_chromium_roots(app_support, CookieSource::Brave),
+        [
+            "BraveSoftware/Brave-Browser",
+            "BraveSoftware/Brave-Browser-Beta",
+            "BraveSoftware/Brave-Browser-Dev",
+            "BraveSoftware/Brave-Browser-Nightly",
+        ]
+        .map(|path| app_support.join(path))
+    );
+}
+
+#[test]
+fn cookie_store_selection_stops_at_first_usable_profile() {
+    let paths = ["empty", "profile-1", "profile-2"]
+        .map(std::path::PathBuf::from)
+        .to_vec();
+    let visited = std::cell::RefCell::new(Vec::new());
+
+    let cookies = load_first_usable_cookie_store(
+        &paths,
+        |path| {
+            visited.borrow_mut().push(path.to_path_buf());
+            let value = match path.to_string_lossy().as_ref() {
+                "empty" => std::collections::HashMap::new(),
+                "profile-1" => std::collections::HashMap::from([(
+                    "session".to_string(),
+                    "first-identity".to_string(),
+                )]),
+                _ => std::collections::HashMap::from([(
+                    "session".to_string(),
+                    "different-identity".to_string(),
+                )]),
+            };
+            Ok(value)
+        },
+        std::collections::HashMap::is_empty,
+    )
+    .expect("first usable profile");
+
+    assert_eq!(
+        cookies.get("session").map(String::as_str),
+        Some("first-identity")
+    );
+    assert_eq!(
+        visited.into_inner(),
+        paths[..2],
+        "later browser identities must not be read or merged"
+    );
+}
+
+#[test]
+fn successful_keychain_key_is_loaded_once_per_service() {
+    let cache = std::sync::Mutex::new(KeychainKeyCache::default());
+    let calls = std::cell::Cell::new(0);
+
+    for _ in 0..2 {
+        let key = load_cookie_key_cached(
+            &cache,
+            "Chrome Safe Storage",
+            KeychainInteraction::Allow,
+            || {
+                calls.set(calls.get() + 1);
+                Ok(vec![7; 16])
+            },
+        )
+        .expect("derived key should load");
+        assert_eq!(key, vec![7; 16]);
+    }
+
+    assert_eq!(calls.get(), 1, "the same service must prompt at most once");
+}
+
+#[test]
+fn interactive_keychain_failure_is_not_retried_in_process() {
+    let cache = std::sync::Mutex::new(KeychainKeyCache::default());
+    let calls = std::cell::Cell::new(0);
+
+    for _ in 0..2 {
+        let error = load_cookie_key_cached(
+            &cache,
+            "Chrome Safe Storage",
+            KeychainInteraction::Allow,
+            || {
+                calls.set(calls.get() + 1);
+                Err(anyhow::anyhow!("approval denied"))
+            },
+        )
+        .expect_err("denied lookup must remain unavailable");
+        assert!(error.to_string().contains("approval denied"));
+    }
+
+    assert_eq!(calls.get(), 1, "a denial must not trigger another prompt");
+}
+
+#[test]
+fn noninteractive_failure_does_not_block_later_interactive_lookup() {
+    let cache = std::sync::Mutex::new(KeychainKeyCache::default());
+    let calls = std::cell::Cell::new(0);
+
+    load_cookie_key_cached(
+        &cache,
+        "Chrome Safe Storage",
+        KeychainInteraction::Never,
+        || {
+            calls.set(calls.get() + 1);
+            Err(anyhow::anyhow!("interaction disabled"))
+        },
+    )
+    .expect_err("noninteractive lookup should fail closed");
+
+    let key = load_cookie_key_cached(
+        &cache,
+        "Chrome Safe Storage",
+        KeychainInteraction::Allow,
+        || {
+            calls.set(calls.get() + 1);
+            Ok(vec![9; 16])
+        },
+    )
+    .expect("explicit interactive lookup should still be attempted");
+
+    assert_eq!(key, vec![9; 16]);
+    assert_eq!(calls.get(), 2);
+}
+
+#[test]
+fn browser_keychain_services_have_independent_cache_entries() {
+    let cache = std::sync::Mutex::new(KeychainKeyCache::default());
+    let calls = std::cell::Cell::new(0);
+
+    for service in ["Chrome Safe Storage", "Brave Safe Storage"] {
+        load_cookie_key_cached(&cache, service, KeychainInteraction::Allow, || {
+            calls.set(calls.get() + 1);
+            Ok(vec![calls.get() as u8; 16])
+        })
+        .expect("each browser key should load");
+    }
+
+    assert_eq!(calls.get(), 2, "distinct services must not share keys");
+}
+
+#[test]
+fn concurrent_keychain_load_is_single_flight_per_service() {
+    let cache = std::sync::Arc::new(std::sync::Mutex::new(KeychainKeyCache::default()));
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut handles = Vec::new();
+
+    for _ in 0..2 {
+        let cache = std::sync::Arc::clone(&cache);
+        let calls = std::sync::Arc::clone(&calls);
+        let barrier = std::sync::Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            load_cookie_key_cached(
+                &cache,
+                "Chrome Safe Storage",
+                KeychainInteraction::Allow,
+                || {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    Ok(vec![3; 16])
+                },
+            )
+            .expect("derived key")
+        }));
+    }
+    barrier.wait();
+
+    for handle in handles {
+        assert_eq!(handle.join().expect("loader thread"), vec![3; 16]);
+    }
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]

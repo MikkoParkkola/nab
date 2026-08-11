@@ -22,8 +22,9 @@ mod tests;
 
 use std::collections::HashMap;
 use std::process::Command;
-#[cfg(target_os = "macos")]
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
@@ -43,6 +44,20 @@ enum KeychainInteraction {
     Allow,
     Never,
 }
+
+#[derive(Debug, Clone)]
+enum CachedKeychainKey {
+    Derived(Vec<u8>),
+    InteractiveFailure(String),
+}
+
+#[derive(Debug, Default)]
+struct KeychainKeyCache {
+    by_service: HashMap<&'static str, CachedKeychainKey>,
+}
+
+#[cfg(target_os = "macos")]
+static KEYCHAIN_KEY_CACHE: OnceLock<Mutex<KeychainKeyCache>> = OnceLock::new();
 
 fn keychain_interaction_from_env_value(value: Option<&str>) -> KeychainInteraction {
     match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
@@ -80,14 +95,85 @@ where
     }
 }
 
+fn resolve_cookie_lookup_for_source<F>(
+    source: CookieSource,
+    native: Result<HashMap<String, String>>,
+    interaction: KeychainInteraction,
+    fallback: F,
+) -> Result<HashMap<String, String>>
+where
+    F: FnOnce() -> Result<HashMap<String, String>>,
+{
+    if source.native_cookie_result_is_authoritative() {
+        return native;
+    }
+    resolve_cookie_lookup(native, interaction, fallback)
+}
+
 #[cfg(target_os = "macos")]
 static KEYCHAIN_UI_LOCK: Mutex<()> = Mutex::new(());
 
-#[cfg(target_os = "macos")]
 fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn load_cookie_key_cached<F>(
+    cache: &Mutex<KeychainKeyCache>,
+    service: &'static str,
+    interaction: KeychainInteraction,
+    load: F,
+) -> Result<Vec<u8>>
+where
+    F: FnOnce() -> Result<Vec<u8>>,
+{
+    let mut cache = lock_ignoring_poison(cache);
+    if let Some(entry) = cache.by_service.get(service) {
+        return match entry {
+            CachedKeychainKey::Derived(key) => Ok(key.clone()),
+            CachedKeychainKey::InteractiveFailure(message) => Err(anyhow::anyhow!(message.clone())),
+        };
+    }
+
+    match load() {
+        Ok(key) => {
+            cache
+                .by_service
+                .insert(service, CachedKeychainKey::Derived(key.clone()));
+            Ok(key)
+        }
+        Err(error) => {
+            if interaction == KeychainInteraction::Allow {
+                cache.by_service.insert(
+                    service,
+                    CachedKeychainKey::InteractiveFailure(error.to_string()),
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
+fn load_first_usable_cookie_store<T, F, E>(
+    paths: &[std::path::PathBuf],
+    mut load: F,
+    is_empty: E,
+) -> Result<T>
+where
+    T: Default,
+    F: FnMut(&std::path::Path) -> Result<T>,
+    E: Fn(&T) -> bool,
+{
+    let mut first_error = None;
+    for path in paths {
+        match load(path) {
+            Ok(value) if !is_empty(&value) => return Ok(value),
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Ok(_) | Err(_) => {}
+        }
+    }
+    first_error.map_or_else(|| Ok(T::default()), Err)
 }
 
 fn cookie_rows_need_key(rows: &[db::CookieRow]) -> bool {
@@ -167,8 +253,13 @@ impl CookieSource {
     }
 
     /// Get the cookie database path for this browser.
+    #[cfg(test)]
     fn cookie_path(self) -> Option<std::path::PathBuf> {
-        platform_cookie_path(self)
+        platform_default_cookie_path(self)
+    }
+
+    fn cookie_paths(self) -> Vec<std::path::PathBuf> {
+        platform_cookie_paths(self)
     }
 
     /// Get the Keychain service name for this browser.
@@ -177,6 +268,18 @@ impl CookieSource {
             CookieSource::Brave => "Brave Safe Storage",
             CookieSource::Chrome => "Chrome Safe Storage",
             CookieSource::Firefox | CookieSource::Safari => "",
+        }
+    }
+
+    fn native_cookie_result_is_authoritative(self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            !self.keychain_service().is_empty()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
         }
     }
 
@@ -192,8 +295,22 @@ impl CookieSource {
         if service.is_empty() {
             anyhow::bail!("Browser does not use Keychain encryption");
         }
-        let password = Self::read_keychain_password(service, interaction)?;
-        crypto::derive_cookie_key(&password)
+
+        let load = || {
+            let password = Self::read_keychain_password(service, interaction)?;
+            crypto::derive_cookie_key(&password)
+        };
+
+        #[cfg(target_os = "macos")]
+        {
+            let cache = KEYCHAIN_KEY_CACHE.get_or_init(|| Mutex::new(KeychainKeyCache::default()));
+            load_cookie_key_cached(cache, service, interaction, load)
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            load()
+        }
     }
 
     /// Read the raw password bytes from the macOS Keychain.
@@ -242,8 +359,12 @@ impl CookieSource {
     /// Get cookies for a domain from the specified browser.
     ///
     /// Tries native Rust extraction first and normally falls back to Python
-    /// `browser_cookie3`. When [`KEYCHAIN_INTERACTION_ENV`] forbids UI, the
-    /// Python fallback is skipped because it can perform a second Keychain read.
+    /// `browser_cookie3`. On macOS, native Chromium extraction covers the
+    /// established Chrome/Brave channels and their profile databases, so it is
+    /// authoritative even when no cookies are found: retrying through Python
+    /// could display a duplicate Keychain prompt for the same browser service.
+    /// When [`KEYCHAIN_INTERACTION_ENV`] forbids UI, the Python fallback is also
+    /// skipped because it can perform a second Keychain read.
     pub fn get_cookies(&self, domain: &str) -> Result<HashMap<String, String>> {
         self.get_cookies_with_interaction(domain, configured_keychain_interaction())
     }
@@ -256,6 +377,7 @@ impl CookieSource {
         debug!("Getting cookies for {} from {:?}", domain, self);
 
         let native = self.get_cookies_native(domain, interaction);
+        let native_is_authoritative = self.native_cookie_result_is_authoritative();
         match &native {
             Ok(cookies) if !cookies.is_empty() => {
                 info!(
@@ -263,17 +385,22 @@ impl CookieSource {
                     cookies.len()
                 );
             }
+            Ok(_) if native_is_authoritative => {
+                debug!("Native Chromium extraction completed; Python fallback disabled");
+            }
             Ok(_) if interaction == KeychainInteraction::Never => {
                 debug!("Native extraction returned empty; prompt-capable fallback disabled");
             }
             Ok(_) => debug!("Native extraction returned empty, trying Python fallback"),
-            Err(e) if interaction == KeychainInteraction::Never => {
+            Err(e) if native_is_authoritative || interaction == KeychainInteraction::Never => {
                 debug!("Native extraction failed; prompt-capable fallback disabled: {e}");
             }
             Err(e) => debug!("Native extraction failed: {e}, trying Python fallback"),
         }
 
-        resolve_cookie_lookup(native, interaction, || self.get_cookies_via_python(domain))
+        resolve_cookie_lookup_for_source(self, native, interaction, || {
+            self.get_cookies_via_python(domain)
+        })
     }
 
     /// Native Rust cookie extraction from the browser `SQLite` database.
@@ -288,15 +415,34 @@ impl CookieSource {
         domain: &str,
         interaction: KeychainInteraction,
     ) -> Result<HashMap<String, String>> {
-        let cookie_path = self
-            .cookie_path()
-            .context("Could not determine cookie path")?;
-        if !cookie_path.exists() {
-            warn!("Cookie database not found: {:?}", cookie_path);
+        let cookie_paths = self.cookie_paths();
+        let existing_paths = cookie_paths
+            .iter()
+            .filter(|path| path.exists())
+            .cloned()
+            .collect::<Vec<_>>();
+        if existing_paths.is_empty() {
+            warn!(
+                "Cookie database not found in candidates: {:?}",
+                cookie_paths
+            );
             return Ok(HashMap::new());
         }
 
-        let temp_db = copy_db_to_temp(&cookie_path)?;
+        load_first_usable_cookie_store(
+            &existing_paths,
+            |cookie_path| self.get_cookies_native_from_path(domain, interaction, cookie_path),
+            HashMap::is_empty,
+        )
+    }
+
+    fn get_cookies_native_from_path(
+        self,
+        domain: &str,
+        interaction: KeychainInteraction,
+        cookie_path: &std::path::Path,
+    ) -> Result<HashMap<String, String>> {
+        let temp_db = copy_db_to_temp(cookie_path)?;
         let extraction = (|| {
             let rows = query_cookie_db(&temp_db, domain)?;
             let needs_key = cookie_rows_need_key(&rows);
@@ -446,15 +592,34 @@ except Exception as e:
         domain: &str,
         interaction: KeychainInteraction,
     ) -> Result<Vec<PlaywrightCookie>> {
-        let cookie_path = self
-            .cookie_path()
-            .context("Could not determine cookie path")?;
-        if !cookie_path.exists() {
-            warn!("Cookie database not found: {:?}", cookie_path);
+        let cookie_paths = self.cookie_paths();
+        let existing_paths = cookie_paths
+            .iter()
+            .filter(|path| path.exists())
+            .cloned()
+            .collect::<Vec<_>>();
+        if existing_paths.is_empty() {
+            warn!(
+                "Cookie database not found in candidates: {:?}",
+                cookie_paths
+            );
             return Ok(Vec::new());
         }
 
-        let temp_db = copy_db_to_temp(&cookie_path)?;
+        load_first_usable_cookie_store(
+            &existing_paths,
+            |cookie_path| self.get_cookies_rich_native_from_path(domain, interaction, cookie_path),
+            Vec::is_empty,
+        )
+    }
+
+    fn get_cookies_rich_native_from_path(
+        self,
+        domain: &str,
+        interaction: KeychainInteraction,
+        cookie_path: &std::path::Path,
+    ) -> Result<Vec<PlaywrightCookie>> {
+        let temp_db = copy_db_to_temp(cookie_path)?;
         let extraction = (|| {
             let rows = query_cookie_db_rich(&temp_db, domain)?;
             let needs_key = rich_cookie_rows_need_key(&rows);
@@ -499,11 +664,92 @@ fn synthesize_cookie(name: String, value: String, domain: &str) -> PlaywrightCoo
     }
 }
 
+fn chromium_cookie_paths_under(roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut profiles = entries
+            .flatten()
+            .filter_map(|entry| {
+                entry
+                    .file_type()
+                    .ok()
+                    .filter(std::fs::FileType::is_dir)
+                    .map(|_| entry.path())
+            })
+            .collect::<Vec<_>>();
+        profiles.sort();
+        for profile in profiles {
+            for relative in ["Cookies", "Network/Cookies"] {
+                let candidate = profile.join(relative);
+                if candidate.is_file() {
+                    paths.push(candidate);
+                }
+            }
+        }
+    }
+    paths
+}
+
 #[cfg(target_os = "macos")]
-fn platform_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
+fn macos_chromium_roots(
+    app_support: &std::path::Path,
+    source: CookieSource,
+) -> Vec<std::path::PathBuf> {
+    match source {
+        CookieSource::Chrome => [
+            "Google/Chrome",
+            "Google/Chrome Beta",
+            "Google/Chrome Dev",
+            "Google/Chrome Canary",
+            "Chromium",
+        ]
+        .map(|path| app_support.join(path))
+        .to_vec(),
+        CookieSource::Brave => [
+            "BraveSoftware/Brave-Browser",
+            "BraveSoftware/Brave-Browser-Beta",
+            "BraveSoftware/Brave-Browser-Dev",
+            "BraveSoftware/Brave-Browser-Nightly",
+        ]
+        .map(|path| app_support.join(path))
+        .to_vec(),
+        CookieSource::Firefox | CookieSource::Safari => Vec::new(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_cookie_paths(source: CookieSource) -> Vec<std::path::PathBuf> {
+    let Some(app_support) = dirs::config_dir() else {
+        return Vec::new();
+    };
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+
+    let roots = match source {
+        CookieSource::Brave | CookieSource::Chrome => macos_chromium_roots(&app_support, source),
+        CookieSource::Firefox => return vec![app_support.join("Firefox/Profiles")],
+        CookieSource::Safari => {
+            return vec![home.join("Library/Cookies/Cookies.binarycookies")];
+        }
+    };
+
+    let mut paths = chromium_cookie_paths_under(&roots);
+    if paths.is_empty()
+        && let Some(root) = roots.first()
+    {
+        paths.push(root.join("Default/Cookies"));
+    }
+    paths
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn platform_default_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
     let app_support = dirs::config_dir()?;
     let home = dirs::home_dir()?;
-
     Some(match source {
         CookieSource::Brave => app_support.join("BraveSoftware/Brave-Browser/Default/Cookies"),
         CookieSource::Chrome => app_support.join("Google/Chrome/Default/Cookies"),
@@ -513,35 +759,63 @@ fn platform_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn platform_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
-    let config_dir = dirs::config_dir()?;
-    let home = dirs::home_dir()?;
+fn platform_cookie_paths(source: CookieSource) -> Vec<std::path::PathBuf> {
+    let Some(config_dir) = dirs::config_dir() else {
+        return Vec::new();
+    };
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
 
     match source {
-        CookieSource::Brave => Some(config_dir.join("BraveSoftware/Brave-Browser/Default/Cookies")),
-        CookieSource::Chrome => Some(config_dir.join("google-chrome/Default/Cookies")),
-        CookieSource::Firefox => Some(home.join(".mozilla/firefox")),
-        CookieSource::Safari => None,
+        CookieSource::Brave => vec![config_dir.join("BraveSoftware/Brave-Browser/Default/Cookies")],
+        CookieSource::Chrome => vec![config_dir.join("google-chrome/Default/Cookies")],
+        CookieSource::Firefox => vec![home.join(".mozilla/firefox")],
+        CookieSource::Safari => Vec::new(),
     }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn platform_default_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
+    platform_cookie_paths(source).into_iter().next()
 }
 
 #[cfg(target_os = "windows")]
-fn platform_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
-    let local_data = dirs::data_local_dir()?;
-    let config_dir = dirs::config_dir()?;
+fn platform_cookie_paths(source: CookieSource) -> Vec<std::path::PathBuf> {
+    let Some(local_data) = dirs::data_local_dir() else {
+        return Vec::new();
+    };
+    let Some(config_dir) = dirs::config_dir() else {
+        return Vec::new();
+    };
 
     match source {
         CookieSource::Brave => {
-            Some(local_data.join("BraveSoftware/Brave-Browser/User Data/Default/Cookies"))
+            vec![local_data.join("BraveSoftware/Brave-Browser/User Data/Default/Cookies")]
         }
-        CookieSource::Chrome => Some(local_data.join("Google/Chrome/User Data/Default/Cookies")),
-        CookieSource::Firefox => Some(config_dir.join("Mozilla/Firefox/Profiles")),
-        CookieSource::Safari => None,
+        CookieSource::Chrome => {
+            vec![local_data.join("Google/Chrome/User Data/Default/Cookies")]
+        }
+        CookieSource::Firefox => vec![config_dir.join("Mozilla/Firefox/Profiles")],
+        CookieSource::Safari => Vec::new(),
     }
 }
 
+#[cfg(all(test, target_os = "windows"))]
+fn platform_default_cookie_path(source: CookieSource) -> Option<std::path::PathBuf> {
+    platform_cookie_paths(source).into_iter().next()
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn platform_cookie_path(_source: CookieSource) -> Option<std::path::PathBuf> {
+fn platform_cookie_paths(_source: CookieSource) -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
+#[cfg(all(
+    test,
+    not(any(target_os = "macos", target_os = "linux", target_os = "windows"))
+))]
+fn platform_default_cookie_path(_source: CookieSource) -> Option<std::path::PathBuf> {
     None
 }
 
