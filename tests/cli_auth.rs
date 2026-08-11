@@ -1,17 +1,55 @@
 //! Integration tests for the `nab auth` and `nab otp` commands.
 //!
-//! These commands interact with 1Password and system-level OTP sources,
-//! so we test only argument parsing and graceful degradation when the
-//! external tools are not available.
+//! These commands interact with 1Password and system-level OTP sources in
+//! production. Tests shadow those tools with deterministic failing stubs so
+//! the default suite can only exercise graceful degradation and never invoke
+//! the user's real credential tools.
 
 #![allow(deprecated)] // cargo_bin deprecation — replacement not yet stable
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::path::Path;
+use tempfile::TempDir;
 
 /// Helper: get a Command for the `nab` binary.
 fn nab() -> Command {
     Command::cargo_bin("nab").expect("binary 'nab' should be built")
+}
+
+fn isolate_external_tools(command: &mut Command) -> TempDir {
+    let tool_dir = tempfile::tempdir().expect("create isolated tool directory");
+    write_failing_tool(tool_dir.path(), "op");
+    write_failing_tool(tool_dir.path(), "mcp-cli");
+
+    let mut paths = vec![tool_dir.path().to_path_buf()];
+    if let Some(path) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&path));
+    }
+    command.env(
+        "PATH",
+        std::env::join_paths(paths).expect("build isolated PATH"),
+    );
+    tool_dir
+}
+
+#[cfg(unix)]
+fn write_failing_tool(directory: &Path, name: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join(name);
+    std::fs::write(&path, "#!/bin/sh\nexit 1\n").expect("write failing tool stub");
+    let mut permissions = std::fs::metadata(&path)
+        .expect("read failing tool metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("make failing tool executable");
+}
+
+#[cfg(windows)]
+fn write_failing_tool(directory: &Path, name: &str) {
+    std::fs::write(directory.join(format!("{name}.cmd")), "@exit /b 1\r\n")
+        .expect("write failing tool stub");
 }
 
 // ─── Auth command ────────────────────────────────────────────────────────────
@@ -27,10 +65,11 @@ fn auth_missing_url_fails() {
 
 #[test]
 fn auth_runs_without_crash() {
-    // The auth command calls 1Password CLI which may block waiting for
-    // authentication.  We use .output() with a timeout so the test
-    // always completes, then verify the process at least started.
-    let output = nab()
+    // Real credential tools are shadowed on PATH, so this exercises the
+    // deterministic unavailable-provider path without authentication UI.
+    let mut command = nab();
+    let _tool_dir = isolate_external_tools(&mut command);
+    let output = command
         .args(["auth", "https://example.com"])
         .timeout(std::time::Duration::from_secs(5))
         .output()
@@ -40,8 +79,7 @@ fn auth_runs_without_crash() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
 
-    // The command should at least print a search/credential message before
-    // the 1Password CLI potentially blocks.
+    // The command should report graceful unavailability without crashing.
     assert!(
         combined.contains("1Password")
             || combined.contains("credential")
@@ -64,8 +102,10 @@ fn otp_missing_domain_fails() {
 
 #[test]
 fn otp_runs_without_crash() {
-    // OTP command may call external tools that block.  Same pattern as auth.
-    let output = nab()
+    // All external OTP providers are shadowed on PATH.
+    let mut command = nab();
+    let _tool_dir = isolate_external_tools(&mut command);
+    let output = command
         .args(["otp", "example.com"])
         .timeout(std::time::Duration::from_secs(5))
         .output()
@@ -88,17 +128,17 @@ fn otp_runs_without_crash() {
 fn otp_accepts_url_format() {
     // The otp command should also work when given a full URL
     // (it strips down to domain internally).
-    let output = nab()
+    let mut command = nab();
+    let _tool_dir = isolate_external_tools(&mut command);
+    let output = command
         .args(["otp", "https://accounts.example.com/login"])
         .timeout(std::time::Duration::from_secs(5))
         .output()
         .expect("command should execute");
 
-    // Accept either success or timeout-interrupted (1Password may block).
-    // The key test is that it didn't panic or crash with a non-timeout error.
     assert!(
-        output.status.success() || output.status.code().is_none(), // None = killed by timeout
-        "otp should succeed or be interrupted, got: {:?}",
+        output.status.success(),
+        "otp should degrade cleanly: {:?}",
         output.status
     );
 }

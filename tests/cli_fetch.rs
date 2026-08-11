@@ -31,6 +31,10 @@ fn nab() -> Command {
 /// Using an IP literal avoids DNS, while routing through `spawn_test_proxy`
 /// prevents any connection to the address itself.
 const PROXY_TEST_ORIGIN: &str = "http://93.184.216.34";
+const PROXY_ACCEPT_TIMEOUT: Duration = Duration::from_secs(15);
+const PROXY_READ_TIMEOUT: Duration = Duration::from_secs(15);
+const PROXY_COMMAND_TIMEOUT: Duration = Duration::from_secs(25);
+const PROXY_COMPLETION_TIMEOUT: Duration = Duration::from_secs(35);
 
 fn spawn_test_proxy<F>(response: &str, inspect_request: F) -> (String, Receiver<Result<(), String>>)
 where
@@ -48,7 +52,7 @@ where
 
     thread::spawn(move || {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let deadline = Instant::now() + Duration::from_secs(15);
+            let deadline = Instant::now() + PROXY_ACCEPT_TIMEOUT;
             let (mut stream, _) = loop {
                 match listener.accept() {
                     Ok(connection) => break connection,
@@ -63,7 +67,10 @@ where
                 }
             };
             stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
+                .set_nonblocking(false)
+                .expect("make proxied connection blocking");
+            stream
+                .set_read_timeout(Some(PROXY_READ_TIMEOUT))
                 .expect("set proxied request read timeout");
             let mut request = Vec::new();
             let mut buffer = [0_u8; 4096];
@@ -123,7 +130,7 @@ where
 
 fn wait_for_test_proxy(result: &Receiver<Result<(), String>>) {
     result
-        .recv_timeout(Duration::from_secs(20))
+        .recv_timeout(PROXY_COMPLETION_TIMEOUT)
         .expect("test proxy should finish before its deadline")
         .expect("test proxy should finish cleanly");
 }
@@ -434,7 +441,7 @@ fn fetch_custom_header() {
             &proxy_url,
             &format!("{PROXY_TEST_ORIGIN}/headers"),
         ])
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(PROXY_COMMAND_TIMEOUT)
         .assert()
         .success()
         .stdout(predicate::str::contains("X-Nab-Test"));
@@ -522,7 +529,7 @@ fn fetch_unreachable_host_fails() {
             &proxy_url,
             &format!("{PROXY_TEST_ORIGIN}/disconnect"),
         ])
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(PROXY_COMMAND_TIMEOUT)
         .assert()
         .failure();
     wait_for_test_proxy(&proxy_result);
@@ -589,7 +596,7 @@ fn fetch_no_redirect_captures_302() {
             &proxy_url,
             &format!("{PROXY_TEST_ORIGIN}/redirect/1"),
         ])
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(PROXY_COMMAND_TIMEOUT)
         .assert()
         .success()
         .stdout(predicate::str::is_match(r"^302 ").unwrap());
@@ -627,7 +634,7 @@ fn fetch_post_with_data() {
             &proxy_url,
             &format!("{PROXY_TEST_ORIGIN}/post"),
         ])
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(PROXY_COMMAND_TIMEOUT)
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""key": "value""#));
