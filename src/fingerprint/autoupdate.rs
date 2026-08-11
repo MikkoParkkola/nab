@@ -233,21 +233,31 @@ impl BrowserVersions {
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
 
-            match reqwest::blocking::get(url) {
-                Ok(resp) => match resp.error_for_status() {
-                    Ok(resp) => match resp.json::<serde_json::Value>() {
-                        Ok(json) => return Ok(json),
-                        Err(e) => last_error = Some(format!("JSON parse error: {e}")),
-                    },
-                    Err(e) => last_error = Some(format!("HTTP error: {e}")),
-                },
-                Err(e) => last_error = Some(format!("Network error: {e}")),
+            // `reqwest::blocking` owns an internal Tokio runtime. Browser
+            // profiles are lazily initialized from async request paths, and
+            // dropping that internal runtime on a Tokio worker panics. Keep
+            // the complete blocking request lifecycle on a plain OS thread.
+            let url = url.to_owned();
+            match std::thread::spawn(move || Self::fetch_json_once(&url)).join() {
+                Ok(Ok(json)) => return Ok(json),
+                Ok(Err(error)) => last_error = Some(error),
+                Err(_) => last_error = Some("Version-fetch worker panicked".to_string()),
             }
         }
 
         Err(last_error
             .unwrap_or_else(|| "Unknown error".to_string())
             .into())
+    }
+
+    fn fetch_json_once(url: &str) -> Result<serde_json::Value, String> {
+        let response = reqwest::blocking::get(url).map_err(|e| format!("Network error: {e}"))?;
+        let response = response
+            .error_for_status()
+            .map_err(|e| format!("HTTP error: {e}"))?;
+        response
+            .json::<serde_json::Value>()
+            .map_err(|e| format!("JSON parse error: {e}"))
     }
 
     fn fetch_firefox_versions() -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -351,6 +361,8 @@ impl Default for BrowserVersions {
 mod tests {
     use super::*;
     use chrono::Duration;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     /// Floor for the bundled-default Chrome major version.
     ///
@@ -489,6 +501,37 @@ mod tests {
             versions,
             vec!["136.0", "135.0", "134.0", "133.0", "132.0", "131.0"]
         );
+    }
+
+    #[test]
+    fn blocking_version_fetch_is_safe_inside_tokio_runtime() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local HTTP server");
+        let address = listener.local_addr().expect("read local HTTP address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept version request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).expect("read version request");
+            let body = r#"{"versions":[]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write version response");
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build Tokio runtime");
+        let response = runtime
+            .block_on(async { BrowserVersions::fetch_with_retry(&format!("http://{address}"), 1) });
+
+        assert_eq!(
+            response.expect("fetch JSON")["versions"],
+            serde_json::json!([])
+        );
+        server.join().expect("local HTTP server should finish");
     }
 
     #[test]
