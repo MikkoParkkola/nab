@@ -454,9 +454,9 @@ mod tests {
     #[test]
     fn fetch_sync_blocks_ftp_scheme() {
         let client = FetchClient::new(None, None);
-        let result = client.fetch_sync("ftp://internal.server/data".to_string());
+        let result = client.fetch_sync("ftp://93.184.216.34/data".to_string());
         assert!(result.is_err());
-        // Should fail at SSRF validation (no host_str) or connection
+        // The unsupported scheme must be rejected without a DNS lookup.
     }
 
     // ─── Relative URL resolution tests ───────────────────────────────────

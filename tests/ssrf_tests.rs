@@ -459,7 +459,7 @@ fn redirect_blocks_loopback() {
 
 #[test]
 fn redirect_allows_public_http() {
-    let url = Url::parse("https://example.com/page").unwrap();
+    let url = Url::parse("https://93.184.216.34/page").unwrap();
     assert!(validate_redirect_target(&url).is_ok());
 }
 

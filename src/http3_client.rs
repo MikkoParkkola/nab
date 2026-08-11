@@ -263,6 +263,7 @@ mod tests {
     use crate::fingerprint::chrome_profile;
 
     #[tokio::test]
+    #[ignore = "requires live network; run explicitly with --ignored"]
     async fn test_h3_detection() {
         // Cloudflare always supports H3
         let supports = Http3Client::supports_h3("https://cloudflare.com").await;
@@ -271,6 +272,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live network; run explicitly with --ignored"]
     async fn test_h3_fetch() {
         let profile = chrome_profile();
         let client = Http3Client::new(profile).unwrap();
