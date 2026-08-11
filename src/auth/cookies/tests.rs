@@ -163,7 +163,9 @@ fn chromium_paths_cover_default_network_and_named_profiles() {
         "Default/Network/Cookies",
         "Profile 1/Cookies",
         "Profile 2/Network/Cookies",
+        "Profile 10/Cookies",
         "Guest Profile/Cookies",
+        "Alpha Profile/Cookies",
     ] {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().expect("cookie parent")).expect("profile dir");
@@ -177,16 +179,20 @@ fn chromium_paths_cover_default_network_and_named_profiles() {
         "Default/Network/Cookies",
         "Profile 1/Cookies",
         "Profile 2/Network/Cookies",
+        "Profile 10/Cookies",
         "Guest Profile/Cookies",
+        "Alpha Profile/Cookies",
     ] {
         assert!(paths.contains(&root.join(relative)), "missing {relative}");
     }
-    assert_eq!(paths.len(), 5, "only real cookie databases are returned");
+    assert_eq!(paths.len(), 7, "only real cookie databases are returned");
     assert_eq!(paths[0], root.join("Default/Cookies"));
     assert_eq!(paths[1], root.join("Default/Network/Cookies"));
     assert_eq!(paths[2], root.join("Guest Profile/Cookies"));
     assert_eq!(paths[3], root.join("Profile 1/Cookies"));
     assert_eq!(paths[4], root.join("Profile 2/Network/Cookies"));
+    assert_eq!(paths[5], root.join("Profile 10/Cookies"));
+    assert_eq!(paths[6], root.join("Alpha Profile/Cookies"));
 }
 
 #[cfg(target_os = "macos")]

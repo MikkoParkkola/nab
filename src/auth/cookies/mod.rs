@@ -22,6 +22,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::process::Command;
+#[cfg(any(test, target_os = "macos"))]
 use std::sync::Mutex;
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
@@ -46,12 +47,14 @@ enum KeychainInteraction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(any(test, target_os = "macos"))]
 enum CachedKeychainKey {
     Derived(Vec<u8>),
     InteractiveFailure(String),
 }
 
 #[derive(Debug, Default)]
+#[cfg(any(test, target_os = "macos"))]
 struct KeychainKeyCache {
     by_service: HashMap<&'static str, CachedKeychainKey>,
 }
@@ -113,12 +116,14 @@ where
 #[cfg(target_os = "macos")]
 static KEYCHAIN_UI_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(any(test, target_os = "macos"))]
 fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn load_cookie_key_cached<F>(
     cache: &Mutex<KeychainKeyCache>,
     service: &'static str,
@@ -664,6 +669,26 @@ fn synthesize_cookie(name: String, value: String, domain: &str) -> PlaywrightCoo
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
+fn chromium_profile_sort_key(path: &std::path::Path) -> (u8, u64, String) {
+    let name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default();
+    match name {
+        "Default" => (0, 0, String::new()),
+        "Guest Profile" => (1, 0, String::new()),
+        _ => name
+            .strip_prefix("Profile ")
+            .and_then(|number| number.parse::<u64>().ok())
+            .map_or_else(
+                || (3, 0, name.to_owned()),
+                |number| (2, number, String::new()),
+            ),
+    }
+}
+
+#[cfg(any(test, target_os = "macos"))]
 fn chromium_cookie_paths_under(roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
     for root in roots {
@@ -680,7 +705,7 @@ fn chromium_cookie_paths_under(roots: &[std::path::PathBuf]) -> Vec<std::path::P
                     .map(|_| entry.path())
             })
             .collect::<Vec<_>>();
-        profiles.sort();
+        profiles.sort_by_key(|path| chromium_profile_sort_key(path));
         for profile in profiles {
             for relative in ["Cookies", "Network/Cookies"] {
                 let candidate = profile.join(relative);
