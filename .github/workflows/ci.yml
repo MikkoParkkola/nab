@@ -159,6 +159,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: wasm32-wasip2
+          components: rustfmt
       - run: cargo fmt --manifest-path examples/wasm_provider/Cargo.toml -- --check
       - run: cargo build --locked --target wasm32-wasip2 --release --manifest-path examples/wasm_provider/Cargo.toml
 
