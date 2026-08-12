@@ -315,4 +315,5 @@ unnecessary_wraps = "allow"
 
 [workspace]
 members = [".", "crates/nab-core", "crates/nab-yara-engine"]
+exclude = ["examples/wasm_provider"]
 resolver = "3"

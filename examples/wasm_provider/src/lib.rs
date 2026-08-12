@@ -98,8 +98,7 @@ struct ParsedArticle {
 fn parse_article(html: &str, url: &str) -> ParsedArticle {
     let _ = url; // used by callers for context; unused in this simple extractor
     ParsedArticle {
-        title: extract_tag_content(html, "title")
-            .or_else(|| extract_og_meta(html, "og:title")),
+        title: extract_tag_content(html, "title").or_else(|| extract_og_meta(html, "og:title")),
         content: extract_article_text(html),
         author: extract_og_meta(html, "article:author"),
     }
@@ -139,11 +138,15 @@ fn extract_og_meta(html: &str, property: &str) -> Option<String> {
 
 /// Extract visible text from inside `<article>` or `<main>` tags.
 fn extract_article_text(html: &str) -> Option<String> {
-    let content_html = extract_tag_content(html, "article")
-        .or_else(|| extract_tag_content(html, "main"))?;
+    let content_html =
+        extract_tag_content(html, "article").or_else(|| extract_tag_content(html, "main"))?;
     let stripped = strip_tags(&content_html);
     let trimmed = stripped.trim().to_string();
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 /// Strip all HTML tags from a string, returning plain text.
