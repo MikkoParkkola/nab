@@ -5,6 +5,9 @@ edition = "2024"
 description = "Example WASM provider for nab — extracts article content using the WIT Component Model"
 publish = false
 
+# Keep this example independently buildable from its documented manifest path.
+[workspace]
+
 # Build as a cdylib so Rust produces a .wasm component (via wasm-tools adapter).
 [lib]
 crate-type = ["cdylib"]
@@ -14,7 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 # wit-bindgen generates Guest trait + export! macro from wit/provider.wit.
 # This is a proc-macro — it has no runtime overhead beyond what the guest needs.
-wit-bindgen = "0.59"
+wit-bindgen = "0.60"
 
 [profile.release]
 # Minimize .wasm size: strip debug info, optimise for size, LTO.
