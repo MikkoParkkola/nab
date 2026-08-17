@@ -335,23 +335,11 @@ impl Default for BrowserVersions {
             // defaults never drift far from the live stable channel between
             // releases. Last refreshed: 2026-06-02.
             chrome: vec![
-                ("149".into(), "149.0.7827.48".into()),
-                ("148".into(), "148.0.7778.216".into()),
-                ("147".into(), "147.0.7727.138".into()),
-                ("146".into(), "146.0.7680.178".into()),
-                ("145".into(), "145.0.7632.161".into()),
-            ],
-            firefox: vec![
-                "151.0".into(),
-                "150.0".into(),
-                "149.0".into(),
-                "148.0".into(),
-            ],
-            safari: vec![
-                ("18.5".into(), "620.1.16".into()),
-                ("18.4".into(), "620.1.16".into()),
-                ("18.3".into(), "619.1.26".into()),
-                ("18.2".into(), "619.1.15".into()),
+                ("152".into(), "152.0.7977.42".into()),
+                ("151".into(), "151.0.7922.138".into()),
+                ("150".into(), "150.0.7871.189".into()),
+                ("149".into(), "149.0.7827.201".into()),
+                ("148".into(), "148.0.7778.217".into()),
             ],
         }
     }
