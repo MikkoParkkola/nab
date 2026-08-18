@@ -31,9 +31,10 @@ This document describes the internal architecture of nab, a token-optimized web 
                                      │
 ┌────────────────────────────────────┼────────────────────────────────────┐
 │                         CLI (main.rs)                                   │
-│  Commands: fetch, fetch_batch, submit, login, auth, cookies, otp,      │
-│  spa, stream, analyze, annotate, fingerprint, bench, validate,         │
-│  export-rules, context                                                  │
+│  Commands: fetch, browser, spa, bench, fingerprint, auth, validate,     │
+│  doctor, otp, stream, analyze, annotate, submit, login, context,        │
+│  cookies, rules, provider, watch, models, upgrade, linkedin, mcp,       │
+│  task (built only with --features task)                                 │
 └────────────────────────────┬───────────────────────────────────────────┘
                              │
         ┌────────────────────┼────────────────────────────────┐
@@ -369,6 +370,7 @@ title = "h1.page-title"
 - DNS pinning via `resolve_and_validate()` to prevent DNS rebinding attacks
 - Redirect target validation before following each hop
 - Returns `NabError::SsrfBlocked` with descriptive reason
+- Two opt-in relaxations, both off by default: `NAB_SSRF_ALLOW_PRIVATE=1` (or `--allow-private-ips`) unblocks RFC 1918, IPv6 ULA and CGN addresses, and `NAB_SSRF_ALLOWLIST` (or repeated `--allow-private-ip <CIDR>`) unblocks only the listed ranges. Neither can unblock loopback, link-local/cloud-metadata, or any other always-denied range (`ssrf.rs:73-92`, `ssrf.rs:265-331`)
 
 **Used By**: All HTTP client fetch operations (validated before connection)
 
@@ -486,7 +488,8 @@ The CLI layer in `src/cmd/` maps each subcommand to its implementation:
 cmd/
 ├── mod.rs              # Command dispatch
 ├── fetch.rs            # Single URL fetch
-├── fetch_batch.rs      # Parallel multi-URL fetch
+├── fetch_batch.rs      # Parallel multi-URL fetch (`nab fetch --batch <file>`)
+├── browser.rs          # Render a JS-heavy URL through a configured CDP endpoint
 ├── submit.rs           # Form submission
 ├── login.rs            # Auto-login flow
 ├── auth.rs             # Credential lookup
@@ -500,7 +503,15 @@ cmd/
 ├── stream.rs           # Media streaming
 ├── spa.rs              # SPA data extraction
 ├── context.rs          # Context/session management
-├── export_rules.rs     # Export embedded rule configs
+├── doctor.rs           # Environment diagnosis (e.g. shadowed installs on PATH)
+├── watch.rs            # Monitor URLs for content changes
+├── models.rs           # Manage locally-built inference model binaries
+├── provider.rs         # WASM provider marketplace (install, list, remove)
+├── mcp.rs              # MCP server management (serve, install)
+├── linkedin.rs         # LinkedIn official data-archive export
+├── upgrade.rs          # Post-install migrations and release notes
+├── task.rs             # Experimental web-task engine (`--features task`)
+├── export_rules.rs     # Export embedded rule configs (`nab rules export`)
 └── output.rs           # Output formatting (markdown/JSON/compact)
 ```
 
@@ -633,5 +644,12 @@ See `Cargo.toml` for complete list with feature flags.
 | `cli` | yes | CLI binary (`nab`) with clap argument parsing |
 | `http3` | yes | HTTP/3 + QUIC via quinn |
 | `impersonate` | yes | TLS fingerprint impersonation via rquest + BoringSSL |
+| `analyze` | yes | Audio extraction and the ASR (speech-to-text) trait; backends are separate flags |
+| `browser-launcher` | yes | Cross-platform default-browser launcher, used by the WAF browser escape hatch |
+| `js-dom-full` | yes | Extended DOM shim for WAF challenge scripts (navigator, performance, crypto.subtle, canvas) |
 | `pdf` | no | PDF to Markdown conversion via pdfium |
 | `browser` | no | Browser automation via Chrome DevTools Protocol |
+| `task` | no | Experimental API-first web-task engine (`nab task`) |
+| `analyze-sherpa` | no | Sherpa-ONNX ASR backend; needs model weights via `nab models fetch sherpa-onnx` |
+| `analyze-whisper` | no | Whisper ASR backend; needs model weights via `nab models fetch whisper` |
+| `wasm-providers` | no | WASM provider marketplace for third-party extractors |

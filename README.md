@@ -465,6 +465,8 @@ Optional plugin configuration at `~/.config/nab/plugins.toml`. See [docs/getting
 | `HTTP_PROXY` / `http_proxy` | HTTP proxy URL |
 | `ALL_PROXY` / `all_proxy` | Proxy for all protocols |
 | `RUST_LOG` | Logging level (e.g., `nab=debug`) |
+| `NAB_SSRF_ALLOW_PRIVATE` | Set to `1`/`true` to allow fetching private/internal addresses (RFC 1918, IPv6 ULA, CGN). Off by default. Loopback and cloud-metadata addresses stay blocked |
+| `NAB_SSRF_ALLOWLIST` | Comma-separated CIDR/IP allowlist exempting only those private ranges (e.g. `10.252.0.0/16,192.168.1.5`). Empty by default; preferred over the blanket flag above |
 | `NAB_KEYCHAIN_INTERACTION` | Set to `never` for background automation: macOS Keychain reads cannot open UI, and prompt-capable Python cookie fallback is disabled |
 | `PUSHOVER_USER` / `PUSHOVER_TOKEN` | Pushover notifications for MFA |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram notifications for MFA |
