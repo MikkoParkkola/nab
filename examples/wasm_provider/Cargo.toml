@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 # wit-bindgen generates Guest trait + export! macro from wit/provider.wit.
 # This is a proc-macro — it has no runtime overhead beyond what the guest needs.
-wit-bindgen = "0.60"
+wit-bindgen = "0.61"
 
 [profile.release]
 # Minimize .wasm size: strip debug info, optimise for size, LTO.
