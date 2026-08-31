@@ -3,12 +3,10 @@
 #
 # Yanked-crate status (cargo audit prints these as non-failing warnings; the
 # CI `cargo audit` step has no `--deny yanked`, so it stays exit-0 / honest-green):
-#   * gimli 0.32.3 (yanked) — transitive via yara-x 1.16 -> walrus 0.26.1, which
-#     requires `gimli = "^0.32"` and so cannot accept the non-yanked 0.33.1.
-#     yara-x is already latest in its `^1.16` line; clearing this would mean
-#     bumping the security-critical YARA engine past its pin solely for a
-#     non-failing cosmetic warning — out of scope per #134's fail-fast. A second,
-#     non-yanked gimli 0.33.1 already coexists in the tree for the other consumers.
+#   * gimli 0.32.3 — not yanked; still present via yara-x 1.16 -> walrus 0.26.1
+#     (`gimli = "^0.32"`). A second gimli 0.33.0 (non-yanked; 0.33.1 was yanked)
+#     coexists for cranelift/wasmtime 46.
+#   * chacha20 0.10.0 was yanked; lockfile is on 0.10.2.
 #   * aes / lru — previously flagged in #134, now RESOLVED (no longer in the tree).
 # cargo-audit ignores RUSTSEC IDs, not yanked-by-crate, so gimli is documented
 # here rather than listed below.
@@ -24,9 +22,11 @@ ignore = [
     #
     # Why this cannot be bumped away today: the advisory's patched lines are
     # >=24.0.12, >=36.0.13, >=46.0.2 and >=47.0.3. There is NO patched 43.x.
-    # yara-x requires `wasmtime ^43.0.2` and 1.19.0 -- the newest published --
-    # still does, so no available yara-x release can reach a patched wasmtime.
-    # Verified against the crates.io dependency API for 1.16.0 and 1.19.0.
+    # Rechecked 2026-08-31: yara-x 1.16.0 (our pin) requires wasmtime ^43.0.1;
+    # newest yara-x 1.20.0 requires wasmtime ^45.0.3 -- still no patched 45.x
+    # line, and 1.20.0 dropped the `inventory` crate feature so it cannot be
+    # cargo-updated under the current feature list. Verified against crates.io
+    # dependency API for 1.16.0, 1.19.0, and 1.20.0.
     #
     # Why suppressing it is defensible rather than lazy: CVSS 3.8 LOW, vector
     # AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:L/A:L -- local access, high attack complexity,
@@ -50,9 +50,33 @@ ignore = [
     #
     # Remove this cargo-audit ignore when yara-x releases a version requiring a
     # patched wasmtime line. Cargo-audit cannot expire ignores itself; the
-    # corresponding OSV exception enforces a 2026-09-01 review deadline.
+    # corresponding OSV exception enforces a 2026-10-01 review deadline
+    # (re-reviewed 2026-08-31; previous 2026-09-01 date still blocked).
     # Re-check on every yara-x release. Tracked in #267.
     "RUSTSEC-2026-0222",
+    # wasmtime-wasi filesystem sandbox escape via trailing slash / symlink
+    # (RUSTSEC-2026-0269 / GHSA-vqjp-4c8c-hfgg, HIGH). Patched lines:
+    # 24.0.13, 36.0.14, 46.0.3, 47.0.4; 48.0.0+ is unaffected. No 43.x or
+    # 45.x patch. Direct optional wasmtime is 46.0.3. Remaining hit is
+    # wasmtime 43.0.2 via yara-x 1.16.0 (see 0222 for why yara-x cannot
+    # move to a patched line).
+    #
+    # The advisory is in wasmtime-wasi: a guest with a preopened directory
+    # can escape the cap-std sandbox on macOS and Linux kernels before
+    # openat2 (5.6). Verified at source 2026-08-31:
+    #   * Cargo.lock contains no `wasmtime-wasi` package.
+    #   * yara-x depends on wasmtime with default-features=false and only
+    #     `cranelift` + `runtime` -- not WASI.
+    #   * nab's wasm-providers path (src/site/wasm_provider.rs) does not
+    #     configure WASI; Component Model linker has no filesystem imports.
+    # Fetched content is YARA scan input, not a WASI guest with host dirs.
+    # cargo-audit still flags the `wasmtime` crate ID, which is why this
+    # ignore exists.
+    #
+    # RUSTSEC-2026-0268 (WASIp3 streams) is unaffected below 46.0.0 and
+    # patched at 46.0.3; it needs no ignore after the direct bump.
+    # Remove with 0222 when yara-x ships a patched wasmtime. #267.
+    "RUSTSEC-2026-0269",
     # NOTE: the lru RUSTSEC-2026-0002 ignore was removed once main moved to
     # wreq 6.0.0-rc.29 (lru >= 0.18.0, past the 0.16.3 fix). The advisory no
     # longer applies, so suppressing it would be dead config. See Cargo.toml
