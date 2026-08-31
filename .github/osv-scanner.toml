@@ -51,5 +51,10 @@ reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unm
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0222"
-ignoreUntil = 2026-09-01
-reason = "wasmtime 43.0.2 is transitive through yara-x; current yara-x 1.19.0 still requires ^43.0.2 and no patched 43.x exists. The CVSS 3.8 issue requires multiple engines, local high-privilege access and user interaction; Nab compiles its own built-in YARA rules in yara-x's internal engine. Nab's direct optional wasmtime is upgraded to patched 46.0.2. Recheck every yara-x release. Tracked in #267. Reviewed 2026-08-11 by Mikko/Codex."
+ignoreUntil = 2026-10-01
+reason = "wasmtime 43.0.2 is transitive through yara-x 1.16.0. Rechecked 2026-08-31: newest yara-x 1.20.0 requires wasmtime ^45.0.3, which has no patched 45.x line, and cannot be cargo-updated because 1.20.0 dropped the `inventory` crate feature. CVSS 3.8, multiple engines, local high-privilege access and user interaction; Nab compiles its own built-in YARA rules in yara-x's internal engine. Direct optional wasmtime is 46.0.3. Recheck every yara-x release. Tracked in #267. Reviewed 2026-08-31."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0269"
+ignoreUntil = 2026-10-01
+reason = "HIGH wasmtime-wasi filesystem sandbox escape (trailing slash/symlink). Direct wasmtime is patched at 46.0.3. Remaining lockfile hit is wasmtime 43.0.2 via yara-x 1.16.0; no patched 43.x/45.x exists (yara-x 1.20.0 still uses unpatched ^45.0.3). Cargo.lock has no wasmtime-wasi; yara-x enables only cranelift+runtime; nab wasm-providers do not link WASI filesystem. Fetched content is YARA scan input, not a WASI guest with host directories. Tracked in #267. Reviewed 2026-08-31."
