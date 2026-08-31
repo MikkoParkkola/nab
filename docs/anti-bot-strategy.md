@@ -28,6 +28,14 @@ Tier 5.  chromiumoxide CDP — full Chrome; gated --features browser; opt-in via
 
 **Force Tier 5** via site rule (`engine = "browser"` in `linkedin.toml`). MIK-3061 adds the schema field.
 
+## Shipped alongside the ladder: WAF challenges and bot traps
+
+Two checks run on the ordinary `nab fetch` path, independent of the tiers above.
+
+**WAF challenge handling, on by default.** Every HTML response is inspected for an AWS WAF, Cloudflare Turnstile, or DataDome challenge page (`src/waf/mod.rs:70-93`). On a hit, nab prints the vendor and tries the tier named by `--waf-mode`, which defaults to `auto` (`src/main.rs:248-251`). Only AWS WAF has a replay solver today; Cloudflare and DataDome are detected and reported, and their replay path returns `NotImplemented` (`src/waf/mod.rs:127-133`). `--waf-mode browser` opens the system browser for a manual solve; `--waf-mode off` skips the check.
+
+**Bot-trap scoring, opt-in.** `--detect-labyrinth` scores the body for Cloudflare AI Labyrinth-style traps: hidden-link density, topic drift between title and body, `noindex` on a heavy page, sentence-length variance, and link-graph fanout to auto-generated-looking targets (`src/detect/labyrinth.rs`). A page classified as a trap is not returned or saved; the fetch exits with `NabError::LabyrinthDetected`. Off by default because it costs a few milliseconds per fetch.
+
 ## Three-track innovation roadmap
 
 ### Track F — official data export (ships first; ~1 day)
