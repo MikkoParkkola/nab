@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-09-04
+
 ### Security
 
 - Bumped the optional Wasmtime runtime from 46.0.2 to 46.0.3 (RUSTSEC-2026-0268,
   RUSTSEC-2026-0269). Transitive `yara-x` 1.16.0 still pulls Wasmtime 43.0.2;
   newest yara-x 1.20.0 uses Wasmtime ^45.0.3, which has no patched 45.x line.
   Tracked by #267 with a review deadline of 2026-10-01.
+- Transitive `h2` 0.4.16 (RUSTSEC-2026-0258).
 
 ## [0.12.2] - 2026-08-12
 
