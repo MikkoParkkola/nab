@@ -46,8 +46,8 @@
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0141"
-ignoreUntil = 2026-09-01   # review by this date; after it the gate fires again
-reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unmaintained). No upstream fix / patched release exists — there is nothing to bump to. Pulled in transitively; not a code-execution vulnerability. Time-boxed pending an upstream maintenance resumption or a transitive-dep migration off bincode. Reviewed 2026-06-05 by Claude (Opus 4.8)."
+ignoreUntil = 2026-12-01   # review by this date; after it the gate fires again
+reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unmaintained). Rechecked 2026-09-04: still no patched release (osv-scanner FIXED VERSION --). Transitive; not a code-execution vulnerability. Time-boxed pending upstream maintenance or a migration off bincode. Reviewed 2026-09-04."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0222"
