@@ -1,0 +1,73 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.MikkoParkkola/nab",
+  "title": "nab",
+  "description": "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown. MCP server with fetch, login, watch, and fingerprint tools.",
+  "version": "0.12.3",
+  "repository": {
+    "url": "https://github.com/MikkoParkkola/nab",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/MikkoParkkola/nab",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "nab",
+      "version": "0.12.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NAB_SSRF_ALLOW_PRIVATE",
+          "description": "Set to allow fetching private/internal IP addresses (corporate dashboards). Never unblocks loopback, link-local/cloud-metadata, or other always-denied ranges. Off by default.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_SSRF_ALLOWLIST",
+          "description": "Comma-separated list of private IP/CIDR ranges to exempt from the SSRF guard (e.g. 10.252.0.0/16,192.168.1.5). Narrower, preferred alternative to NAB_SSRF_ALLOW_PRIVATE. Empty by default.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_WEBMCP_STRICT",
+          "description": "Set to a truthy value to require fetched pages advertising a WebMCP manifest to match NAB_WEBMCP_OPT_IN before ingestion is allowed (defense against prompt injection via fetched content). Off by default.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_WEBMCP_OPT_IN",
+          "description": "Comma-separated allowlist consulted when NAB_WEBMCP_STRICT is enabled. Empty by default.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_STATE_DIR",
+          "description": "Overrides the directory used to persist session/cookie state (default: ~/.nab).",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_KEYCHAIN_INTERACTION",
+          "description": "Controls whether cookie extraction may prompt macOS Keychain for authorization. Set to 'never' in automated/headless callers so a background fetch cannot open a GUI dialog.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_OP_BIN",
+          "description": "Path to the 1Password CLI binary used for credential retrieval during the login tool (default: op).",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_MCP_CLI_BIN",
+          "description": "Path to the mcp-cli binary used for MCP-based credential retrieval (default: mcp-cli).",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
