@@ -955,8 +955,9 @@ mod tests {
         let result = truncate_to_budget(&doc, Some(budget));
 
         assert!(result.truncated, "fixture must exceed the budget");
+        // NAB.MCP.1 (amended): >= 3400 of the 3600-token budget, i.e. >= 94%.
         assert!(
-            result.shown_tokens * 100 / budget >= 90,
+            result.shown_tokens * 100 / budget >= 94,
             "showed {} of {budget} tokens ({}%)",
             result.shown_tokens,
             result.shown_tokens * 100 / budget
