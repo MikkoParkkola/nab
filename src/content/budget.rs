@@ -872,4 +872,47 @@ mod tests {
             "marker must include shown token count"
         );
     }
+
+    /// Regression: a single oversized block must not strand most of the budget.
+    ///
+    /// Mirrors a real article (block profile ~[253, 279, 58, 252, 3251] tokens):
+    /// the greedy pass dropped the 3251-token tail whole, showing 842 of 3600.
+    #[test]
+    fn fills_leftover_budget_when_one_block_is_oversized() {
+        let para = |n: usize| "lorem ipsum dolor ".repeat(n);
+        let big = (0..50)
+            .map(|i| "lorem ipsum dolor ".repeat(5 + i % 20))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let doc = format!(
+            "{}\n\n```\n{}\n```\n\n{}\n\n```\n{}\n```\n\n{}",
+            para(56),
+            para(62),
+            para(13),
+            para(56),
+            big
+        );
+        let budget = 3600;
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        assert!(result.truncated, "fixture must exceed the budget");
+        assert!(
+            result.shown_tokens * 100 / budget >= 90,
+            "showed {} of {budget} tokens ({}%)",
+            result.shown_tokens,
+            result.shown_tokens * 100 / budget
+        );
+        let content = result
+            .markdown
+            .split("\n\n[Truncated:")
+            .next()
+            .expect("content before the footer");
+        assert!(
+            estimate_tokens(content) <= budget,
+            "content {} exceeds budget {budget}",
+            estimate_tokens(content)
+        );
+    }
+
 }
