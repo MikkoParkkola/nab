@@ -25,6 +25,8 @@
 //! assert_eq!(result.shown_tokens, result.total_tokens);
 //! ```
 
+use std::borrow::Cow;
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Characters per token for the standard 4-char/token English prose heuristic.
@@ -48,6 +50,12 @@ const HEADING_BUDGET_PERCENT: usize = 30;
 
 /// Returned content should leave caller headroom for instructions and metadata.
 pub const OUTPUT_BUDGET_HEADROOM_PERCENT: usize = 80;
+
+/// Shortest prefix worth splicing in when filling the leftover budget.
+const MIN_FILL_TOKENS: usize = 16;
+
+/// Tokens reserved for the `\n\n` joining a spliced prefix to its neighbour.
+const SEPARATOR_TOKENS: usize = 1;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -370,7 +378,7 @@ fn assign_priorities(blocks: &[Block]) -> Vec<Priority> {
 /// and the 30% heading budget cap.
 ///
 /// Returns blocks in their original document order.
-fn select_blocks(blocks: &[Block], budget: usize) -> Vec<&Block> {
+fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
     let priorities = assign_priorities(blocks);
     let heading_cap = budget * HEADING_BUDGET_PERCENT / 100;
 
@@ -382,7 +390,7 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<&Block> {
     let mut heading_used = 0usize;
     let mut included = vec![false; blocks.len()];
 
-    for idx in order {
+    for &idx in &order {
         let block = &blocks[idx];
         let prio = priorities[idx];
         let tokens = block.estimated_tokens();
@@ -412,21 +420,71 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<&Block> {
         remaining = remaining.saturating_sub(tokens);
     }
 
+    // Spend the leftover budget on a prefix of the best dropped block: without
+    // this, one oversized block leaves most of the budget unused.
+    let mut partial: Option<(usize, String)> = None;
+    if remaining > MIN_FILL_TOKENS {
+        for &idx in &order {
+            if included[idx]
+                || matches!(blocks[idx].kind, BlockKind::Heading(_) | BlockKind::CodeBlock)
+            {
+                continue;
+            }
+            if let Some(text) = split_prefix(&blocks[idx].text, remaining - SEPARATOR_TOKENS) {
+                partial = Some((idx, text));
+                break;
+            }
+        }
+    }
+
     // Return in document order.
     blocks
         .iter()
         .enumerate()
-        .filter_map(|(i, b)| if included[i] { Some(b) } else { None })
+        .filter_map(|(i, b)| match &partial {
+            Some((pi, text)) if *pi == i => Some(Cow::Owned(text.clone())),
+            _ if included[i] => Some(Cow::Borrowed(b.text.as_str())),
+            _ => None,
+        })
         .collect()
+}
+
+/// Take as many whole lines of `text` as fit in `limit` tokens, falling back to
+/// whole words when even the first line is too long.
+///
+/// Returns `None` when the prefix would be too short to be worth showing.
+/// Segments are always split on boundaries of `text`, so the slice is never
+/// taken mid-character.
+fn split_prefix(text: &str, limit: usize) -> Option<String> {
+    let max_chars = limit * CHARS_PER_TOKEN;
+    let take = |sep: char| {
+        let mut end = 0usize;
+        for segment in text.split_inclusive(sep) {
+            if end + segment.len() > max_chars {
+                break;
+            }
+            end += segment.len();
+        }
+        end
+    };
+
+    let mut end = take('\n');
+    if end == 0 {
+        end = take(' ');
+    }
+    if end < MIN_FILL_TOKENS * CHARS_PER_TOKEN {
+        return None;
+    }
+    Some(text[..end].trim_end().to_string())
 }
 
 // ── Output assembly ───────────────────────────────────────────────────────────
 
 /// Assemble the selected blocks back into a markdown string.
-fn build_output(selected: &[&Block], total_tokens: usize, budget: usize) -> BudgetResult {
+fn build_output(selected: &[Cow<'_, str>], total_tokens: usize, budget: usize) -> BudgetResult {
     let content = selected
         .iter()
-        .map(|b| b.text.as_str())
+        .map(std::convert::AsRef::as_ref)
         .collect::<Vec<_>>()
         .join("\n\n");
 
