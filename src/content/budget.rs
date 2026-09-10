@@ -489,7 +489,7 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
 
 /// True when `text` leaves a fenced code block open.
 ///
-/// Counting three-marker substrings cannot answer this: CommonMark allows a
+/// Counting three-marker substrings cannot answer this: `CommonMark` allows a
 /// fence longer than three markers so the block can hold a three-marker run of
 /// its own, and a six-backtick opener contains that substring twice — even, and
 /// therefore balanced, while the fence is still open.
@@ -572,10 +572,10 @@ fn split_prefix(text: &str, limit: usize) -> Option<String> {
     // Paragraph where the kind check cannot see it.  Order, not counts: prose
     // using `-->` as an arrow before the `<!--` balances a count while leaving
     // the comment open.
-    if let Some(open) = prefix.rfind("<!--") {
-        if prefix.rfind("-->").is_none_or(|close| close < open) {
-            return None;
-        }
+    if let Some(open) = prefix.rfind("<!--")
+        && prefix.rfind("-->").is_none_or(|close| close < open)
+    {
+        return None;
     }
     Some(prefix.to_string())
 }
