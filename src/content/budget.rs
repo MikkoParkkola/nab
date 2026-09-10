@@ -422,11 +422,35 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
 
     // Spend the leftover budget on a prefix of the best dropped block: without
     // this, one oversized block leaves most of the budget unused.
+    //
+    // Only kinds whose line-boundary prefix is still valid markdown of the same
+    // kind are eligible.  An allowlist, not a blocklist: a code block cut before
+    // its closing fence swallows the rest of the response, a table cut before
+    // its `|---|` separator stops being a table, and front matter (parsed as a
+    // HorizontalRule chunk) cut before its closing `---` never terminates.  A
+    // BlockKind added later fails closed instead of silently becoming eligible.
+    //
+    // ponytail: eligibility is judged per block kind, not per inline construct.
+    // Still possible inside an eligible block: a cut mid-sentence, a dangling
+    // `[` when the word fallback splits a link, and an unclosed inline HTML tag.
+    // Those degrade one line of rendering; the fence case corrupted the whole
+    // response, which is why only it is guarded.  Upgrade path if it ever
+    // matters: an inline-balance check inside `split_prefix`.
+    //
+    // This allowlist is also compensating for a test gap: MIK-7430.  The suite's
+    // `truncation_never_splits_code_block` wraps every assertion in an
+    // `if contains("```")` and its fixture drops the code block, so it stayed
+    // green against an earlier revision of this loop that emitted a half-open
+    // fence.  Until that test asserts unconditionally, this guard is the only
+    // thing enforcing the invariant it claims to cover.
     let mut partial: Option<(usize, String)> = None;
     if remaining > MIN_FILL_TOKENS {
         for &idx in &order {
             if included[idx]
-                || matches!(blocks[idx].kind, BlockKind::Heading(_) | BlockKind::CodeBlock)
+                || !matches!(
+                    blocks[idx].kind,
+                    BlockKind::Paragraph | BlockKind::ListItem | BlockKind::Blockquote
+                )
             {
                 continue;
             }
@@ -972,6 +996,63 @@ mod tests {
             "content {} exceeds budget {budget}",
             estimate_tokens(content)
         );
+        // The footer still renders after a spliced prefix, and the splice does
+        // not leave the document inside a code fence.
+        assert!(
+            result.markdown.ends_with(&format!(
+                "[Truncated: showing {} of {} tokens \u{2014} use max_tokens to adjust]",
+                result.shown_tokens, result.total_tokens
+            )),
+            "footer must terminate the output after a spliced prefix"
+        );
+        assert_eq!(
+            result.markdown.matches("```").count() % 2,
+            0,
+            "code fences must stay balanced around a spliced prefix"
+        );
     }
 
+    #[test]
+    fn fill_pass_never_splices_a_code_block() {
+        // GIVEN: a short paragraph plus a code block far too large to fit, so
+        // the fill pass has a large leftover budget and only the code block to
+        // spend it on.
+        let md = format!(
+            "Intro paragraph.\n\n```rust\n{}\n```",
+            (0..40)
+                .map(|i| format!("    let x{i} = {i};"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let budget = 120;
+        assert!(estimate_tokens(&md) > budget, "fixture must exceed the budget");
+
+        let result = truncate_to_budget(&md, Some(budget));
+
+        // THEN: no half-open fence.  Without the allowlist the fill pass splices
+        // a prefix starting with ``` and never reaching the closing fence, which
+        // swallows the truncation footer into a code block.
+        assert!(result.truncated);
+        assert_eq!(
+            result.markdown.matches("```").count() % 2,
+            0,
+            "unbalanced fence in output: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn structured_document_under_budget_is_byte_identical() {
+        // GIVEN: every block kind the fill pass could otherwise touch, all of it
+        // comfortably under budget.
+        let md = "---\ntitle: Front matter\n---\n\n# Heading\n\nA paragraph with a [link](/docs/guide).\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- item one\n- item two\n\n> quoted line\n\n```rust\nfn main() {}\n```\n\n***\n\nTrailing paragraph.";
+
+        let result = truncate_to_budget(md, Some(10_000));
+
+        // THEN: the untruncated fast path returns the input unchanged, byte for
+        // byte, without parsing blocks or running the fill pass.
+        assert!(!result.truncated);
+        assert_eq!(result.markdown, md);
+        assert_eq!(result.shown_tokens, result.total_tokens);
+    }
 }
