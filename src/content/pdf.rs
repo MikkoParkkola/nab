@@ -40,10 +40,13 @@ impl PdfHandler {
     /// Try to load pdfium from common library paths.
     ///
     /// Searches: standard dlopen paths, /usr/local/lib, homebrew, pypdfium2.
-    fn load_pdfium() -> Result<Pdfium> {
+    fn load_pdfium() -> Result<&'static Pdfium> {
+        // Borrow the cached handle: `Pdfium` is not `Clone`, so cloning the
+        // `Result` clones the reference and the later `map_err` cannot move out
+        // of it. Both callers only need `&Pdfium`.
         PDFIUM_INSTANCE
             .get_or_init(|| Self::init_pdfium().map_err(|err| err.to_string()))
-            .clone()
+            .as_ref()
             .map_err(anyhow::Error::msg)
     }
 
