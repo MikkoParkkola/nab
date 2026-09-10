@@ -154,9 +154,12 @@ pub fn max_tokens_with_output_headroom(max_tokens: usize) -> usize {
 ///
 /// # Block preservation
 ///
-/// Blocks are never split.  If a single block exceeds the remaining budget
-/// it is skipped rather than partially included, **except** for P0 blocks
-/// which are always included regardless of size.
+/// Whole blocks are selected first: a block that exceeds the remaining budget
+/// is skipped rather than partially included, **except** for P0 blocks which
+/// are always included regardless of size.  Leftover budget is then spent on a
+/// line- or word-boundary prefix of the best dropped paragraph, list item or
+/// blockquote — the only kinds whose prefix is still valid markdown of the same
+/// kind.  Code blocks, tables and front matter are never split.
 ///
 /// # Truncation marker
 ///
@@ -443,8 +446,16 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
     // green against an earlier revision of this loop that emitted a half-open
     // fence.  Until that test asserts unconditionally, this guard is the only
     // thing enforcing the invariant it claims to cover.
+    //
+    // `remaining` was decremented by block tokens alone, so it still contains
+    // the `\n\n` separators `build_output` will insert between the selected
+    // blocks.  Filling it to the brim without deducting them overshoots the
+    // budget by one token per join.
+    let separators = included.iter().filter(|&&inc| inc).count();
+    let fill_room = remaining.saturating_sub(separators * SEPARATOR_TOKENS);
+
     let mut partial: Option<(usize, String)> = None;
-    if remaining > MIN_FILL_TOKENS {
+    if fill_room > MIN_FILL_TOKENS {
         for &idx in &order {
             if included[idx]
                 || !matches!(
@@ -454,7 +465,7 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
             {
                 continue;
             }
-            if let Some(text) = split_prefix(&blocks[idx].text, remaining - SEPARATOR_TOKENS) {
+            if let Some(text) = split_prefix(&blocks[idx].text, fill_room) {
                 partial = Some((idx, text));
                 break;
             }
@@ -492,14 +503,35 @@ fn split_prefix(text: &str, limit: usize) -> Option<String> {
         end
     };
 
+    // Whole lines first, then whole words from whatever line the cut landed in.
+    // Lines alone are not enough: a short first line followed by a 4,000-word
+    // paragraph would spend 20 characters of a 14,000-character allowance and
+    // leave the rest of the budget unused, which is the gap this fill exists to
+    // close.  When the first line alone is too long, `end` is 0 and this is the
+    // word fallback outright.
     let mut end = take('\n');
-    if end == 0 {
-        end = take(' ');
+    if end < max_chars {
+        for segment in text[end..].split_inclusive(' ') {
+            if end + segment.len() > max_chars {
+                break;
+            }
+            end += segment.len();
+        }
     }
     if end < MIN_FILL_TOKENS * CHARS_PER_TOKEN {
         return None;
     }
-    Some(text[..end].trim_end().to_string())
+    let prefix = text[..end].trim_end();
+
+    // An HTML comment opened but not closed inside the prefix swallows every
+    // later block and the truncation footer in any renderer that passes raw
+    // HTML through.  Same failure mode as the unterminated code fence the
+    // caller's allowlist guards, but it lives *inside* an allowed Paragraph, so
+    // the kind check cannot see it.  Skip the block rather than emit it.
+    if prefix.matches("<!--").count() > prefix.matches("-->").count() {
+        return None;
+    }
+    Some(prefix.to_string())
 }
 
 // ── Output assembly ───────────────────────────────────────────────────────────
@@ -1025,7 +1057,10 @@ mod tests {
                 .join("\n")
         );
         let budget = 120;
-        assert!(estimate_tokens(&md) > budget, "fixture must exceed the budget");
+        assert!(
+            estimate_tokens(&md) > budget,
+            "fixture must exceed the budget"
+        );
 
         let result = truncate_to_budget(&md, Some(budget));
 
@@ -1038,6 +1073,88 @@ mod tests {
             0,
             "unbalanced fence in output: {}",
             result.markdown
+        );
+    }
+
+    #[test]
+    fn fill_extends_past_a_short_first_line() {
+        // GIVEN: a paragraph whose first line is a few characters and whose
+        // second line is thousands of words.  Taking whole lines alone spends
+        // ~11 characters of a ~14,000-character allowance.
+        let doc = format!("Intro.\n\nBrief lead.\n{}", "word ".repeat(4000));
+        let budget = 3600;
+        assert!(
+            estimate_tokens(&doc) > budget,
+            "fixture must exceed the budget"
+        );
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        // THEN: the word extension fills the rest.  Without it the body is the
+        // two short lines and the budget is stranded.
+        assert!(
+            result.shown_tokens * 100 / budget >= 94,
+            "showed {} of {budget} tokens ({}%)",
+            result.shown_tokens,
+            result.shown_tokens * 100 / budget
+        );
+    }
+
+    #[test]
+    fn fill_never_leaves_an_html_comment_open() {
+        // GIVEN: a paragraph that opens an HTML comment early and closes it far
+        // past any prefix the fill pass could take.
+        let doc = format!(
+            "Intro.\n\n{}<!-- {}--> tail",
+            "word ".repeat(10),
+            "hidden ".repeat(2000)
+        );
+        let budget = 100;
+        assert!(
+            estimate_tokens(&doc) > budget,
+            "fixture must exceed the budget"
+        );
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        // THEN: nothing is spliced with a dangling `<!--`.  A renderer that
+        // passes raw HTML through would otherwise swallow the footer and every
+        // later block into the comment.
+        assert_eq!(
+            result.markdown.matches("<!--").count(),
+            result.markdown.matches("-->").count(),
+            "unbalanced HTML comment in output: {}",
+            result.markdown
+        );
+        assert!(result.markdown.contains("[Truncated:"));
+    }
+
+    #[test]
+    fn fill_accounts_for_separators_between_selected_blocks() {
+        // GIVEN: enough tiny blocks that the `\n\n` joins are a third of the
+        // budget, plus an oversized tail for the fill pass to spend on.
+        let doc = format!(
+            "{}\n\n{}",
+            vec!["abcd"; 50].join("\n\n"),
+            "lorem ipsum dolor ".repeat(500)
+        );
+        let budget = 100;
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        // THEN: the assembled content honours the budget.  Counting only block
+        // tokens leaves the 49 separators unpaid for and the fill pass spends
+        // them a second time.
+        assert!(result.truncated, "fixture must exceed the budget");
+        let content = result
+            .markdown
+            .split("\n\n[Truncated:")
+            .next()
+            .expect("content before the footer");
+        assert!(
+            estimate_tokens(content) <= budget,
+            "content {} exceeds budget {budget}",
+            estimate_tokens(content)
         );
     }
 
