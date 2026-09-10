@@ -25,6 +25,8 @@
 //! assert_eq!(result.shown_tokens, result.total_tokens);
 //! ```
 
+use std::borrow::Cow;
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Characters per token for the standard 4-char/token English prose heuristic.
@@ -48,6 +50,12 @@ const HEADING_BUDGET_PERCENT: usize = 30;
 
 /// Returned content should leave caller headroom for instructions and metadata.
 pub const OUTPUT_BUDGET_HEADROOM_PERCENT: usize = 80;
+
+/// Shortest prefix worth splicing in when filling the leftover budget.
+const MIN_FILL_TOKENS: usize = 16;
+
+/// Length of the `\n\n` that `build_output` puts between two blocks.
+const SEPARATOR_CHARS: usize = 2;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -146,9 +154,12 @@ pub fn max_tokens_with_output_headroom(max_tokens: usize) -> usize {
 ///
 /// # Block preservation
 ///
-/// Blocks are never split.  If a single block exceeds the remaining budget
-/// it is skipped rather than partially included, **except** for P0 blocks
-/// which are always included regardless of size.
+/// Whole blocks are selected first: a block that exceeds the remaining budget
+/// is skipped rather than partially included, **except** for P0 blocks which
+/// are always included regardless of size.  Leftover budget is then spent on a
+/// line- or word-boundary prefix of the best dropped paragraph, list item or
+/// blockquote — the only kinds whose prefix is still valid markdown of the same
+/// kind.  Code blocks, tables and front matter are never split.
 ///
 /// # Truncation marker
 ///
@@ -370,7 +381,7 @@ fn assign_priorities(blocks: &[Block]) -> Vec<Priority> {
 /// and the 30% heading budget cap.
 ///
 /// Returns blocks in their original document order.
-fn select_blocks(blocks: &[Block], budget: usize) -> Vec<&Block> {
+fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
     let priorities = assign_priorities(blocks);
     let heading_cap = budget * HEADING_BUDGET_PERCENT / 100;
 
@@ -382,7 +393,7 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<&Block> {
     let mut heading_used = 0usize;
     let mut included = vec![false; blocks.len()];
 
-    for idx in order {
+    for &idx in &order {
         let block = &blocks[idx];
         let prio = priorities[idx];
         let tokens = block.estimated_tokens();
@@ -412,21 +423,170 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<&Block> {
         remaining = remaining.saturating_sub(tokens);
     }
 
+    // Spend the leftover budget on a prefix of the best dropped block: without
+    // this, one oversized block leaves most of the budget unused.
+    //
+    // Only kinds whose line-boundary prefix is still valid markdown of the same
+    // kind are eligible.  An allowlist, not a blocklist: a code block cut before
+    // its closing fence swallows the rest of the response, a table cut before
+    // its `|---|` separator stops being a table, and front matter (parsed as a
+    // HorizontalRule chunk) cut before its closing `---` never terminates.  A
+    // BlockKind added later fails closed instead of silently becoming eligible.
+    //
+    // ponytail: eligibility is judged per block kind, not per inline construct.
+    // Still possible inside an eligible block: a cut mid-sentence, a dangling
+    // `[` when the word fallback splits a link, and an unclosed inline HTML tag.
+    // Those degrade one line of rendering; the fence case corrupted the whole
+    // response, which is why only it is guarded.  Upgrade path if it ever
+    // matters: an inline-balance check inside `split_prefix`.
+    //
+    // This allowlist is also compensating for a test gap: MIK-7430.  The suite's
+    // `truncation_never_splits_code_block` wraps every assertion in an
+    // `if contains("```")` and its fixture drops the code block, so it stayed
+    // green against an earlier revision of this loop that emitted a half-open
+    // fence.  Until that test asserts unconditionally, this guard is the only
+    // thing enforcing the invariant it claims to cover.
+    //
+    // `remaining` was decremented by block tokens alone, so it still contains
+    // the `\n\n` separators `build_output` will insert between the selected
+    // blocks.  Filling it to the brim without deducting them overshoots the
+    // budget by one token per join.
+    // Counted in characters, not tokens: `estimate_tokens` rounds the whole
+    // assembled string up once, so charging a whole token per join reserves
+    // about twice what the joins cost.
+    let joins = included.iter().filter(|&&inc| inc).count();
+    let fill_room = remaining.saturating_sub((joins * SEPARATOR_CHARS).div_ceil(CHARS_PER_TOKEN));
+
+    let mut partial: Option<(usize, String)> = None;
+    if fill_room > MIN_FILL_TOKENS {
+        for &idx in &order {
+            if included[idx]
+                || !matches!(
+                    blocks[idx].kind,
+                    BlockKind::Paragraph | BlockKind::ListItem | BlockKind::Blockquote
+                )
+            {
+                continue;
+            }
+            if let Some(text) = split_prefix(&blocks[idx].text, fill_room) {
+                partial = Some((idx, text));
+                break;
+            }
+        }
+    }
+
     // Return in document order.
     blocks
         .iter()
         .enumerate()
-        .filter_map(|(i, b)| if included[i] { Some(b) } else { None })
+        .filter_map(|(i, b)| match &partial {
+            Some((pi, text)) if *pi == i => Some(Cow::Owned(text.clone())),
+            _ if included[i] => Some(Cow::Borrowed(b.text.as_str())),
+            _ => None,
+        })
         .collect()
+}
+
+/// True when `text` leaves a fenced code block open.
+///
+/// Counting three-marker substrings cannot answer this: `CommonMark` allows a
+/// fence longer than three markers so the block can hold a three-marker run of
+/// its own, and a six-backtick opener contains that substring twice — even, and
+/// therefore balanced, while the fence is still open.
+fn has_unterminated_fence(text: &str) -> bool {
+    let mut open: Option<(char, usize)> = None;
+    for line in text.lines() {
+        // Fence syntax ignores the `>` markers a blockquote puts in front of it.
+        let content = line.trim_start().trim_start_matches(['>', ' ']);
+        let Some(marker) = content.chars().next().filter(|c| *c == '`' || *c == '~') else {
+            continue;
+        };
+        // Marker chars are ASCII, so the run length is also a byte offset.
+        let run = content.chars().take_while(|c| *c == marker).count();
+        if run < 3 {
+            continue;
+        }
+        let rest = &content[run..];
+        match open {
+            // A backtick info string may not itself contain a backtick, which
+            // is what distinguishes an opening fence from inline code.
+            None if marker == '~' || !rest.contains('`') => open = Some((marker, run)),
+            // A closing fence matches the opener's marker, is at least as long,
+            // and carries nothing else on its line.
+            Some((c, len)) if c == marker && run >= len && rest.trim().is_empty() => open = None,
+            _ => {}
+        }
+    }
+    open.is_some()
+}
+
+/// Take as many whole lines of `text` as fit in `limit` tokens, falling back to
+/// whole words when even the first line is too long.
+///
+/// Returns `None` when the prefix would be too short to be worth showing.
+/// Segments are always split on boundaries of `text`, so the slice is never
+/// taken mid-character.
+fn split_prefix(text: &str, limit: usize) -> Option<String> {
+    let max_chars = limit * CHARS_PER_TOKEN;
+    let take = |sep: char| {
+        let mut end = 0usize;
+        for segment in text.split_inclusive(sep) {
+            if end + segment.len() > max_chars {
+                break;
+            }
+            end += segment.len();
+        }
+        end
+    };
+
+    // Whole lines first, then whole words from whatever line the cut landed in.
+    // Lines alone are not enough: a short first line followed by a 4,000-word
+    // paragraph would spend 20 characters of a 14,000-character allowance and
+    // leave the rest of the budget unused, which is the gap this fill exists to
+    // close.  When the first line alone is too long, `end` is 0 and this is the
+    // word fallback outright.
+    let mut end = take('\n');
+    if end < max_chars {
+        for segment in text[end..].split_inclusive(' ') {
+            if end + segment.len() > max_chars {
+                break;
+            }
+            end += segment.len();
+        }
+    }
+    if end < MIN_FILL_TOKENS * CHARS_PER_TOKEN {
+        return None;
+    }
+    let prefix = text[..end].trim_end();
+
+    // A blockquote may contain a fenced code block (`> ```rust`), so the
+    // caller's kind allowlist cannot rule out a fence the way it does for a
+    // top-level CodeBlock.  A cut inside one renders every later block plus the
+    // truncation footer as code.
+    if has_unterminated_fence(prefix) {
+        return None;
+    }
+
+    // An HTML comment opened but not closed swallows the same tail in any
+    // renderer that passes raw HTML through, and it lives *inside* an allowed
+    // Paragraph where the kind check cannot see it.  Order, not counts: prose
+    // using `-->` as an arrow before the `<!--` balances a count while leaving
+    // the comment open.
+    if let Some(open) = prefix.rfind("<!--")
+        && prefix.rfind("-->").is_none_or(|close| close < open)
+    {
+        return None;
+    }
+    Some(prefix.to_string())
 }
 
 // ── Output assembly ───────────────────────────────────────────────────────────
 
 /// Assemble the selected blocks back into a markdown string.
-fn build_output(selected: &[&Block], total_tokens: usize, budget: usize) -> BudgetResult {
+fn build_output(selected: &[Cow<'_, str>], total_tokens: usize, budget: usize) -> BudgetResult {
     let content = selected
         .iter()
-        .map(|b| b.text.as_str())
+        .map(std::convert::AsRef::as_ref)
         .collect::<Vec<_>>()
         .join("\n\n");
 
@@ -871,5 +1031,233 @@ mod tests {
                 .contains(&format!("showing {} of", result.shown_tokens)),
             "marker must include shown token count"
         );
+    }
+
+    /// Regression: a single oversized block must not strand most of the budget.
+    ///
+    /// Mirrors a real article (block profile ~[253, 279, 58, 252, 3251] tokens):
+    /// the greedy pass dropped the 3251-token tail whole, showing 842 of 3600.
+    #[test]
+    fn fills_leftover_budget_when_one_block_is_oversized() {
+        let para = |n: usize| "lorem ipsum dolor ".repeat(n);
+        let big = (0..50)
+            .map(|i| "lorem ipsum dolor ".repeat(5 + i % 20))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let doc = format!(
+            "{}\n\n```\n{}\n```\n\n{}\n\n```\n{}\n```\n\n{}",
+            para(56),
+            para(62),
+            para(13),
+            para(56),
+            big
+        );
+        let budget = 3600;
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        assert!(result.truncated, "fixture must exceed the budget");
+        // NAB.MCP.1 (amended): >= 3400 of the 3600-token budget, i.e. >= 94%.
+        assert!(
+            result.shown_tokens * 100 / budget >= 94,
+            "showed {} of {budget} tokens ({}%)",
+            result.shown_tokens,
+            result.shown_tokens * 100 / budget
+        );
+        let content = result
+            .markdown
+            .split("\n\n[Truncated:")
+            .next()
+            .expect("content before the footer");
+        assert!(
+            estimate_tokens(content) <= budget,
+            "content {} exceeds budget {budget}",
+            estimate_tokens(content)
+        );
+        // The footer still renders after a spliced prefix, and the splice does
+        // not leave the document inside a code fence.
+        assert!(
+            result.markdown.ends_with(&format!(
+                "[Truncated: showing {} of {} tokens \u{2014} use max_tokens to adjust]",
+                result.shown_tokens, result.total_tokens
+            )),
+            "footer must terminate the output after a spliced prefix"
+        );
+        assert_eq!(
+            result.markdown.matches("```").count() % 2,
+            0,
+            "code fences must stay balanced around a spliced prefix"
+        );
+    }
+
+    #[test]
+    fn fill_pass_never_splices_a_code_block() {
+        // GIVEN: a short paragraph plus a code block far too large to fit, so
+        // the fill pass has a large leftover budget and only the code block to
+        // spend it on.
+        let md = format!(
+            "Intro paragraph.\n\n```rust\n{}\n```",
+            (0..40)
+                .map(|i| format!("    let x{i} = {i};"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let budget = 120;
+        assert!(
+            estimate_tokens(&md) > budget,
+            "fixture must exceed the budget"
+        );
+
+        let result = truncate_to_budget(&md, Some(budget));
+
+        // THEN: no half-open fence.  Without the allowlist the fill pass splices
+        // a prefix starting with ``` and never reaching the closing fence, which
+        // swallows the truncation footer into a code block.
+        assert!(result.truncated);
+        assert_eq!(
+            result.markdown.matches("```").count() % 2,
+            0,
+            "unbalanced fence in output: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn fill_extends_past_a_short_first_line() {
+        // GIVEN: a paragraph whose first line is a few characters and whose
+        // second line is thousands of words.  Taking whole lines alone spends
+        // ~11 characters of a ~14,000-character allowance.
+        let doc = format!("Intro.\n\nBrief lead.\n{}", "word ".repeat(4000));
+        let budget = 3600;
+        assert!(
+            estimate_tokens(&doc) > budget,
+            "fixture must exceed the budget"
+        );
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        // THEN: the word extension fills the rest.  Without it the body is the
+        // two short lines and the budget is stranded.
+        assert!(
+            result.shown_tokens * 100 / budget >= 94,
+            "showed {} of {budget} tokens ({}%)",
+            result.shown_tokens,
+            result.shown_tokens * 100 / budget
+        );
+    }
+
+    #[test]
+    fn fill_never_leaves_an_html_comment_open() {
+        // GIVEN: a paragraph that opens an HTML comment early and closes it far
+        // past any prefix the fill pass could take.
+        let doc = format!(
+            "Intro.\n\n{}<!-- {}--> tail",
+            "word ".repeat(10),
+            "hidden ".repeat(2000)
+        );
+        let budget = 100;
+        assert!(
+            estimate_tokens(&doc) > budget,
+            "fixture must exceed the budget"
+        );
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        // THEN: nothing is spliced with a dangling `<!--`.  A renderer that
+        // passes raw HTML through would otherwise swallow the footer and every
+        // later block into the comment.
+        assert_eq!(
+            result.markdown.matches("<!--").count(),
+            result.markdown.matches("-->").count(),
+            "unbalanced HTML comment in output: {}",
+            result.markdown
+        );
+        assert!(result.markdown.contains("[Truncated:"));
+    }
+
+    #[test]
+    fn fill_accounts_for_separators_between_selected_blocks() {
+        // GIVEN: enough tiny blocks that the `\n\n` joins are a third of the
+        // budget, plus an oversized tail for the fill pass to spend on.
+        let doc = format!(
+            "{}\n\n{}",
+            vec!["abcd"; 50].join("\n\n"),
+            "lorem ipsum dolor ".repeat(500)
+        );
+        let budget = 100;
+
+        let result = truncate_to_budget(&doc, Some(budget));
+
+        // THEN: the assembled content honours the budget.  Counting only block
+        // tokens leaves the 49 separators unpaid for and the fill pass spends
+        // them a second time.
+        assert!(result.truncated, "fixture must exceed the budget");
+        let content = result
+            .markdown
+            .split("\n\n[Truncated:")
+            .next()
+            .expect("content before the footer");
+        assert!(
+            estimate_tokens(content) <= budget,
+            "content {} exceeds budget {budget}",
+            estimate_tokens(content)
+        );
+        // ...and reserving for them must not disable the fill outright: charging
+        // a whole token per two-character join would strand a quarter of it.
+        assert!(
+            result.shown_tokens * 100 / budget >= 90,
+            "showed {} of {budget} tokens ({}%)",
+            result.shown_tokens,
+            result.shown_tokens * 100 / budget
+        );
+    }
+
+    #[test]
+    fn fill_never_cuts_inside_a_fence_longer_than_three_markers() {
+        // A six-backtick fence is how CommonMark lets a code block hold a
+        // three-backtick run, and it contains the three-backtick substring
+        // twice — so a substring parity check reads it as closed while open.
+        let doc = "# Title\n\nIntro paragraph of ordinary prose.\n\n> Quoting the docs:\n>\n> ``````markdown\n> Fence a snippet like this:\n>\n> ```rust\n> fn main() {}\n> ```\n> ``````\n>\n> ...and that is the whole example.\n";
+
+        for budget in 20..=80 {
+            let result = truncate_to_budget(doc, Some(budget));
+            assert!(
+                !has_unterminated_fence(&result.markdown),
+                "unterminated fence at budget {budget}:\n{}",
+                result.markdown
+            );
+        }
+    }
+
+    #[test]
+    fn fill_never_cuts_inside_a_fence_nested_in_a_blockquote() {
+        // A blockquote is an eligible fill candidate, and this one carries a
+        // fenced code block, so a prefix cut anywhere in budgets 29..=49 lands
+        // between the opening and closing fence.
+        let doc = "# Title\n\nIntro paragraph of ordinary prose.\n\n> Quoting the docs:\n>\n> ```rust\n> fn main() {\n>     println!(\"hello world from the example\");\n>     println!(\"a second line of the example\");\n> }\n> ```\n>\n> ...and that is the whole example.\n";
+
+        for budget in 29..=49 {
+            let result = truncate_to_budget(doc, Some(budget));
+            assert_eq!(
+                result.markdown.matches("```").count() % 2,
+                0,
+                "unbalanced fence at budget {budget}:\n{}",
+                result.markdown
+            );
+        }
+    }
+    #[test]
+    fn structured_document_under_budget_is_byte_identical() {
+        // GIVEN: every block kind the fill pass could otherwise touch, all of it
+        // comfortably under budget.
+        let md = "---\ntitle: Front matter\n---\n\n# Heading\n\nA paragraph with a [link](/docs/guide).\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- item one\n- item two\n\n> quoted line\n\n```rust\nfn main() {}\n```\n\n***\n\nTrailing paragraph.";
+
+        let result = truncate_to_budget(md, Some(10_000));
+
+        // THEN: the untruncated fast path returns the input unchanged, byte for
+        // byte, without parsing blocks or running the fill pass.
+        assert!(!result.truncated);
+        assert_eq!(result.markdown, md);
+        assert_eq!(result.shown_tokens, result.total_tokens);
     }
 }
