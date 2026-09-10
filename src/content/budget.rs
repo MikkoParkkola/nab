@@ -54,8 +54,8 @@ pub const OUTPUT_BUDGET_HEADROOM_PERCENT: usize = 80;
 /// Shortest prefix worth splicing in when filling the leftover budget.
 const MIN_FILL_TOKENS: usize = 16;
 
-/// Tokens reserved for the `\n\n` joining a spliced prefix to its neighbour.
-const SEPARATOR_TOKENS: usize = 1;
+/// Length of the `\n\n` that `build_output` puts between two blocks.
+const SEPARATOR_CHARS: usize = 2;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -451,8 +451,11 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
     // the `\n\n` separators `build_output` will insert between the selected
     // blocks.  Filling it to the brim without deducting them overshoots the
     // budget by one token per join.
-    let separators = included.iter().filter(|&&inc| inc).count();
-    let fill_room = remaining.saturating_sub(separators * SEPARATOR_TOKENS);
+    // Counted in characters, not tokens: `estimate_tokens` rounds the whole
+    // assembled string up once, so charging a whole token per join reserves
+    // about twice what the joins cost.
+    let joins = included.iter().filter(|&&inc| inc).count();
+    let fill_room = remaining.saturating_sub((joins * SEPARATOR_CHARS).div_ceil(CHARS_PER_TOKEN));
 
     let mut partial: Option<(usize, String)> = None;
     if fill_room > MIN_FILL_TOKENS {
@@ -523,13 +526,23 @@ fn split_prefix(text: &str, limit: usize) -> Option<String> {
     }
     let prefix = text[..end].trim_end();
 
-    // An HTML comment opened but not closed inside the prefix swallows every
-    // later block and the truncation footer in any renderer that passes raw
-    // HTML through.  Same failure mode as the unterminated code fence the
-    // caller's allowlist guards, but it lives *inside* an allowed Paragraph, so
-    // the kind check cannot see it.  Skip the block rather than emit it.
-    if prefix.matches("<!--").count() > prefix.matches("-->").count() {
+    // A blockquote may contain a fenced code block (`> ```rust`), so the
+    // caller's kind allowlist cannot rule out a fence the way it does for a
+    // top-level CodeBlock.  An odd fence count means the cut landed inside one,
+    // and every later block plus the truncation footer renders as code.
+    if prefix.matches("```").count() % 2 != 0 || prefix.matches("~~~").count() % 2 != 0 {
         return None;
+    }
+
+    // An HTML comment opened but not closed swallows the same tail in any
+    // renderer that passes raw HTML through, and it lives *inside* an allowed
+    // Paragraph where the kind check cannot see it.  Order, not counts: prose
+    // using `-->` as an arrow before the `<!--` balances a count while leaving
+    // the comment open.
+    if let Some(open) = prefix.rfind("<!--") {
+        if prefix.rfind("-->").is_none_or(|close| close < open) {
+            return None;
+        }
     }
     Some(prefix.to_string())
 }
@@ -1156,8 +1169,33 @@ mod tests {
             "content {} exceeds budget {budget}",
             estimate_tokens(content)
         );
+        // ...and reserving for them must not disable the fill outright: charging
+        // a whole token per two-character join would strand a quarter of it.
+        assert!(
+            result.shown_tokens * 100 / budget >= 90,
+            "showed {} of {budget} tokens ({}%)",
+            result.shown_tokens,
+            result.shown_tokens * 100 / budget
+        );
     }
 
+    #[test]
+    fn fill_never_cuts_inside_a_fence_nested_in_a_blockquote() {
+        // A blockquote is an eligible fill candidate, and this one carries a
+        // fenced code block, so a prefix cut anywhere in budgets 29..=49 lands
+        // between the opening and closing fence.
+        let doc = "# Title\n\nIntro paragraph of ordinary prose.\n\n> Quoting the docs:\n>\n> ```rust\n> fn main() {\n>     println!(\"hello world from the example\");\n>     println!(\"a second line of the example\");\n> }\n> ```\n>\n> ...and that is the whole example.\n";
+
+        for budget in 29..=49 {
+            let result = truncate_to_budget(doc, Some(budget));
+            assert_eq!(
+                result.markdown.matches("```").count() % 2,
+                0,
+                "unbalanced fence at budget {budget}:\n{}",
+                result.markdown
+            );
+        }
+    }
     #[test]
     fn structured_document_under_budget_is_byte_identical() {
         // GIVEN: every block kind the fill pass could otherwise touch, all of it
