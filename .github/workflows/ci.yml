@@ -142,6 +142,10 @@ jobs:
             command: cargo build --locked --bin nab-mcp --features task
           - name: mcp-task-browser
             command: cargo build --locked --bin nab-mcp --features task,browser
+          # An optional feature no job builds is a feature that rots unnoticed:
+          # a dependency upgrade broke `pdf` and every job stayed green.
+          - name: pdf
+            command: cargo build --locked --bin nab --features pdf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
