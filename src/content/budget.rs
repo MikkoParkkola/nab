@@ -487,6 +487,39 @@ fn select_blocks(blocks: &[Block], budget: usize) -> Vec<Cow<'_, str>> {
         .collect()
 }
 
+/// True when `text` leaves a fenced code block open.
+///
+/// Counting three-marker substrings cannot answer this: CommonMark allows a
+/// fence longer than three markers so the block can hold a three-marker run of
+/// its own, and a six-backtick opener contains that substring twice — even, and
+/// therefore balanced, while the fence is still open.
+fn has_unterminated_fence(text: &str) -> bool {
+    let mut open: Option<(char, usize)> = None;
+    for line in text.lines() {
+        // Fence syntax ignores the `>` markers a blockquote puts in front of it.
+        let content = line.trim_start().trim_start_matches(['>', ' ']);
+        let Some(marker) = content.chars().next().filter(|c| *c == '`' || *c == '~') else {
+            continue;
+        };
+        // Marker chars are ASCII, so the run length is also a byte offset.
+        let run = content.chars().take_while(|c| *c == marker).count();
+        if run < 3 {
+            continue;
+        }
+        let rest = &content[run..];
+        match open {
+            // A backtick info string may not itself contain a backtick, which
+            // is what distinguishes an opening fence from inline code.
+            None if marker == '~' || !rest.contains('`') => open = Some((marker, run)),
+            // A closing fence matches the opener's marker, is at least as long,
+            // and carries nothing else on its line.
+            Some((c, len)) if c == marker && run >= len && rest.trim().is_empty() => open = None,
+            _ => {}
+        }
+    }
+    open.is_some()
+}
+
 /// Take as many whole lines of `text` as fit in `limit` tokens, falling back to
 /// whole words when even the first line is too long.
 ///
@@ -528,9 +561,9 @@ fn split_prefix(text: &str, limit: usize) -> Option<String> {
 
     // A blockquote may contain a fenced code block (`> ```rust`), so the
     // caller's kind allowlist cannot rule out a fence the way it does for a
-    // top-level CodeBlock.  An odd fence count means the cut landed inside one,
-    // and every later block plus the truncation footer renders as code.
-    if prefix.matches("```").count() % 2 != 0 || prefix.matches("~~~").count() % 2 != 0 {
+    // top-level CodeBlock.  A cut inside one renders every later block plus the
+    // truncation footer as code.
+    if has_unterminated_fence(prefix) {
         return None;
     }
 
@@ -1177,6 +1210,23 @@ mod tests {
             result.shown_tokens,
             result.shown_tokens * 100 / budget
         );
+    }
+
+    #[test]
+    fn fill_never_cuts_inside_a_fence_longer_than_three_markers() {
+        // A six-backtick fence is how CommonMark lets a code block hold a
+        // three-backtick run, and it contains the three-backtick substring
+        // twice — so a substring parity check reads it as closed while open.
+        let doc = "# Title\n\nIntro paragraph of ordinary prose.\n\n> Quoting the docs:\n>\n> ``````markdown\n> Fence a snippet like this:\n>\n> ```rust\n> fn main() {}\n> ```\n> ``````\n>\n> ...and that is the whole example.\n";
+
+        for budget in 20..=80 {
+            let result = truncate_to_budget(doc, Some(budget));
+            assert!(
+                !has_unterminated_fence(&result.markdown),
+                "unterminated fence at budget {budget}:\n{}",
+                result.markdown
+            );
+        }
     }
 
     #[test]
