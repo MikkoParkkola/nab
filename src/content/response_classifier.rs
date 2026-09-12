@@ -244,6 +244,18 @@ pub fn classify_response(analysis: ResponseAnalysis<'_>) -> ResponseClassificati
         });
     }
 
+    if super::html::looks_like_client_spa_shell(analysis.body)
+        && analysis
+            .markdown
+            .is_some_and(|markdown| markdown.trim().chars().count() < 200)
+    {
+        classification.push(ResponseSignal {
+            class: ResponseClass::ThinContent,
+            confidence: 0.95,
+            reason: "client-rendered SPA shell with no extractable article body",
+        });
+    }
+
     if let (Some(html_bytes), Some(markdown_chars)) = (analysis.html_bytes, analysis.markdown_chars)
         && classify_thin_content(
             analysis.content_type,
@@ -793,6 +805,21 @@ mod tests {
             html_bytes: Some(20_000),
             markdown: Some("short"),
             markdown_chars: Some(120),
+            quality: None,
+        });
+        assert!(classification.has_class(ResponseClass::ThinContent));
+    }
+
+    #[test]
+    fn classify_response_marks_angular_app_root_shell() {
+        let html = include_str!("../../tests/fixtures/angular-scania-shell.html");
+        let classification = classify_response(ResponseAnalysis {
+            status: 200,
+            body: html,
+            content_type: Some("text/html"),
+            html_bytes: Some(html.len()),
+            markdown: Some("Scania Developer Portal"),
+            markdown_chars: Some(22),
             quality: None,
         });
         assert!(classification.has_class(ResponseClass::ThinContent));

@@ -77,6 +77,22 @@ pub enum NabError {
         verdict: String,
     },
 
+    /// HTML fetched successfully but extraction produced near-zero content.
+    ///
+    /// Distinct from a transport failure: the bytes arrived, the converter
+    /// did not recover the article (JS shell, wrong DOM root, etc.).
+    #[error(
+        "extraction produced near-zero content ({markdown_chars} chars from {html_bytes} byte body): {reason}"
+    )]
+    ThinContent {
+        /// Raw response body size in bytes.
+        html_bytes: usize,
+        /// Extracted markdown size in characters.
+        markdown_chars: usize,
+        /// Why this was classified as empty extraction.
+        reason: String,
+    },
+
     /// Catch-all for unclassified errors propagated from internal anyhow chains.
     #[error(transparent)]
     Other(#[from] anyhow::Error),

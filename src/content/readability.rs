@@ -53,6 +53,13 @@ static SUBSTACK_NOISE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
     )
     .expect("static substack noise selector")
 });
+static WP_ENTRY_CONTENT_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("div.entry-content").expect("static wordpress entry-content selector")
+});
+static WP_NOISE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("figure, picture, source, img, svg, iframe, form, input, button")
+        .expect("static wordpress noise selector")
+});
 
 /// Extracted article content from HTML.
 #[derive(Debug, Clone)]
@@ -79,6 +86,15 @@ pub fn extract_article(html: &str, url: &str) -> Option<Article> {
             url
         );
         return Some(substack_result);
+    }
+
+    if let Some(wordpress_result) = extract_wordpress_article(html) {
+        tracing::debug!(
+            "wordpress entry-content extraction: {} chars for {}",
+            wordpress_result.text_content.len(),
+            url
+        );
+        return Some(wordpress_result);
     }
 
     let readability_result = extract_with_readability_crate(html, url);
@@ -229,9 +245,54 @@ fn extract_og_title(document: &Html) -> Option<String> {
 }
 
 fn strip_substack_noise(html: &str) -> String {
+    strip_selected_noise(html, &SUBSTACK_NOISE_SELECTOR)
+}
+
+/// Extract the authored body from `WordPress` `div.entry-content`.
+///
+/// NVIDIA developer blogs (and other WP templates) put the article in
+/// `.entry-content` but wrap it in `<main>` alongside hero images whose
+/// `srcset` attributes dominate `html2md` output. Prefer the authored node
+/// the same way Substack prefers `.available-content .body.markup`.
+fn extract_wordpress_article(html: &str) -> Option<Article> {
+    let document = Html::parse_document(html);
+    let body = document.select(&WP_ENTRY_CONTENT_SELECTOR).next()?;
+    let title = extract_title(&document);
+    let body_html = strip_selected_noise(&body.html(), &WP_NOISE_SELECTOR);
+
+    let mut content_html = String::from("<article>");
+    if !title.is_empty() && title != "Untitled" {
+        content_html.push_str("<h1>");
+        content_html.push_str(&escape_html_text(&title));
+        content_html.push_str("</h1>");
+    }
+    content_html.push_str(&body_html);
+    content_html.push_str("</article>");
+
+    let text_content = strip_html_tags(&content_html);
+    if text_content.len() < 100 {
+        return None;
+    }
+
+    let excerpt = text_content
+        .chars()
+        .take(200)
+        .collect::<String>()
+        .trim()
+        .to_string();
+
+    Some(Article {
+        title,
+        content_html,
+        excerpt,
+        text_content,
+    })
+}
+
+fn strip_selected_noise(html: &str, selector: &Selector) -> String {
     let document = Html::parse_fragment(html);
     let excluded_ids = document
-        .select(&SUBSTACK_NOISE_SELECTOR)
+        .select(selector)
         .map(|el| el.id())
         .collect::<std::collections::HashSet<_>>();
 
@@ -889,5 +950,49 @@ mod tests {
         let doc = Html::parse_fragment(html);
         let element = doc.select(&DIV_SELECTOR).next().unwrap();
         assert!(!is_unlikely_candidate(&element));
+    }
+
+    #[test]
+    fn extracts_wordpress_entry_content_instead_of_hero_srcset() {
+        const NEEDLE: &str = "Before loading a model, first ask where a compatible copy of its weights already lives";
+        let srcset = "https://cdn.example/hero-1024.jpg 1024w, https://cdn.example/hero-2048.jpg 2048w, https://cdn.example/hero-4096.jpg 4096w";
+        let html = format!(
+            r#"
+            <html>
+              <body>
+                <main class="main-content col-lg-9">
+                  <img class="wp-post-image" srcset="{srcset}" alt="">
+                  <figure><img srcset="{srcset}" alt="hero"></figure>
+                  <h1>ModelExpress: Distributing Model Artifacts at the Speed of Light</h1>
+                  <div class="entry-content">
+                    <p class="wp-block-paragraph">Every byte moved has a cost. As model checkpoints grow to hundreds of gigabytes, that cost adds up quickly.</p>
+                    <p class="wp-block-paragraph">NVIDIA ModelExpress (MX) is built around a simple idea: {NEEDLE}. Rather than treating every replica as an independent cold start, MX chooses the fastest available source and transfer path.</p>
+                    <p class="wp-block-paragraph">When a serving peer already holds compatible weights in GPU, MX transfers them directly from GPU to GPU over P2P RDMA.</p>
+                  </div>
+                  <div class="entry-content-comments"><p>A long comment should not be selected as the article.</p></div>
+                </main>
+              </body>
+            </html>
+            "#
+        );
+
+        let article =
+            extract_article(&html, "https://developer.nvidia.com/blog/modelexpress/").unwrap();
+        assert!(
+            article.text_content.contains(NEEDLE),
+            "missing authored sentence; text: {}",
+            article.text_content
+        );
+        assert!(!article.content_html.contains("srcset"));
+        assert!(
+            !article
+                .text_content
+                .contains("A long comment should not be selected")
+        );
+        let markdown = article_to_markdown(&article);
+        assert!(
+            markdown.contains(NEEDLE),
+            "markdown lost the article: {markdown}"
+        );
     }
 }

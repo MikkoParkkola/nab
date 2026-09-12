@@ -508,4 +508,22 @@ mod tests {
         let handler = PdfHandler::new();
         assert_eq!(handler.supported_types(), &["application/pdf"]);
     }
+
+    #[test]
+    fn load_pdfium_is_stable_across_repeated_calls() {
+        match (PdfHandler::load_pdfium(), PdfHandler::load_pdfium()) {
+            (Ok(first), Ok(second)) => {
+                assert!(
+                    std::ptr::eq(first, second),
+                    "cached Pdfium handle must be reused"
+                );
+            }
+            (Err(first), Err(second)) => {
+                assert_eq!(first.to_string(), second.to_string());
+            }
+            (Ok(_), Err(err)) | (Err(err), Ok(_)) => {
+                panic!("cached pdfium result must be stable, got mixed Ok/Err: {err}");
+            }
+        }
+    }
 }

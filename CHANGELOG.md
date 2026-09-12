@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `nab fetch` now fails closed when HTML extraction recovers near-zero content
+  from a non-empty body (`NabError::ThinContent`): large thin pages and
+  Angular/Vue empty app shells warn on stderr and exit non-zero instead of
+  looking like a successful empty article (#280, #246).
+- WordPress `div.entry-content` is preferred over hero `srcset` markup, so
+  NVIDIA developer blog posts extract the article prose (#280).
+- Canonical `lesswrong.com` posts are handled by the LessWrong provider: the
+  `/api/post/{slug}` markdown API plus ForumMagnum embedded `html` JSON, not
+  the author-bio DOM (#198).
+- PDF `OnceLock` initialization is covered for repeated calls after the
+  all-features compile fix (#260, #308).
+
 ## [0.12.3] - 2026-09-04
 
 ### Security

@@ -598,7 +598,49 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         },
     )?;
 
+    if let Some(err) = extraction_exit_error(
+        Some(&content_type),
+        &raw_text,
+        body_len,
+        &body_text,
+        quality.as_ref(),
+    ) {
+        return Err(err.into());
+    }
+
     Ok(())
+}
+
+/// Fail closed when HTML extraction recovered almost nothing from a non-empty
+/// body. Callers that only check the exit code otherwise treat a JS shell as
+/// an empty page.
+fn extraction_exit_error(
+    content_type: Option<&str>,
+    html: &str,
+    html_len: usize,
+    markdown: &str,
+    quality: Option<&nab::content::quality::QualityScore>,
+) -> Option<nab::NabError> {
+    if let Some(message) = nab::content::html::detect_empty_spa_shell(html, markdown) {
+        return Some(nab::NabError::ThinContent {
+            html_bytes: html_len,
+            markdown_chars: markdown.len(),
+            reason: message,
+        });
+    }
+    if classify_thin_content(content_type, html_len, markdown.len(), quality).is_some() {
+        let message = thin_content_message(ThinContentDiagnostic {
+            html_bytes: html_len,
+            markdown_chars: markdown.len(),
+            low_confidence: quality.is_some_and(|score| score.confidence < 0.5),
+        });
+        return Some(nab::NabError::ThinContent {
+            html_bytes: html_len,
+            markdown_chars: markdown.len(),
+            reason: message,
+        });
+    }
+    None
 }
 
 /// Authed DOM-render path: inject the user's existing browser session cookies
@@ -1593,6 +1635,57 @@ mod tests {
         assert!(
             !warning.contains("login page"),
             "warning should not pretend a bare 401 is a login page, got: {warning}"
+        );
+    }
+
+    #[test]
+    fn extraction_exit_error_fails_closed_on_thin_html() {
+        let err = super::extraction_exit_error(
+            Some("text/html"),
+            "<html></html>",
+            20_000,
+            &"x".repeat(100),
+            None,
+        )
+        .expect("thin HTML must fail closed");
+        let nab::NabError::ThinContent {
+            html_bytes,
+            markdown_chars,
+            ..
+        } = err
+        else {
+            panic!("expected ThinContent, got {err:?}");
+        };
+        assert_eq!(html_bytes, 20_000);
+        assert_eq!(markdown_chars, 100);
+    }
+
+    #[test]
+    fn extraction_exit_error_fails_closed_on_angular_shell() {
+        let html = include_str!("../../tests/fixtures/angular-scania-shell.html");
+        let err = super::extraction_exit_error(
+            Some("text/html"),
+            html,
+            html.len(),
+            "Scania Developer Portal",
+            None,
+        )
+        .expect("Angular app-root shell must fail closed");
+        assert!(err.to_string().contains("SPA shell"));
+    }
+
+    #[test]
+    fn extraction_exit_error_allows_short_static_pages() {
+        let html = "<html><body><p>Hello from a small static page.</p></body></html>";
+        assert!(
+            super::extraction_exit_error(
+                Some("text/html"),
+                html,
+                html.len(),
+                "Hello from a small static page.",
+                None
+            )
+            .is_none()
         );
     }
 
