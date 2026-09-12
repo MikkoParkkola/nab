@@ -347,6 +347,43 @@ fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
     ratio_percent < THIN_RATIO_PERCENT
 }
 
+/// Client-rendered shells (Angular `app-root`, Vue CLI `#app` + chunk vendors)
+/// that ship almost no visible text in the initial HTML.
+#[must_use]
+pub fn looks_like_client_spa_shell(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    if lower.contains("<app-root") || lower.contains("ng-version") {
+        return true;
+    }
+    let has_vue_app = lower.contains("id=\"app\"") || lower.contains("id='app'");
+    has_vue_app && (lower.contains("chunk-vendors") || lower.contains("polyfills"))
+}
+
+/// Detect an Angular/Vue-style empty app shell whose extracted markdown is
+/// just the document title.
+///
+/// Unlike [`detect_thin_content`], this fires on small HTML (a 2 KB Angular
+/// index.html never reaches the 5 KB thin-content floor).
+#[must_use]
+pub fn detect_empty_spa_shell(html: &str, markdown: &str) -> Option<String> {
+    const MAX_SHELL_MARKDOWN_CHARS: usize = 200;
+    if !looks_like_client_spa_shell(html) {
+        return None;
+    }
+    if markdown.trim().chars().count() >= MAX_SHELL_MARKDOWN_CHARS {
+        return None;
+    }
+    Some(format!(
+        "Extracted only {} chars from a client-rendered SPA shell ({} bytes of HTML). \
+         The article body is populated by JavaScript that nab does not execute. Try:\n  \
+         1. nab spa <url>              (extract embedded SPA data)\n  \
+         2. nab browser <url>          (explicit external-CDP browser rendering)\n  \
+         3. nab fetch --render <url>   (same, via fetch)",
+        markdown.trim().chars().count(),
+        html.len()
+    ))
+}
+
 /// Fetch content from Jina reader as an opt-in fallback for JS-rendered pages.
 ///
 /// Jina reader (`r.jina.ai`) renders JavaScript and returns clean markdown.
@@ -890,8 +927,9 @@ pub fn is_boilerplate(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        HtmlConversionOptions, html_to_markdown_with_url, html_to_markdown_with_url_and_fetcher,
-        html_to_markdown_with_url_and_sources, is_thin_content, strip_embedded_data_sections,
+        HtmlConversionOptions, detect_empty_spa_shell, html_to_markdown_with_url,
+        html_to_markdown_with_url_and_fetcher, html_to_markdown_with_url_and_sources,
+        is_thin_content, looks_like_client_spa_shell, strip_embedded_data_sections,
         strip_hidden_sections, strip_noise_sections,
     };
 
@@ -1486,5 +1524,48 @@ mod tests {
             authored_ratio >= 0.80,
             "authored markdown ratio too low: {authored_ratio:.2}; markdown: {md}"
         );
+    }
+
+    #[test]
+    fn looks_like_client_spa_shell_detects_angular_app_root() {
+        let html = r#"<!DOCTYPE html><html><head><title>Scania Developer Portal</title>
+            <base href="/"></head>
+            <body><app-root></app-root>
+            <script src="polyfills.js"></script></body></html>"#;
+        assert!(looks_like_client_spa_shell(html));
+        assert!(!looks_like_client_spa_shell(
+            "<html><body><p>A static article with no SPA markers.</p></body></html>"
+        ));
+    }
+
+    #[test]
+    fn detect_empty_spa_shell_fires_on_title_only_angular_index() {
+        let html = include_str!("../../tests/fixtures/angular-scania-shell.html");
+        let markdown = "Scania Developer Portal";
+        let warning = detect_empty_spa_shell(html, markdown)
+            .expect("empty Angular shell must not report success");
+        assert!(warning.contains("client-rendered SPA shell"));
+        assert!(
+            !is_thin_content(html.len(), markdown.len()),
+            "2 KB Angular shells sit below the 5 KB thin-content floor"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_keeps_wordpress_entry_content() {
+        const NEEDLE: &str = "Before loading a model, first ask where a compatible copy of its weights already lives";
+        let html = format!(
+            r#"<html><body><main>
+                <img srcset="{}">
+                <div class="entry-content">
+                    <p>Every byte moved has a cost when checkpoints grow.</p>
+                    <p>{NEEDLE}</p>
+                    <p>MX transfers weights over P2P RDMA instead of object storage.</p>
+                </div>
+            </main></body></html>"#,
+            "https://cdn.example/hero.jpg 1024w, https://cdn.example/hero-2x.jpg 2048w"
+        );
+        let md = html_to_markdown_with_url(&html, Some("https://developer.nvidia.com/blog/x/"));
+        assert!(md.contains(NEEDLE), "lost authored body: {md}");
     }
 }
