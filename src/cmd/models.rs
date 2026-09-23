@@ -17,10 +17,10 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tracing::info;
+use tracing::{debug, info};
 
 #[cfg(target_os = "macos")]
-use tracing::{debug, warn};
+use tracing::warn;
 
 // ─── Model registry ──────────────────────────────────────────────────────────
 
@@ -176,12 +176,28 @@ pub async fn cmd_models_list() -> Result<()> {
     println!("{:<16} {:<10} {:<12} VERSION", "MODEL", "PHASE", "STATUS");
     println!("{}", "-".repeat(60));
 
+    let mut any_checkout = false;
     for model in KNOWN_MODELS {
         let (status_str, version_str) = match install_status(model)? {
-            InstallStatus::Installed { version } => (
-                "installed".to_string(),
-                version.unwrap_or_else(|| "—".to_string()),
-            ),
+            InstallStatus::Installed { version } => {
+                // For git-backed models, "installed" is not the same as "current".
+                let install_dir = model_install_dir(model.name)?;
+                let status = match commits_behind(&install_dir).await {
+                    Some(0) => {
+                        any_checkout = true;
+                        "current".to_string()
+                    }
+                    Some(n) => {
+                        any_checkout = true;
+                        format!("behind {n}")
+                    }
+                    None => "installed".to_string(),
+                };
+                (
+                    status,
+                    version.map_or_else(|| "—".to_string(), |v| short_sha(&v)),
+                )
+            }
             InstallStatus::BrokenSymlink => ("broken".to_string(), "—".to_string()),
             InstallStatus::NotInstalled => ("not installed".to_string(), "—".to_string()),
         };
@@ -192,6 +208,10 @@ pub async fn cmd_models_list() -> Result<()> {
             status_str,
             version_str,
         );
+    }
+
+    if any_checkout {
+        println!("\ncurrent/behind is relative to the last `nab models fetch <name>`.");
     }
     Ok(())
 }
@@ -468,7 +488,7 @@ async fn download_with_progress(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `nab models update <name>` — git pull + rebuild + re-symlink.
+/// `nab models update <name>` — fetch + fast-forward + rebuild + re-symlink.
 pub async fn cmd_models_update(name: &str) -> Result<()> {
     let model = KNOWN_MODELS
         .iter()
@@ -480,6 +500,8 @@ pub async fn cmd_models_update(name: &str) -> Result<()> {
         anyhow::bail!("Model '{name}' is not installed. Run `nab models fetch {name}` first.");
     }
 
+    fast_forward_repo(&install_dir).await?;
+
     #[cfg(not(target_os = "macos"))]
     {
         anyhow::bail!("FluidAudio is macOS-only");
@@ -487,11 +509,6 @@ pub async fn cmd_models_update(name: &str) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        info!("pulling latest changes in {}", install_dir.display());
-        run_subprocess("git", &["-C", &install_dir.to_string_lossy(), "pull"])
-            .await
-            .context("git pull failed")?;
-
         build_and_symlink(model, &install_dir).await
     }
 }
@@ -506,6 +523,7 @@ async fn fetch_fluidaudio(model: &ModelEntry) -> Result<()> {
 
     if install_dir.exists() {
         info!("FluidAudio already cloned at {}", install_dir.display());
+        fast_forward_repo(&install_dir).await?;
     } else {
         info!("Cloning {} into {}", model.repo_url, install_dir.display());
         let parent = install_dir.parent().context("install dir has no parent")?;
@@ -607,7 +625,6 @@ async fn run_subprocess(program: &str, args: &[&str]) -> Result<()> {
 }
 
 /// Run a subprocess inside a working directory.
-#[cfg(target_os = "macos")]
 async fn run_subprocess_in_dir(program: &str, args: &[&str], dir: &Path) -> Result<()> {
     debug!(cmd = program, ?args, cwd = %dir.display(), "spawning subprocess");
     let status = tokio::process::Command::new(program)
@@ -648,18 +665,113 @@ fn create_symlink(target: &Path, link: &Path) -> Result<()> {
         .with_context(|| format!("creating symlink {} → {}", link.display(), target.display()))
 }
 
-/// Read the current HEAD git SHA in `repo_dir`.
-#[cfg(target_os = "macos")]
-async fn git_sha(repo_dir: &Path) -> Result<String> {
+/// Run `git` inside `repo_dir` and capture its trimmed stdout.
+async fn git_capture(repo_dir: &Path, args: &[&str]) -> Result<String> {
+    debug!(?args, cwd = %repo_dir.display(), "capturing git output");
     let out = tokio::process::Command::new("git")
-        .args(["-C", &repo_dir.to_string_lossy(), "rev-parse", "HEAD"])
+        .args(args)
+        .current_dir(repo_dir)
         .output()
         .await
-        .context("git rev-parse failed")?;
+        .with_context(|| format!("failed to spawn 'git' in {}", repo_dir.display()))?;
     if !out.status.success() {
-        anyhow::bail!("git rev-parse exited with {}", out.status);
+        anyhow::bail!(
+            "'git {}' exited with {} in {}",
+            args.join(" "),
+            out.status,
+            repo_dir.display()
+        );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Read the current HEAD git SHA in `repo_dir`.
+async fn git_sha(repo_dir: &Path) -> Result<String> {
+    git_capture(repo_dir, &["rev-parse", "HEAD"]).await
+}
+
+/// First 8 characters of a git SHA, for display.
+fn short_sha(sha: &str) -> String {
+    sha.chars().take(8).collect()
+}
+
+/// Fetch `repo_dir`'s upstream branch and fast-forward HEAD onto it.
+///
+/// Local work is never discarded: tracked modifications, a diverged branch, or a
+/// missing upstream are reported and the checkout is left untouched. Untracked
+/// files do not block — nab itself writes an untracked `VERSION` here.
+async fn fast_forward_repo(repo_dir: &Path) -> Result<()> {
+    info!("fetching upstream for {}", repo_dir.display());
+    run_subprocess_in_dir("git", &["fetch", "--quiet"], repo_dir)
+        .await
+        .with_context(|| format!("git fetch failed in {}", repo_dir.display()))?;
+
+    // Refuse before anything else touches the checkout: a tracked modification
+    // means the sources are not the ones any recorded SHA would describe.
+    let dirty = git_capture(repo_dir, &["status", "--porcelain", "--untracked-files=no"]).await?;
+    if !dirty.is_empty() {
+        anyhow::bail!(
+            "{} has local modifications — refusing to update, nothing was changed. \
+             Commit, stash or revert them first:\n{dirty}",
+            repo_dir.display()
+        );
+    }
+
+    let head = git_sha(repo_dir).await?;
+    let upstream = git_capture(repo_dir, &["rev-parse", "@{u}"])
+        .await
+        .with_context(|| {
+            format!(
+                "no upstream branch configured for {} — set one with \
+                 `git -C {} branch --set-upstream-to=origin/<branch>`",
+                repo_dir.display(),
+                repo_dir.display()
+            )
+        })?;
+
+    if head == upstream {
+        println!("Already at the latest upstream commit {}", short_sha(&head));
+        return Ok(());
+    }
+
+    // `--ff-only` is the guard: git refuses (non-zero) on a diverged branch
+    // rather than rewriting local history.
+    run_subprocess_in_dir("git", &["merge", "--ff-only", &upstream], repo_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "could not fast-forward {} — the local branch has diverged from upstream \
+                 or an untracked file is in the way; nab will not force-update",
+                repo_dir.display()
+            )
+        })?;
+
+    // Report what HEAD actually did: `--ff-only` also exits 0 when upstream is
+    // already an ancestor (local branch ahead), and nothing moved in that case.
+    let after = git_sha(repo_dir).await?;
+    if after == head {
+        println!(
+            "Local branch is ahead of upstream — nothing to fast-forward ({})",
+            short_sha(&head)
+        );
+    } else {
+        println!(
+            "Fast-forwarded {} → {}",
+            short_sha(&head),
+            short_sha(&after)
+        );
+    }
+    Ok(())
+}
+
+/// Commits `dir` is behind its upstream **as of the last fetch**, or `None` when
+/// `dir` is not a git checkout with an upstream branch.
+async fn commits_behind(dir: &Path) -> Option<u32> {
+    git_capture(dir, &["rev-list", "--count", "HEAD..@{u}"])
+        .await
+        .ok()?
+        .parse()
+        .ok()
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
@@ -827,5 +939,167 @@ mod tests {
         let status = install_status(model).expect("should not fail");
         // THEN doesn't panic — actual value depends on test environment
         let _ = status;
+    }
+
+    /// Run git with a hermetic identity — CI has none and this host may sign commits.
+    fn git_fixture(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=nab-test",
+                "-c",
+                "user.email=nab@test.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git should be on PATH");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// A local upstream repo with one commit, plus a clone of it.
+    fn upstream_and_clone(tmp: &Path) -> (PathBuf, PathBuf) {
+        let upstream = tmp.join("upstream");
+        std::fs::create_dir_all(&upstream).expect("mkdir upstream");
+        git_fixture(&upstream, &["init", "-b", "main"]);
+        std::fs::write(upstream.join("file.txt"), "v1\n").expect("write v1");
+        git_fixture(&upstream, &["add", "."]);
+        git_fixture(&upstream, &["commit", "-m", "v1"]);
+
+        let clone = tmp.join("clone");
+        git_fixture(
+            tmp,
+            &[
+                "clone",
+                "--quiet",
+                &upstream.to_string_lossy(),
+                &clone.to_string_lossy(),
+            ],
+        );
+        (upstream, clone)
+    }
+
+    /// Add a commit to the upstream repo and return its SHA.
+    fn commit_upstream(upstream: &Path, content: &str) -> String {
+        std::fs::write(upstream.join("file.txt"), content).expect("write");
+        git_fixture(upstream, &["commit", "-am", content]);
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(upstream)
+            .output()
+            .expect("rev-parse");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// An existing install is fetched and fast-forwarded, so the SHA that
+    /// `build_and_symlink` records moves to the new upstream commit.
+    #[tokio::test]
+    async fn fast_forward_repo_pulls_new_upstream_commit() {
+        // GIVEN a cloned install that is one commit behind upstream
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let (upstream, clone) = upstream_and_clone(tmp.path());
+        let before = git_sha(&clone).await.expect("head");
+        let want = commit_upstream(&upstream, "v2\n");
+        assert_ne!(before, want, "upstream must have moved");
+
+        // AND the untracked VERSION file nab writes into the checkout
+        std::fs::write(clone.join("VERSION"), format!("{before}\n")).expect("write VERSION");
+
+        // WHEN the install is synced
+        fast_forward_repo(&clone).await.expect("fast-forward");
+
+        // THEN the SHA `build_and_symlink` records moved to the upstream commit
+        assert_eq!(git_sha(&clone).await.expect("head"), want);
+        assert_eq!(commits_behind(&clone).await, Some(0));
+    }
+
+    /// A tracked local modification stops the update and is left intact.
+    #[tokio::test]
+    async fn fast_forward_repo_refuses_dirty_tracked_file() {
+        // GIVEN an install behind upstream with a locally edited tracked file
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let (upstream, clone) = upstream_and_clone(tmp.path());
+        let before = git_sha(&clone).await.expect("head");
+        commit_upstream(&upstream, "v2\n");
+        std::fs::write(clone.join("file.txt"), "local edit\n").expect("write");
+
+        // WHEN we try to sync
+        let err = fast_forward_repo(&clone).await.expect_err("must refuse");
+
+        // THEN it reports, and neither the edit nor HEAD was touched
+        assert!(
+            err.to_string().contains("local modifications"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(clone.join("file.txt")).expect("read"),
+            "local edit\n"
+        );
+        assert_eq!(git_sha(&clone).await.expect("head"), before);
+    }
+
+    /// A dirty checkout is refused even when it is already at the upstream commit,
+    /// so no build ever records a SHA that does not describe the sources.
+    #[tokio::test]
+    async fn fast_forward_repo_refuses_dirty_even_when_current() {
+        // GIVEN an install already at upstream with a locally edited tracked file
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let (_upstream, clone) = upstream_and_clone(tmp.path());
+        std::fs::write(clone.join("file.txt"), "local edit\n").expect("write");
+
+        // WHEN we try to sync
+        let err = fast_forward_repo(&clone).await.expect_err("must refuse");
+
+        // THEN it reports and leaves the edit alone
+        assert!(
+            err.to_string().contains("local modifications"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(clone.join("file.txt")).expect("read"),
+            "local edit\n"
+        );
+    }
+
+    /// A diverged branch is declined rather than force-updated.
+    #[tokio::test]
+    async fn fast_forward_repo_declines_diverged_branch() {
+        // GIVEN a local commit and an upstream commit on top of a shared base
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let (upstream, clone) = upstream_and_clone(tmp.path());
+        commit_upstream(&upstream, "v2\n");
+        std::fs::write(clone.join("local.txt"), "mine\n").expect("write");
+        git_fixture(&clone, &["add", "."]);
+        git_fixture(&clone, &["commit", "-m", "local work"]);
+        let before = git_sha(&clone).await.expect("head");
+
+        // WHEN we try to sync
+        let err = fast_forward_repo(&clone).await.expect_err("must decline");
+
+        // THEN local history survives
+        assert!(
+            err.to_string().contains("fast-forward"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(git_sha(&clone).await.expect("head"), before);
+        assert!(clone.join("local.txt").exists());
+        // AND `nab models list` can see the missed upstream commit
+        assert_eq!(commits_behind(&clone).await, Some(1));
+    }
+
+    /// `commits_behind` is `None` outside a git checkout, so `list` falls back
+    /// to plain "installed" for download-only models.
+    #[tokio::test]
+    async fn commits_behind_none_outside_a_checkout() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        assert_eq!(commits_behind(tmp.path()).await, None);
     }
 }
