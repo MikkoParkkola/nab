@@ -500,8 +500,7 @@ pub async fn cmd_models_update(name: &str) -> Result<()> {
         anyhow::bail!("Model '{name}' is not installed. Run `nab models fetch {name}` first.");
     }
 
-    fast_forward_repo(&install_dir).await?;
-
+    // Bail before fetching: a checkout this platform cannot build must not be mutated.
     #[cfg(not(target_os = "macos"))]
     {
         anyhow::bail!("FluidAudio is macOS-only");
@@ -509,6 +508,7 @@ pub async fn cmd_models_update(name: &str) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
+        fast_forward_repo(&install_dir).await?;
         build_and_symlink(model, &install_dir).await
     }
 }
@@ -700,6 +700,7 @@ fn short_sha(sha: &str) -> String {
 /// Local work is never discarded: tracked modifications, a diverged branch, or a
 /// missing upstream are reported and the checkout is left untouched. Untracked
 /// files do not block — nab itself writes an untracked `VERSION` here.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // Linux reaches it only from tests
 async fn fast_forward_repo(repo_dir: &Path) -> Result<()> {
     info!("fetching upstream for {}", repo_dir.display());
     run_subprocess_in_dir("git", &["fetch", "--quiet"], repo_dir)
