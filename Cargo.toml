@@ -170,11 +170,11 @@ async-trait = "0.1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-yara-x = { version = "1.16", default-features = false, features = [
+# inventory stopped being an optional feature in 1.19 (always on); GHSA-2jx3-ff3v-j7jj fixed in 1.19.0.
+yara-x = { version = "1.19", default-features = false, features = [
     "constant-folding",
     "exact-atoms",
     "fast-regexp",
-    "inventory",
 ] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
