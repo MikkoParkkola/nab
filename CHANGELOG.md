@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bumped `yara-x` from 1.16.0 to 1.20.0 (GHSA-2jx3-ff3v-j7jj, unvalidated
+  `Rules::deserialize`; nab compiles rules from source and never deserializes
+  them). Its transitive Wasmtime moves from 43.0.2 to 45.0.3, still with no
+  patched 45.x line, so the RUSTSEC-2026-0222/0269 exceptions (#267) remain.
 - Bumped the optional Wasmtime runtime from 46.0.2 to 46.0.3 (RUSTSEC-2026-0268,
   RUSTSEC-2026-0269). Transitive `yara-x` 1.16.0 still pulls Wasmtime 43.0.2;
   newest yara-x 1.20.0 uses Wasmtime ^45.0.3, which has no patched 45.x line.
