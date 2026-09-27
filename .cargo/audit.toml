@@ -3,7 +3,7 @@
 #
 # Yanked-crate status (cargo audit prints these as non-failing warnings; the
 # CI `cargo audit` step has no `--deny yanked`, so it stays exit-0 / honest-green):
-#   * gimli 0.32.3 — not yanked; still present via yara-x 1.16 -> walrus 0.26.1
+#   * gimli 0.32.3 — not yanked; still present via yara-x -> walrus 0.26.1
 #     (`gimli = "^0.32"`). A second gimli 0.33.0 (non-yanked; 0.33.1 was yanked)
 #     coexists for cranelift/wasmtime 46.
 #   * chacha20 0.10.0 was yanked; lockfile is on 0.10.2.
@@ -18,11 +18,12 @@ ignore = [
     "RUSTSEC-2025-0141",
     # wasmtime "stores can mix up type indices between engines"
     # (RUSTSEC-2026-0222 / GHSA-hgjw-h833-99q9, 2026-07-31). The remaining
-    # affected version is wasmtime 43.0.2, transitive through yara-x.
+    # affected version is wasmtime 45.0.3, transitive through yara-x 1.20.0.
     #
     # Why this cannot be bumped away today: the advisory's patched lines are
     # >=24.0.12, >=36.0.13, >=46.0.2 and >=47.0.3. There is NO patched 43.x.
-    # Rechecked 2026-08-31: yara-x 1.16.0 (our pin) requires wasmtime ^43.0.1;
+    # Rechecked 2026-09-27: yara-x 1.20.0 (our lock, bumped for GHSA-2jx3-ff3v-j7jj)
+    # requires wasmtime ^45.0.3. Previously 1.16.0 required ^43.0.1;
     # newest yara-x 1.20.0 requires wasmtime ^45.0.3 -- still no patched 45.x
     # line, and 1.20.0 dropped the `inventory` crate feature so it cannot be
     # cargo-updated under the current feature list. Verified against crates.io
@@ -58,7 +59,7 @@ ignore = [
     # (RUSTSEC-2026-0269 / GHSA-vqjp-4c8c-hfgg, HIGH). Patched lines:
     # 24.0.13, 36.0.14, 46.0.3, 47.0.4; 48.0.0+ is unaffected. No 43.x or
     # 45.x patch. Direct optional wasmtime is 46.0.3. Remaining hit is
-    # wasmtime 43.0.2 via yara-x 1.16.0 (see 0222 for why yara-x cannot
+    # wasmtime 45.0.3 via yara-x 1.20.0 (see 0222 for why yara-x cannot
     # move to a patched line).
     #
     # The advisory is in wasmtime-wasi: a guest with a preopened directory
