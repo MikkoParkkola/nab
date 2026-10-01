@@ -23,6 +23,22 @@ use tracing::{debug, info, warn};
 
 #[cfg(feature = "browser")]
 use crate::auth::Credential;
+use crate::error::NabError;
+
+/// Whether the browser may open or follow `url`.
+///
+/// Calls [`crate::ssrf::validate_redirect_target`] with the deny-all policy,
+/// the same check the HTTP client uses before each redirect hop.
+///
+/// # Errors
+///
+/// Returns [`NabError::InvalidUrl`] when `url` does not parse, and
+/// [`NabError::SsrfBlocked`] when the target is a denied scheme or address
+/// (including `http://127.0.0.1/`).
+pub fn browser_target_allowed(url: &str) -> std::result::Result<(), NabError> {
+    let parsed = url::Url::parse(url).map_err(|err| NabError::InvalidUrl(err.to_string()))?;
+    crate::ssrf::validate_redirect_target(&parsed)
+}
 
 /// Chrome `DevTools` Protocol client for browser automation
 #[cfg(feature = "browser")]
@@ -89,10 +105,9 @@ impl BrowserLogin {
     pub async fn login(&self, url: &str, credential: Option<&Credential>) -> Result<Vec<Cookie>> {
         info!("Starting browser login for {}", url);
 
-        // Create new page
-        let page = self
-            .browser
-            .new_page(url)
+        // Blank page first so the Fetch guard is armed before Chrome navigates.
+        let (page, guard) = self
+            .open_guarded(url)
             .await
             .context("Failed to create new browser page")?;
 
@@ -126,6 +141,7 @@ impl BrowserLogin {
             "Browser login complete, extracted {} cookies",
             cookies.len()
         );
+        drop(guard);
         Ok(cookies)
     }
 
@@ -268,23 +284,25 @@ impl BrowserLogin {
     /// wraps so the brain-driven loop can escalate to a browser without nab ever
     /// bundling Chromium — it orchestrates the user's EXTERNAL Chrome over CDP.
     pub async fn render_markdown(&self, url: &str) -> Result<String> {
-        let page = self
-            .browser
-            .new_page(url)
+        let (page, guard) = self
+            .open_guarded(url)
             .await
             .context("failed to open browser page for rung-3 render")?;
-        page.wait_for_navigation()
-            .await
-            .context("failed to navigate the browser page")?;
-        // SPAs hydrate after load; give the DOM a brief settle window.
-        tokio::time::sleep(Duration::from_millis(800)).await;
-        let html = page
-            .content()
-            .await
-            .context("failed to read rendered DOM from the browser")?;
+        let loaded = async {
+            page.wait_for_navigation()
+                .await
+                .context("failed to navigate the browser page")?;
+            // SPAs hydrate after load; give the DOM a brief settle window.
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            page.content()
+                .await
+                .context("failed to read rendered DOM from the browser")
+        }
+        .await;
         // Best-effort close so the orchestrated browser does not accumulate tabs.
         let _ = page.close().await;
-        Self::dom_to_markdown(&html, url)
+        drop(guard);
+        Self::dom_to_markdown(&loaded?, url)
     }
 
     /// Render `url` with the supplied session `cookies` injected into the page
@@ -317,13 +335,22 @@ impl BrowserLogin {
     pub async fn render_with_cookies(&self, url: &str, cookies: &[Cookie]) -> Result<String> {
         use chromiumoxide::cdp::browser_protocol::network::{CookieParam, SetCookiesParams};
 
+        browser_target_allowed(url)?;
         // Open a blank page first so cookies are present in the context BEFORE
-        // the first navigation to the target URL.
+        // the first navigation to the target URL. The Fetch guard is armed
+        // before that navigation so a redirect hop is paused inside Chrome.
         let page = self
             .browser
             .new_page("about:blank")
             .await
             .context("failed to open blank browser page for authed render")?;
+        let guard = match arm_ssrf_fetch_guard(&page).await {
+            Ok(guard) => guard,
+            Err(err) => {
+                let _ = page.close().await;
+                return Err(err);
+            }
+        };
 
         if !cookies.is_empty() {
             // Each CookieParam carries an explicit `url` so the CDP backend can
@@ -353,22 +380,46 @@ impl BrowserLogin {
                 .context("failed to inject session cookies into the browser context")?;
         }
 
-        page.goto(url)
-            .await
-            .context("failed to navigate to the authed render target")?;
-        page.wait_for_navigation()
-            .await
-            .context("failed waiting for navigation on the authed render target")?;
-        // The authed XHR paints into the DOM AFTER hydration; give it a generous
-        // settle window beyond the load event (network-idle proxy).
-        tokio::time::sleep(COOKIE_RENDER_SETTLE).await;
-
-        let html = page
-            .content()
-            .await
-            .context("failed to read rendered DOM from the authed page")?;
+        let navigated = async {
+            goto_checked(&page, &guard, url)
+                .await
+                .context("failed to navigate to the authed render target")?;
+            page.wait_for_navigation()
+                .await
+                .context("failed waiting for navigation on the authed render target")?;
+            // The authed XHR paints into the DOM AFTER hydration; give it a generous
+            // settle window beyond the load event (network-idle proxy).
+            tokio::time::sleep(COOKIE_RENDER_SETTLE).await;
+            page.content()
+                .await
+                .context("failed to read rendered DOM from the authed page")
+        }
+        .await;
         let _ = page.close().await;
-        Self::dom_to_markdown(&html, url)
+        drop(guard);
+        Self::dom_to_markdown(&navigated?, url)
+    }
+
+    /// Open `about:blank`, arm the Fetch guard, then navigate to `url`.
+    async fn open_guarded(&self, url: &str) -> Result<(chromiumoxide::Page, SsrfFetchGuard)> {
+        browser_target_allowed(url)?;
+        let page = self
+            .browser
+            .new_page("about:blank")
+            .await
+            .context("failed to open browser page")?;
+        let guard = match arm_ssrf_fetch_guard(&page).await {
+            Ok(guard) => guard,
+            Err(err) => {
+                let _ = page.close().await;
+                return Err(err);
+            }
+        };
+        if let Err(err) = goto_checked(&page, &guard, url).await {
+            let _ = page.close().await;
+            return Err(err);
+        }
+        Ok((page, guard))
     }
 
     /// Convert rendered DOM `html` to screened markdown.
@@ -383,6 +434,124 @@ impl BrowserLogin {
             .context("YARA screen rejected the rendered page")?;
         Ok(screened)
     }
+}
+
+/// Paused Fetch requests the browser guard has refused.
+#[cfg(feature = "browser")]
+struct SsrfFetchGuard {
+    blocked: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+}
+
+#[cfg(feature = "browser")]
+impl SsrfFetchGuard {
+    fn first_blocked(&self) -> Option<String> {
+        self.blocked.lock().ok().and_then(|slot| slot.clone())
+    }
+}
+
+/// Arm Chrome's Fetch domain so a redirect hop is failed before it completes.
+///
+/// `Page::goto` lets Chrome follow redirects internally. Pausing every request
+/// and failing a denied target with `BlockedByClient` applies the HTTP SSRF
+/// policy to that hop. `about` / `data` / `blob` are not network targets and
+/// are continued so a blank page can still render.
+#[cfg(feature = "browser")]
+async fn arm_ssrf_fetch_guard(page: &chromiumoxide::Page) -> Result<SsrfFetchGuard> {
+    use chromiumoxide::cdp::browser_protocol::fetch::{
+        ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams, RequestPattern,
+        RequestStage,
+    };
+    use chromiumoxide::cdp::browser_protocol::network::ErrorReason;
+
+    let blocked = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let mut events = page
+        .event_listener::<EventRequestPaused>()
+        .await
+        .context("failed to listen for paused browser requests")?;
+    let pattern = RequestPattern::builder()
+        .url_pattern("*")
+        .request_stage(RequestStage::Request)
+        .build();
+    page.execute(
+        EnableParams::builder()
+            .handle_auth_requests(false)
+            .pattern(pattern)
+            .build(),
+    )
+    .await
+    .context("failed to enable the browser Fetch domain")?;
+
+    let page = page.clone();
+    let blocked_task = std::sync::Arc::clone(&blocked);
+    tokio::spawn(async move {
+        while let Some(event) = events.next().await {
+            let url = event.request.url.clone();
+            // A response-stage pause is the original request, not the next hop.
+            let allowed = event.response_status_code.is_some() || browser_request_allowed(&url);
+            if !allowed {
+                debug!("refusing browser request: {url}");
+                if let Ok(mut slot) = blocked_task.lock() {
+                    if slot.is_none() {
+                        *slot = Some(url);
+                    }
+                }
+            }
+            let request_id = event.request_id.clone();
+            let settled = if allowed {
+                page.execute(ContinueRequestParams::new(request_id))
+                    .await
+                    .err()
+            } else {
+                page.execute(FailRequestParams::new(
+                    request_id,
+                    ErrorReason::BlockedByClient,
+                ))
+                .await
+                .err()
+            };
+            if let Some(err) = settled {
+                debug!("ssrf fetch guard could not settle paused request: {err}");
+            }
+        }
+    });
+
+    Ok(SsrfFetchGuard { blocked })
+}
+
+/// Continue non-network schemes. HTTP(S) uses [`browser_target_allowed`].
+#[cfg(feature = "browser")]
+fn browser_request_allowed(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    match parsed.scheme() {
+        "http" | "https" => browser_target_allowed(url).is_ok(),
+        "about" | "data" | "blob" | "chrome" | "chrome-extension" | "devtools" => true,
+        _ => false,
+    }
+}
+
+/// Navigate, then refuse if the guard paused a denied hop or the landed URL is denied.
+#[cfg(feature = "browser")]
+async fn goto_checked(page: &chromiumoxide::Page, guard: &SsrfFetchGuard, url: &str) -> Result<()> {
+    browser_target_allowed(url)?;
+    let navigated = page
+        .goto(url)
+        .await
+        .context("failed to navigate the browser page");
+    if let Some(blocked) = guard.first_blocked() {
+        let _ = page.clone().close().await;
+        browser_target_allowed(&blocked)?;
+        anyhow::bail!("browser redirect refused for {blocked}");
+    }
+    navigated?;
+    if let Ok(Some(landed)) = page.url().await {
+        if let Err(err) = browser_target_allowed(&landed) {
+            let _ = page.clone().close().await;
+            return Err(err.into());
+        }
+    }
+    Ok(())
 }
 
 /// Settle window after the load event for authed DOM renders.
@@ -555,6 +724,7 @@ fn launch_default_browser(url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::NabError;
 
     #[test]
     fn scope_domain_collapses_subdomain_to_dot_parent() {
@@ -686,6 +856,30 @@ mod tests {
         assert_eq!(c1.name, c2.name);
         assert_eq!(c1.value, c2.value);
         assert_eq!(c1.domain, c2.domain);
+    }
+
+    #[test]
+    fn browser_target_allowed_refuses_loopback() {
+        for url in ["http://127.0.0.1/", "http://127.0.0.1:39401/"] {
+            let err = browser_target_allowed(url).expect_err(url);
+            let text = err.to_string();
+            assert!(
+                matches!(err, NabError::SsrfBlocked(_)),
+                "{url} must be the SSRF refusal, got {text}"
+            );
+            assert!(text.contains("SSRF"), "{url}: {text}");
+            let parsed = url::Url::parse(url).unwrap();
+            let http = crate::ssrf::validate_redirect_target(&parsed).expect_err(url);
+            assert_eq!(http.to_string(), text);
+        }
+
+        // A public host is resolved by validate_url. Offline, that is a DNS
+        // failure ("DNS resolution failed..."), not a loopback denial.
+        match browser_target_allowed("https://example.com/") {
+            Ok(()) => {}
+            Err(NabError::SsrfBlocked(msg)) if msg.contains("DNS") => {}
+            Err(other) => panic!("public host must be allowed or a DNS error, got {other}"),
+        }
     }
 
     #[test]

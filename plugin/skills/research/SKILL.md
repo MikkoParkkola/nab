@@ -100,7 +100,7 @@ exa_search            -> query, category (research_paper), num_results, type
 internet_archive_search -> q (Lucene), rows, fl, sort; use mediatype:texts for papers/books/proceedings
 oreilly_search        -> query, formats, limit, page, sort; use formats=book for book/chapter results
 oreilly_books_search  -> query, limit, page; use for whole-book bibliography/ISBN, not narrow chapter evidence
-unpaywall_find_open   -> doi, email REQUIRED; use parm@iki.fi; fails on 10.48550/arXiv.* (use publisher DOI)
+unpaywall_find_open   -> doi, contact REQUIRED; pass the operator Unpaywall contact; fails on 10.48550/arXiv.* (use publisher DOI)
 openalex: pass `select: "id,title,publication_year,doi,cited_by_count,authorships"` or response is ~35KB/hit
 ```
 
@@ -171,7 +171,7 @@ so it's worth as a 3rd cross-check for survey/prior-art.
    OR semantic_scholar query "forward-forward Hinton"
 
 # "Is DOI 10.1038/nature12373 open access?"
--> unpaywall_find_open doi=10.1038/nature12373 email=parm@iki.fi
+-> unpaywall_find_open doi=10.1038/nature12373 contact=<operator-contact>
    (returns best_oa_location.url_for_pdf if OA)
 
 # "Recent CS papers about X (last 30 days)"

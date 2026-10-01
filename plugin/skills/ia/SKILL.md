@@ -344,7 +344,7 @@ Search by uploader's user item, screen name, or email:
 ```bash
 ia search '_uploader_useritem:@username'
 ia search '_uploader_screenname:"Display Name"'
-ia search 'uploader:your@email.com'
+ia search 'uploader:EXAMPLE_USER'
 ```
 
 #### Additional Searchable Fields

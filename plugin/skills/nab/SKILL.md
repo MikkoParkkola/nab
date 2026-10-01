@@ -128,7 +128,7 @@ hatch only; `NAB_YARA_ACTION=refuse` blocks instead of redacting matched section
 
 ---
 
-Confidence: V = verified in nab `README.md` / `CLAUDE.md` / `plugin/.mcp.json` (v0.10.3) **or
+Confidence: V = verified in nab `README.md` / `CLAUDE.md` / `plugin/.mcp.json` (v0.12.3) **or
 source** (`src/main.rs`, `src/cmd/otp.rs`, `src/bin/mcp_server/tools/`) | I = schema/convention
 argument | A = operator-config assertion not confirmed in this repo. Both prior open flags
 (`nab otp` existence, MCP tool naming) are now source-verified V (2026-05-26).

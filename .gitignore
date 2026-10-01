@@ -35,6 +35,9 @@ linkedin-posts-draft.md
 docs/linkedin-ajax-replay.md
 retros/
 
+# Plugin launcher cache (downloaded nab-mcp release binary)
+plugin/bin/cache/
+
 # Stray scripts from other projects
 spectre_v1.py
 .gitnexus

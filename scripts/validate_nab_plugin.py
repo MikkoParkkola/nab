@@ -165,6 +165,8 @@ def validate_mcp(checks: Checks) -> None:
     mcp = load_json(mcp_path, checks, "MIK-3402.MCP.1")
     compat = load_json(compat_path, checks, "MIK-3402.MCP.1")
     server = mcp.get("mcpServers", {}).get("nab", {})
+    launch = PLUGIN / "bin" / "launch.js"
+    launch_text = text(launch)
     checks.check(
         "MIK-3402.MCP.1",
         mcp == compat and bool(mcp),
@@ -172,15 +174,19 @@ def validate_mcp(checks: Checks) -> None:
     )
     checks.check(
         "MIK-3402.MCP.1",
-        server.get("command") == "${CLAUDE_PLUGIN_ROOT}/bin/nab-mcp-wrapper",
-        "mcp.json auto-registers nab through the bundled wrapper",
+        server.get("command") == "node"
+        and server.get("args") == ["${CLAUDE_PLUGIN_ROOT}/bin/launch.js"],
+        "mcp.json runs node on the launcher inside the plugin",
     )
-    wrapper = PLUGIN / "bin" / "nab-mcp-wrapper"
-    wrapper_text = text(wrapper)
     checks.check(
         "MIK-3402.MCP.1",
-        is_executable(wrapper) and "brew" in wrapper_text.lower() and "nab-mcp" in wrapper_text,
-        "wrapper is executable and includes Homebrew/cargo fallback lookup",
+        launch.is_file()
+        and "0.12.3" in launch_text
+        and "spawn(" in launch_text
+        and "exec(" not in launch_text
+        and "execSync" not in launch_text
+        and "nab-mcp-wrapper" not in launch_text,
+        "launcher pins nab-mcp 0.12.3 and spawns it without a shell",
     )
 
 

@@ -1,14 +1,14 @@
 {
   "name": "nab",
-  "version": "0.10.3",
-  "description": "Auth-aware URL fetch, research, Wayback, Internet Archive, and O'Reilly workflows powered by nab MCP and Claude Elite research skills.",
+  "version": "0.12.3",
+  "description": "Auth-aware URL fetch, research, Wayback, Internet Archive, and O'Reilly workflows. The plugin downloads pinned nab-mcp; the nab CLI does not need to be on PATH.",
   "author": {
     "name": "MikkoParkkola",
     "url": "https://github.com/MikkoParkkola"
   },
   "homepage": "https://github.com/MikkoParkkola/nab",
   "repository": "https://github.com/MikkoParkkola/nab",
-  "license": "MIT AND PolyForm-Noncommercial-1.0.0",
+  "license": "MIT",
   "keywords": [
     "nab",
     "claude-elite",
