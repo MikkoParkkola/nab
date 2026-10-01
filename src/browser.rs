@@ -916,6 +916,7 @@ mod tests {
             .arg("--disable-sync")
             .arg("--disable-extensions")
             .arg("--disable-background-networking")
+            .arg("--disable-gpu")
             .arg("about:blank")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
