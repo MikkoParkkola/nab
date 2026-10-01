@@ -907,7 +907,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&profile);
         std::fs::create_dir_all(&profile).expect("chrome profile");
 
-        let mut child = std::process::Command::new(chrome)
+        let child = std::process::Command::new(chrome)
             .arg("--headless=new")
             .arg(format!("--remote-debugging-port={port}"))
             .arg(format!("--user-data-dir={}", profile.display()))
