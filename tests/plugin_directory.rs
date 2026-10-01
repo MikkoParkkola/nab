@@ -187,6 +187,14 @@ fn privacy_facts_and_no_email() {
         "fetches must go to the URL the user asked for"
     );
     assert!(lower.contains("https://github.com/mikkoparkkola/nab/issues"));
+    assert!(
+        privacy.contains("Mikko Parkkola"),
+        "support must name Mikko Parkkola"
+    );
+    assert!(
+        lower.contains("stores its cookies on this machine"),
+        "privacy must say where cookies are stored"
+    );
     assert!(!privacy.contains('@'), "PRIVACY.md must not contain @");
 
     let email =

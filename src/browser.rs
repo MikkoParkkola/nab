@@ -882,6 +882,117 @@ mod tests {
         }
     }
 
+    /// Drive the production browser path at a public page that redirects to
+    /// loopback. A fresh headless Chrome is used so the user's profile and
+    /// cookies are never opened.
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn browser_fetch_refuses_redirect_to_loopback() {
+        let chrome = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+        ]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).is_file())
+        .expect("Chrome is required to drive the browser redirect");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("free port");
+        let port = listener.local_addr().expect("port").port();
+        drop(listener);
+
+        let profile = std::env::temp_dir().join(format!("nab-browser-ssrf-{port}"));
+        let _ = std::fs::remove_dir_all(&profile);
+        std::fs::create_dir_all(&profile).expect("chrome profile");
+
+        let mut child = std::process::Command::new(chrome)
+            .arg("--headless=new")
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg("--disable-sync")
+            .arg("--disable-extensions")
+            .arg("--disable-background-networking")
+            .arg("about:blank")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("launch chrome");
+
+        struct StopChrome {
+            child: std::process::Child,
+            port: u16,
+            profile: std::path::PathBuf,
+        }
+        impl Drop for StopChrome {
+            fn drop(&mut self) {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                if let Ok(out) = std::process::Command::new("lsof")
+                    .args(["-nP", &format!("-iTCP:{}", self.port), "-sTCP:LISTEN", "-t"])
+                    .output()
+                {
+                    for line in String::from_utf8_lossy(&out.stdout).lines() {
+                        let pid = line.trim();
+                        if pid.is_empty() {
+                            continue;
+                        }
+                        let _ = std::process::Command::new("kill").arg(pid).status();
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&self.profile);
+            }
+        }
+        let _stop = StopChrome {
+            child,
+            port,
+            profile,
+        };
+
+        let probe = reqwest::Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .expect("probe client");
+        let mut ready = false;
+        for _ in 0..50 {
+            if probe
+                .get(format!("http://127.0.0.1:{port}/json/version"))
+                .send()
+                .await
+                .is_ok()
+            {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(ready, "chrome debugging port {port} did not open");
+
+        let browser = BrowserLogin::connect(Some(port))
+            .await
+            .expect("connect to the fresh chrome");
+        let started =
+            "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%2F&status_code=302";
+        let result =
+            tokio::time::timeout(Duration::from_secs(25), browser.render_markdown(started))
+                .await
+                .expect("browser redirect check timed out");
+        let err = result.expect_err("a redirect to http://127.0.0.1/ must be refused");
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("127.0.0.1"),
+            "the refusal must name the loopback hop"
+        );
+        assert!(
+            text.contains("SSRF"),
+            "the refusal must be the same SSRF block the HTTP path uses"
+        );
+    }
+
     #[test]
     fn test_open_and_wait_aborts_early_on_cookie_change() {
         // Does NOT launch a real browser: we temporarily override
