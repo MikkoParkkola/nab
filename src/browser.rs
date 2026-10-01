@@ -925,33 +925,35 @@ mod tests {
 
         struct StopChrome {
             child: std::process::Child,
-            port: u16,
             profile: std::path::PathBuf,
         }
         impl Drop for StopChrome {
             fn drop(&mut self) {
                 let _ = self.child.kill();
                 let _ = self.child.wait();
-                if let Ok(out) = std::process::Command::new("lsof")
-                    .args(["-nP", &format!("-iTCP:{}", self.port), "-sTCP:LISTEN", "-t"])
+                let marker = self.profile.display().to_string();
+                if let Ok(out) = std::process::Command::new("pgrep")
+                    .args(["-f", &marker])
                     .output()
                 {
-                    for line in String::from_utf8_lossy(&out.stdout).lines() {
-                        let pid = line.trim();
-                        if pid.is_empty() {
-                            continue;
-                        }
-                        let _ = std::process::Command::new("kill").arg(pid).status();
+                    let owned = String::from_utf8_lossy(&out.stdout).to_string();
+                    let pids: Vec<&str> = owned
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .collect();
+                    if !pids.is_empty() {
+                        let _ = std::process::Command::new("kill").args(&pids).status();
+                        let _ = std::process::Command::new("kill")
+                            .arg("-9")
+                            .args(&pids)
+                            .status();
                     }
                 }
                 let _ = std::fs::remove_dir_all(&self.profile);
             }
         }
-        let _stop = StopChrome {
-            child,
-            port,
-            profile,
-        };
+        let _stop = StopChrome { child, profile };
 
         let probe = reqwest::Client::builder()
             .timeout(Duration::from_secs(1))
