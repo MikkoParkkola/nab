@@ -967,6 +967,9 @@ fn main() -> Result<()> {
 #[allow(clippy::too_many_lines)] // Main command dispatcher; splitting obscures exhaustive routing.
 async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+    // Daily heartbeat. Returns immediately. Opt out with NAB_NO_TELEMETRY,
+    // NO_TELEMETRY, or DO_NOT_TRACK. Skipped for dev builds, CI, and tests.
+    nab::telemetry::heartbeat_in_background(env!("CARGO_PKG_VERSION"));
 
     // Initialize logging. `nab context` defaults to ERROR-only for clean
     // stdout piping; other commands use INFO (or DEBUG with --verbose).

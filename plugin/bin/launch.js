@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const https = require('https');
 const path = require('path');
+const heartbeat = require('./heartbeat');
 
 // Pinned release. The launcher never searches PATH for nab or nab-mcp.
 const NAB_MCP_VERSION = '0.12.3';
@@ -111,6 +112,15 @@ async function binaryPath() {
 }
 
 async function main() {
+  // The downloaded 0.12.3 binary does not contain this client. The launcher
+  // sends the daily POST, and a later build shares ~/.nab/telemetry.
+  heartbeat.start({
+    project: 'nab',
+    version: NAB_MCP_VERSION,
+    optOut: ['NAB_NO_TELEMETRY'],
+    endpointEnv: 'NAB_TELEMETRY_ENDPOINT',
+    stateParts: ['.nab', 'telemetry'],
+  });
   const binPath = await binaryPath();
   const child = spawn(binPath, process.argv.slice(2), {
     stdio: 'inherit',

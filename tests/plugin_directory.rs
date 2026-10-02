@@ -195,6 +195,16 @@ fn privacy_facts_and_no_email() {
         lower.contains("stores its cookies on this machine"),
         "privacy must say where cookies are stored"
     );
+    assert!(privacy.contains("https://telemetry.revaluator.ai/v1/heartbeat"));
+    assert!(!privacy.contains("telemetry.trvl.app"));
+    assert!(lower.contains("install_id"));
+    assert!(lower.contains("city name and country code"));
+    assert!(lower.contains("coordinates and the ip are not written"));
+    assert!(privacy.contains("NAB_NO_TELEMETRY"));
+    assert!(privacy.contains("NO_TELEMETRY"));
+    assert!(privacy.contains("DO_NOT_TRACK"));
+    assert!(privacy.contains("The published build pinned by this folder does not."));
+    assert!(lower.contains("no cookie"));
     assert!(!privacy.contains('@'), "PRIVACY.md must not contain @");
 
     let email =

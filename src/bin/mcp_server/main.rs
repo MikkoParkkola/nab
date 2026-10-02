@@ -1205,6 +1205,9 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use clap::Parser as _;
     let cli = Cli::parse();
+    // Daily heartbeat. Returns immediately. Shares ~/.nab/telemetry with the
+    // plugin launcher so the two do not both send on the same day.
+    nab::telemetry::heartbeat_in_background(env!("CARGO_PKG_VERSION"));
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
