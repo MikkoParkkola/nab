@@ -20,6 +20,9 @@ const DEFAULT_ENDPOINT: &str = "https://telemetry.revaluator.ai/v1/heartbeat";
 const ENDPOINT_ENV: &str = "NAB_TELEMETRY_ENDPOINT";
 const MAX_BODY: usize = 2048;
 const DAY: i64 = 24 * 60 * 60;
+/// A stamp inside this window was just written by the process that won the
+/// lock, or the clock moved a little. Farther ahead is a stuck stamp.
+const FUTURE_SKEW: i64 = 120;
 const STATE_DIR: &[&str] = &[".nab", "telemetry"];
 const CI_ENVS: &[&str] = &[
     "CI",
@@ -39,8 +42,8 @@ const CI_ENVS: &[&str] = &[
 
 /// Holds the heartbeat thread until the command finishes.
 ///
-/// Binding this to `_` drops it immediately and can cancel the post. Keep a
-/// named binding for the whole command.
+/// Binding this to `_` drops it at the end of that statement, which waits
+/// for the post there. Keep a named binding until the command is finished.
 pub struct Heartbeat;
 
 impl Drop for Heartbeat {
@@ -219,8 +222,10 @@ fn due(dir: &Path, now: DateTime<Utc>) -> bool {
     };
     let last_at = last.timestamp();
     let now_at = now.timestamp();
-    // A future stamp would otherwise suppress the post until the clock catches it.
-    last_at > now_at || now_at.saturating_sub(last_at) >= DAY
+    if last_at > now_at {
+        return last_at - now_at >= FUTURE_SKEW;
+    }
+    now_at.saturating_sub(last_at) >= DAY
 }
 
 fn mark_sent(dir: &Path, now: DateTime<Utc>) -> std::io::Result<()> {
@@ -349,18 +354,27 @@ fn valid_machine(value: &str) -> bool {
 fn machine_id(home: &Path) -> String {
     let dir = home.join(".revaluator");
     let path = dir.join("machine-id");
-    if let Some(existing) = read_trim(&path) {
-        // Shared with other tools. Reuse a valid id. Leave any other content alone.
-        if valid_machine(&existing) {
-            return existing;
+    // Shared with other tools. Create the file only when it is absent.
+    // Empty, non-UTF-8, and any other unrecognized bytes stay where they are.
+    match fs::metadata(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let id = random_id();
+            if write_private(&dir, "machine-id", &id).is_err() {
+                String::new()
+            } else {
+                id
+            }
         }
-        return String::new();
+        Err(_) => String::new(),
+        Ok(_) => {
+            let existing = read_trim(&path).unwrap_or_default();
+            if valid_machine(&existing) {
+                existing
+            } else {
+                String::new()
+            }
+        }
     }
-    let id = random_id();
-    if write_private(&dir, "machine-id", &id).is_err() {
-        return String::new();
-    }
-    id
 }
 
 fn runtime_string() -> String {
@@ -705,6 +719,30 @@ mod tests {
     }
 
     #[test]
+    fn a_stamp_a_few_seconds_ahead_is_not_due() {
+        let home = TempHome::new();
+        let now = at(2026, 10, 2, 12);
+        let dir = state_dir(&home.0);
+        write_private(
+            &dir,
+            "heartbeat",
+            &format_stamp(now + chrono::Duration::seconds(30)),
+        )
+        .unwrap();
+        let mut posts = 0;
+        assert!(!drive(
+            &home.0,
+            &env_from(&[]),
+            "0.12.4",
+            now,
+            &mut |_, _| {
+                posts += 1;
+            },
+        ));
+        assert_eq!(posts, 0);
+    }
+
+    #[test]
     fn a_future_stamp_is_due_again() {
         let home = TempHome::new();
         let dir = state_dir(&home.0);
@@ -720,6 +758,32 @@ mod tests {
             },
         ));
         assert_eq!(posts, 1);
+    }
+
+    fn assert_machine_file_untouched(bytes: &[u8]) {
+        let home = TempHome::new();
+        let dir = home.0.join(".revaluator");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("machine-id");
+        fs::write(&path, bytes).unwrap();
+        let mut raw = Vec::new();
+        drive(
+            &home.0,
+            &env_from(&[]),
+            "0.12.4",
+            at(2026, 10, 2, 12),
+            &mut |_, body| raw = body.to_vec(),
+        );
+        let value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert!(value.get("machine_id").is_none());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn an_empty_or_non_utf8_machine_id_is_left_alone() {
+        assert_machine_file_untouched(b"");
+        assert_machine_file_untouched(b" \n");
+        assert_machine_file_untouched(&[0xff, 0xfe]);
     }
 
     #[test]
