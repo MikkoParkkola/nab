@@ -153,14 +153,17 @@ fn suppressed(version: &str, env: &impl Fn(&str) -> Option<String>) -> bool {
     if CI_ENVS.iter().any(|name| truthy(env(name).as_deref())) {
         return true;
     }
-    [
-        "DO_NOT_TRACK",
-        "NO_TELEMETRY",
-        "NAB_NO_TELEMETRY",
-        "CARGO_MANIFEST_DIR",
-    ]
-    .iter()
-    .any(|name| truthy(env(name).as_deref()))
+    if truthy(env("CARGO_MANIFEST_DIR").as_deref()) {
+        return true;
+    }
+    // An empty value is present. SECURITY.md says any value other than
+    // 0 or false turns the heartbeat off, and that includes "".
+    ["DO_NOT_TRACK", "NO_TELEMETRY", "NAB_NO_TELEMETRY"]
+        .iter()
+        .any(|name| match env(name).as_deref() {
+            None | Some("0" | "false") => false,
+            Some(_) => true,
+        })
 }
 
 fn resolve_endpoint(env: &impl Fn(&str) -> Option<String>) -> Option<String> {
@@ -567,8 +570,11 @@ mod tests {
         let now = at(2026, 10, 2, 12);
         for pairs in [
             &[("NAB_NO_TELEMETRY", "1")][..],
+            &[("NAB_NO_TELEMETRY", "")],
             &[("NO_TELEMETRY", "yes")],
+            &[("NO_TELEMETRY", "")],
             &[("DO_NOT_TRACK", "1")],
+            &[("DO_NOT_TRACK", "")],
             &[("CARGO_MANIFEST_DIR", "/tmp/nab-src")],
             &[("CI", "true")],
             &[("GITHUB_ACTIONS", "true")],
