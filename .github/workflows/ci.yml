@@ -75,7 +75,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-      - run: cargo clippy --locked --all-targets -- -D warnings
+      # Rust 1.99 denies clippy::assert_is_empty in existing tests. The allow
+      # unblocks CI Gate until those asserts are rewritten. Remove the flag
+      # in the same change as the rewrite. Tracked in #339.
+      - run: cargo clippy --locked --all-targets -- -D warnings -A clippy::assert_is_empty
 
   test:
     name: Test (${{ matrix.name }})
