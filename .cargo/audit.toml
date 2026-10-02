@@ -89,7 +89,8 @@ ignore = [
     #
     # Record lifting lives in the component model. yara-x does not enable
     # component-model. Fetched content is YARA rule input and cannot
-    # construct component records. This ignore is by advisory ID, so a later
+    # construct component records. This excepts the yara-x copy. It does
+    # not patch the bug. This ignore is by advisory ID, so a later
     # downgrade of the direct runtime below 48.0.3 would stay silent here.
     # Keep the direct pin at 48.0.5. Cargo-audit cannot expire ignores; the
     # OSV entry reviews this on 2026-12-01. Remove with 0222. #267.
