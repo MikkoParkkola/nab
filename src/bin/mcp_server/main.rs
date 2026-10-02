@@ -1205,7 +1205,7 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use clap::Parser as _;
     let cli = Cli::parse();
-    nab::telemetry::maybe_send();
+    let _heartbeat = nab::telemetry::maybe_send();
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)

@@ -14,9 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A release build sends at most one heartbeat per day to
   `https://telemetry.revaluator.ai/v1/heartbeat`. The body is `project`,
   `event`, `version`, `runtime`, `install_id`, `install_date`, and
-  `machine_id`. Debug builds, tests, and CI do not send it. Set
-  `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or `DO_NOT_TRACK` to a value other than
-  `0` or `false` to turn it off.
+  `machine_id`. Debug builds, tests, and CI do not send it. The command
+  waits for that post on the way out, up to three seconds, and only on a
+  day when a send is due. Set `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or
+  `DO_NOT_TRACK` to a value other than `0` or `false` to turn it off.
 
 ### Fixed
 

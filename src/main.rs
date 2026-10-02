@@ -967,7 +967,7 @@ fn main() -> Result<()> {
 #[allow(clippy::too_many_lines)] // Main command dispatcher; splitting obscures exhaustive routing.
 async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
-    nab::telemetry::maybe_send();
+    let _heartbeat = nab::telemetry::maybe_send();
 
     // Initialize logging. `nab context` defaults to ERROR-only for clean
     // stdout piping; other commands use INFO (or DEBUG with --verbose).

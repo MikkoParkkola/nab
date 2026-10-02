@@ -3,10 +3,14 @@
 //! At most one POST per day. The body is the seven fields the receiver accepts.
 //! Debug builds and tests return before any of this runs, so `cargo run` and the
 //! test suite stay quiet. A failure never surfaces to the caller.
+//!
+//! The caller holds the returned guard until the command is finished. Drop waits
+//! for the post, so a short command still sends. Startup does not wait.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -33,14 +37,34 @@ const CI_ENVS: &[&str] = &[
     "CODEBUILD_BUILD_ID",
 ];
 
-/// Fire the daily heartbeat from a release binary. Never panics and never blocks the caller.
-pub fn maybe_send() {
+/// Holds the heartbeat thread until the command finishes.
+///
+/// Binding this to `_` drops it immediately and can cancel the post. Keep a
+/// named binding for the whole command.
+pub struct Heartbeat {
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Heartbeat {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Fire the daily heartbeat from a release binary.
+///
+/// Returns immediately. Drop of the guard waits for the post, at most a few
+/// seconds, and only on a day when a send is due. Never panics.
+#[must_use = "hold the guard until the command exits so the post can finish"]
+pub fn maybe_send() -> Heartbeat {
     // Test and debug builds are the development copies. The published binary is
     // a release build, which is the one that sends.
     if cfg!(test) || cfg!(debug_assertions) {
-        return;
+        return Heartbeat { handle: None };
     }
-    let Ok(_) = std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .name("nab-heartbeat".to_string())
         .spawn(|| {
             let Some(home) = home_dir() else {
@@ -56,9 +80,8 @@ pub fn maybe_send() {
                 &mut post,
             );
         })
-    else {
-        return;
-    };
+        .ok();
+    Heartbeat { handle }
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -337,11 +360,30 @@ fn build_body(
     }
 }
 
+fn heartbeat_tls() -> Option<rustls::ClientConfig> {
+    // An explicit provider. install_default() would replace the ring provider
+    // the HTTP/3 and browser paths install, and the first caller wins for the
+    // whole process.
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .ok()?;
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs().certs {
+        let _ = roots.add(cert);
+    }
+    if roots.is_empty() {
+        return None;
+    }
+    Some(builder.with_root_certificates(roots).with_no_client_auth())
+}
+
 fn post_blocking(url: &str, body: &[u8]) {
-    // rustls 0.23 refuses to build a client until a process provider exists.
-    // Another part of nab may have installed one already; either outcome is fine.
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let Some(tls) = heartbeat_tls() else {
+        return;
+    };
     let Ok(client) = reqwest::blocking::Client::builder()
+        .use_preconfigured_tls(tls)
         .timeout(Duration::from_secs(3))
         .connect_timeout(Duration::from_secs(3))
         .user_agent("heartbeat")
@@ -609,6 +651,15 @@ mod tests {
     #[test]
     fn maybe_send_returns_without_touching_a_home() {
         // The test build takes the early return. This guards that path against a panic.
-        maybe_send();
+        let _guard = maybe_send();
+    }
+
+    #[test]
+    fn tls_config_does_not_install_a_process_provider() {
+        let before = rustls::crypto::CryptoProvider::get_default().map(|p| Arc::as_ptr(p));
+        let config = heartbeat_tls();
+        let after = rustls::crypto::CryptoProvider::get_default().map(|p| Arc::as_ptr(p));
+        assert_eq!(before, after);
+        assert!(config.is_some());
     }
 }
