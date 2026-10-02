@@ -5,7 +5,8 @@
 //! test suite stay quiet. A failure never surfaces to the caller.
 //!
 //! The caller holds the returned guard until the command is finished. Drop waits
-//! for the post, so a short command still sends. Startup does not wait.
+//! for the post for at most three seconds, so a short command still sends.
+//! Startup does not wait.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -20,6 +21,9 @@ const DEFAULT_ENDPOINT: &str = "https://telemetry.revaluator.ai/v1/heartbeat";
 const ENDPOINT_ENV: &str = "NAB_TELEMETRY_ENDPOINT";
 const MAX_BODY: usize = 2048;
 const DAY: i64 = 24 * 60 * 60;
+/// Bound on the request and on shutdown. Certificate loading has no deadline
+/// of its own, so the shutdown wait is what keeps a stall from holding the process.
+const WORKER_LIMIT: Duration = Duration::from_secs(3);
 /// A stamp inside this window was just written by the process that won the
 /// lock, or the clock moved a little. Farther ahead is a stuck stamp.
 const FUTURE_SKEW: i64 = 120;
@@ -52,23 +56,47 @@ impl Drop for Heartbeat {
     }
 }
 
-fn slot() -> &'static Mutex<Option<std::thread::JoinHandle<()>>> {
-    static SLOT: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+struct SignalDone(std::sync::mpsc::Sender<()>);
+
+impl Drop for SignalDone {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
+struct Job {
+    handle: std::thread::JoinHandle<()>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+fn slot() -> &'static Mutex<Option<Job>> {
+    static SLOT: Mutex<Option<Job>> = Mutex::new(None);
     &SLOT
 }
 
+fn wait_for_worker(job: Job, limit: Duration) {
+    let finished = match job.done.recv_timeout(limit) {
+        Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => true,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => false,
+    };
+    if finished {
+        let _ = job.handle.join();
+    }
+}
+
 /// Wait for an in-flight heartbeat. `nab mcp serve` must call this before
-/// `exec`, which does not run destructors.
+/// `exec`, which does not run destructors. The wait is bounded: a worker
+/// stuck while loading certificates does not hold the process open.
 pub fn finish() {
-    let handle = slot().lock().unwrap_or_else(PoisonError::into_inner).take();
-    if let Some(handle) = handle {
-        let _ = handle.join();
+    let job = slot().lock().unwrap_or_else(PoisonError::into_inner).take();
+    if let Some(job) = job {
+        wait_for_worker(job, WORKER_LIMIT);
     }
 }
 
 /// Fire the daily heartbeat from a release binary.
 ///
-/// Returns immediately. Drop of the guard waits for the post, at most a few
+/// Returns immediately. Drop of the guard waits for the post, at most three
 /// seconds, and only on a day when a send is due. Never panics.
 #[must_use = "hold the guard until the command exits so the post can finish"]
 pub fn maybe_send() -> Heartbeat {
@@ -77,9 +105,11 @@ pub fn maybe_send() -> Heartbeat {
     if cfg!(test) || cfg!(debug_assertions) {
         return Heartbeat;
     }
+    let (tx, rx) = std::sync::mpsc::channel();
     let handle = std::thread::Builder::new()
         .name("nab-heartbeat".to_string())
-        .spawn(|| {
+        .spawn(move || {
+            let _signal = SignalDone(tx);
             let Some(home) = home_dir() else {
                 return;
             };
@@ -94,7 +124,8 @@ pub fn maybe_send() -> Heartbeat {
             );
         })
         .ok();
-    *slot().lock().unwrap_or_else(PoisonError::into_inner) = handle;
+    *slot().lock().unwrap_or_else(PoisonError::into_inner) =
+        handle.map(|handle| Job { handle, done: rx });
     Heartbeat
 }
 
@@ -446,8 +477,8 @@ fn post_blocking(url: &str, body: &[u8]) {
     };
     let Ok(client) = reqwest::blocking::Client::builder()
         .use_preconfigured_tls(tls)
-        .timeout(Duration::from_secs(3))
-        .connect_timeout(Duration::from_secs(3))
+        .timeout(WORKER_LIMIT)
+        .connect_timeout(WORKER_LIMIT)
         .user_agent("heartbeat")
         .build()
     else {
@@ -491,7 +522,9 @@ fn drive(
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::mpsc;
+    use std::time::Instant;
 
     static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -823,6 +856,52 @@ mod tests {
         );
         assert!(!sent);
         assert_eq!(posts, 0);
+    }
+
+    #[test]
+    fn a_stalled_worker_does_not_hold_shutdown() {
+        let (release_tx, release_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let _ = release_rx.recv();
+            let _ = done_tx.send(());
+        });
+        let (result_tx, result_rx) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let started = Instant::now();
+            wait_for_worker(
+                Job {
+                    handle,
+                    done: done_rx,
+                },
+                Duration::from_millis(100),
+            );
+            let _ = result_tx.send(started.elapsed());
+        });
+        let outcome = result_rx.recv_timeout(Duration::from_secs(2));
+        let _ = release_tx.send(());
+        let _ = waiter.join();
+        let elapsed = outcome.expect("shutdown wait did not return");
+        assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+    }
+
+    #[test]
+    fn a_finished_worker_is_waited_for() {
+        let (done_tx, done_rx) = mpsc::channel();
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_for_worker = Arc::clone(&flag);
+        let handle = std::thread::spawn(move || {
+            let _signal = SignalDone(done_tx);
+            flag_for_worker.store(true, Ordering::SeqCst);
+        });
+        wait_for_worker(
+            Job {
+                handle,
+                done: done_rx,
+            },
+            Duration::from_secs(2),
+        );
+        assert!(flag.load(Ordering::SeqCst));
     }
 
     #[test]
