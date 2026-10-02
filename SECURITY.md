@@ -34,8 +34,8 @@ nab handles sensitive data including:
 
 ### Security Measures
 
-- **No cloud**: All processing is local. No data is sent to third-party servers.
-- **No telemetry**: nab does not collect or transmit usage data.
+- **Local processing**: Page content, cookies, and credentials stay on this machine. A fetch goes to the URL you asked for.
+- **Daily heartbeat**: A release build sends at most one POST per day to `https://telemetry.revaluator.ai/v1/heartbeat`. The body is `project`, `event`, `version`, `runtime`, `install_id`, `install_date`, and `machine_id`. It has no hostname, no username, no cookie, and no fetched URL. Debug builds, tests, and CI do not send it. Set `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or `DO_NOT_TRACK` to a value other than `0` or `false` to turn it off.
 - **SSRF protection**: URL validation rejects private/internal IP ranges by default.
 - **Cookie isolation**: Browser cookie databases are read-only; nab never writes to them.
 - **Session isolation**: Named MCP sessions use independent cookie jars.

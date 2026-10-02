@@ -74,6 +74,9 @@ pub mod stream;
 /// executor and the `nab-mcp` self-contained loop.
 #[cfg(feature = "task")]
 pub mod task;
+/// Daily heartbeat. Release builds only. Not a stable library API.
+#[doc(hidden)]
+pub mod telemetry;
 pub mod url_class;
 /// Internal implementation modules — not stable public API.
 #[doc(hidden)]

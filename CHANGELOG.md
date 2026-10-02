@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-10-02
+
+### Added
+
+- A release build sends at most one heartbeat per day to
+  `https://telemetry.revaluator.ai/v1/heartbeat`. The body is `project`,
+  `event`, `version`, `runtime`, `install_id`, `install_date`, and
+  `machine_id`. Debug builds, tests, and CI do not send it. Set
+  `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or `DO_NOT_TRACK` to a value other than
+  `0` or `false` to turn it off.
+
 ### Fixed
 
 - `nab fetch` now fails closed when HTML extraction recovers near-zero content
@@ -20,15 +31,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the author-bio DOM (#198).
 - PDF `OnceLock` initialization is covered for repeated calls after the
   all-features compile fix (#260, #308).
+- A token budget now spends the leftover room on a prefix of an oversized
+  block, instead of stopping at the last whole block (#307).
+- `nab models` fetches an existing install instead of rebuilding the same
+  commit (#327).
+
+### Security
+
+- Bumped `yara-x` from 1.16.0 to 1.20.0 (GHSA-2jx3-ff3v-j7jj). nab compiles
+  rules from source and does not deserialize them. Transitive Wasmtime for
+  that crate moves to 45.0.3. The RUSTSEC-2026-0222/0269 exceptions (#267)
+  remain.
+- Bumped `rustls` to 0.23.45 (RUSTSEC-2026-0285, CVSS 5.3).
 
 ## [0.12.3] - 2026-09-04
 
 ### Security
 
-- Bumped `yara-x` from 1.16.0 to 1.20.0 (GHSA-2jx3-ff3v-j7jj, unvalidated
-  `Rules::deserialize`; nab compiles rules from source and never deserializes
-  them). Its transitive Wasmtime moves from 43.0.2 to 45.0.3, still with no
-  patched 45.x line, so the RUSTSEC-2026-0222/0269 exceptions (#267) remain.
 - Bumped the optional Wasmtime runtime from 46.0.2 to 46.0.3 (RUSTSEC-2026-0268,
   RUSTSEC-2026-0269). Transitive `yara-x` 1.16.0 still pulls Wasmtime 43.0.2;
   newest yara-x 1.20.0 uses Wasmtime ^45.0.3, which has no patched 45.x line.
