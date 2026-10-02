@@ -6,8 +6,11 @@
     "name": "MikkoParkkola",
     "url": "https://github.com/MikkoParkkola"
   },
-  "homepage": "https://github.com/MikkoParkkola/nab",
+  "homepage": "https://github.com/MikkoParkkola/nab/tree/directory/plugin-ready/plugin",
   "repository": "https://github.com/MikkoParkkola/nab",
+  "documentationUrl": "https://github.com/MikkoParkkola/nab/blob/directory/plugin-ready/plugin/README.md",
+  "privacyPolicyUrl": "https://github.com/MikkoParkkola/nab/blob/directory/plugin-ready/plugin/PRIVACY.md",
+  "supportUrl": "https://github.com/MikkoParkkola/nab/issues",
   "license": "MIT",
   "keywords": [
     "nab",
