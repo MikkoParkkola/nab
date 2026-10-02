@@ -10,7 +10,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -41,15 +41,25 @@ const CI_ENVS: &[&str] = &[
 ///
 /// Binding this to `_` drops it immediately and can cancel the post. Keep a
 /// named binding for the whole command.
-pub struct Heartbeat {
-    handle: Option<std::thread::JoinHandle<()>>,
-}
+pub struct Heartbeat;
 
 impl Drop for Heartbeat {
     fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        finish();
+    }
+}
+
+fn slot() -> &'static Mutex<Option<std::thread::JoinHandle<()>>> {
+    static SLOT: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+    &SLOT
+}
+
+/// Wait for an in-flight heartbeat. `nab mcp serve` must call this before
+/// `exec`, which does not run destructors.
+pub fn finish() {
+    let handle = slot().lock().unwrap_or_else(PoisonError::into_inner).take();
+    if let Some(handle) = handle {
+        let _ = handle.join();
     }
 }
 
@@ -62,7 +72,7 @@ pub fn maybe_send() -> Heartbeat {
     // Test and debug builds are the development copies. The published binary is
     // a release build, which is the one that sends.
     if cfg!(test) || cfg!(debug_assertions) {
-        return Heartbeat { handle: None };
+        return Heartbeat;
     }
     let handle = std::thread::Builder::new()
         .name("nab-heartbeat".to_string())
@@ -81,7 +91,8 @@ pub fn maybe_send() -> Heartbeat {
             );
         })
         .ok();
-    Heartbeat { handle }
+    *slot().lock().unwrap_or_else(PoisonError::into_inner) = handle;
+    Heartbeat
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -108,9 +119,14 @@ fn suppressed(version: &str, env: &impl Fn(&str) -> Option<String>) -> bool {
     if CI_ENVS.iter().any(|name| truthy(env(name).as_deref())) {
         return true;
     }
-    ["DO_NOT_TRACK", "NO_TELEMETRY", "NAB_NO_TELEMETRY"]
-        .iter()
-        .any(|name| truthy(env(name).as_deref()))
+    [
+        "DO_NOT_TRACK",
+        "NO_TELEMETRY",
+        "NAB_NO_TELEMETRY",
+        "CARGO_MANIFEST_DIR",
+    ]
+    .iter()
+    .any(|name| truthy(env(name).as_deref()))
 }
 
 fn resolve_endpoint(env: &impl Fn(&str) -> Option<String>) -> Option<String> {
@@ -201,11 +217,41 @@ fn due(dir: &Path, now: DateTime<Utc>) -> bool {
     let Some(last) = parse_stamp(&text) else {
         return true;
     };
-    now.timestamp().saturating_sub(last.timestamp()) >= DAY
+    let last_at = last.timestamp();
+    let now_at = now.timestamp();
+    // A future stamp would otherwise suppress the post until the clock catches it.
+    last_at > now_at || now_at.saturating_sub(last_at) >= DAY
 }
 
 fn mark_sent(dir: &Path, now: DateTime<Utc>) -> std::io::Result<()> {
     write_private(dir, "heartbeat", &format_stamp(now))
+}
+
+/// Exclusive claim for this daily slot. `None` means do not post: another
+/// process holds the slot, the stamp is still fresh, or the stamp could not
+/// be written. The returned file keeps the lock until the post finishes.
+fn claim_day(dir: &Path, now: DateTime<Utc>) -> Option<std::fs::File> {
+    fs::create_dir_all(dir).ok()?;
+    set_dir_private(dir);
+    let path = dir.join("heartbeat.lock");
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(&path).ok()?;
+    set_file_private(&path);
+    // Another nab is already sending. Skipping is the once-a-day outcome.
+    if file.try_lock().is_err() {
+        return None;
+    }
+    if !due(dir, now) {
+        return None;
+    }
+    mark_sent(dir, now).ok()?;
+    Some(file)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -303,10 +349,12 @@ fn valid_machine(value: &str) -> bool {
 fn machine_id(home: &Path) -> String {
     let dir = home.join(".revaluator");
     let path = dir.join("machine-id");
-    if let Some(existing) = read_trim(&path)
-        && valid_machine(&existing)
-    {
-        return existing;
+    if let Some(existing) = read_trim(&path) {
+        // Shared with other tools. Reuse a valid id. Leave any other content alone.
+        if valid_machine(&existing) {
+            return existing;
+        }
+        return String::new();
     }
     let id = random_id();
     if write_private(&dir, "machine-id", &id).is_err() {
@@ -412,10 +460,9 @@ fn drive(
         return false;
     };
     let dir = state_dir(home);
-    if !due(&dir, now) {
+    let Some(_claim) = claim_day(&dir, now) else {
         return false;
-    }
-    let _ = mark_sent(&dir, now);
+    };
     let install = ensure_install(&dir);
     let installed = install_date(&dir, now, install.fresh);
     let machine = machine_id(home);
@@ -475,12 +522,13 @@ mod tests {
             &[("NAB_NO_TELEMETRY", "1")][..],
             &[("NO_TELEMETRY", "yes")],
             &[("DO_NOT_TRACK", "1")],
+            &[("CARGO_MANIFEST_DIR", "/tmp/nab-src")],
             &[("CI", "true")],
             &[("GITHUB_ACTIONS", "true")],
         ] {
             let mut posts = 0;
             let sent = drive(&home.0, &env_from(pairs), "0.12.4", now, &mut |_, _| {
-                posts += 1
+                posts += 1;
             });
             assert!(!sent);
             assert_eq!(posts, 0);
@@ -488,10 +536,10 @@ mod tests {
         }
         let mut posts = 0;
         assert!(!drive(&home.0, &env_from(&[]), "dev", now, &mut |_, _| {
-            posts += 1
+            posts += 1;
         }));
         assert!(!drive(&home.0, &env_from(&[]), "", now, &mut |_, _| {
-            posts += 1
+            posts += 1;
         }));
         assert_eq!(posts, 0);
     }
@@ -540,7 +588,9 @@ mod tests {
             )]),
             "0.12.4",
             now,
-            &mut |_, _| posts += 1,
+            &mut |_, _| {
+                posts += 1;
+            },
         ));
         assert_eq!(posts, 0);
 
@@ -606,21 +656,27 @@ mod tests {
             &env_from(&[]),
             "0.12.4",
             now,
-            &mut |_, _| posts += 1
+            &mut |_, _| {
+                posts += 1;
+            }
         ));
         assert!(!drive(
             &home.0,
             &env_from(&[]),
             "0.12.4",
             now + chrono::Duration::hours(23),
-            &mut |_, _| posts += 1,
+            &mut |_, _| {
+                posts += 1;
+            },
         ));
         assert!(drive(
             &home.0,
             &env_from(&[]),
             "0.12.4",
             now + chrono::Duration::hours(24),
-            &mut |_, _| posts += 1,
+            &mut |_, _| {
+                posts += 1;
+            },
         ));
         assert_eq!(posts, 2);
         let id = read_trim(&state_dir(&home.0).join("install-id")).unwrap();
@@ -649,6 +705,63 @@ mod tests {
     }
 
     #[test]
+    fn a_future_stamp_is_due_again() {
+        let home = TempHome::new();
+        let dir = state_dir(&home.0);
+        write_private(&dir, "heartbeat", "2099-01-01T00:00:00Z").unwrap();
+        let mut posts = 0;
+        assert!(drive(
+            &home.0,
+            &env_from(&[]),
+            "0.12.4",
+            at(2026, 10, 2, 12),
+            &mut |_, _| {
+                posts += 1;
+            },
+        ));
+        assert_eq!(posts, 1);
+    }
+
+    #[test]
+    fn an_invalid_shared_machine_id_is_left_alone() {
+        let home = TempHome::new();
+        let dir = home.0.join(".revaluator");
+        write_private(&dir, "machine-id", "not-ours").unwrap();
+        let mut raw = Vec::new();
+        drive(
+            &home.0,
+            &env_from(&[]),
+            "0.12.4",
+            at(2026, 10, 2, 12),
+            &mut |_, body| raw = body.to_vec(),
+        );
+        let value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert!(value.get("machine_id").is_none());
+        assert_eq!(
+            fs::read_to_string(dir.join("machine-id")).unwrap().trim(),
+            "not-ours"
+        );
+    }
+
+    #[test]
+    fn unwritable_state_does_not_post() {
+        let home = TempHome::new();
+        fs::write(home.0.join(".nab"), "not a directory").unwrap();
+        let mut posts = 0;
+        let sent = drive(
+            &home.0,
+            &env_from(&[]),
+            "0.12.4",
+            at(2026, 10, 2, 12),
+            &mut |_, _| {
+                posts += 1;
+            },
+        );
+        assert!(!sent);
+        assert_eq!(posts, 0);
+    }
+
+    #[test]
     fn maybe_send_returns_without_touching_a_home() {
         // The test build takes the early return. This guards that path against a panic.
         let _guard = maybe_send();
@@ -656,9 +769,9 @@ mod tests {
 
     #[test]
     fn tls_config_does_not_install_a_process_provider() {
-        let before = rustls::crypto::CryptoProvider::get_default().map(|p| Arc::as_ptr(p));
+        let before = rustls::crypto::CryptoProvider::get_default().map(Arc::as_ptr);
         let config = heartbeat_tls();
-        let after = rustls::crypto::CryptoProvider::get_default().map(|p| Arc::as_ptr(p));
+        let after = rustls::crypto::CryptoProvider::get_default().map(Arc::as_ptr);
         assert_eq!(before, after);
         assert!(config.is_some());
     }

@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `event`, `version`, `runtime`, `install_id`, `install_date`, and
   `machine_id`. Debug builds, tests, and CI do not send it. The command
   waits for that post on the way out, up to three seconds, and only on a
-  day when a send is due. Set `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or
+  day when a send is due. A run launched by Cargo does not send. Set
+  `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or
   `DO_NOT_TRACK` to a value other than `0` or `false` to turn it off.
 
 ### Fixed
@@ -44,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that crate moves to 45.0.3. The RUSTSEC-2026-0222/0269 exceptions (#267)
   remain.
 - Bumped `rustls` to 0.23.45 (RUSTSEC-2026-0285, CVSS 5.3).
+- Bumped the optional Wasmtime runtime from 46.0.3 to 48.0.3 (#329).
+  `yara-x` 1.20.0 still builds against Wasmtime 45.0.3.
 
 ## [0.12.3] - 2026-09-04
 
