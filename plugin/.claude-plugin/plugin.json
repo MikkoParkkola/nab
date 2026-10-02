@@ -24,6 +24,5 @@
   "commands": [
     "./commands/nab.md"
   ],
-  "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json"
 }

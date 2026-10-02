@@ -84,8 +84,8 @@ def validate_manifest(checks: Checks) -> dict:
     )
     checks.check(
         "MIK-3402.PLUG.1",
-        manifest.get("hooks") == "./hooks/hooks.json",
-        "plugin.json declares hooks/hooks.json",
+        "hooks" not in manifest and (PLUGIN / "hooks" / "hooks.json").is_file(),
+        "hooks/hooks.json is present and not re-listed in plugin.json",
     )
     checks.check(
         "MIK-3402.PLUG.1",
