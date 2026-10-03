@@ -351,6 +351,10 @@ pub fn cmd_mcp_serve(cfg: &ServeConfig) -> Result<()> {
         args.push(origin.clone());
     }
 
+    // exec and process::exit skip destructors. Finish the post first so the
+    // replacement server does not observe a stamp for a request that died.
+    nab::telemetry::finish();
+
     // exec replaces the current process — no fork overhead, no zombie.
     #[cfg(unix)]
     {

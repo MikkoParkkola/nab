@@ -3,7 +3,7 @@
   "name": "io.github.MikkoParkkola/nab",
   "title": "nab",
   "description": "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown. MCP server with fetch, login, watch, and fingerprint tools.",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "repository": {
     "url": "https://github.com/MikkoParkkola/nab",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "cargo",
       "registryBaseUrl": "https://crates.io",
       "identifier": "nab",
-      "version": "0.12.3",
+      "version": "0.12.4",
       "transport": {
         "type": "stdio"
       },
@@ -64,6 +64,18 @@
         {
           "name": "NAB_MCP_CLI_BIN",
           "description": "Path to the mcp-cli binary used for MCP-based credential retrieval (default: mcp-cli).",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_NO_TELEMETRY",
+          "description": "Set to anything other than 0 or false to skip the daily heartbeat. NO_TELEMETRY and DO_NOT_TRACK do the same.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NAB_TELEMETRY_ENDPOINT",
+          "description": "Replace the daily heartbeat URL. An empty value leaves the default.",
           "isRequired": false,
           "isSecret": false
         }

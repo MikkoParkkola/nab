@@ -1,6 +1,6 @@
 [package]
 name = "nab"
-version = "0.12.3"
+version = "0.12.4"
 edition = "2024"
 authors = ["Mikko Parkkola"]
 description = "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown"
@@ -120,7 +120,7 @@ toml = "1.1"                            # Plugin config parsing
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sandboxed WASM runtime for third-party site extractors.
 # No unsafe code needed — wasmtime's safe API is used throughout.
-wasmtime = { version = "48.0.3", optional = true, default-features = false, features = [
+wasmtime = { version = "48.0.5", optional = true, default-features = false, features = [
     "cranelift",         # JIT compiler backend
     "runtime",           # Core runtime
     "component-model",   # WIT Component Model (bindgen!, Linker<T>, Component)

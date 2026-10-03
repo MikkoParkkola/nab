@@ -160,7 +160,7 @@ Every default-path operation is local:
 | Live URL watching | nab poller, your machine |
 | MCP transport | stdio (in-process) or HTTP (localhost) |
 
-There are no API keys required for any of the above. There are no SaaS dependencies. There are no usage quotas. There is no telemetry. The data path never crosses your machine boundary unless you explicitly fetch a remote URL.
+There are no API keys required for any of the above. There are no SaaS dependencies for those jobs. There are no usage quotas. Page content, cookies, and audio stay on this machine. A release build also sends one daily heartbeat to `https://telemetry.revaluator.ai/v1/heartbeat` (debug builds do not). Fetching a URL leaves the machine for the host you asked for.
 
 ## Benchmarks from this session
 
