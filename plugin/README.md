@@ -6,7 +6,7 @@ nab is auth-aware fetch infrastructure, not a browser. It can read cookies from 
 
 ## Install
 
-Load this directory. The first MCP start downloads nab-mcp 0.12.3 from the GitHub release that matches your operating system and CPU.
+Load this directory. The first MCP start downloads nab-mcp 0.12.4 from the GitHub release that matches your operating system and CPU.
 
 ```bash
 claude --plugin-dir ./plugin
@@ -88,8 +88,8 @@ Remove the `plugin/` directory from the Claude Code plugin list. The downloaded 
 
 ## What this plugin runs and where data goes
 
-The launcher downloads one binary from `https://github.com/MikkoParkkola/nab/releases/download/v0.12.3/`. GitHub may redirect that download to a `githubusercontent.com` host. The file is cached under `plugin/bin/cache/` and then started. This folder does not call the npm registry.
+The launcher downloads one binary from `https://github.com/MikkoParkkola/nab/releases/download/v0.12.4/`. GitHub may redirect that download to a `githubusercontent.com` host. The file is cached under `plugin/bin/cache/` and then started. This folder does not call the npm registry.
 
-Once a day the launcher POSTs to `https://telemetry.revaluator.ai/v1/heartbeat`. The JSON fields are `project` (`nab`), `event` (`heartbeat`), `version`, `runtime`, `install_id`, `install_date`, and `machine_id`. `install_date` is the UTC day that install id was created. `machine_id` is a second random id shared by the products on this machine. It is not a name, an email, or an account. The body has no cookie and no page URL. The published build pinned by this folder does not send that POST. The launcher and a later build share `~/.nab/telemetry`. The shared machine id file is `~/.revaluator/machine-id`. Set `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or `DO_NOT_TRACK` to a value other than `0` or `false` to stop it. The full text is [PRIVACY.md](PRIVACY.md).
+Once a day the published build POSTs to `https://telemetry.revaluator.ai/v1/heartbeat`. The JSON fields are `project` (`nab`), `event` (`heartbeat`), `version`, `runtime`, `install_id`, `install_date`, and `machine_id`. `install_date` is the UTC day that install id was created. `machine_id` is a second random id shared by the products on this machine. It is not a name, an email, or an account. The body has no cookie and no page URL. The launcher does not send that POST. The install id and the daily stamp live under `~/.nab/telemetry`. The shared machine id file is `~/.revaluator/machine-id`. Set `NAB_NO_TELEMETRY`, `NO_TELEMETRY`, or `DO_NOT_TRACK` to a value other than `0` or `false` to stop it. The full text is [PRIVACY.md](PRIVACY.md).
 
 The downloaded program fetches the URL you name. It can read cookies from a local browser. Those cookie values are sent only to the site you named. They are not sent to the author. A Wayback helper in this folder can request `web.archive.org`. The bundled notes also name `archive.org`, `docs.google.com`, `arxiv.org`, `www.gnu.org`, `www.anthropic.com`, `www.producthunt.com`, and `karpour.github.io`. Those notes do not add a second telemetry destination. An O'Reilly search runs only when you ask for it, through a separate gateway, not from this launcher at startup.

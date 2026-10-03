@@ -1,6 +1,6 @@
 {
   "name": "nab",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "Auth-aware URL fetch, research, Wayback, Internet Archive, and O'Reilly workflows. The plugin downloads pinned nab-mcp; the nab CLI does not need to be on PATH.",
   "author": {
     "name": "MikkoParkkola",

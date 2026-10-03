@@ -4,10 +4,8 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const https = require('https');
 const path = require('path');
-const heartbeat = require('./heartbeat');
-
 // Pinned release. The launcher never searches PATH for nab or nab-mcp.
-const NAB_MCP_VERSION = '0.12.3';
+const NAB_MCP_VERSION = '0.12.4';
 
 const ASSET_BY_PLATFORM = {
   'darwin:arm64': 'nab-mcp-aarch64-apple-darwin',
@@ -101,7 +99,7 @@ async function binaryPath() {
   fs.mkdirSync(cacheDir, { recursive: true });
   const binPath = path.join(cacheDir, asset);
   if (!fs.existsSync(binPath) || fs.statSync(binPath).size === 0) {
-    const downloadPrefix = 'https://github.com/MikkoParkkola/nab/releases/download/v0.12.3/';
+    const downloadPrefix = 'https://github.com/MikkoParkkola/nab/releases/download/v0.12.4/';
     if (downloadPrefix !== `https://github.com/MikkoParkkola/nab/releases/download/v${NAB_MCP_VERSION}/`) {
       throw new Error('nab-mcp version pin drifted');
     }
@@ -112,15 +110,8 @@ async function binaryPath() {
 }
 
 async function main() {
-  // The downloaded 0.12.3 binary does not contain this client. The launcher
-  // sends the daily POST, and a later build shares ~/.nab/telemetry.
-  heartbeat.start({
-    project: 'nab',
-    version: NAB_MCP_VERSION,
-    optOut: ['NAB_NO_TELEMETRY'],
-    endpointEnv: 'NAB_TELEMETRY_ENDPOINT',
-    stateParts: ['.nab', 'telemetry'],
-  });
+  // The 0.12.4 binary sends the daily POST. This launcher does not, so a
+  // directory install is counted once.
   const binPath = await binaryPath();
   const child = spawn(binPath, process.argv.slice(2), {
     stdio: 'inherit',
