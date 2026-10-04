@@ -129,12 +129,18 @@ fn is_pdf(bytes: &[u8]) -> bool {
 /// Uncompressed page dictionaries sit outside `stream` bodies. PDF 1.5 puts
 /// them inside `FlateDecode` object streams, which a raw scan cannot see.
 /// Returns 0 when none are visible — callers must not invent a page count.
+/// An incremental update can leave a replaced page object in the file, so the
+/// count can be high for those files.
 fn count_pages(bytes: &[u8]) -> usize {
+    count_pages_with_budget(bytes, MAX_DECOMPRESSED_BYTES)
+}
+
+fn count_pages_with_budget(bytes: &[u8], mut budget: usize) -> usize {
     let mut total = 0;
     let mut cursor = 0;
     while let Some(span) = next_stream(bytes, cursor) {
         total += count_page_tokens(&bytes[cursor..span.keyword]);
-        total += page_tokens_in_object_stream(bytes, cursor, &span);
+        total += page_tokens_in_object_stream(bytes, &span, &mut budget);
         cursor = span.after;
     }
     total + count_page_tokens(&bytes[cursor..])
@@ -142,15 +148,19 @@ fn count_pages(bytes: &[u8]) -> usize {
 
 struct StreamSpan {
     keyword: usize,
+    dict_start: usize,
+    dict_end: usize,
     data_start: usize,
     data_end: usize,
     after: usize,
 }
 
-/// Next `stream … endstream` span at or after `from`.
+/// Next real `stream … endstream` span at or after `from`.
 ///
-/// The `stream` inside `endstream` is rejected. A stream with no `endstream`
-/// ends the walk so the remaining bytes stay with the caller.
+/// A hit counts only when a dictionary's `>>` sits immediately before the
+/// keyword, so the word `stream` inside a string is not a stream. The
+/// `stream` inside `endstream` is rejected. A stream with no `endstream`
+/// ends the walk.
 fn next_stream(bytes: &[u8], from: usize) -> Option<StreamSpan> {
     const KW: &[u8] = b"stream";
     let mut i = from;
@@ -163,6 +173,14 @@ fn next_stream(bytes: &[u8], from: usize) -> Option<StreamSpan> {
             i += KW.len();
             continue;
         }
+        let Some(dict_end) = closing_dict_end(bytes, i, from) else {
+            i += KW.len();
+            continue;
+        };
+        let Some(dict_start) = opening_dict_start(bytes, dict_end, from) else {
+            i += KW.len();
+            continue;
+        };
         let mut data_start = i + KW.len();
         if bytes.get(data_start) == Some(&b'\r') {
             data_start += 1;
@@ -174,6 +192,8 @@ fn next_stream(bytes: &[u8], from: usize) -> Option<StreamSpan> {
         let data_end = data_start + rel;
         return Some(StreamSpan {
             keyword: i,
+            dict_start,
+            dict_end,
             data_start,
             data_end,
             after: data_end + b"endstream".len(),
@@ -182,9 +202,48 @@ fn next_stream(bytes: &[u8], from: usize) -> Option<StreamSpan> {
     None
 }
 
-fn page_tokens_in_object_stream(bytes: &[u8], prev_end: usize, span: &StreamSpan) -> usize {
-    let dict_start = span.keyword.saturating_sub(512).max(prev_end);
-    let dict = &bytes[dict_start..span.keyword];
+/// Exclusive end of the `>>` that closes the dictionary before `keyword`.
+fn closing_dict_end(bytes: &[u8], keyword: usize, prev_end: usize) -> Option<usize> {
+    let mut i = keyword;
+    while i > prev_end && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    if i >= prev_end.saturating_add(2) && bytes[i - 2] == b'>' && bytes[i - 1] == b'>' {
+        Some(i)
+    } else {
+        None
+    }
+}
+
+/// Index of the `<<` that matches the `>>` ending at `dict_end`.
+fn opening_dict_start(bytes: &[u8], dict_end: usize, prev_end: usize) -> Option<usize> {
+    if dict_end < prev_end.saturating_add(2) {
+        return None;
+    }
+    let mut depth = 1i32;
+    let mut j = dict_end - 2;
+    while j > prev_end {
+        j -= 1;
+        if j + 1 >= bytes.len() {
+            continue;
+        }
+        if bytes[j] == b'>' && bytes[j + 1] == b'>' {
+            depth += 1;
+        } else if bytes[j] == b'<' && bytes[j + 1] == b'<' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(j);
+            }
+        }
+    }
+    None
+}
+
+fn page_tokens_in_object_stream(bytes: &[u8], span: &StreamSpan, budget: &mut usize) -> usize {
+    if *budget == 0 {
+        return 0;
+    }
+    let dict = &bytes[span.dict_start..span.dict_end];
     if !window_contains(dict, b"ObjStm") || dict_is_image(dict) {
         return 0;
     }
@@ -196,52 +255,85 @@ fn page_tokens_in_object_stream(bytes: &[u8], prev_end: usize, span: &StreamSpan
     } else {
         None
     };
-    payload.as_deref().map_or(0, count_page_tokens)
+    let Some(payload) = payload else {
+        return 0;
+    };
+    let usable = payload.len().min(*budget);
+    let n = count_page_tokens(&payload[..usable]);
+    *budget = budget.saturating_sub(usable);
+    n
 }
 
-/// Count `/Type /Page` and `/Type/Page` names. `/Type /Pages` does not match:
-/// the following name character (`s`) means the name has not ended.
+/// Count `/Type` names whose value is the name `/Page`.
+///
+/// Whitespace may separate the two names. `/Pages` is a different name.
+/// Matches inside comments and literal or hex strings are not page objects.
 fn count_page_tokens(bytes: &[u8]) -> usize {
-    count_pdf_name(bytes, b"/Type /Page") + count_pdf_name(bytes, b"/Type/Page")
-}
-
-fn count_pdf_name(haystack: &[u8], name: &[u8]) -> usize {
-    if name.is_empty() {
-        return 0;
-    }
     let mut count = 0;
     let mut i = 0;
-    while i + name.len() <= haystack.len() {
-        let end = i + name.len();
-        let followed_by_name_char = haystack
-            .get(end)
-            .is_some_and(|b| !is_pdf_delimiter_or_ws(*b));
-        if haystack[i..end] == *name && !followed_by_name_char {
-            count += 1;
-            i = end;
-        } else {
-            i += 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'(' => {
+                if let Some((_, n)) = parse_literal_string(&bytes[i..]) {
+                    i += n;
+                } else {
+                    i += 1;
+                }
+            }
+            // A dictionary opens with `<<`. Treating the second `<` as a hex
+            // string would read through the next `>` and hide the names inside.
+            b'<' if bytes.get(i + 1) == Some(&b'<') => i += 2,
+            b'<' => {
+                if let Some((_, n)) = parse_hex_string(&bytes[i..]) {
+                    i += n;
+                } else {
+                    i += 1;
+                }
+            }
+            b'/' => {
+                let Some((name, n)) = pdf_name_at(&bytes[i..]) else {
+                    i += 1;
+                    continue;
+                };
+                i += n;
+                if name == b"/Type" {
+                    i = skip_ascii_ws(bytes, i);
+                    if let Some((value, n2)) = pdf_name_at(&bytes[i..]) {
+                        if value == b"/Page" {
+                            count += 1;
+                        }
+                        i += n2;
+                    }
+                }
+            }
+            _ => i += 1,
         }
     }
     count
 }
 
-/// Count non-overlapping occurrences of `needle` in `haystack`.
-fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
-    if needle.is_empty() {
-        return 0;
+fn pdf_name_at(bytes: &[u8]) -> Option<(&[u8], usize)> {
+    if bytes.first() != Some(&b'/') {
+        return None;
     }
-    let mut count = 0;
-    let mut i = 0;
-    while i + needle.len() <= haystack.len() {
-        if haystack[i..i + needle.len()] == *needle {
-            count += 1;
-            i += needle.len();
-        } else {
-            i += 1;
-        }
+    let mut i = 1;
+    while i < bytes.len() && !is_pdf_delimiter_or_ws(bytes[i]) && bytes[i] != b'%' {
+        i += 1;
     }
-    count
+    Some((&bytes[..i], i.max(1)))
+}
+
+fn skip_ascii_ws(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0c) {
+        i += 1;
+    }
+    i
 }
 
 /// Extract text from PDF byte stream using operator-based scanning.
@@ -517,25 +609,32 @@ fn hex_digit(b: u8) -> Option<u8> {
 
 /// Parse a PDF array `[ (str1) adj (str2) ... ]` used by the TJ operator.
 ///
-/// A positioning number of [`WORD_GAP_THOUSANDTHS`] or less becomes one space
-/// between the surrounding strings. Smaller numbers are kerning and stay
-/// invisible. The space is stored in the preceding string so later joining
-/// cannot drop it.
+/// Consecutive positioning numbers are summed. A total of
+/// [`WORD_GAP_THOUSANDTHS`] or less becomes one space before the next
+/// non-empty string. An empty string does not consume that total, and a
+/// comment is not a number. The space is stored in the preceding string so
+/// later joining cannot drop it.
 fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
     if bytes.first() != Some(&b'[') {
         return None;
     }
     let mut strings = Vec::new();
     let mut i = 1;
-    let mut pending_gap = false;
+    let mut adjust = 0.0;
+    let mut saw_adjust = false;
 
     while i < bytes.len() {
         match bytes[i] {
             b']' => return Some((strings, i + 1)),
+            b'%' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    i += 1;
+                }
+            }
             b'(' => {
                 if let Some((s, consumed)) = parse_literal_string(&bytes[i..]) {
-                    push_tj_piece(&mut strings, &s, pending_gap);
-                    pending_gap = false;
+                    take_tj_piece(&mut strings, &s, &mut adjust, &mut saw_adjust);
                     i += consumed;
                 } else {
                     i += 1;
@@ -543,8 +642,7 @@ fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
             }
             b'<' if bytes.get(i + 1).is_some_and(|&b| b != b'<') => {
                 if let Some((s, consumed)) = parse_hex_string(&bytes[i..]) {
-                    push_tj_piece(&mut strings, &s, pending_gap);
-                    pending_gap = false;
+                    take_tj_piece(&mut strings, &s, &mut adjust, &mut saw_adjust);
                     i += consumed;
                 } else {
                     i += 1;
@@ -552,9 +650,8 @@ fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
             }
             b'+' | b'-' | b'.' | b'0'..=b'9' => {
                 if let Some((n, consumed)) = parse_pdf_number(&bytes[i..]) {
-                    if n <= WORD_GAP_THOUSANDTHS {
-                        pending_gap = true;
-                    }
+                    adjust += n;
+                    saw_adjust = true;
                     i += consumed;
                 } else {
                     i += 1;
@@ -568,20 +665,27 @@ fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
     None // unclosed array
 }
 
-fn push_tj_piece(strings: &mut Vec<String>, piece: &str, gap: bool) {
+fn take_tj_piece(strings: &mut Vec<String>, piece: &str, adjust: &mut f64, saw_adjust: &mut bool) {
+    let gap = *saw_adjust && *adjust <= WORD_GAP_THOUSANDTHS;
+    if push_tj_piece(strings, piece, gap) {
+        *adjust = 0.0;
+        *saw_adjust = false;
+    }
+}
+
+fn push_tj_piece(strings: &mut Vec<String>, piece: &str, gap: bool) -> bool {
     if piece.is_empty() {
-        return;
+        return false;
     }
-    if gap {
-        if let Some(prev) = strings.last_mut() {
-            if !prev.ends_with(' ') && !piece.starts_with(' ') {
-                prev.push(' ');
-            }
-            prev.push_str(piece);
-            return;
+    if gap && let Some(prev) = strings.last_mut() {
+        if !prev.ends_with(' ') && !piece.starts_with(' ') {
+            prev.push(' ');
         }
+        prev.push_str(piece);
+    } else {
+        strings.push(piece.to_string());
     }
-    strings.push(piece.to_string());
+    true
 }
 
 /// Parse a PDF number (`-250`, `16.5`, `-.5`). Returns the value and the
@@ -650,9 +754,7 @@ fn collect_stream_contents(bytes: &[u8]) -> Option<Vec<u8>> {
 
     while let Some(span) = next_stream(bytes, cursor) {
         found_any = true;
-        // Dictionary lookback stays inside this object, after the previous stream.
-        let dict_start = span.keyword.saturating_sub(512).max(cursor);
-        let dict = &bytes[dict_start..span.keyword];
+        let dict = &bytes[span.dict_start..span.dict_end];
         let data = &bytes[span.data_start..span.data_end];
         cursor = span.after;
 
@@ -883,6 +985,56 @@ mod tests {
         let (strings, _) = parse_array_strings(b"[(A) -20 (V)]").unwrap();
         let line: String = strings.concat();
         assert_eq!(line, "AV");
+    }
+
+    #[test]
+    fn tj_empty_piece_does_not_swallow_the_word_gap() {
+        let (strings, _) = parse_array_strings(b"[(Hello) -250 () (world)]").unwrap();
+        assert_eq!(strings.concat(), "Hello world");
+    }
+
+    #[test]
+    fn tj_cancelling_adjustments_do_not_become_a_space() {
+        let (strings, _) = parse_array_strings(b"[(A) -250 250 (V)]").unwrap();
+        assert_eq!(strings.concat(), "AV");
+    }
+
+    #[test]
+    fn tj_comment_is_not_a_positioning_number() {
+        let (strings, _) = parse_array_strings(b"[(A) % -250\n (V)]").unwrap();
+        assert_eq!(strings.concat(), "AV");
+    }
+
+    #[test]
+    fn count_pages_ignores_a_stream_word_inside_a_string() {
+        // The bytes `stream` in metadata are not a content stream. Page
+        // dictionaries after them must still count.
+        let pdf = b"%PDF-1.4\n<< /Title (stream) >>\n<< /Type /Page >>\n<< /Type /Page >>\n<< /Length 5 >>\nstream\nhello\nendstream\n";
+        assert_eq!(count_pages(pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_ignores_type_page_inside_strings_and_comments() {
+        let bytes = b"%PDF-1.4\n% /Type /Page\n/Title (/Type /Page)\n/Type\n/Page\n";
+        assert_eq!(count_pages(bytes), 1);
+    }
+
+    #[test]
+    fn count_pages_reads_object_stream_after_a_nearby_image_name() {
+        let payload = b"<< /Type /Page >>\n<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /XObject << /Image1 9 0 R >> >>\n");
+        pdf.extend_from_slice(b"<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n%%EOF");
+
+        assert_eq!(count_pages(&pdf), 2);
     }
 
     #[test]
@@ -1213,16 +1365,22 @@ mod tests {
         assert_eq!(handler.supported_types(), &["application/pdf"]);
     }
 
-    // ─── count_occurrences helper ────────────────────────────────────────
-
     #[test]
-    fn count_occurrences_finds_no_match_in_empty_haystack() {
-        assert_eq!(count_occurrences(b"", b"needle"), 0);
-    }
+    fn count_pages_stops_inflating_when_the_byte_budget_is_spent() {
+        let payload = b"<< /Type /Page >>\n<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
 
-    #[test]
-    fn count_occurrences_finds_multiple_non_overlapping() {
-        let hay = b"abcabcabc";
-        assert_eq!(count_occurrences(hay, b"abc"), 3);
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /Type /Page >>\n");
+        pdf.extend_from_slice(b"<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        assert_eq!(count_pages_with_budget(&pdf, 0), 1);
+        assert_eq!(count_pages(&pdf), 3);
     }
 }
