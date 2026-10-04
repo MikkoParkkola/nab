@@ -155,88 +155,137 @@ struct StreamSpan {
     after: usize,
 }
 
+/// PDF whitespace: NUL, TAB, LF, FF, CR, space.
+fn is_pdf_whitespace(b: u8) -> bool {
+    matches!(b, 0x00 | b'\t' | b'\n' | 0x0c | b'\r' | b' ')
+}
+
 /// Next real `stream … endstream` span at or after `from`.
 ///
-/// A hit counts only when a dictionary's `>>` sits immediately before the
-/// keyword, so the word `stream` inside a string is not a stream. The
-/// `stream` inside `endstream` is rejected. A stream with no `endstream`
-/// ends the walk.
+/// The keyword counts only at depth zero, immediately after a dictionary.
+/// Whitespace and comments may sit between that dictionary and the keyword.
+/// A `stream` inside a string, a comment, or a name is not a stream. The walk
+/// ends when a stream has no `endstream`.
 fn next_stream(bytes: &[u8], from: usize) -> Option<StreamSpan> {
-    const KW: &[u8] = b"stream";
     let mut i = from;
-    while i + KW.len() <= bytes.len() {
-        if &bytes[i..i + KW.len()] != KW {
-            i += 1;
-            continue;
-        }
-        if i > 0 && bytes[i - 1].is_ascii_alphabetic() {
-            i += KW.len();
-            continue;
-        }
-        let Some(dict_end) = closing_dict_end(bytes, i, from) else {
-            i += KW.len();
-            continue;
-        };
-        let Some(dict_start) = opening_dict_start(bytes, dict_end, from) else {
-            i += KW.len();
-            continue;
-        };
-        let mut data_start = i + KW.len();
-        if bytes.get(data_start) == Some(&b'\r') {
-            data_start += 1;
-        }
-        if bytes.get(data_start) == Some(&b'\n') {
-            data_start += 1;
-        }
-        let rel = find_subsequence(&bytes[data_start..], b"endstream")?;
-        let data_end = data_start + rel;
-        return Some(StreamSpan {
-            keyword: i,
-            dict_start,
-            dict_end,
-            data_start,
-            data_end,
-            after: data_end + b"endstream".len(),
-        });
-    }
-    None
-}
+    let mut depth = 0i32;
+    let mut dict_start = from;
+    let mut pending: Option<(usize, usize)> = None;
 
-/// Exclusive end of the `>>` that closes the dictionary before `keyword`.
-fn closing_dict_end(bytes: &[u8], keyword: usize, prev_end: usize) -> Option<usize> {
-    let mut i = keyword;
-    while i > prev_end && bytes[i - 1].is_ascii_whitespace() {
-        i -= 1;
-    }
-    if i >= prev_end.saturating_add(2) && bytes[i - 2] == b'>' && bytes[i - 1] == b'>' {
-        Some(i)
-    } else {
-        None
-    }
-}
-
-/// Index of the `<<` that matches the `>>` ending at `dict_end`.
-fn opening_dict_start(bytes: &[u8], dict_end: usize, prev_end: usize) -> Option<usize> {
-    if dict_end < prev_end.saturating_add(2) {
-        return None;
-    }
-    let mut depth = 1i32;
-    let mut j = dict_end - 2;
-    while j > prev_end {
-        j -= 1;
-        if j + 1 >= bytes.len() {
-            continue;
-        }
-        if bytes[j] == b'>' && bytes[j + 1] == b'>' {
-            depth += 1;
-        } else if bytes[j] == b'<' && bytes[j + 1] == b'<' {
-            depth -= 1;
-            if depth == 0 {
-                return Some(j);
+    while i < bytes.len() {
+        match bytes[i] {
+            b if is_pdf_whitespace(b) => i += 1,
+            b'%' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'(' => {
+                if depth == 0 {
+                    pending = None;
+                }
+                match parse_literal_string(&bytes[i..]) {
+                    Some((_, n)) => i += n,
+                    None => break,
+                }
+            }
+            b'<' if bytes.get(i + 1) == Some(&b'<') => {
+                if depth == 0 {
+                    dict_start = i;
+                    pending = None;
+                }
+                depth += 1;
+                i += 2;
+            }
+            b'>' if bytes.get(i + 1) == Some(&b'>') => {
+                if depth > 0 {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        pending = Some((dict_start, i));
+                    }
+                } else {
+                    i += 2;
+                }
+            }
+            b'<' => {
+                if depth == 0 {
+                    pending = None;
+                }
+                match parse_hex_string(&bytes[i..]) {
+                    Some((_, n)) => i += n,
+                    None => break,
+                }
+            }
+            b'/' => {
+                if depth == 0 {
+                    pending = None;
+                }
+                i += 1;
+                while i < bytes.len()
+                    && !is_pdf_delimiter_or_ws(bytes[i])
+                    && bytes[i] != b'%'
+                    && !is_pdf_whitespace(bytes[i])
+                {
+                    i += 1;
+                }
+            }
+            _ => {
+                if is_pdf_delimiter_or_ws(bytes[i]) {
+                    if depth == 0 {
+                        pending = None;
+                    }
+                    i += 1;
+                    continue;
+                }
+                let token_start = i;
+                while i < bytes.len()
+                    && !is_pdf_delimiter_or_ws(bytes[i])
+                    && bytes[i] != b'%'
+                    && !is_pdf_whitespace(bytes[i])
+                {
+                    i += 1;
+                }
+                if depth != 0 {
+                    continue;
+                }
+                if &bytes[token_start..i] == b"stream"
+                    && let Some((start, end)) = pending
+                {
+                    return stream_span(bytes, token_start, start, end);
+                }
+                pending = None;
             }
         }
     }
     None
+}
+
+/// Body of a stream whose keyword starts at `keyword`.
+fn stream_span(
+    bytes: &[u8],
+    keyword: usize,
+    dict_start: usize,
+    dict_end: usize,
+) -> Option<StreamSpan> {
+    let mut data_start = keyword + b"stream".len();
+    if bytes.get(data_start) == Some(&b'\r') {
+        data_start += 1;
+    }
+    if bytes.get(data_start) == Some(&b'\n') {
+        data_start += 1;
+    }
+    let rel = find_subsequence(&bytes[data_start..], b"endstream")?;
+    let data_end = data_start + rel;
+    Some(StreamSpan {
+        keyword,
+        dict_start,
+        dict_end,
+        data_start,
+        data_end,
+        after: data_end + b"endstream".len(),
+    })
 }
 
 fn page_tokens_in_object_stream(bytes: &[u8], span: &StreamSpan, budget: &mut usize) -> usize {
@@ -248,19 +297,16 @@ fn page_tokens_in_object_stream(bytes: &[u8], span: &StreamSpan, budget: &mut us
         return 0;
     }
     let data = &bytes[span.data_start..span.data_end];
+    let limit = *budget;
     let payload = if window_contains(dict, b"/FlateDecode") {
-        inflate_flate(data)
+        inflate_capped(data, limit)
     } else if !window_contains(dict, b"Decode") {
-        Some(data.to_vec())
+        data[..data.len().min(limit)].to_vec()
     } else {
-        None
+        Vec::new()
     };
-    let Some(payload) = payload else {
-        return 0;
-    };
-    let usable = payload.len().min(*budget);
-    let n = count_page_tokens(&payload[..usable]);
-    *budget = budget.saturating_sub(usable);
+    let n = count_page_tokens(&payload);
+    *budget = budget.saturating_sub(payload.len());
     n
 }
 
@@ -279,23 +325,18 @@ fn count_page_tokens(bytes: &[u8]) -> usize {
                     i += 1;
                 }
             }
-            b'(' => {
-                if let Some((_, n)) = parse_literal_string(&bytes[i..]) {
-                    i += n;
-                } else {
-                    i += 1;
-                }
-            }
+            b'(' => match parse_literal_string(&bytes[i..]) {
+                Some((_, n)) => i += n,
+                // The rest of this region is the unclosed string.
+                None => break,
+            },
             // A dictionary opens with `<<`. Treating the second `<` as a hex
             // string would read through the next `>` and hide the names inside.
             b'<' if bytes.get(i + 1) == Some(&b'<') => i += 2,
-            b'<' => {
-                if let Some((_, n)) = parse_hex_string(&bytes[i..]) {
-                    i += n;
-                } else {
-                    i += 1;
-                }
-            }
+            b'<' => match parse_hex_string(&bytes[i..]) {
+                Some((_, n)) => i += n,
+                None => break,
+            },
             b'/' => {
                 let Some((name, n)) = pdf_name_at(&bytes[i..]) else {
                     i += 1;
@@ -303,7 +344,7 @@ fn count_page_tokens(bytes: &[u8]) -> usize {
                 };
                 i += n;
                 if name == b"/Type" {
-                    i = skip_ascii_ws(bytes, i);
+                    i = skip_pdf_ws(bytes, i);
                     if let Some((value, n2)) = pdf_name_at(&bytes[i..]) {
                         if value == b"/Page" {
                             count += 1;
@@ -323,14 +364,18 @@ fn pdf_name_at(bytes: &[u8]) -> Option<(&[u8], usize)> {
         return None;
     }
     let mut i = 1;
-    while i < bytes.len() && !is_pdf_delimiter_or_ws(bytes[i]) && bytes[i] != b'%' {
+    while i < bytes.len()
+        && !is_pdf_delimiter_or_ws(bytes[i])
+        && bytes[i] != b'%'
+        && !is_pdf_whitespace(bytes[i])
+    {
         i += 1;
     }
     Some((&bytes[..i], i.max(1)))
 }
 
-fn skip_ascii_ws(bytes: &[u8], mut i: usize) -> usize {
-    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0c) {
+fn skip_pdf_ws(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && is_pdf_whitespace(bytes[i]) {
         i += 1;
     }
     i
@@ -803,15 +848,27 @@ fn dict_is_image(dict: &[u8]) -> bool {
 /// Partial output is accepted: a truncated/corrupt tail still yields the text
 /// decoded so far.
 fn inflate_flate(data: &[u8]) -> Option<Vec<u8>> {
-    let mut buf = Vec::new();
-    let mut z = ZlibDecoder::new(data).take(MAX_DECOMPRESSED_BYTES as u64);
-    if z.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-        return Some(buf);
-    }
-    buf.clear();
-    let mut d = DeflateDecoder::new(data).take(MAX_DECOMPRESSED_BYTES as u64);
-    let _ = d.read_to_end(&mut buf);
+    let buf = inflate_capped(data, MAX_DECOMPRESSED_BYTES);
     if buf.is_empty() { None } else { Some(buf) }
+}
+
+/// Inflate at most `limit` bytes. A short or failed decode keeps the bytes
+/// already emitted, so a caller can charge them against a budget.
+fn inflate_capped(data: &[u8], limit: usize) -> Vec<u8> {
+    if limit == 0 || data.is_empty() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    let mut z = ZlibDecoder::new(data).take(limit as u64);
+    let _ = z.read_to_end(&mut buf);
+    if buf.is_empty() {
+        let mut raw = DeflateDecoder::new(data).take(limit as u64);
+        let _ = raw.read_to_end(&mut buf);
+    }
+    if buf.len() > limit {
+        buf.truncate(limit);
+    }
+    buf
 }
 
 /// Classify why a PDF has (or lacks) a text layer, for honest messaging (#195).
@@ -1035,6 +1092,59 @@ mod tests {
         pdf.extend_from_slice(b"\nendstream\n%%EOF");
 
         assert_eq!(count_pages(&pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_reads_a_stream_whose_dictionary_ends_with_nested_closers() {
+        // `>>>>` is two closers with no space. A one-byte backward scan
+        // counts the overlapping pair and rejects the stream.
+        let payload = b"<< /Type /Page >>\n<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b"/X<< /A 1>>>>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        assert_eq!(count_pages(&pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_reads_a_stream_after_a_comment() {
+        let payload = b"<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\n% between the dictionary and the keyword\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        assert_eq!(count_pages(&pdf), 1);
+    }
+
+    #[test]
+    fn count_pages_ignores_a_fake_dictionary_inside_a_string() {
+        let pdf = b"%PDF-1.4\n<< /Title (<< >> stream) >>\n<< /Type /Page >>\n<< /Type /Page >>\n<< /Length 5 >>\nstream\nhello\nendstream\n";
+        assert_eq!(count_pages(pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_accepts_form_feed_between_type_and_page() {
+        assert_eq!(count_pages(b"%PDF-1.4\n/Type\x0c/Page\n"), 1);
+    }
+
+    #[test]
+    fn count_pages_stops_at_an_unclosed_string() {
+        // The remainder of an unclosed literal string is string data.
+        assert_eq!(count_pages(b"%PDF-1.4\n(unclosed /Type /Page\n"), 0);
     }
 
     #[test]
@@ -1338,6 +1448,24 @@ mod tests {
     }
 
     #[test]
+    fn collect_stream_contents_keeps_a_stream_whose_dictionary_nests() {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"BT (visible) Tj ET").unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"<< /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b"/DecodeParms<< /Predictor 1>>>>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        let out = collect_stream_contents(&pdf).expect("nested dictionary is still a stream");
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains("visible"), "inflated text missing: {s}");
+    }
+
+    #[test]
     fn classify_pdf_detects_born_digital_via_font() {
         let pdf = b"%PDF-1.5\n<< /Type /Font /Subtype /Type1 /FontDescriptor 1 0 R >>";
         assert_eq!(classify_pdf(pdf, b""), PdfKind::HasTextLayer);
@@ -1357,6 +1485,15 @@ mod tests {
         compressed.truncate(compressed.len().saturating_sub(2)); // corrupt the tail
         // Should not panic; returns whatever decoded (possibly None on tiny input).
         let _ = inflate_flate(&compressed);
+    }
+
+    #[test]
+    fn inflate_capped_stops_at_the_callers_limit() {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"0123456789abcdef").unwrap();
+        let compressed = enc.finish().unwrap();
+        assert_eq!(inflate_capped(&compressed, 4).len(), 4);
+        assert!(inflate_capped(&compressed, 0).is_empty());
     }
 
     #[test]
