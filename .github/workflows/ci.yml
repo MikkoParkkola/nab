@@ -51,6 +51,11 @@ jobs:
               - 'rust-toolchain*'
               - '.cargo/**'
               - '.github/workflows/**'
+              - 'README.md'
+              - 'llms.txt'
+              - 'docs/**'
+              - 'third_party/**'
+              - 'scripts/**'
 
   fmt:
     name: Format
@@ -75,6 +80,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - run: bash scripts/install-vendor-lint-cap.sh
       # Rust 1.99 denies clippy::assert_is_empty in existing tests. The allow
       # unblocks CI Gate until those asserts are rewritten. Remove the flag
       # in the same change as the rewrite. Tracked in #339.
@@ -117,10 +123,17 @@ jobs:
             command: cargo test --locked --features task --lib --bin nab task
             net_tests: "0"
             rustflags: -Dwarnings
+          - name: mcp-2026
+            os: ubuntu-latest
+            command: cargo test --locked --features task --test mcp_2026
+            net_tests: "1"
+            rustflags: -Dwarnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - run: bash scripts/install-vendor-lint-cap.sh
+        if: runner.os != 'Windows'
       - run: ${{ matrix.command }}
         env:
           NAB_NET_TESTS: ${{ matrix.net_tests }}
@@ -157,6 +170,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - run: bash scripts/install-vendor-lint-cap.sh
       - run: ${{ matrix.command }}
 
   wasm-provider-example:
@@ -183,6 +197,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - run: bash scripts/install-vendor-lint-cap.sh
       - run: cargo publish --locked --dry-run
 
   # Secret scanning always runs — a documentation change can still leak a key.

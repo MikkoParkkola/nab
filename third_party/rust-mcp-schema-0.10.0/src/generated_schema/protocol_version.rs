@@ -1,0 +1,83 @@
+use std::fmt::Display;
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProtocolVersion {
+    V2024_11_05,
+    V2025_03_26,
+    V2025_06_18,
+    V2025_11_25,
+    Draft,
+}
+impl ProtocolVersion {
+    /// Returns a list of supported protocol versions.
+    ///
+    /// By default, this does not include the `Draft` version.
+    /// If `include_draft` is `true`, the `Draft` version will be included as well.
+    pub fn supported_versions(include_draft: bool) -> Vec<ProtocolVersion> {
+        let mut versions = vec![
+            ProtocolVersion::V2024_11_05,
+            ProtocolVersion::V2025_03_26,
+            ProtocolVersion::V2025_06_18,
+            ProtocolVersion::V2025_11_25,
+        ];
+        if include_draft {
+            versions.push(ProtocolVersion::Draft);
+        }
+        versions
+    }
+    /// Returns the latest stable protocol version.
+    pub const fn latest() -> Self {
+        ProtocolVersion::V2025_11_25
+    }
+}
+impl Display for ProtocolVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtocolVersion::V2024_11_05 => write!(f, "2024-11-05"),
+            ProtocolVersion::V2025_03_26 => write!(f, "2025-03-26"),
+            ProtocolVersion::V2025_06_18 => write!(f, "2025-06-18"),
+            ProtocolVersion::V2025_11_25 => write!(f, "2025-11-25"),
+            ProtocolVersion::Draft => write!(f, "DRAFT-2026-v1"),
+        }
+    }
+}
+#[allow(clippy::from_over_into)]
+impl Into<String> for ProtocolVersion {
+    fn into(self) -> String {
+        self.to_string()
+    }
+}
+#[derive(Debug)]
+pub struct ParseProtocolVersionError {
+    details: String,
+}
+impl std::fmt::Display for ParseProtocolVersionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Unsupported protocol version : {}. Supported versions: {}",
+            self.details,
+            ProtocolVersion::supported_versions(false)
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+impl std::error::Error for ParseProtocolVersionError {}
+impl TryFrom<&str> for ProtocolVersion {
+    type Error = ParseProtocolVersionError;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "2024-11-05" => Ok(ProtocolVersion::V2024_11_05),
+            "2025-03-26" => Ok(ProtocolVersion::V2025_03_26),
+            "2025-06-18" => Ok(ProtocolVersion::V2025_06_18),
+            "2025-11-25" => Ok(ProtocolVersion::V2025_11_25),
+            "DRAFT-2026-v1" => Ok(ProtocolVersion::Draft),
+            "DRAFT" => Ok(ProtocolVersion::Draft),
+            other => Err(ParseProtocolVersionError {
+                details: other.to_string(),
+            }),
+        }
+    }
+}

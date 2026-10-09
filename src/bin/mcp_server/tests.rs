@@ -195,6 +195,64 @@ fn fetch_output_schema_advertises_optional_metadata_fields() {
     }
 }
 
+/// `nullable_prop` is the one spelling for a value that is a named type or
+/// JSON null. Both call sites must accept null and the named type, and reject
+/// a different JSON type.
+#[test]
+fn nullable_output_properties_accept_null_and_the_named_type() {
+    let batch = serde_json::to_value(crate::fetch_batch_output_schema()).expect("batch schema");
+    let auth = serde_json::to_value(crate::auth_lookup_output_schema()).expect("auth schema");
+    let batch_validator = jsonschema::draft202012::new(&batch).expect("batch schema compiles");
+    let auth_validator = jsonschema::draft202012::new(&auth).expect("auth schema compiles");
+
+    let null_status = serde_json::json!({
+        "results": [{
+            "url": "https://invalid.test/item",
+            "status": null,
+            "content": "error",
+            "timing_ms": 1
+        }]
+    });
+    let named_status = serde_json::json!({
+        "results": [{
+            "url": "https://invalid.test/item",
+            "status": 200,
+            "content": "ok",
+            "timing_ms": 1
+        }]
+    });
+    let wrong_status = serde_json::json!({
+        "results": [{
+            "url": "https://invalid.test/item",
+            "status": "200",
+            "content": "ok",
+            "timing_ms": 1
+        }]
+    });
+    assert!(batch_validator.validate(&null_status).is_ok());
+    assert!(batch_validator.validate(&named_status).is_ok());
+    assert!(batch_validator.validate(&wrong_status).is_err());
+
+    let null_user = serde_json::json!({
+        "domain": "invalid.test",
+        "username": null,
+        "has_totp": false
+    });
+    let named_user = serde_json::json!({
+        "domain": "invalid.test",
+        "username": "ada",
+        "has_totp": false
+    });
+    let wrong_user = serde_json::json!({
+        "domain": "invalid.test",
+        "username": 1,
+        "has_totp": false
+    });
+    assert!(auth_validator.validate(&null_user).is_ok());
+    assert!(auth_validator.validate(&named_user).is_ok());
+    assert!(auth_validator.validate(&wrong_user).is_err());
+}
+
 #[test]
 fn fetch_structured_preserves_content_verbatim() {
     // GIVEN content passed to the structured builder

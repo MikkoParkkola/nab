@@ -271,6 +271,11 @@ predicates = "3"
 # Used in WASM provider tests to compile WAT → WASM bytes without enabling
 # the full wasmtime `wat` feature in production builds.
 wat = { version = "1", optional = false }
+serde_json = "1"
+tempfile = "3"
+rust-mcp-schema = "=0.10.0"
+jsonschema = { version = "0.58.6", default-features = false }
+sha2 = "0.11"
 
 [[bin]]
 name = "nab"
@@ -292,6 +297,22 @@ harness = false
 [[bench]]
 name = "router_bench"
 harness = false
+
+# In-repo copies. The SDK copy is 0.9.0 plus one ingress callback.
+# The schema copy is 0.10.0 plus `_meta` on the three task param structs.
+[patch.crates-io]
+rust-mcp-sdk = { path = "third_party/rust-mcp-sdk-0.9.0" }
+rust-mcp-schema = { path = "third_party/rust-mcp-schema-0.10.0" }
+
+# Design event, recorded here because the ratified design file stays frozen.
+# A path patch is compiled as a first-party crate. The registry copies were
+# lint-capped, and their feature-gated helpers are unused under nab's feature
+# set. scripts/cap_vendor_lints.rs restores that cap for these two crates
+# only. Nab itself stays under -Dwarnings. Hashed vendor bytes stay put.
+# `cargo publish` deletes this `[patch]` table before the verify build.
+# build.rs turns that absence into cfg `nab_sdk_patch` being off, so the
+# packaged `nab-mcp` compiles against registry rust-mcp-sdk 0.9.0 and does
+# not install the 2026 hook. Git builds keep the table and the hook.
 
 [profile.release]
 lto = true

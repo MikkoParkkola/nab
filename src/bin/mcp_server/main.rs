@@ -32,6 +32,17 @@ pub mod structured;
 mod tests;
 pub mod tools;
 
+mod ask;
+#[cfg(nab_sdk_patch)]
+mod rev2026;
+
+fn install_revision(watch: &Arc<WatchManager>) {
+    #[cfg(nab_sdk_patch)]
+    rev2026::install(Arc::clone(watch));
+    #[cfg(not(nab_sdk_patch))]
+    let _ = watch;
+}
+
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -40,14 +51,16 @@ use rust_mcp_sdk::mcp_server::ToMcpServerHandler;
 use rust_mcp_sdk::mcp_server::{McpServerOptions, ServerHandler, server_runtime};
 use rust_mcp_sdk::schema::{
     CallToolRequestParams, CallToolResult, CompleteRequestParams, CompleteResult, ContentBlock,
-    CreateTaskResult, GetPromptRequestParams, GetPromptResult, Implementation, InitializeResult,
-    LATEST_PROTOCOL_VERSION, ListPromptsResult, ListResourcesResult, ListToolsResult,
-    PaginatedRequestParams, Prompt, PromptArgument, PromptMessage, ReadResourceRequestParams,
-    ReadResourceResult, Resource, ResourceUpdatedNotificationParams, RpcError, ServerCapabilities,
-    ServerCapabilitiesPrompts, ServerCapabilitiesResources, ServerCapabilitiesTools,
-    ServerTaskRequest, ServerTaskTools, ServerTasks, SetLevelRequestParams, SubscribeRequestParams,
-    TextContent, TextResourceContents, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport,
-    ToolOutputSchema, UnsubscribeRequestParams, schema_utils::CallToolError,
+    CreateTaskResult, GetPromptRequestParams, GetPromptResult, Implementation,
+    InitializeRequestParams, InitializeResult, LATEST_PROTOCOL_VERSION, ListPromptsResult,
+    ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument,
+    PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource,
+    ResourceUpdatedNotificationParams, RpcError, ServerCapabilities, ServerCapabilitiesPrompts,
+    ServerCapabilitiesResources, ServerCapabilitiesTools, ServerTaskRequest, ServerTaskTools,
+    ServerTasks, SetLevelRequestParams, SubscribeRequestParams, TextContent, TextResourceContents,
+    Tool, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolOutputSchema,
+    UnsubscribeRequestParams,
+    schema_utils::{CallToolError, UnknownTool},
 };
 use rust_mcp_sdk::schema::{
     TaskStatus,
@@ -189,7 +202,7 @@ fn fetch_batch_output_schema() -> ToolOutputSchema {
     item_props.insert("url".into(), string_prop("The fetched URL"));
     item_props.insert(
         "status".into(),
-        integer_prop("HTTP status code, or null on error"),
+        nullable_prop("integer", "HTTP status code, or null on error"),
     );
     item_props.insert(
         "content".into(),
@@ -231,7 +244,13 @@ fn fetch_batch_output_schema() -> ToolOutputSchema {
 fn auth_lookup_output_schema() -> ToolOutputSchema {
     let mut props = BTreeMap::new();
     props.insert("domain".into(), string_prop("The queried domain"));
-    props.insert("username".into(), string_prop("Account username if found"));
+    props.insert(
+        "username".into(),
+        nullable_prop(
+            "string",
+            "Account username if found, or null when it is not",
+        ),
+    );
     props.insert(
         "has_totp".into(),
         bool_prop("Whether a TOTP credential is stored"),
@@ -521,6 +540,15 @@ fn integer_prop(description: &str) -> serde_json::Map<String, serde_json::Value>
     schema_prop("integer", description)
 }
 
+/// A value that is `type_name` or JSON null. The builders that call this
+/// already emit null for that property.
+fn nullable_prop(type_name: &str, description: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut property = serde_json::Map::new();
+    property.insert("type".into(), serde_json::json!([type_name, "null"]));
+    property.insert("description".into(), description.into());
+    property
+}
+
 fn bool_prop(description: &str) -> serde_json::Map<String, serde_json::Value> {
     schema_prop("boolean", description)
 }
@@ -558,7 +586,7 @@ fn tool_annotations(name: &str) -> ToolAnnotations {
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 
 /// Build the static list of prompts this server advertises.
-fn all_prompts() -> Vec<Prompt> {
+pub(crate) fn all_prompts() -> Vec<Prompt> {
     vec![
         Prompt {
             name: "fetch-and-extract".into(),
@@ -643,7 +671,7 @@ fn prompt_arg(name: &str, description: &str, required: bool) -> PromptArgument {
 /// Render a `GetPromptResult` for the named prompt given its arguments.
 ///
 /// Returns `None` if `name` is not a known prompt.
-fn build_prompt_result(
+pub(crate) fn build_prompt_result(
     name: &str,
     args: &std::collections::BTreeMap<String, String>,
 ) -> Option<GetPromptResult> {
@@ -770,7 +798,7 @@ fn watch_resource(watch: &nab::watch::Watch) -> Resource {
 }
 
 /// Build the full dynamic resource list: static + all watches.
-async fn all_resources(watch_manager: &WatchManager) -> Vec<Resource> {
+pub(crate) async fn all_resources(watch_manager: &WatchManager) -> Vec<Resource> {
     let mut resources = static_resources();
     let watches = watch_manager.list().await;
     resources.extend(watches.iter().map(watch_resource));
@@ -780,7 +808,7 @@ async fn all_resources(watch_manager: &WatchManager) -> Vec<Resource> {
 /// Return the text content for a known resource URI, or `None` if unknown.
 ///
 /// Watch URIs (`nab://watch/<id>`) are handled separately via the async path.
-fn static_resource_content(uri: &str) -> Option<String> {
+pub(crate) fn static_resource_content(uri: &str) -> Option<String> {
     match uri {
         "nab://guide/quickstart" => Some(QUICKSTART_GUIDE.to_string()),
         "nab://status" => Some(status_content()),
@@ -878,55 +906,175 @@ fn lock_subscribed_uris(
     }
 }
 
+/// One list builder. `execution` is the 2025 task advertisement.
+/// The 2026 list passes false, so no tool carries `execution`.
+pub(crate) fn prepared_tools(execution: bool) -> Vec<Tool> {
+    let mut tools = MicroFetchTools::tools();
+    for tool in &mut tools {
+        tool.output_schema = match tool.name.as_str() {
+            "fetch" => Some(fetch_output_schema()),
+            "fetch_batch" => Some(fetch_batch_output_schema()),
+            "submit" => Some(submit_output_schema()),
+            "login" => Some(login_output_schema()),
+            "auth_lookup" => Some(auth_lookup_output_schema()),
+            "fingerprint" => Some(fingerprint_output_schema()),
+            "validate" => Some(validate_output_schema()),
+            "benchmark" => Some(benchmark_output_schema()),
+            "analyze" => Some(analyze_output_schema()),
+            _ => None, // watch tools return freeform text
+        };
+        tool.annotations = Some(tool_annotations(tool.name.as_str()));
+        if execution && tool.name == "fetch_batch" {
+            tool.execution = Some(ToolExecution {
+                task_support: Some(ToolExecutionTaskSupport::Optional),
+            });
+        }
+        if execution && tool.name == "analyze" {
+            tool.execution = Some(ToolExecution {
+                task_support: Some(ToolExecutionTaskSupport::Required),
+            });
+        }
+    }
+    tools
+}
+
+/// Design event, recorded here because the ratified design file stays frozen.
+/// `try_from` returns one `CallToolError` for an unknown name and for a bad
+/// params object. The malformed error's inner type is private, so a split
+/// after the merge cannot tell them apart. The split is at `try_from`,
+/// before `run`. A `WaitRefusal` is recognized on the way out of `run`.
+/// The 2025 handler maps every variant back to that original error.
+pub(crate) enum ToolCallFailure {
+    Wait(CallToolError),
+    Unknown(CallToolError),
+    Malformed(CallToolError),
+    Tool(CallToolError),
+}
+
+impl ToolCallFailure {
+    fn into_error(self) -> CallToolError {
+        match self {
+            Self::Wait(error)
+            | Self::Unknown(error)
+            | Self::Malformed(error)
+            | Self::Tool(error) => error,
+        }
+    }
+}
+
+fn classify_try_from(error: CallToolError) -> ToolCallFailure {
+    if error.0.downcast_ref::<UnknownTool>().is_some() {
+        ToolCallFailure::Unknown(error)
+    } else {
+        ToolCallFailure::Malformed(error)
+    }
+}
+
+fn classify_run(error: CallToolError) -> ToolCallFailure {
+    if error.0.downcast_ref::<ask::WaitRefusal>().is_some() {
+        ToolCallFailure::Wait(error)
+    } else {
+        ToolCallFailure::Tool(error)
+    }
+}
+
+/// The one production match of a tool `run`. 2025 and 2026 both call it.
+pub(crate) async fn run_named_tool(
+    params: CallToolRequestParams,
+    runtime: Option<Arc<dyn McpServer>>,
+) -> Result<CallToolResult, ToolCallFailure> {
+    let tool = match MicroFetchTools::try_from(params) {
+        Ok(tool) => tool,
+        Err(error) => return Err(classify_try_from(error)),
+    };
+    let outcome = match tool {
+        MicroFetchTools::FetchTool(tool) => tool.run().await,
+        MicroFetchTools::FetchBatchTool(tool) => tool.run().await,
+        MicroFetchTools::SubmitTool(tool) => tool.run().await,
+        MicroFetchTools::LoginTool(tool) => tool.run(runtime).await,
+        MicroFetchTools::AuthLookupTool(tool) => tool.run(),
+        MicroFetchTools::FingerprintTool(tool) => tool.run(),
+        MicroFetchTools::ValidateTool(tool) => tool.run().await,
+        MicroFetchTools::BenchmarkTool(tool) => tool.run().await,
+        MicroFetchTools::AnalyzeTool(tool) => tool.run(runtime.as_ref()).await,
+        MicroFetchTools::WatchCreateTool(tool) => tool.run().await,
+        MicroFetchTools::WatchListTool(tool) => tool.run().await,
+        MicroFetchTools::WatchRemoveTool(tool) => tool.run().await,
+        #[cfg(feature = "task")]
+        MicroFetchTools::TaskTool(tool) => tool.run(runtime.as_ref()).await,
+    };
+    outcome.map_err(classify_run)
+}
+
+/// One resource body for the 2025 handler and the 2026 dispatcher.
+pub(crate) async fn read_resource_result(
+    watch_manager: &WatchManager,
+    uri: &str,
+) -> Result<ReadResourceResult, RpcError> {
+    use rust_mcp_sdk::schema::ReadResourceContent;
+
+    let text = if let Some(id) = uri.strip_prefix("nab://watch/") {
+        watch_manager
+            .render_resource(&id.to_owned())
+            .await
+            .ok_or_else(|| {
+                RpcError::method_not_found().with_message(format!("Watch '{id}' not found"))
+            })?
+    } else {
+        static_resource_content(uri).ok_or_else(|| {
+            RpcError::method_not_found().with_message(format!("Unknown resource: '{uri}'"))
+        })?
+    };
+
+    Ok(ReadResourceResult {
+        meta: None,
+        contents: vec![ReadResourceContent::TextResourceContents(
+            TextResourceContents {
+                meta: None,
+                mime_type: Some("text/markdown".into()),
+                text,
+                uri: uri.to_string(),
+            },
+        )],
+    })
+}
+
 #[async_trait]
 impl ServerHandler for MicroFetchHandler {
+    async fn handle_initialize_request(
+        &self,
+        params: InitializeRequestParams,
+        runtime: Arc<dyn McpServer>,
+    ) -> Result<InitializeResult, RpcError> {
+        let mut server_info = runtime.server_info().to_owned();
+        if params.protocol_version == "2026-07-28" {
+            server_info.protocol_version = "2025-11-25".to_string();
+        } else if let Some(updated) = rust_mcp_sdk::mcp_server::enforce_compatible_protocol_version(
+            &params.protocol_version,
+            &server_info.protocol_version,
+        )
+        .map_err(|err| RpcError::internal_error().with_message(err.to_string()))?
+        {
+            server_info.protocol_version = updated;
+        }
+
+        runtime
+            .set_client_details(params)
+            .await
+            .map_err(|err| RpcError::internal_error().with_message(format!("{err}")))?;
+
+        Ok(server_info)
+    }
+
     async fn handle_list_tools_request(
         &self,
         _params: Option<PaginatedRequestParams>,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<ListToolsResult, RpcError> {
-        let mut tools = MicroFetchTools::tools();
-
-        // Inject outputSchema, annotations, and task execution metadata after macro
-        // generation. The #[mcp_tool] macro always emits these fields as None,
-        // so we patch them here.
-        for tool in &mut tools {
-            tool.output_schema = match tool.name.as_str() {
-                "fetch" => Some(fetch_output_schema()),
-                "fetch_batch" => Some(fetch_batch_output_schema()),
-                "submit" => Some(submit_output_schema()),
-                "login" => Some(login_output_schema()),
-                "auth_lookup" => Some(auth_lookup_output_schema()),
-                "fingerprint" => Some(fingerprint_output_schema()),
-                "validate" => Some(validate_output_schema()),
-                "benchmark" => Some(benchmark_output_schema()),
-                "analyze" => Some(analyze_output_schema()),
-                _ => None, // watch tools return freeform text
-            };
-
-            tool.annotations = Some(tool_annotations(tool.name.as_str()));
-
-            // Advertise that fetch_batch supports optional task-augmented execution.
-            // Clients that understand tasks can opt in; others get synchronous execution.
-            if tool.name == "fetch_batch" {
-                tool.execution = Some(ToolExecution {
-                    task_support: Some(ToolExecutionTaskSupport::Optional),
-                });
-            }
-
-            // analyze requires task-augmented execution — long videos can take
-            // minutes to transcribe and must not block the MCP request loop.
-            if tool.name == "analyze" {
-                tool.execution = Some(ToolExecution {
-                    task_support: Some(ToolExecutionTaskSupport::Required),
-                });
-            }
-        }
-
         Ok(ListToolsResult {
             meta: None,
             next_cursor: None,
-            tools,
+            tools: prepared_tools(true),
         })
     }
 
@@ -935,25 +1083,9 @@ impl ServerHandler for MicroFetchHandler {
         params: CallToolRequestParams,
         runtime: Arc<dyn McpServer>,
     ) -> Result<CallToolResult, CallToolError> {
-        let tool = MicroFetchTools::try_from(params)
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
-
-        match tool {
-            MicroFetchTools::FetchTool(t) => t.run().await,
-            MicroFetchTools::FetchBatchTool(t) => t.run().await,
-            MicroFetchTools::SubmitTool(t) => t.run().await,
-            MicroFetchTools::LoginTool(t) => t.run(runtime).await,
-            MicroFetchTools::AuthLookupTool(t) => t.run(),
-            MicroFetchTools::FingerprintTool(t) => t.run(),
-            MicroFetchTools::ValidateTool(t) => t.run().await,
-            MicroFetchTools::BenchmarkTool(t) => t.run().await,
-            MicroFetchTools::AnalyzeTool(t) => t.run(&runtime).await,
-            MicroFetchTools::WatchCreateTool(t) => t.run().await,
-            MicroFetchTools::WatchListTool(t) => t.run().await,
-            MicroFetchTools::WatchRemoveTool(t) => t.run().await,
-            #[cfg(feature = "task")]
-            MicroFetchTools::TaskTool(t) => t.run(&runtime).await,
-        }
+        run_named_tool(params, Some(runtime))
+            .await
+            .map_err(ToolCallFailure::into_error)
     }
 
     async fn handle_list_prompts_request(
@@ -997,33 +1129,7 @@ impl ServerHandler for MicroFetchHandler {
         params: ReadResourceRequestParams,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<ReadResourceResult, RpcError> {
-        use rust_mcp_sdk::schema::ReadResourceContent;
-
-        let text = if let Some(id) = params.uri.strip_prefix("nab://watch/") {
-            self.watch_manager
-                .render_resource(&id.to_owned())
-                .await
-                .ok_or_else(|| {
-                    RpcError::method_not_found().with_message(format!("Watch '{id}' not found"))
-                })?
-        } else {
-            static_resource_content(&params.uri).ok_or_else(|| {
-                RpcError::method_not_found()
-                    .with_message(format!("Unknown resource: '{}'", params.uri))
-            })?
-        };
-
-        Ok(ReadResourceResult {
-            meta: None,
-            contents: vec![ReadResourceContent::TextResourceContents(
-                TextResourceContents {
-                    meta: None,
-                    mime_type: Some("text/markdown".into()),
-                    text,
-                    uri: params.uri,
-                },
-            )],
-        })
+        read_resource_result(&self.watch_manager, &params.uri).await
     }
 
     async fn handle_subscribe_request(
@@ -1146,7 +1252,7 @@ impl ServerHandler for MicroFetchHandler {
             MicroFetchTools::AnalyzeTool(analyze_tool) => {
                 let runtime_clone = runtime.clone();
                 tokio::spawn(async move {
-                    let (status, call_result) = match analyze_tool.run(&runtime_clone).await {
+                    let (status, call_result) = match analyze_tool.run(Some(&runtime_clone)).await {
                         Ok(r) => (TaskStatus::Completed, ResultFromServer::CallToolResult(r)),
                         Err(e) => {
                             let msg = e.to_string();
@@ -1332,6 +1438,7 @@ async fn run_stdio(
     subscribed_uris: Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let transport = StdioTransport::new(TransportOptions::default())?;
+    install_revision(&watch_manager);
 
     let server = server_runtime::create_server(McpServerOptions {
         server_details,
@@ -1410,6 +1517,7 @@ async fn run_http(
         ..HyperServerOptions::default()
     };
 
+    install_revision(&watch_manager);
     let server =
         hyper_server::create_server(server_details, handler.to_mcp_server_handler(), options);
 
