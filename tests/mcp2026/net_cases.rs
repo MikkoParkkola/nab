@@ -78,6 +78,7 @@ fn tool(name: &str, arguments: Value, field: Field, caps: Caps) -> Value {
     wire::tool_call(name, arguments, wire::id_num(), field, caps, None)
 }
 
+/// `body` is set because the text summary omits the page unless that argument is true.
 #[test]
 fn tp_c4() {
     check::ok(c4());
@@ -97,7 +98,7 @@ fn c4() -> Check {
 fn c4_http(url: &str, allow: Option<&str>) -> Check {
     let message = tool(
         "fetch",
-        json!({"url": url}),
+        json!({"url": url, "body": true}),
         Field::Value(wire::V2026),
         Caps::Empty,
     );
@@ -117,7 +118,7 @@ fn c4_http(url: &str, allow: Option<&str>) -> Check {
 fn c4_stdio(url: &str, allow: Option<&str>) -> Check {
     let message = tool(
         "fetch",
-        json!({"url": url}),
+        json!({"url": url, "body": true}),
         Field::Value(wire::V2026),
         Caps::Empty,
     );
