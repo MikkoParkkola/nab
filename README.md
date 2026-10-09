@@ -6,12 +6,12 @@
 [![docs.rs](https://img.shields.io/docsrs/nab)](https://docs.rs/nab)
 [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![License: MIT + PolyForm NC](https://img.shields.io/badge/License-MIT%20%2B%20PolyForm%20NC-yellow.svg)](LICENSE.md)
-[![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io)
+[![MCP Protocol](https://img.shields.io/badge/MCP-2025--11--25-blueviolet.svg)](https://modelcontextprotocol.io) [![MCP 2026-07-28](https://img.shields.io/badge/MCP-2026--07--28-blue.svg)](https://modelcontextprotocol.io)
 [![nab MCP server](https://glama.ai/mcp/servers/MikkoParkkola/nab/badges/score.svg)](https://glama.ai/mcp/servers/MikkoParkkola/nab)
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_MCP-0078d4?logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=nab&config=%7B%22command%22%3A%22nab-mcp%22%7D)
 [![Install in Cursor](https://img.shields.io/badge/Cursor-Install_MCP-black?logo=cursor)](cursor://anysphere.cursor-deeplink/mcp/install?name=nab&config=%7B%22command%22%3A%22nab-mcp%22%7D)
 
-Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 compliant. Rust. macOS arm64 first, cross-platform.
+Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 and 2026-07-28 (partial: a call that does not wait). Rust. macOS arm64 first, cross-platform.
 
 ![demo](demo.gif)
 
@@ -55,7 +55,7 @@ nab watch add https://status.openai.com --interval 5m         # subscribe to cha
 | `nab analyze <video\|audio>` | Transcribe and diarize. FluidAudio (Parakeet TDT v3) on Apple Neural Engine, 131x realtime on a 2-hour clip, word-level timestamps, 25 EU languages, optional Qwen3-ASR for zh/ja/ko/vi, optional active reading via MCP sampling. |
 | `nab watch add <url>` | Monitor a URL and push notifications via subscribable MCP resources. RSS for the entire web. Conditional GETs, semantic diff, adaptive backoff. |
 | `nab models fetch <name>` | Persistent install of inference model binaries. Supports `fluidaudio` (default on macOS Apple Silicon), `sherpa-onnx` (cross-platform Parakeet TDT, ~30× realtime CPU), and `whisper` (universal fallback, whisper-large-v3-turbo, 99 langs). |
-| `nab-mcp` | MCP 2025-11-25 server. stdio + Streamable HTTP. 12 tools, 4 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
+| `nab-mcp` | MCP 2025-11-25 and 2026-07-28 server. stdio + Streamable HTTP. 12 tools, 4 prompts, 2+N resources, structured logging, sampling, roots, elicitation. |
 | `nab::content::ocr` | Apple Vision OCR engine. 15 languages. Apple Neural Engine accelerated. ~10-50 ms per image. macOS only. |
 
 ## Security: prompt-injection defense
@@ -318,7 +318,7 @@ Both `whisper` and `sherpa-onnx` ship as cross-platform fallbacks alongside the 
 
 ## MCP integration
 
-`nab-mcp` is a native Rust MCP server. It runs over stdio (default) or Streamable HTTP. It is fully compliant with MCP protocol version `2025-11-25`.
+`nab-mcp` is a native Rust MCP server. It runs over stdio (default) or Streamable HTTP. It is not fully compliant with `2026-07-28`. A call that does not wait is served on that revision, including `fetch`, `fetch_batch`, `submit`, `auth_lookup`, `fingerprint`, `validate`, `benchmark`, `watch_create`, `watch_list`, and `watch_remove`. `login`, `analyze`, and `task` are served only when that call would not elicit or sample. A `2026-07-28` call that would elicit or sample returns a JSON-RPC error and does not wait. Sessions, elicitation, sampling, and tasks stay on `2025-11-25`. A `2026-07-28` request needs no `initialize` and no session id. On HTTP that call sends the matching `mcp-protocol-version` header. On stdio the success or the JSON-RPC error may be the first message.
 
 ### Quick setup (recommended)
 

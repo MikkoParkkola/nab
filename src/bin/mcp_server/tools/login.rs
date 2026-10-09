@@ -56,7 +56,10 @@ pub struct LoginTool {
 
 impl LoginTool {
     #[allow(clippy::too_many_lines)]
-    pub async fn run(&self, runtime: Arc<dyn McpServer>) -> Result<CallToolResult, CallToolError> {
+    pub async fn run(
+        &self,
+        runtime: Option<Arc<dyn McpServer>>,
+    ) -> Result<CallToolResult, CallToolError> {
         use nab::LoginFlow;
 
         let mut output = format!("🔐 Auto-login: {}\n", self.url);
@@ -66,7 +69,7 @@ impl LoginTool {
         if is_oauth_redirect(&self.url) {
             let service = oauth_service_name(&self.url);
             output.push_str("   Detected OAuth/SSO flow — directing to browser\n");
-            let action = elicit_oauth_url(&runtime, &self.url, &service).await?;
+            let action = elicit_oauth_url(runtime.as_ref(), &self.url, &service).await?;
             match action {
                 ElicitResultAction::Accept => {
                     output.push_str("   ✅ OAuth flow completed by user\n");
@@ -86,7 +89,7 @@ impl LoginTool {
 
         if !OnePasswordAuth::is_available() {
             // Elicit manual credentials when 1Password is unavailable.
-            let (username, password) = elicit_credentials(&runtime, &self.url).await?;
+            let (username, password) = elicit_credentials(runtime.as_ref(), &self.url).await?;
             return run_login_with_credentials(&self.url, &username, &password, output).await;
         }
 
@@ -99,7 +102,7 @@ impl LoginTool {
         let credential = match all_creds.len() {
             0 => {
                 // No stored credentials — elicit from user.
-                let (username, password) = elicit_credentials(&runtime, &self.url).await?;
+                let (username, password) = elicit_credentials(runtime.as_ref(), &self.url).await?;
                 return run_login_with_credentials(&self.url, &username, &password, output).await;
             }
             1 => {
@@ -110,7 +113,7 @@ impl LoginTool {
             _ => {
                 // Multiple matches — let the user choose via elicitation.
                 let chosen_title =
-                    elicit_credential_choice(&runtime, &self.url, &all_creds).await?;
+                    elicit_credential_choice(runtime.as_ref(), &self.url, &all_creds).await?;
                 let cred = all_creds
                     .into_iter()
                     .find(|c| c.title == chosen_title)
@@ -132,7 +135,7 @@ impl LoginTool {
         // so the user can choose one or more browser cookie stores to inject
         // into the login request.  An empty selection means no cookies.
         let resolved_cookies =
-            resolve_login_cookies(&self.url, self.cookies.as_deref(), &runtime).await?;
+            resolve_login_cookies(&self.url, self.cookies.as_deref(), runtime.as_ref()).await?;
 
         // Build the AcceleratedClient for the login flow.
         // When a session is named, wrap the session's dedicated reqwest::Client
