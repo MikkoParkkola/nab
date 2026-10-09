@@ -748,5 +748,11 @@ fn pkg_1() -> Check {
     if main.matches("rev2026::install").count() != 1 {
         return Err("rev2026::install has more than the cfg-gated call".into());
     }
+    let ask = fs::read_to_string(base.join("src/bin/mcp_server/ask.rs"))
+        .map_err(|error| error.to_string())?;
+    let kept = "#[cfg_attr(not(nab_sdk_patch), allow(dead_code))]";
+    if ask.matches(kept).count() != 2 {
+        return Err("published build would deny the unused 2026 ask symbols".into());
+    }
     Ok(())
 }

@@ -16,6 +16,8 @@ use tokio::task_local;
 pub(crate) enum Ask {
     Allow,
     /// `sampling` is this request's advertisement, not the stored initialize.
+    /// The crates.io build omits the dispatcher that constructs this variant.
+    #[cfg_attr(not(nab_sdk_patch), allow(dead_code))]
     Refuse {
         sampling: bool,
     },
@@ -29,6 +31,8 @@ pub(crate) fn current() -> Ask {
     CALL_ASK.try_with(|ask| *ask).unwrap_or(Ask::Allow)
 }
 
+/// The crates.io build omits the dispatcher that calls this.
+#[cfg_attr(not(nab_sdk_patch), allow(dead_code))]
 pub(crate) async fn scope<T>(ask: Ask, future: impl std::future::Future<Output = T>) -> T {
     CALL_ASK.scope(ask, future).await
 }
