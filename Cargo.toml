@@ -309,6 +309,10 @@ rust-mcp-schema = { path = "third_party/rust-mcp-schema-0.10.0" }
 # lint-capped, and their feature-gated helpers are unused under nab's feature
 # set. scripts/cap_vendor_lints.rs restores that cap for these two crates
 # only. Nab itself stays under -Dwarnings. Hashed vendor bytes stay put.
+# `cargo publish` deletes this `[patch]` table before the verify build.
+# build.rs turns that absence into cfg `nab_sdk_patch` being off, so the
+# packaged `nab-mcp` compiles against registry rust-mcp-sdk 0.9.0 and does
+# not install the 2026 hook. Git builds keep the table and the hook.
 
 [profile.release]
 lto = true

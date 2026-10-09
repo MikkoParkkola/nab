@@ -33,7 +33,15 @@ mod tests;
 pub mod tools;
 
 mod ask;
+#[cfg(nab_sdk_patch)]
 mod rev2026;
+
+fn install_revision(watch: &Arc<WatchManager>) {
+    #[cfg(nab_sdk_patch)]
+    rev2026::install(Arc::clone(watch));
+    #[cfg(not(nab_sdk_patch))]
+    let _ = watch;
+}
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -1430,7 +1438,7 @@ async fn run_stdio(
     subscribed_uris: Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let transport = StdioTransport::new(TransportOptions::default())?;
-    rev2026::install(Arc::clone(&watch_manager));
+    install_revision(&watch_manager);
 
     let server = server_runtime::create_server(McpServerOptions {
         server_details,
@@ -1509,7 +1517,7 @@ async fn run_http(
         ..HyperServerOptions::default()
     };
 
-    rev2026::install(Arc::clone(&watch_manager));
+    install_revision(&watch_manager);
     let server =
         hyper_server::create_server(server_details, handler.to_mcp_server_handler(), options);
 

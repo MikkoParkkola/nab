@@ -728,3 +728,25 @@ fn has_pin(text: &str, name: &str) -> Check {
         Err(format!("{name} initialize body missing 2025-11-25"))
     }
 }
+
+#[test]
+fn tp_pkg_1() {
+    check::ok(pkg_1());
+}
+
+fn pkg_1() -> Check {
+    let base = root();
+    let build_rs = fs::read_to_string(base.join("build.rs")).map_err(|error| error.to_string())?;
+    let main = fs::read_to_string(base.join("src/bin/mcp_server/main.rs"))
+        .map_err(|error| error.to_string())?;
+    if !build_rs.contains("[patch.crates-io]") || !build_rs.contains("nab_sdk_patch") {
+        return Err("build.rs does not gate on the patch table".into());
+    }
+    if !main.contains("#[cfg(nab_sdk_patch)]\nmod rev2026;") {
+        return Err("rev2026 is compiled without the patch cfg".into());
+    }
+    if main.matches("rev2026::install").count() != 1 {
+        return Err("rev2026::install has more than the cfg-gated call".into());
+    }
+    Ok(())
+}
