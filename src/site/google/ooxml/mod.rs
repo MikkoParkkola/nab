@@ -342,7 +342,11 @@ pub(super) fn append_xlsx_comments_from_bytes(xlsx_bytes: &[u8], markdown: &mut 
 /// Extract comments from a `.xlsx` file.
 pub(crate) fn parse_xlsx_comments(bytes: &[u8]) -> Result<Vec<String>> {
     let mut archive = open_zip(bytes)?;
-    let names: Vec<String> = archive.file_names().map(String::from).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.map(std::borrow::Cow::into_owned))
+        .collect::<std::result::Result<_, _>>()
+        .context("Failed to decode ZIP entry names")?;
     let mut results = Vec::new();
 
     let threaded: Vec<String> = names
@@ -431,7 +435,11 @@ pub(super) fn parse_xlsx_legacy_xml(xml: &str) -> Vec<String> {
 /// Extract comments from a `.pptx` file.
 pub(crate) fn parse_pptx_comments(bytes: &[u8]) -> Result<Vec<String>> {
     let mut archive = open_zip(bytes)?;
-    let names: Vec<String> = archive.file_names().map(String::from).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.map(std::borrow::Cow::into_owned))
+        .collect::<std::result::Result<_, _>>()
+        .context("Failed to decode ZIP entry names")?;
 
     let comment_files: Vec<String> = names
         .iter()
