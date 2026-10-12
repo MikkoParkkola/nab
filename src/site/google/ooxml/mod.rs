@@ -23,6 +23,17 @@ pub(super) fn open_zip(bytes: &[u8]) -> Result<zip::ZipArchive<Cursor<&[u8]>>> {
     zip::ZipArchive::new(Cursor::new(bytes)).context("Failed to open ZIP/OOXML archive")
 }
 
+/// Names of the entries in a ZIP archive.
+///
+/// Names that fail to decode are skipped: callers only match them against
+/// fixed ASCII paths, so an undecodable name can never be one they want.
+fn entry_names(archive: &zip::ZipArchive<Cursor<&[u8]>>) -> Vec<String> {
+    archive
+        .file_names()
+        .filter_map(|name| name.ok().map(std::borrow::Cow::into_owned))
+        .collect()
+}
+
 /// Read a named entry from a ZIP archive as UTF-8.
 pub(super) fn read_zip_entry(
     archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
@@ -342,11 +353,7 @@ pub(super) fn append_xlsx_comments_from_bytes(xlsx_bytes: &[u8], markdown: &mut 
 /// Extract comments from a `.xlsx` file.
 pub(crate) fn parse_xlsx_comments(bytes: &[u8]) -> Result<Vec<String>> {
     let mut archive = open_zip(bytes)?;
-    let names: Vec<String> = archive
-        .file_names()
-        .map(|name| name.map(std::borrow::Cow::into_owned))
-        .collect::<std::result::Result<_, _>>()
-        .context("Failed to decode ZIP entry names")?;
+    let names = entry_names(&archive);
     let mut results = Vec::new();
 
     let threaded: Vec<String> = names
@@ -435,11 +442,7 @@ pub(super) fn parse_xlsx_legacy_xml(xml: &str) -> Vec<String> {
 /// Extract comments from a `.pptx` file.
 pub(crate) fn parse_pptx_comments(bytes: &[u8]) -> Result<Vec<String>> {
     let mut archive = open_zip(bytes)?;
-    let names: Vec<String> = archive
-        .file_names()
-        .map(|name| name.map(std::borrow::Cow::into_owned))
-        .collect::<std::result::Result<_, _>>()
-        .context("Failed to decode ZIP entry names")?;
+    let names = entry_names(&archive);
 
     let comment_files: Vec<String> = names
         .iter()
