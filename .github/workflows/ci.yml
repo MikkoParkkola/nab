@@ -228,7 +228,7 @@ jobs:
       # Prebuilt cargo-audit binary instead of `cargo install` (which compiled
       # it from source, ~3-5 min per run). Same tool, same version, ~10s.
       # cargo-audit only parses Cargo.lock, so no Rust toolchain build is needed.
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: cargo-audit@0.22.0
       - name: Run cargo audit
