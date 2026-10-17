@@ -156,7 +156,8 @@ Add to your MCP client config (Claude Desktop, Cursor, Windsurf, etc.):
 {
   "mcpServers": {
     "nab": {
-      "command": "nab-mcp"
+      "command": "nab-mcp",
+      "args": []
     }
   }
 }
@@ -177,7 +178,7 @@ nab mcp install --dry-run              # preview without writing
 
 Also supported: `gemini`, `amazon-q`, `lm-studio`.
 
-See [MCP integration](#mcp-integration) below for the full list of tools, capabilities, and HTTP transport.
+See [Tools](#tools) for the full tool list and [MCP integration](#mcp-integration) for capabilities and HTTP transport.
 
 ## Claude Code plugin
 
@@ -343,7 +344,8 @@ Add to your MCP client configuration (`~/.config/claude/mcp.json` or equivalent)
 {
   "mcpServers": {
     "nab": {
-      "command": "nab-mcp"
+      "command": "nab-mcp",
+      "args": []
     }
   }
 }
@@ -374,21 +376,24 @@ Bind to localhost by default. Origin checks and `MCP-Protocol-Version` header va
 | Server icons | Light + dark SVG |
 | Transports | stdio + Streamable HTTP (resumable, session-scoped) |
 
-The 12 MCP tools:
+## Tools
 
-| Tool | Description |
-|------|-------------|
-| `fetch` | Fetch URL → markdown, with cookies, focus, token budget, session |
-| `fetch_batch` | Parallel multi-URL fetch with task-augmented async execution |
-| `submit` | Submit a form with CSRF + smart field extraction |
-| `login` | 1Password auto-login with TOTP support |
-| `auth_lookup` | Look up 1Password credentials for a URL |
-| `fingerprint` | Generate browser fingerprint profiles |
-| `validate` | Run the validation test suite |
-| `benchmark` | Time URL fetches with stats |
-| `analyze` | Transcribe and diarize audio/video |
-| `watch_create` | Create a URL watch and subscribe |
-| `watch_list` / `watch_remove` | Manage watches |
+`nab-mcp` exposes 12 MCP tools:
+
+- `fetch` — Fetch a URL and convert it to clean markdown, with cookies, focus, token budget, and session
+- `fetch_batch` — Fetch multiple URLs in parallel (HTTP/2 multiplexing, task-augmented async execution)
+- `submit` — Submit a web form with CSRF handling and smart field extraction
+- `login` — Auto-login to a website with 1Password credentials, including TOTP/MFA
+- `auth_lookup` — Look up 1Password credentials for a URL without exposing the password
+- `fingerprint` — Generate realistic Chrome, Firefox, or Safari browser fingerprint profiles
+- `validate` — Run the validation test suite against real websites (HTTP/2, HTTP/3, TLS 1.3, 1Password)
+- `benchmark` — Time URL fetches over multiple iterations with min/avg/max stats
+- `analyze` — Transcribe and diarize audio/video with multilingual ASR
+- `watch_create` — Create a URL watch that emits MCP resource notifications when content changes
+- `watch_list` — List active URL watches with their IDs, URLs, and polling status
+- `watch_remove` — Remove a URL watch by ID
+
+Builds compiled with the opt-in `task` Cargo feature also expose `task`, an experimental web-task entry that fetches and screens a seed URL and returns the API endpoints it discovers.
 
 ## Site providers
 
