@@ -165,7 +165,7 @@ mod tests {
         // GIVEN prefix that matches nothing
         let results = filter_prefix(ALL_BROWSERS, "zzz");
         // THEN empty
-        assert!(results.is_empty());
+        assert_eq!(results, [] as [std::string::String; 0]);
     }
 
     // ── complete_prompt_arg ───────────────────────────────────────────────────
@@ -185,7 +185,7 @@ mod tests {
         // GIVEN arg "browser", prefix "chrome"
         let results = complete_prompt_arg("fetch-and-extract", "browser", "chrome");
         // THEN all chrome profiles are returned
-        assert!(!results.is_empty());
+        assert_ne!(results, [] as [std::string::String; 0]);
         assert!(results.iter().all(|s| s.starts_with("chrome")));
     }
 
@@ -194,7 +194,7 @@ mod tests {
         // GIVEN an unknown argument name
         let results = complete_prompt_arg("some-prompt", "unknown_arg", "");
         // THEN empty (no crash, no error)
-        assert!(results.is_empty());
+        assert_eq!(results, [] as [std::string::String; 0]);
     }
 
     // ── handle_complete ───────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ mod tests {
         // WHEN handled
         let result = handle_complete(&params);
         // THEN browser names are returned
-        assert!(!result.completion.values.is_empty());
+        assert_ne!(result.completion.values, [] as [std::string::String; 0]);
         assert!(result.completion.values.contains(&"brave".to_string()));
         assert!(result.completion.values.contains(&"chrome".to_string()));
     }
@@ -241,7 +241,7 @@ mod tests {
         // WHEN handled
         let result = handle_complete(&params);
         // THEN empty result (no error)
-        assert!(result.completion.values.is_empty());
+        assert_eq!(result.completion.values, [] as [std::string::String; 0]);
     }
 
     #[test]

@@ -97,7 +97,7 @@ fn multiselect_returns_empty_on_missing_field() {
     // WHEN extracted
     let result = extract_multiselect_field(&content, "sources");
     // THEN empty vec is returned
-    assert!(result.is_empty());
+    assert_eq!(result, [] as [std::string::String; 0]);
 }
 
 // ── build_structured ─────────────────────────────────────────────────────────

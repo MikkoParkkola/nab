@@ -945,7 +945,7 @@ mod tests {
         engine.inject_full_dom().unwrap();
 
         let ua = engine.eval("navigator.userAgent").unwrap();
-        assert!(!ua.is_empty());
+        assert_ne!(ua, "");
         let hc = engine.eval("navigator.hardwareConcurrency").unwrap();
         assert_eq!(hc, "8");
         let wd = engine.eval("navigator.webdriver").unwrap();

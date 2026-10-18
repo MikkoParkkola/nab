@@ -590,7 +590,7 @@ mod tests {
         let html = "<html><body><p>No article here</p></body></html>";
         let doc = Html::parse_document(html);
         let result = build_content_html(&doc, &ARTICLE_SELECTOR, &[], "https://example.com");
-        assert!(result.is_empty());
+        assert_eq!(result, "");
     }
 
     #[test]
@@ -709,7 +709,7 @@ mod tests {
             .extract("https://myblog.com/post/1", &client, None, Some(html))
             .await
             .expect("should succeed even with no match");
-        assert!(result.markdown.is_empty());
+        assert_eq!(result.markdown, "");
     }
 
     #[tokio::test]
@@ -724,7 +724,7 @@ mod tests {
             .extract("https://myblog.com/post/1", &client, None, Some(html))
             .await
             .expect("extract should succeed");
-        assert!(!result.markdown.is_empty());
+        assert_ne!(result.markdown, "");
         assert!(result.markdown.contains("Body text here"));
         assert_eq!(result.metadata.platform, "css:test-blog");
     }

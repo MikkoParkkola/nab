@@ -662,7 +662,7 @@ mod tests {
         );
         // Each chunk must be non-empty
         for (_, text) in &chunks {
-            assert!(!text.is_empty());
+            assert_ne!(text, "");
         }
     }
 
@@ -741,7 +741,7 @@ mod tests {
         let output = reader.process(&mut transcript).await.unwrap();
 
         // THEN no footnotes are added and the fetcher is never called
-        assert!(output.footnotes.is_empty());
+        assert_eq!(output.footnotes, [] as [std::string::String; 0]);
         assert_eq!(fetcher.call_count(), 0);
     }
 
@@ -841,7 +841,7 @@ mod tests {
         // THEN the pipeline does not error — it just produces fewer (or zero) footnotes
         assert!(output.is_ok(), "process should not propagate lookup errors");
         // No footnotes because fetcher always fails
-        assert!(output.unwrap().footnotes.is_empty());
+        assert_eq!(output.unwrap().footnotes, [] as [std::string::String; 0]);
     }
 
     /// Token budget stops the pipeline before processing all chunks.
@@ -895,7 +895,7 @@ mod tests {
         let output = reader.process(&mut transcript).await.unwrap();
 
         // THEN no footnote and no fetch
-        assert!(output.footnotes.is_empty());
+        assert_eq!(output.footnotes, [] as [std::string::String; 0]);
         assert_eq!(fetcher.call_count(), 0);
     }
 
@@ -912,7 +912,7 @@ mod tests {
         let output = reader.process(&mut transcript).await.unwrap();
 
         // THEN nothing is produced
-        assert!(output.footnotes.is_empty());
+        assert_eq!(output.footnotes, [] as [std::string::String; 0]);
         assert_eq!(output.metadata.references_identified, 0);
     }
 

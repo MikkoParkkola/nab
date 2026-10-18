@@ -446,7 +446,7 @@ mod tests {
     fn render_omits_line_when_one_of_two_placeholders_missing() {
         let f = fields(&[("first", "Foo")]);
         let output = render("{first} and {second}", &f, "https://example.com");
-        assert!(output.is_empty());
+        assert_eq!(output, "");
     }
 
     #[test]
@@ -460,7 +460,7 @@ mod tests {
     fn render_empty_template_returns_empty() {
         let f = fields(&[]);
         let output = render("", &f, "https://example.com");
-        assert!(output.is_empty());
+        assert_eq!(output, "");
     }
 
     // ── truncate filter ───────────────────────────────────────────────────────
@@ -483,7 +483,7 @@ mod tests {
     fn render_truncate_filter_omits_line_when_field_missing() {
         let f = fields(&[]);
         let output = render("{body|truncate:50}", &f, "https://example.com");
-        assert!(output.is_empty());
+        assert_eq!(output, "");
     }
 
     #[test]

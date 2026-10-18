@@ -362,7 +362,7 @@ mod tests {
         // THEN nothing flagged
         assert!(!report.shadowed);
         assert!(!report.is_problem());
-        assert!(report.binaries.is_empty());
+        assert_eq!(report.binaries, [] as [crate::cmd::doctor::PathBinary; 0]);
     }
 
     /// `enumerate_path_binaries` honours the platform separator and
@@ -407,7 +407,7 @@ mod tests {
         let found = enumerate_path_binaries(&path_var, |_| Some(v(1, 0, 0)));
 
         // THEN nothing discovered
-        assert!(found.is_empty());
+        assert_eq!(found, [] as [crate::cmd::doctor::PathBinary; 0]);
     }
 
     /// A cargo-installed winner maps to `cargo uninstall nab`.

@@ -165,7 +165,7 @@ mod tests {
         // GIVEN the platform's default engine
         let engine = default_engine();
         // THEN name is non-empty
-        assert!(!engine.name().is_empty());
+        assert_ne!(engine.name(), "");
     }
 
     /// Available default engines list supported languages.
@@ -175,7 +175,7 @@ mod tests {
         let engine = default_engine();
         // THEN usable engines advertise their supported languages
         if engine.is_available() {
-            assert!(!engine.supported_languages().is_empty());
+            assert_ne!(engine.supported_languages(), [] as [&str; 0]);
         }
     }
 

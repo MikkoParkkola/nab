@@ -752,7 +752,7 @@ mod tests {
     fn render_empty_response() {
         let body = r#"{"elements":[]}"#;
         let md = render_voyager_body(body, "Mikko Parkkola");
-        assert!(md.trim().is_empty());
+        assert_eq!(md.trim(), "");
     }
 
     #[test]

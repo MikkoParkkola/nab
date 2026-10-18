@@ -538,7 +538,10 @@ mod tests {
     #[ignore = "requires external network access"]
     fn test_fetch_chrome_versions_live() {
         let versions = BrowserVersions::fetch_chrome_versions().unwrap();
-        assert!(!versions.is_empty());
+        assert_ne!(
+            versions,
+            [] as [(std::string::String, std::string::String); 0]
+        );
         let major: u32 = versions[0].0.parse().unwrap();
         assert!(major >= 100, "Chrome version too old: {major}");
     }
@@ -547,7 +550,7 @@ mod tests {
     #[ignore = "requires external network access"]
     fn test_fetch_firefox_versions_live() {
         let versions = BrowserVersions::fetch_firefox_versions().unwrap();
-        assert!(!versions.is_empty());
+        assert_ne!(versions, [] as [std::string::String; 0]);
         let major: u32 = versions[0].split('.').next().unwrap().parse().unwrap();
         assert!(major >= 100, "Firefox version too old: {major}");
     }
