@@ -60,7 +60,7 @@ ignore = [
     # wasmtime-wasi filesystem sandbox escape via trailing slash / symlink
     # (RUSTSEC-2026-0269 / GHSA-vqjp-4c8c-hfgg, HIGH). Patched lines:
     # >=24.0.13,<25, >=36.0.14,<37, >=46.0.3,<47, and >=47.0.4. No 45.x
-    # patch. Direct optional wasmtime is 48.0.5, inside >=47.0.4, so the
+    # patch. Direct optional wasmtime is 49.0.3, inside >=47.0.4, so the
     # direct copy is patched. Remaining hit is wasmtime 45.0.3 via yara-x
     # 1.20.0 (see 0222 for why yara-x cannot move to a patched line).
     #
@@ -83,7 +83,7 @@ ignore = [
     # Dynamic record lifting can allocate beyond the hostcall fuel limit
     # (RUSTSEC-2026-0316 / GHSA-jqpg-j7w6-42pr, 2026-09-24, low). Patched:
     # >=36.0.16,<37, >=48.0.3,<49, >=49.0.1. No unaffected range and no
-    # patched 45.x. Direct optional wasmtime is 48.0.5, inside >=48.0.3.
+    # patched 45.x. Direct optional wasmtime is 49.0.3, inside >=49.0.1.
     # The remaining hit is wasmtime 45.0.3 via yara-x 1.20.0. yara-x 1.21.0
     # still declares wasmtime 45.0.3 with only cranelift and runtime.
     #
@@ -91,19 +91,19 @@ ignore = [
     # component-model. Fetched content is YARA rule input and cannot
     # construct component records. This excepts the yara-x copy. It does
     # not patch the bug. This ignore is by advisory ID, so a later
-    # downgrade of the direct runtime below 48.0.3 would stay silent here.
-    # Keep the direct pin at 48.0.5. Cargo-audit cannot expire ignores; the
+    # downgrade of the direct runtime below 49.0.1 would stay silent here.
+    # Keep the direct pin at or above 49.0.3. Cargo-audit cannot expire ignores; the
     # OSV entry reviews this on 2026-12-01. Remove with 0222. #267.
     "RUSTSEC-2026-0316",
     # Component async-lifted callback result count is unvalidated
     # (RUSTSEC-2026-0327 / GHSA-32h6-97mm-8q3c, 2026-10-02, critical).
     # Patched: >=48.0.4,<49 and >=49.0.2. Unaffected below 39.0.0. No
-    # patched 45.x. Direct optional wasmtime 48.0.5 is inside >=48.0.4, so
+    # patched 45.x. Direct optional wasmtime 49.0.3 is inside >=49.0.2, so
     # this ignore exists for the yara-x copy at 45.0.3. Same reachability
     # note as 0316: yara-x enables cranelift and runtime, not
     # component-model. The exception does not patch the bug.
     #
-    # ID-wide: a downgrade of the direct runtime below 48.0.4 would stay
+    # ID-wide: a downgrade of the direct runtime below 49.0.2 would stay
     # silent here until the line is removed. OSV reviews this on 2026-12-01.
     # #267.
     "RUSTSEC-2026-0327",
