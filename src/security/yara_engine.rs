@@ -435,9 +435,6 @@ mod tests {
     fn built_in_rules_compile() {
         let engine = YaraEngine::default();
         let report = engine.scan(b"ordinary page").unwrap();
-        assert_eq!(
-            report.matches,
-            [] as [crate::security::yara_engine::SignatureMatch; 0]
-        );
+        assert_eq!(report.matches, [] as [SignatureMatch; 0]);
     }
 }
