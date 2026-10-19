@@ -78,7 +78,10 @@ fn parse_xlsx_workbook_generates_fallback_name_for_empty_name_attr() {
 
 #[test]
 fn parse_xlsx_workbook_returns_empty_for_invalid_xml() {
-    assert!(parse_xlsx_workbook("<this is not valid xml<<<").is_empty());
+    assert_eq!(
+        parse_xlsx_workbook("<this is not valid xml<<<"),
+        [] as [crate::site::google::ooxml::XlsxSheet; 0]
+    );
 }
 
 // ── XLSX shared strings ────────────────────────────────────────────────────
@@ -109,7 +112,10 @@ fn parse_shared_strings_concatenates_rich_text_runs() {
 
 #[test]
 fn parse_shared_strings_returns_empty_for_invalid_xml() {
-    assert!(parse_shared_strings("not xml").is_empty());
+    assert_eq!(
+        parse_shared_strings("not xml"),
+        [] as [std::string::String; 0]
+    );
 }
 
 // ── XLSX sheet cell parsing ────────────────────────────────────────────────
@@ -169,7 +175,10 @@ fn parse_xlsx_sheet_xml_handles_boolean_cells() {
 
 #[test]
 fn parse_xlsx_sheet_xml_returns_empty_for_invalid_xml() {
-    assert!(parse_xlsx_sheet_xml("not xml", &[]).is_empty());
+    assert_eq!(
+        parse_xlsx_sheet_xml("not xml", &[]),
+        [] as [std::vec::Vec<std::string::String>; 0]
+    );
 }
 
 #[test]
@@ -378,7 +387,7 @@ fn parse_docx_comment_xml_omits_anchor_suffix_when_no_anchor() {
 fn parse_docx_comments_returns_empty_for_no_comments_entry() {
     let bytes = create_minimal_zip(&[("word/document.xml", "<document/>")]);
     let result = parse_docx_comments(&bytes).unwrap();
-    assert!(result.is_empty());
+    assert_eq!(result, [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -434,7 +443,7 @@ fn parse_docx_suggestions_extracts_deletions() {
 fn parse_xlsx_comments_returns_empty_for_minimal_xlsx() {
     let bytes = create_minimal_zip(&[("[Content_Types].xml", "<Types/>")]);
     let result = parse_xlsx_comments(&bytes).unwrap();
-    assert!(result.is_empty());
+    assert_eq!(result, [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -458,7 +467,7 @@ fn parse_xlsx_legacy_xml_extracts_comments() {
 fn parse_pptx_comments_returns_empty_for_minimal_pptx() {
     let bytes = create_minimal_zip(&[("[Content_Types].xml", "<Types/>")]);
     let result = parse_pptx_comments(&bytes).unwrap();
-    assert!(result.is_empty());
+    assert_eq!(result, [] as [std::string::String; 0]);
 }
 
 #[test]

@@ -99,7 +99,7 @@ fn test_readability_handles_non_article_pages_gracefully() {
         .expect("Should not fail on non-article pages");
 
     // Should still produce some output (fallback behavior)
-    assert!(!result.markdown.is_empty());
+    assert_ne!(result.markdown, "");
 }
 
 #[test]

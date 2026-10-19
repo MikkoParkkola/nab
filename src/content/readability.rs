@@ -663,7 +663,7 @@ mod tests {
 
         let article = extract_article(html, "https://example.com/page").unwrap();
         // Title may come from various sources - just verify content extraction works
-        assert!(!article.title.is_empty());
+        assert_ne!(article.title, "");
         assert!(article.text_content.contains("main content area"));
         assert!(!article.text_content.contains("Sidebar"));
     }
@@ -763,7 +763,7 @@ mod tests {
         ";
 
         let article = extract_article(html, "https://example.com/article").unwrap();
-        assert!(!article.excerpt.is_empty());
+        assert_ne!(article.excerpt, "");
         assert!(article.excerpt.len() <= 200);
         assert!(article.excerpt.starts_with("This is a long article"));
     }

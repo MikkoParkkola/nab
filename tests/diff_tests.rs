@@ -37,7 +37,7 @@ fn split_blank_string_yields_empty_vec() {
     // GIVEN: empty input
     // WHEN: split
     // THEN: empty result
-    assert!(split_paragraphs("").is_empty());
+    assert_eq!(split_paragraphs(""), [] as [std::string::String; 0]);
 }
 
 #[test]

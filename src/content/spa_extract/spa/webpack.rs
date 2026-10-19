@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn parse_lazy_chunk_ids_returns_empty_for_no_mdx() {
         let js = r#"var x = {"key": "value"};"#;
-        assert!(parse_lazy_chunk_ids(js).is_empty());
+        assert_eq!(parse_lazy_chunk_ids(js), [] as [u64; 0]);
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
         let webpack_js = r#"r.u=e=>"static/chunks/"+e+"."+({999:"abc123"})[e]+".js""#;
         let page_js = r#"{"./post.mdx":[5264,264]}"#;
         let urls = resolve_content_chunk_urls(webpack_js, page_js, "https://example.com");
-        assert!(urls.is_empty());
+        assert_eq!(urls, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -401,7 +401,10 @@ mod tests {
     #[test]
     fn discover_nextjs_content_chunks_returns_empty_for_non_nextjs() {
         let html = r"<html><body><p>Regular page</p></body></html>";
-        assert!(discover_nextjs_content_chunks(html, "https://example.com").is_empty());
+        assert_eq!(
+            discover_nextjs_content_chunks(html, "https://example.com"),
+            [] as [std::string::String; 0]
+        );
     }
 
     #[test]
@@ -415,6 +418,9 @@ mod tests {
             </script>
         </head><body></body></html>"#
         );
-        assert!(discover_nextjs_content_chunks(&html, "https://example.com").is_empty());
+        assert_eq!(
+            discover_nextjs_content_chunks(&html, "https://example.com"),
+            [] as [std::string::String; 0]
+        );
     }
 }

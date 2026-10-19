@@ -109,14 +109,14 @@ fn from_browser_name_uses_chrome_family_fallback_for_edge_and_unknown() {
 
 #[test]
 fn keychain_service_brave_and_chrome_are_nonempty() {
-    assert!(!CookieSource::Brave.keychain_service().is_empty());
-    assert!(!CookieSource::Chrome.keychain_service().is_empty());
+    assert_ne!(CookieSource::Brave.keychain_service(), "");
+    assert_ne!(CookieSource::Chrome.keychain_service(), "");
 }
 
 #[test]
 fn keychain_service_firefox_safari_are_empty() {
-    assert!(CookieSource::Firefox.keychain_service().is_empty());
-    assert!(CookieSource::Safari.keychain_service().is_empty());
+    assert_eq!(CookieSource::Firefox.keychain_service(), "");
+    assert_eq!(CookieSource::Safari.keychain_service(), "");
 }
 
 #[cfg(target_os = "macos")]
@@ -855,7 +855,7 @@ fn decrypt_cookie_value_only_prefix_no_ciphertext_returns_error() {
     let err = decrypt_cookie_value(&blob, &[0u8; 16], false).unwrap_err();
 
     // THEN: error is descriptive
-    assert!(!err.to_string().is_empty());
+    assert_ne!(err.to_string(), "");
 }
 
 #[test]
@@ -944,7 +944,7 @@ fn parse_cookie_rows_plaintext_value() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "session_id");
     assert_eq!(rows[0].value, "abc123");
-    assert!(rows[0].encrypted_bytes.is_empty());
+    assert_eq!(rows[0].encrypted_bytes, [] as [u8; 0]);
 }
 
 #[test]

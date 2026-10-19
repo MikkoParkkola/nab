@@ -119,7 +119,7 @@ fn extract_from_jsonld_product() {
             .contains("best widget")
     );
     assert_eq!(result.sources["name"], DataSource::JsonLd);
-    assert!(result.missing.is_empty());
+    assert_eq!(result.missing, [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -703,5 +703,5 @@ fn handles_empty_schema() {
     let result = extract_structured(html, &schema);
 
     assert!(result.fields.is_empty());
-    assert!(result.missing.is_empty());
+    assert_eq!(result.missing, [] as [std::string::String; 0]);
 }

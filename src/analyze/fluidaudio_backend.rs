@@ -917,7 +917,7 @@ mod tests {
     /// Empty string returns empty vec.
     #[test]
     fn sentence_split_empty_string() {
-        assert!(segment_text_into_sentences("").is_empty());
+        assert_eq!(segment_text_into_sentences(""), [] as [&str; 0]);
     }
 
     // ── overlap ───────────────────────────────────────────────────────────────

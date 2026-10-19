@@ -298,7 +298,7 @@ mod tests {
         });
         let mut texts = Vec::new();
         unwrap_api_response_bodies(&envelope, &mut texts);
-        assert!(texts.is_empty());
+        assert_eq!(texts, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -331,7 +331,7 @@ mod tests {
         });
         let mut texts = Vec::new();
         unwrap_api_response_bodies(&envelope, &mut texts);
-        assert!(texts.is_empty());
+        assert_eq!(texts, [] as [std::string::String; 0]);
     }
 
     #[test]

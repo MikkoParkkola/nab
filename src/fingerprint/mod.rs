@@ -296,14 +296,14 @@ mod tests {
     fn test_chrome_profile() {
         let profile = chrome_profile();
         assert!(profile.user_agent.contains("Chrome"));
-        assert!(!profile.sec_ch_ua.is_empty());
+        assert_ne!(profile.sec_ch_ua, "");
     }
 
     #[test]
     fn test_firefox_profile() {
         let profile = firefox_profile();
         assert!(profile.user_agent.contains("Firefox"));
-        assert!(profile.sec_ch_ua.is_empty()); // Firefox doesn't send these
+        assert_eq!(profile.sec_ch_ua, ""); // Firefox doesn't send these
     }
 
     #[test]
@@ -354,10 +354,10 @@ mod tests {
     #[test]
     fn test_random_profile_deterministic_structure() {
         let profile = random_profile();
-        assert!(!profile.user_agent.is_empty());
-        assert!(!profile.accept.is_empty());
-        assert!(!profile.accept_language.is_empty());
-        assert!(!profile.accept_encoding.is_empty());
+        assert_ne!(profile.user_agent, "");
+        assert_ne!(profile.accept, "");
+        assert_ne!(profile.accept_language, "");
+        assert_ne!(profile.accept_encoding, "");
     }
 
     #[test]
@@ -374,9 +374,9 @@ mod tests {
     #[test]
     fn test_firefox_no_sec_ch_ua() {
         let profile = firefox_profile();
-        assert!(profile.sec_ch_ua.is_empty());
-        assert!(profile.sec_ch_ua_mobile.is_empty());
-        assert!(profile.sec_ch_ua_platform.is_empty());
+        assert_eq!(profile.sec_ch_ua, "");
+        assert_eq!(profile.sec_ch_ua_mobile, "");
+        assert_eq!(profile.sec_ch_ua_platform, "");
     }
 
     #[test]
@@ -388,8 +388,8 @@ mod tests {
 
     #[test]
     fn test_platform_os_string_not_empty() {
-        assert!(!Platform::MacOS.os_string().is_empty());
-        assert!(!Platform::Windows.os_string().is_empty());
-        assert!(!Platform::Linux.os_string().is_empty());
+        assert_ne!(Platform::MacOS.os_string(), "");
+        assert_ne!(Platform::Windows.os_string(), "");
+        assert_ne!(Platform::Linux.os_string(), "");
     }
 }

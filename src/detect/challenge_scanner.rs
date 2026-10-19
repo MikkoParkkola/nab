@@ -160,7 +160,10 @@ mod tests {
     #[test]
     fn ignores_clean_html() {
         let html = "<html><body><h1>Welcome</h1><p>No challenge here.</p></body></html>";
-        assert!(scan_for_challenges(html).is_empty());
+        assert_eq!(
+            scan_for_challenges(html),
+            [] as [crate::detect::challenge_scanner::ChallengeReference; 0]
+        );
         assert_eq!(first_vendor(html), None);
     }
 
