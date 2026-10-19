@@ -59,9 +59,14 @@ jobs:
       - name: Scan Cargo dependencies against OSV
         uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
         with:
+          # third_party/ holds vendored crates wired in through
+          # [patch.crates-io]; cargo resolves them from the root Cargo.lock and
+          # never reads their own lockfiles, so scanning those reports
+          # packages nab does not build (#358).
           scan-args: |-
             --config=.github/osv-scanner.toml
             --recursive
+            --experimental-exclude=third_party
             ./
 
   test:
