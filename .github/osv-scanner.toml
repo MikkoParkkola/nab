@@ -68,3 +68,33 @@ reason = "Dynamic record lifting past the hostcall fuel limit. Patched lines sta
 id = "RUSTSEC-2026-0327"
 ignoreUntil = 2026-12-01
 reason = "Component async-lifted callback result count is unvalidated. Patched at >=48.0.4,<49 and >=49.0.2. Unaffected below 39.0.0. No patched 45 release. Direct wasmtime 48.0.5 is patched. Remaining hit is 45.0.3 via yara-x. yara-x 1.21.0 still declares 45.0.3 with cranelift and runtime only, not component-model. This excepts the yara copy. It does not patch it. An ID-wide ignore would also hide a direct-runtime downgrade below 48.0.4 until this date. Tracked in #267. Reviewed 2026-10-02."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0359"
+ignoreUntil = 2026-12-01
+reason = "Stack overflow dropping a long chain of recursive types. Patched in 48.0.6 and 49.0.3; no patched 45 release. Direct wasmtime 48.0.6 is patched. Remaining hit is 45.0.3 via yara-x 1.21.0. Upstream is maintained and fixed on main (yara-x pins wasmtime 48.0.6 since VirusTotal/yara-x 786f914551, 2026-10-16), release pending; yara-x ships roughly monthly. Nab gives yara-x only built-in rules and fetched scan input. Remove with the next yara-x release. Tracked in #267. Reviewed 2026-10-19."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0362"
+ignoreUntil = 2026-12-01
+reason = "Embedder sync/async entry requirement not enforced; not triggerable by guest code. Patched in 48.0.6 and 49.0.3; no patched 45 release. Direct wasmtime 48.0.6 is patched. Remaining hit is 45.0.3 via yara-x 1.21.0. Upstream fixed on main (VirusTotal/yara-x 786f914551), release pending. Remove with the next yara-x release. Tracked in #267. Reviewed 2026-10-19."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0363"
+ignoreUntil = 2026-12-01
+reason = "Component-model handle tables capped only per instance. Patched in 36.0.18, 48.0.6 and 49.0.3; no patched 45 release. Direct wasmtime 48.0.6 is patched. Remaining hit is 45.0.3 via yara-x 1.21.0, which does not enable component-model. Upstream fixed on main (VirusTotal/yara-x 786f914551), release pending. Remove with the next yara-x release. Tracked in #267. Reviewed 2026-10-19."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0367"
+ignoreUntil = 2026-12-01
+reason = "zip keeps SUID/SGID bits on extraction. Fixed in zip 9.0.0. Hit is zip 2.4.2, a build-dependency of sherpa-onnx-sys 1.13.8 whose build script uses zip only for the iOS .xcframework.zip archive (other targets unpack .tar.bz2); nab does not build for iOS and does not link zip 2. ID-wide: a later zip below 9.0.0 would stay silent until this date. Upstream is maintained and fixed on main (sherpa-onnx declares zip = \"9\"; k2-fsa/sherpa-onnx#4059, 2026-10-17), release pending; releases every 1-3 weeks. Remove with the next sherpa-onnx-sys release. Reviewed 2026-10-19."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0368"
+ignoreUntil = 2026-12-01
+reason = "zip ZipArchive::extract applies symlink attributes. Fixed in zip 9.0.0. Hit is zip 2.4.2, build-dependency of sherpa-onnx-sys 1.13.8, used only for the iOS .xcframework.zip archive; nab does not build for iOS and does not link it. ID-wide, as for 0367. Upstream fixed on main (k2-fsa/sherpa-onnx#4059), release pending. Remove with the next sherpa-onnx-sys release. Reviewed 2026-10-19."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0369"
+ignoreUntil = 2026-12-01
+reason = "zip extract applies Unix modes unsafely. Fixed in zip 9.0.0. Hit is zip 2.4.2, build-dependency of sherpa-onnx-sys 1.13.8, used only for the iOS .xcframework.zip archive; nab does not build for iOS and does not link it. ID-wide, as for 0367. Upstream fixed on main (k2-fsa/sherpa-onnx#4059), release pending. Remove with the next sherpa-onnx-sys release. Reviewed 2026-10-19."
