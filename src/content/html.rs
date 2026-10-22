@@ -221,7 +221,8 @@ where
 
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     let spa_candidate = if options.allow_spa_extraction {
-        spa_extractor(html).filter(|candidate| !is_metadata_only_spa_candidate(candidate))
+        // An empty candidate is metadata-only JSON-LD (see `render_spa_content`).
+        spa_extractor(html).filter(|candidate| !candidate.trim().is_empty())
     } else {
         None
     };
@@ -345,72 +346,6 @@ fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
 
     let ratio_percent = (markdown_len * 100) / html_len.max(1);
     ratio_percent < THIN_RATIO_PERCENT
-}
-
-/// Returns `true` when an SPA candidate is only Schema.org metadata, not article content.
-///
-/// Medium's Apollo state serializes its Schema.org JSON-LD into `seoMetaTags.jsonLd`,
-/// and the SPA extractor returns that serialized string as the longest string. Such a
-/// blob carries headline, description, author, and dates, but no article body, so
-/// treating it as content pre-empts readability extraction of the article that is
-/// server-rendered in the page. Invariant: only a candidate that parses as JSON, is
-/// Schema.org-shaped, and carries no `articleBody`/`text` of at least 200 bytes is
-/// metadata-only; plain text and JSON carrying an `articleBody`/`text` of at least
-/// 200 bytes are kept unchanged.
-fn is_metadata_only_spa_candidate(candidate: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate.trim()) else {
-        return false;
-    };
-    let schema_shaped = match &value {
-        serde_json::Value::Object(map) => map.contains_key("@context") || map.contains_key("@type"),
-        serde_json::Value::Array(items) => items.iter().any(|item| {
-            matches!(
-                item,
-                serde_json::Value::Object(map)
-                    if map.contains_key("@context") || map.contains_key("@type")
-            )
-        }),
-        _ => false,
-    };
-    schema_shaped && !contains_body_text(&value)
-}
-
-/// Returns `true` when any article-typed object in `value` has an
-/// `articleBody`/`text` string of at least 200 bytes. A long `text` on an Answer,
-/// Comment or other non-article node is not an article body.
-fn contains_body_text(value: &serde_json::Value) -> bool {
-    // Mirrors `MIN_CONTENT_LEN` and the article-type gate in
-    // `src/content/spa_extract/spa/jsonld.rs`.
-    const MIN_BODY_LEN: usize = 200;
-    fn is_article_type(name: &str) -> bool {
-        ["Article", "Posting", "Report"]
-            .iter()
-            .any(|marker| name.contains(marker))
-    }
-    match value {
-        serde_json::Value::Object(map) => {
-            let is_article = match map.get("@type") {
-                Some(serde_json::Value::String(name)) => is_article_type(name),
-                Some(serde_json::Value::Array(names)) => names
-                    .iter()
-                    .any(|name| name.as_str().is_some_and(is_article_type)),
-                _ => false,
-            };
-            if is_article
-                && ["articleBody", "text"].iter().any(|key| {
-                    matches!(
-                        map.get(*key),
-                        Some(serde_json::Value::String(body)) if body.len() >= MIN_BODY_LEN
-                    )
-                })
-            {
-                return true;
-            }
-            map.values().any(contains_body_text)
-        }
-        serde_json::Value::Array(items) => items.iter().any(contains_body_text),
-        _ => false,
-    }
 }
 
 /// Client-rendered shells (Angular `app-root`, Vue CLI `#app` + chunk vendors)
@@ -995,8 +930,8 @@ mod tests {
     use super::{
         HtmlConversionOptions, detect_empty_spa_shell, html_to_markdown_with_url,
         html_to_markdown_with_url_and_fetcher, html_to_markdown_with_url_and_sources,
-        is_metadata_only_spa_candidate, is_thin_content, looks_like_client_spa_shell,
-        strip_embedded_data_sections, strip_hidden_sections, strip_noise_sections,
+        is_thin_content, looks_like_client_spa_shell, strip_embedded_data_sections,
+        strip_hidden_sections, strip_noise_sections,
     };
 
     #[test]
@@ -1636,59 +1571,16 @@ mod tests {
     }
 
     #[test]
-    fn is_metadata_only_spa_candidate_flags_schema_org_metadata_without_body() {
-        assert!(is_metadata_only_spa_candidate(
-            r#"{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H","description":"D","author":{"@type":"Person","name":"A"},"datePublished":"2026-09-27T18:54:04Z"}"#
-        ));
-        assert!(is_metadata_only_spa_candidate(
-            r#"[{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H","description":"D","author":{"@type":"Person","name":"A"},"datePublished":"2026-09-27T18:54:04Z"}]"#
-        ));
-    }
-
-    #[test]
-    fn is_metadata_only_spa_candidate_keeps_body_and_plain_text() {
-        let body = "The full article text. ".repeat(10);
-        assert!(!is_metadata_only_spa_candidate(&format!(
-            r#"{{"@context":"https://schema.org","@type":"Article","headline":"H","articleBody":"{body}"}}"#
-        )));
-        assert!(!is_metadata_only_spa_candidate(&format!(
-            r#"{{"@context":"https://schema.org","@type":"Article","headline":"H","text":"{body}"}}"#
-        )));
-        assert!(!is_metadata_only_spa_candidate(
-            "An article paragraph that is long enough to read."
-        ));
-        assert!(!is_metadata_only_spa_candidate(
-            r#"{"title":"no schema keys","body":"text"}"#
-        ));
-        assert!(!is_metadata_only_spa_candidate("{not json"));
-    }
-
-    #[test]
-    fn is_metadata_only_spa_candidate_ignores_long_text_on_non_article_nodes() {
-        let answer = "A long answer that is not the article. ".repeat(10);
-        assert!(is_metadata_only_spa_candidate(&format!(
-            r#"{{"@context":"https://schema.org","@graph":[{{"@type":"Article","headline":"H"}},{{"@type":"FAQPage","mainEntity":[{{"@type":"Question","acceptedAnswer":{{"@type":"Answer","text":"{answer}"}}}}]}}]}}"#
-        )));
-        assert!(!is_metadata_only_spa_candidate(&format!(
-            r#"{{"@context":"https://schema.org","@graph":[{{"@type":["NewsArticle"],"articleBody":"{answer}"}}]}}"#
-        )));
-    }
-
-    #[test]
-    fn is_metadata_only_spa_candidate_flags_stub_article_body() {
-        assert!(is_metadata_only_spa_candidate(
-            r#"{"@context":"https://schema.org","@type":"Article","headline":"H","articleBody":"Short stub."}"#
-        ));
-    }
-
-    #[test]
     fn html_to_markdown_falls_through_when_spa_result_is_json_ld_metadata_only() {
         // Trimmed from a saved medium.muz.li article, MIK-8673; full page not committed.
         const FIXTURE: &str = r#"<html><head><title>Product design with AI: Building It Was Never the Hard Part</title></head><body><script>window.__APOLLO_STATE__ = {"Post:05159682106d":{"__typename":"Post","seoMetaTags":{"__typename":"SEOMetaTags","jsonLd":"{\"@context\":\"https://schema.org\",\"@type\":\"SocialMediaPosting\",\"headline\":\"Product design with AI: Building It Was Never the Hard Part\",\"description\":\"Product design with AI: Building It Was Never the Hard Part TL;DR: Making things with AI became easy, but building an app that other people can use is a different story. Small details matter more\",\"author\":{\"@type\":\"Person\",\"name\":\"Yudit Lynn Lee\"},\"datePublished\":\"2026-09-27T18:54:04Z\",\"dateModified\":\"2026-10-19T06:43:10Z\"}"}}};</script><article><h1>Product design with AI: Building It Was Never the Hard Part</h1><p class="pw-post-body-paragraph">I have been having a lot of fun building my own applications using AI lately. An iOS app, a few small web apps that run locally, a few half-finished things, mostly so I can learn a new way of working.</p><p class="pw-post-body-paragraph">And honestly, it is exciting. Building an application is so easy now, and adding features is even easier, especially for someone like me who doesn't come from a development background.</p><p class="pw-post-body-paragraph">One of them is a small design inspiration library I made for myself, somewhere to keep design references and design systems together. I built it the way I build most things now: ideate the feature with AI, then build it.</p><p class="pw-post-body-paragraph">But I realised the more I added, the more the usability quietly slipped. It kept gaining features, but they started to feel bolted onto each other.</p></article></body></html>"#;
 
         let spa = super::spa_extract::extract_spa_data(FIXTURE)
             .expect("fixture must trigger the SPA extractor");
-        assert!(spa.contains("\"@context\"") && !spa.contains("articleBody"));
+        assert!(
+            spa.trim().is_empty(),
+            "metadata-only JSON-LD must yield no SPA content: {spa}"
+        );
 
         let markdown = html_to_markdown_with_url(
             FIXTURE,
@@ -1720,7 +1612,10 @@ mod tests {
 
         let spa = super::spa_extract::extract_spa_data(FIXTURE)
             .expect("fixture must trigger the SPA extractor");
-        assert!(spa.contains("\"@context\"") && spa.contains("<b>bold</b>"));
+        assert!(
+            spa.trim().is_empty(),
+            "metadata-only JSON-LD must yield no SPA content: {spa}"
+        );
 
         let markdown = html_to_markdown_with_url(
             FIXTURE,
