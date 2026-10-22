@@ -5,7 +5,7 @@
 # CI `cargo audit` step has no `--deny yanked`, so it stays exit-0 / honest-green):
 #   * gimli 0.32.3 — not yanked; still present via yara-x -> walrus 0.26.1
 #     (`gimli = "^0.32"`). A second gimli 0.33.0 (non-yanked; 0.33.1 was yanked)
-#     coexists for cranelift/wasmtime 46.
+#     coexists for cranelift 0.135 / wasmtime 48.
 #   * chacha20 0.10.0 was yanked; lockfile is on 0.10.2.
 #   * aes / lru — previously flagged in #134, now RESOLVED (no longer in the tree).
 # cargo-audit ignores RUSTSEC IDs, not yanked-by-crate, so gimli is documented
