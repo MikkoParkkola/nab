@@ -58,8 +58,89 @@ pub fn find_content_by_key(value: &serde_json::Value, key: &str) -> Option<Strin
     }
 }
 
+/// Returns `true` for a Schema.org type name that denotes an article
+/// (`Article`, `NewsArticle`, `BlogPosting`, `SocialMediaPosting`, `Report`, ...).
+pub(super) fn is_article_type(name: &str) -> bool {
+    ["Article", "Posting", "Report"]
+        .iter()
+        .any(|marker| name.contains(marker))
+}
+
+/// Parses `content` as Schema.org JSON: an object, or an array of objects, with
+/// `@type` or a `@context` that names schema.org anywhere in it. Other JSON (`ActivityStreams` uses
+/// `type`, not `@type`) is not Schema.org and returns `None`.
+fn parse_schema_org_json(content: &str) -> Option<serde_json::Value> {
+    let trimmed = content.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return None;
+    }
+    let is_schema = |value: &serde_json::Value| {
+        value.as_object().is_some_and(|map| {
+            // `@context` may be a string, an array, or an object such as
+            // `{"@vocab": "https://schema.org/"}`.
+            map.contains_key("@type")
+                || map
+                    .get("@context")
+                    .is_some_and(|context| context.to_string().contains("schema.org"))
+        })
+    };
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    let schema = match &value {
+        serde_json::Value::Array(items) => items.iter().any(is_schema),
+        other => is_schema(other),
+    };
+    schema.then_some(value)
+}
+
+/// Returns the longest `articleBody`/`text` of at least 200 bytes on an
+/// article-typed node anywhere in `value`. A long `text` on an Answer, Comment
+/// or other non-article node is not an article body.
+fn find_article_body(value: &serde_json::Value) -> Option<&str> {
+    // Mirrors `MIN_CONTENT_LEN` in `jsonld.rs`.
+    const MIN_BODY_LEN: usize = 200;
+    match value {
+        serde_json::Value::Object(map) => {
+            let is_article = match map.get("@type") {
+                Some(serde_json::Value::String(name)) => is_article_type(name),
+                Some(serde_json::Value::Array(names)) => names
+                    .iter()
+                    .any(|name| name.as_str().is_some_and(is_article_type)),
+                _ => false,
+            };
+            let own = is_article
+                .then(|| {
+                    ["articleBody", "text"]
+                        .iter()
+                        .filter_map(|key| map.get(*key).and_then(serde_json::Value::as_str))
+                        .filter(|body| body.len() >= MIN_BODY_LEN)
+                        .max_by_key(|body| body.len())
+                })
+                .flatten();
+            own.into_iter()
+                .chain(map.values().filter_map(find_article_body))
+                .max_by_key(|body| body.len())
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(find_article_body)
+            .max_by_key(|body| body.len()),
+        _ => None,
+    }
+}
+
 /// Convert a SPA content string (HTML or plain text) to clean markdown.
+///
+/// Serialized Schema.org JSON is data, not markup: it renders as its article
+/// body, or as an empty string when it is metadata only (headline, author,
+/// dates), so the caller falls through to readability extraction (MIK-8673).
 pub(super) fn render_spa_content(content: &str) -> String {
+    if let Some(value) = parse_schema_org_json(content) {
+        return find_article_body(&value).map_or_else(String::new, render_markup);
+    }
+    render_markup(content)
+}
+
+fn render_markup(content: &str) -> String {
     if content.contains('<') && content.contains('>') {
         let md = html2md::parse_html(content);
         md.lines()
@@ -110,4 +191,81 @@ pub(super) fn strip_html_comment_wrapper(s: &str) -> &str {
     let s = s.strip_prefix("<!--").unwrap_or(s);
     let s = s.strip_suffix("-->").unwrap_or(s);
     s.trim()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_spa_content;
+
+    const BODY: &str = "The full article text, long enough to count as a body. ";
+
+    #[test]
+    fn render_spa_content_drops_schema_org_metadata_without_body() {
+        for input in [
+            r#"{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H","description":"a <b>bold</b> claim"}"#,
+            r#"[{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H"}]"#,
+            r#"{"@context":"https://schema.org","@type":"Article","articleBody":"Short stub."}"#,
+        ] {
+            assert_eq!(render_spa_content(input), "", "metadata-only: {input}");
+        }
+    }
+
+    #[test]
+    fn render_spa_content_recognises_array_and_vocab_contexts() {
+        for input in [
+            r#"{"@context":["https://schema.org"],"@graph":[{"headline":"H","description":"D"}]}"#,
+            r#"{"@context":{"@vocab":"https://schema.org/"},"@graph":[{"headline":"H"}]}"#,
+        ] {
+            assert_eq!(render_spa_content(input), "", "metadata-only: {input}");
+        }
+    }
+
+    #[test]
+    fn render_spa_content_ignores_long_text_on_non_article_nodes() {
+        let answer = "A long answer that is not the article. ".repeat(10);
+        let input = format!(
+            r#"{{"@context":"https://schema.org","@graph":[{{"@type":"Article","headline":"H"}},{{"@type":"FAQPage","mainEntity":[{{"@type":"Question","acceptedAnswer":{{"@type":"Answer","text":"{answer}"}}}}]}}]}}"#
+        );
+        assert_eq!(render_spa_content(&input), "");
+    }
+
+    #[test]
+    fn render_spa_content_renders_the_article_body_of_schema_org_json() {
+        let body = BODY.repeat(5);
+        let input = format!(
+            r#"{{"@context":"https://schema.org","@graph":[{{"@type":["NewsArticle"],"headline":"H","articleBody":"<p>{body}<b>end</b></p>"}}]}}"#
+        );
+        let out = render_spa_content(&input);
+        assert!(
+            out.contains("The full article text"),
+            "body expected: {out}"
+        );
+        assert!(
+            !out.contains("<b>") && !out.contains("@context"),
+            "rendered prose expected: {out}"
+        );
+    }
+
+    #[test]
+    fn render_spa_content_leaves_non_schema_org_json_on_the_original_path() {
+        let body = BODY.repeat(5);
+        let activity = format!(
+            r#"{{"@context":"https://www.w3.org/ns/activitystreams","type":"Article","content":"{body}"}}"#
+        );
+        assert_eq!(render_spa_content(&activity), activity);
+    }
+
+    #[test]
+    fn render_spa_content_renders_html_inside_non_schema_json() {
+        let out = render_spa_content(r#"{"body":"<p>Hello <b>world</b></p>"}"#);
+        assert!(
+            !out.contains("<b>"),
+            "non-schema JSON must still be rendered: {out}"
+        );
+    }
+
+    #[test]
+    fn render_spa_content_still_renders_html() {
+        assert!(!render_spa_content("<p>Hello <b>world</b></p>").contains("<p>"));
+    }
 }

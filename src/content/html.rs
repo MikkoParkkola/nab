@@ -221,7 +221,8 @@ where
 
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     let spa_candidate = if options.allow_spa_extraction {
-        spa_extractor(html)
+        // An empty candidate is metadata-only JSON-LD (see `render_spa_content`).
+        spa_extractor(html).filter(|candidate| !candidate.trim().is_empty())
     } else {
         None
     };
@@ -1567,5 +1568,89 @@ mod tests {
         );
         let md = html_to_markdown_with_url(&html, Some("https://developer.nvidia.com/blog/x/"));
         assert!(md.contains(NEEDLE), "lost authored body: {md}");
+    }
+
+    #[test]
+    fn html_to_markdown_falls_through_when_spa_result_is_json_ld_metadata_only() {
+        // Trimmed from a saved medium.muz.li article, MIK-8673; full page not committed.
+        const FIXTURE: &str = r#"<html><head><title>Product design with AI: Building It Was Never the Hard Part</title></head><body><script>window.__APOLLO_STATE__ = {"Post:05159682106d":{"__typename":"Post","seoMetaTags":{"__typename":"SEOMetaTags","jsonLd":"{\"@context\":\"https://schema.org\",\"@type\":\"SocialMediaPosting\",\"headline\":\"Product design with AI: Building It Was Never the Hard Part\",\"description\":\"Product design with AI: Building It Was Never the Hard Part TL;DR: Making things with AI became easy, but building an app that other people can use is a different story. Small details matter more\",\"author\":{\"@type\":\"Person\",\"name\":\"Yudit Lynn Lee\"},\"datePublished\":\"2026-09-27T18:54:04Z\",\"dateModified\":\"2026-10-19T06:43:10Z\"}"}}};</script><article><h1>Product design with AI: Building It Was Never the Hard Part</h1><p class="pw-post-body-paragraph">I have been having a lot of fun building my own applications using AI lately. An iOS app, a few small web apps that run locally, a few half-finished things, mostly so I can learn a new way of working.</p><p class="pw-post-body-paragraph">And honestly, it is exciting. Building an application is so easy now, and adding features is even easier, especially for someone like me who doesn't come from a development background.</p><p class="pw-post-body-paragraph">One of them is a small design inspiration library I made for myself, somewhere to keep design references and design systems together. I built it the way I build most things now: ideate the feature with AI, then build it.</p><p class="pw-post-body-paragraph">But I realised the more I added, the more the usability quietly slipped. It kept gaining features, but they started to feel bolted onto each other.</p></article></body></html>"#;
+
+        let spa = super::spa_extract::extract_spa_data(FIXTURE)
+            .expect("fixture must trigger the SPA extractor");
+        assert!(
+            spa.trim().is_empty(),
+            "metadata-only JSON-LD must yield no SPA content: {spa}"
+        );
+
+        let markdown = html_to_markdown_with_url(
+            FIXTURE,
+            Some(
+                "https://medium.muz.li/product-design-with-ai-building-it-was-never-the-hard-part-05159682106d",
+            ),
+        );
+        assert!(
+            markdown.contains("I have been having a lot of fun building my own applications"),
+            "expected article body in markdown: {markdown}"
+        );
+        assert!(
+            markdown.contains("bolted onto each other"),
+            "expected article body in markdown: {markdown}"
+        );
+        assert!(
+            !markdown.trim_start().starts_with('{'),
+            "markdown must not be the JSON-LD blob: {markdown}"
+        );
+        assert!(
+            !markdown.contains("\"@context\""),
+            "markdown must not contain JSON-LD metadata: {markdown}"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_falls_through_when_json_ld_metadata_contains_html() {
+        const FIXTURE: &str = r#"<html><head><title>Product design with AI: Building It Was Never the Hard Part</title></head><body><script>window.__APOLLO_STATE__ = {"Post:05159682106d":{"__typename":"Post","seoMetaTags":{"__typename":"SEOMetaTags","jsonLd":"{\"@context\":\"https://schema.org\",\"@type\":\"SocialMediaPosting\",\"headline\":\"Product design with AI: Building It Was Never the Hard Part\",\"description\":\"Product design with AI: Building It Was Never the Hard Part TL;DR: Making things with AI became easy, but building an app that other people can use is a <b>bold</b> claim and a different story. Small details matter more\",\"author\":{\"@type\":\"Person\",\"name\":\"Yudit Lynn Lee\"},\"datePublished\":\"2026-09-27T18:54:04Z\",\"dateModified\":\"2026-10-19T06:43:10Z\"}"}}};</script><article><h1>Product design with AI: Building It Was Never the Hard Part</h1><p class="pw-post-body-paragraph">I have been having a lot of fun building my own applications using AI lately. An iOS app, a few small web apps that run locally, a few half-finished things, mostly so I can learn a new way of working.</p><p class="pw-post-body-paragraph">And honestly, it is exciting. Building an application is so easy now, and adding features is even easier, especially for someone like me who doesn't come from a development background.</p><p class="pw-post-body-paragraph">One of them is a small design inspiration library I made for myself, somewhere to keep design references and design systems together. I built it the way I build most things now: ideate the feature with AI, then build it.</p><p class="pw-post-body-paragraph">But I realised the more I added, the more the usability quietly slipped. It kept gaining features, but they started to feel bolted onto each other.</p></article></body></html>"#;
+
+        let spa = super::spa_extract::extract_spa_data(FIXTURE)
+            .expect("fixture must trigger the SPA extractor");
+        assert!(
+            spa.trim().is_empty(),
+            "metadata-only JSON-LD must yield no SPA content: {spa}"
+        );
+
+        let markdown = html_to_markdown_with_url(
+            FIXTURE,
+            Some(
+                "https://medium.muz.li/product-design-with-ai-building-it-was-never-the-hard-part-05159682106d",
+            ),
+        );
+        assert!(
+            markdown.contains("I have been having a lot of fun building my own applications"),
+            "expected article body in markdown: {markdown}"
+        );
+        assert!(
+            !markdown.contains("\"@context\""),
+            "markdown must not contain JSON-LD metadata: {markdown}"
+        );
+        assert!(
+            !markdown.contains("@context"),
+            "markdown must not contain JSON-LD metadata: {markdown}"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_keeps_spa_result_that_carries_article_body() {
+        let body =
+            "SPA article body sentence that only exists in the hydration payload. ".repeat(6);
+        let html = format!(
+            r#"<html><body><script>window.__APOLLO_STATE__ = {{"Post:1":{{"content":"{body}"}}}};</script><div id="root">Loading</div></body></html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, None);
+
+        assert!(
+            markdown
+                .contains("SPA article body sentence that only exists in the hydration payload."),
+            "expected SPA body in markdown: {markdown}"
+        );
     }
 }

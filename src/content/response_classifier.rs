@@ -406,7 +406,7 @@ fn classify_http_response_lower(status: u16, body_lower: &str) -> Option<Respons
         });
     }
 
-    if looks_like_turnstile(body_lower) {
+    if looks_like_turnstile(status, body_lower) {
         return Some(ResponseDiagnostic {
             kind: ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Turnstile),
             status,
@@ -532,11 +532,32 @@ fn looks_like_cloudflare_challenge(body_lower: &str) -> bool {
     )
 }
 
-fn looks_like_turnstile(body_lower: &str) -> bool {
-    contains_any(
-        body_lower,
-        &["cf-turnstile", "turnstile.js", "challenge-platform"],
-    )
+// On 403/503 any `challenge-platform` reference counts as a challenge; on
+// other statuses passive `/scripts/` challenge-platform injections (which
+// appear on normal pages) are suppressed, so only active paths, the widget
+// class or turnstile.js count.
+fn looks_like_turnstile(status: u16, body_lower: &str) -> bool {
+    if matches!(status, 403 | 503) && body_lower.contains("challenge-platform") {
+        return true;
+    }
+    if contains_any(body_lower, &["cf-turnstile", "turnstile.js"]) {
+        return true;
+    }
+    body_lower.split("challenge-platform").skip(1).any(|rest| {
+        let token = rest
+            .split(|c: char| {
+                c == '\''
+                    || c == '"'
+                    || c == '<'
+                    || c == '>'
+                    || c == ')'
+                    || c == ';'
+                    || c.is_whitespace()
+            })
+            .next()
+            .unwrap_or_default();
+        !token.contains("/scripts/")
+    })
 }
 
 fn looks_like_captcha(body_lower: &str) -> bool {
@@ -921,5 +942,67 @@ mod tests {
             diagnostic.kind,
             ResponseDiagnosticKind::AuthRequired(AuthRequiredKind::LoginRequired)
         );
+    }
+
+    // Trimmed from a saved HTTP 200 medium.muz.li article (MIK-8673); full third-party page deliberately not committed.
+    const MEDIUM_STYLE_200_WITH_PRECURSOR: &str = r#"<html><head><title>Product design with AI: Building It Was Never the Hard Part | by Yudit Lynn Lee | Muzli</title><script>window.__CF$cv$params={r:'a4ea03e8bf266e50',t:'MTc5MjY4Nzk3NQ=='};(function(){if(!document.body)return;var s=document.createElement('script');s.src='/cdn-cgi/challenge-platform/scripts/precursor/main.js';document.head.appendChild(s);})();</script></head><body><article><label><p>Remember me for faster sign in</p></label><div id="g-recaptcha"></div><p class="pw-post-body-paragraph">I have been having a lot of fun building my own applications using AI lately. An iOS app, a few small web apps that run locally, a few half-finished things, mostly so I can learn a new way of working.</p><p class="pw-post-body-paragraph">And honestly, it is exciting. Building an application is so easy now, and adding features is even easier, especially for someone like me who doesn't come from a development background.</p><p class="pw-post-body-paragraph">One of them is a small design inspiration library I made for myself, somewhere to keep design references and design systems together. I built it the way I build most things now: ideate the feature with AI, then build it.</p><p class="pw-post-body-paragraph">But I realised the more I added, the more the usability quietly slipped. It kept gaining features, but they started to feel bolted onto each other.</p></article></body></html>"#;
+
+    #[test]
+    fn classify_http_response_ignores_passive_challenge_platform_precursor_on_200() {
+        assert!(
+            classify_http_response(200, MEDIUM_STYLE_200_WITH_PRECURSOR).is_none(),
+            "expected no diagnostic for HTTP 200 article with passive precursor script"
+        );
+    }
+
+    #[test]
+    fn classify_http_response_ignores_passive_jsd_script_variants_on_200() {
+        for body in [
+            "<p>article</p><script src='/cdn-cgi/challenge-platform/scripts/jsd/main.js'></script>",
+            "<p>article</p><script src=\"/cdn-cgi/challenge-platform/h/b/scripts/jsd/1a2b3c4d/main.js\"></script>",
+        ] {
+            assert!(
+                classify_http_response(200, body).is_none(),
+                "expected no diagnostic for passive jsd script: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_http_response_still_detects_turnstile_widget_with_precursor_on_200() {
+        let body = format!(
+            "{MEDIUM_STYLE_200_WITH_PRECURSOR}<div class=\"cf-turnstile\" data-sitekey=\"0x4AAAA\"></div>"
+        );
+        let diagnostic = classify_http_response(200, &body).expect("turnstile classification");
+        assert_eq!(
+            diagnostic.kind,
+            ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Turnstile)
+        );
+    }
+
+    #[test]
+    fn classify_http_response_detects_active_challenge_platform_orchestrate_path() {
+        for status in [200, 403, 503] {
+            let body = "<html><body><script>(function(){window._cf_chl_opt={cType:'managed'};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=8f00';document.head.appendChild(a);}());</script></body></html>";
+            let diagnostic =
+                classify_http_response(status, body).expect("turnstile classification");
+            assert_eq!(
+                diagnostic.kind,
+                ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Turnstile)
+            );
+        }
+    }
+
+    #[test]
+    fn classify_http_response_keeps_challenge_platform_on_403_503() {
+        for status in [403, 503] {
+            let body = "<html><body><script src='/cdn-cgi/challenge-platform/scripts/jsd/main.js'></script></body></html>";
+            let diagnostic =
+                classify_http_response(status, body).expect("turnstile classification");
+            assert_eq!(
+                diagnostic.kind,
+                ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Turnstile)
+            );
+        }
     }
 }
