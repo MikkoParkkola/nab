@@ -221,7 +221,7 @@ where
 
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     let spa_candidate = if options.allow_spa_extraction {
-        spa_extractor(html)
+        spa_extractor(html).filter(|candidate| !is_metadata_only_spa_candidate(candidate))
     } else {
         None
     };
@@ -345,6 +345,49 @@ fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
 
     let ratio_percent = (markdown_len * 100) / html_len.max(1);
     ratio_percent < THIN_RATIO_PERCENT
+}
+
+/// Returns `true` when an SPA candidate is only Schema.org metadata, not article content.
+///
+/// Medium's Apollo state serializes its Schema.org JSON-LD into `seoMetaTags.jsonLd`,
+/// and the SPA extractor returns that serialized string as the longest string. Such a
+/// blob carries headline, description, author, and dates, but no article body, so
+/// treating it as content pre-empts readability extraction of the article that is
+/// server-rendered in the page. Invariant: only a candidate that parses as JSON, is
+/// Schema.org-shaped, and carries no `articleBody` is metadata-only; plain text and
+/// JSON carrying an `articleBody` are kept unchanged.
+fn is_metadata_only_spa_candidate(candidate: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate.trim()) else {
+        return false;
+    };
+    let schema_shaped = match &value {
+        serde_json::Value::Object(map) => map.contains_key("@context") || map.contains_key("@type"),
+        serde_json::Value::Array(items) => items.iter().any(|item| {
+            matches!(
+                item,
+                serde_json::Value::Object(map)
+                    if map.contains_key("@context") || map.contains_key("@type")
+            )
+        }),
+        _ => false,
+    };
+    schema_shaped && !contains_article_body(&value)
+}
+
+/// Returns `true` when any object in `value` has a non-empty string `articleBody`.
+fn contains_article_body(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::String(body)) = map.get("articleBody")
+                && !body.is_empty()
+            {
+                return true;
+            }
+            map.values().any(contains_article_body)
+        }
+        serde_json::Value::Array(items) => items.iter().any(contains_article_body),
+        _ => false,
+    }
 }
 
 /// Client-rendered shells (Angular `app-root`, Vue CLI `#app` + chunk vendors)
@@ -929,8 +972,8 @@ mod tests {
     use super::{
         HtmlConversionOptions, detect_empty_spa_shell, html_to_markdown_with_url,
         html_to_markdown_with_url_and_fetcher, html_to_markdown_with_url_and_sources,
-        is_thin_content, looks_like_client_spa_shell, strip_embedded_data_sections,
-        strip_hidden_sections, strip_noise_sections,
+        is_metadata_only_spa_candidate, is_thin_content, looks_like_client_spa_shell,
+        strip_embedded_data_sections, strip_hidden_sections, strip_noise_sections,
     };
 
     #[test]
@@ -1567,5 +1610,79 @@ mod tests {
         );
         let md = html_to_markdown_with_url(&html, Some("https://developer.nvidia.com/blog/x/"));
         assert!(md.contains(NEEDLE), "lost authored body: {md}");
+    }
+
+    #[test]
+    fn is_metadata_only_spa_candidate_flags_schema_org_metadata_without_body() {
+        assert!(is_metadata_only_spa_candidate(
+            r#"{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H","description":"D","author":{"@type":"Person","name":"A"},"datePublished":"2026-09-27T18:54:04Z"}"#
+        ));
+        assert!(is_metadata_only_spa_candidate(
+            r#"[{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H","description":"D","author":{"@type":"Person","name":"A"},"datePublished":"2026-09-27T18:54:04Z"}]"#
+        ));
+    }
+
+    #[test]
+    fn is_metadata_only_spa_candidate_keeps_body_and_plain_text() {
+        assert!(!is_metadata_only_spa_candidate(
+            r#"{"@context":"https://schema.org","@type":"Article","headline":"H","articleBody":"The full article text."}"#
+        ));
+        assert!(!is_metadata_only_spa_candidate(
+            "An article paragraph that is long enough to read."
+        ));
+        assert!(!is_metadata_only_spa_candidate(
+            r#"{"title":"no schema keys","body":"text"}"#
+        ));
+        assert!(!is_metadata_only_spa_candidate("{not json"));
+    }
+
+    #[test]
+    fn html_to_markdown_falls_through_when_spa_result_is_json_ld_metadata_only() {
+        // Trimmed from a saved medium.muz.li article, MIK-8673; full page not committed.
+        const FIXTURE: &str = r#"<html><head><title>Product design with AI: Building It Was Never the Hard Part</title></head><body><script>window.__APOLLO_STATE__ = {"Post:05159682106d":{"__typename":"Post","seoMetaTags":{"__typename":"SEOMetaTags","jsonLd":"{\"@context\":\"https://schema.org\",\"@type\":\"SocialMediaPosting\",\"headline\":\"Product design with AI: Building It Was Never the Hard Part\",\"description\":\"Product design with AI: Building It Was Never the Hard Part TL;DR: Making things with AI became easy, but building an app that other people can use is a different story. Small details matter more\",\"author\":{\"@type\":\"Person\",\"name\":\"Yudit Lynn Lee\"},\"datePublished\":\"2026-09-27T18:54:04Z\",\"dateModified\":\"2026-10-19T06:43:10Z\"}"}}};</script><article><h1>Product design with AI: Building It Was Never the Hard Part</h1><p class="pw-post-body-paragraph">I have been having a lot of fun building my own applications using AI lately. An iOS app, a few small web apps that run locally, a few half-finished things, mostly so I can learn a new way of working.</p><p class="pw-post-body-paragraph">And honestly, it is exciting. Building an application is so easy now, and adding features is even easier, especially for someone like me who doesn't come from a development background.</p><p class="pw-post-body-paragraph">One of them is a small design inspiration library I made for myself, somewhere to keep design references and design systems together. I built it the way I build most things now: ideate the feature with AI, then build it.</p><p class="pw-post-body-paragraph">But I realised the more I added, the more the usability quietly slipped. It kept gaining features, but they started to feel bolted onto each other.</p></article></body></html>"#;
+
+        let spa = super::spa_extract::extract_spa_data(FIXTURE)
+            .expect("fixture must trigger the SPA extractor");
+        assert!(spa.contains("\"@context\"") && !spa.contains("articleBody"));
+
+        let markdown = html_to_markdown_with_url(
+            FIXTURE,
+            Some(
+                "https://medium.muz.li/product-design-with-ai-building-it-was-never-the-hard-part-05159682106d",
+            ),
+        );
+        assert!(
+            markdown.contains("I have been having a lot of fun building my own applications"),
+            "expected article body in markdown: {markdown}"
+        );
+        assert!(
+            markdown.contains("bolted onto each other"),
+            "expected article body in markdown: {markdown}"
+        );
+        assert!(
+            !markdown.trim_start().starts_with('{'),
+            "markdown must not be the JSON-LD blob: {markdown}"
+        );
+        assert!(
+            !markdown.contains("\"@context\""),
+            "markdown must not contain JSON-LD metadata: {markdown}"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_keeps_spa_result_that_carries_article_body() {
+        let body =
+            "SPA article body sentence that only exists in the hydration payload. ".repeat(6);
+        let html = format!(
+            r#"<html><body><script>window.__APOLLO_STATE__ = {{"Post:1":{{"content":"{body}"}}}};</script><div id="root">Loading</div></body></html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, None);
+
+        assert!(
+            markdown
+                .contains("SPA article body sentence that only exists in the hydration payload."),
+            "expected SPA body in markdown: {markdown}"
+        );
     }
 }
