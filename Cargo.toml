@@ -120,7 +120,7 @@ toml = "1.1"                            # Plugin config parsing
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sandboxed WASM runtime for third-party site extractors.
 # No unsafe code needed — wasmtime's safe API is used throughout.
-wasmtime = { version = "48.0.6", optional = true, default-features = false, features = [
+wasmtime = { version = "48.0.7", optional = true, default-features = false, features = [
     "cranelift",         # JIT compiler backend
     "runtime",           # Core runtime
     "component-model",   # WIT Component Model (bindgen!, Linker<T>, Component)
@@ -171,7 +171,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # inventory stopped being an optional feature in 1.19 (always on); GHSA-2jx3-ff3v-j7jj fixed in 1.19.0.
-yara-x = { version = "1.19", default-features = false, features = [
+yara-x = { version = "1.22", default-features = false, features = [
     "constant-folding",
     "exact-atoms",
     "fast-regexp",
