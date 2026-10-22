@@ -5,7 +5,7 @@
 # CI `cargo audit` step has no `--deny yanked`, so it stays exit-0 / honest-green):
 #   * gimli 0.32.3 — not yanked; still present via yara-x -> walrus 0.26.1
 #     (`gimli = "^0.32"`). A second gimli 0.33.0 (non-yanked; 0.33.1 was yanked)
-#     coexists for cranelift/wasmtime 46.
+#     coexists for cranelift 0.135 / wasmtime 48.
 #   * chacha20 0.10.0 was yanked; lockfile is on 0.10.2.
 #   * aes / lru — previously flagged in #134, now RESOLVED (no longer in the tree).
 # cargo-audit ignores RUSTSEC IDs, not yanked-by-crate, so gimli is documented
@@ -16,111 +16,6 @@ ignore = [
     # no drop-in maintained replacement wired yet. No upstream patch exists
     # (informational/unmaintained advisory). Tracked in #134.
     "RUSTSEC-2025-0141",
-    # wasmtime "stores can mix up type indices between engines"
-    # (RUSTSEC-2026-0222 / GHSA-hgjw-h833-99q9, 2026-07-31). The remaining
-    # affected version is wasmtime 45.0.3, transitive through yara-x 1.20.0.
-    #
-    # Why this cannot be bumped away today: the advisory's patched lines are
-    # >=24.0.12, >=36.0.13, >=46.0.2 and >=47.0.3. There is NO patched 43.x.
-    # Rechecked 2026-09-27: yara-x 1.20.0 (our lock, bumped for GHSA-2jx3-ff3v-j7jj)
-    # requires wasmtime ^45.0.3. Previously 1.16.0 required ^43.0.1;
-    # newest yara-x 1.20.0 requires wasmtime ^45.0.3 -- still no patched 45.x
-    # line, and 1.20.0 dropped the `inventory` crate feature so it cannot be
-    # cargo-updated under the current feature list. Verified against crates.io
-    # dependency API for 1.16.0, 1.19.0, and 1.20.0.
-    #
-    # Why suppressing it is defensible rather than lazy: CVSS 3.8 LOW, vector
-    # AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:L/A:L -- local access, high attack complexity,
-    # high privileges AND user interaction required, all impacts low. The bug needs
-    # multiple wasmtime Engines to confuse embedder-managed type indices between
-    # them. Fetched remote content is scanned by yara-x, but it is only rule input:
-    # it cannot create Engines or mix embedder objects between them. Nab compiles
-    # its own built-in rules into yara-x's internally managed engine.
-    #
-    # Why we are not dropping yara-x to remove wasmtime: it is the fetch-time
-    # prompt-injection firewall (src/security/yara_engine.rs, 30 built-in rules
-    # covering prompt injection, exfiltration, secret detection and obfuscated
-    # shell payloads). nab fetches hostile web content for agents by design, so
-    # removing that guard to clear a local-privilege advisory would trade a
-    # reachable defence for a theoretical exposure -- a net security regression.
-    #
-    # Cost of NOT suppressing it: `cargo audit` fails hard on any advisory
-    # regardless of severity, so this 3.8 blocked all nine open dependency PRs,
-    # including the security bumps. The security gate was blocking the security
-    # fixes.
-    #
-    # Remove this cargo-audit ignore when yara-x releases a version requiring a
-    # patched wasmtime line. Rechecked 2026-10-02: yara-x 1.21.0 still declares
-    # wasmtime 45.0.3 (caret requirement; 45.0.3 is the last 45 release) with
-    # only cranelift and runtime. Cargo-audit cannot expire ignores itself; the
-    # corresponding OSV exception reviews this on 2026-12-01
-    # (the previous 2026-10-01 date has passed).
-    # Re-check on every yara-x release. Tracked in #267.
-    "RUSTSEC-2026-0222",
-    # wasmtime-wasi filesystem sandbox escape via trailing slash / symlink
-    # (RUSTSEC-2026-0269 / GHSA-vqjp-4c8c-hfgg, HIGH). Patched lines:
-    # >=24.0.13,<25, >=36.0.14,<37, >=46.0.3,<47, and >=47.0.4. No 45.x
-    # patch. Direct optional wasmtime is 48.0.6, inside >=47.0.4, so the
-    # direct copy is patched. Remaining hit is wasmtime 45.0.3 via yara-x
-    # 1.20.0 (see 0222 for why yara-x cannot move to a patched line).
-    #
-    # The advisory is in wasmtime-wasi: a guest with a preopened directory
-    # can escape the cap-std sandbox on macOS and Linux kernels before
-    # openat2 (5.6). Verified at source 2026-08-31:
-    #   * Cargo.lock contains no `wasmtime-wasi` package.
-    #   * yara-x depends on wasmtime with default-features=false and only
-    #     `cranelift` + `runtime` -- not WASI.
-    #   * nab's wasm-providers path (src/site/wasm_provider.rs) does not
-    #     configure WASI; Component Model linker has no filesystem imports.
-    # Fetched content is YARA scan input, not a WASI guest with host dirs.
-    # cargo-audit still flags the `wasmtime` crate ID, which is why this
-    # ignore exists.
-    #
-    # RUSTSEC-2026-0268 (WASIp3 streams) is unaffected below 46.0.0 and
-    # patched at 46.0.3; it needs no ignore after the direct bump.
-    # Remove with 0222 when yara-x ships a patched wasmtime. #267.
-    "RUSTSEC-2026-0269",
-    # Dynamic record lifting can allocate beyond the hostcall fuel limit
-    # (RUSTSEC-2026-0316 / GHSA-jqpg-j7w6-42pr, 2026-09-24, low). Patched:
-    # >=36.0.16,<37, >=48.0.3,<49, >=49.0.1. No unaffected range and no
-    # patched 45.x. Direct optional wasmtime is 48.0.6, inside >=48.0.3.
-    # The remaining hit is wasmtime 45.0.3 via yara-x 1.20.0. yara-x 1.21.0
-    # still declares wasmtime 45.0.3 with only cranelift and runtime.
-    #
-    # Record lifting lives in the component model. yara-x does not enable
-    # component-model. Fetched content is YARA rule input and cannot
-    # construct component records. This excepts the yara-x copy. It does
-    # not patch the bug. This ignore is by advisory ID, so a later
-    # downgrade of the direct runtime below 48.0.3 would stay silent here.
-    # Keep the direct pin at 48.0.6. Cargo-audit cannot expire ignores; the
-    # OSV entry reviews this on 2026-12-01. Remove with 0222. #267.
-    "RUSTSEC-2026-0316",
-    # Component async-lifted callback result count is unvalidated
-    # (RUSTSEC-2026-0327 / GHSA-32h6-97mm-8q3c, 2026-10-02, critical).
-    # Patched: >=48.0.4,<49 and >=49.0.2. Unaffected below 39.0.0. No
-    # patched 45.x. Direct optional wasmtime 48.0.6 is inside >=48.0.4, so
-    # this ignore exists for the yara-x copy at 45.0.3. Same reachability
-    # note as 0316: yara-x enables cranelift and runtime, not
-    # component-model. The exception does not patch the bug.
-    #
-    # ID-wide: a downgrade of the direct runtime below 48.0.4 would stay
-    # silent here until the line is removed. OSV reviews this on 2026-12-01.
-    # #267.
-    "RUSTSEC-2026-0327",
-    # wasmtime: stack overflow dropping recursive types (RUSTSEC-2026-0359),
-    # embedder sync/async entry not enforced, not guest-triggerable
-    # (RUSTSEC-2026-0362), component handle
-    # tables capped only per instance (RUSTSEC-2026-0363). Patched in 48.0.6
-    # and 49.0.3 (0363 also 36.0.18); no patched 45.x. Direct optional
-    # wasmtime 48.0.6 is patched; the hit is the yara-x 1.21.0 copy at 45.0.3.
-    # Upstream is maintained and already fixed: yara-x main pins
-    # wasmtime 48.0.6 (VirusTotal/yara-x 786f914551, 2026-10-16); releases
-    # land roughly monthly. Nab feeds yara-x only its own built-in rules and
-    # fetched content as scan input, never attacker Wasm. Remove these three
-    # with the next yara-x release. OSV reviews them on 2026-12-01. #267.
-    "RUSTSEC-2026-0359",
-    "RUSTSEC-2026-0362",
-    "RUSTSEC-2026-0363",
     # zip: SUID/SGID bits kept on extraction (RUSTSEC-2026-0367), symlink
     # attributes on extraction (RUSTSEC-2026-0368), unsafe mode handling in
     # extract (RUSTSEC-2026-0369). Fixed in zip 9.0.0. The hit is zip 2.4.2,
