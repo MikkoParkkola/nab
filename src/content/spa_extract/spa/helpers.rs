@@ -58,14 +58,30 @@ pub fn find_content_by_key(value: &serde_json::Value, key: &str) -> Option<Strin
     }
 }
 
+/// Returns `true` when `content` parses as JSON carrying `@context` or `@type`
+/// at the top level or on a top-level array item.
+fn is_schema_org_json(content: &str) -> bool {
+    let trimmed = content.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return false;
+    }
+    let is_schema = |value: &serde_json::Value| {
+        value
+            .as_object()
+            .is_some_and(|map| map.contains_key("@context") || map.contains_key("@type"))
+    };
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(serde_json::Value::Array(items)) => items.iter().any(is_schema),
+        Ok(value) => is_schema(&value),
+        Err(_) => false,
+    }
+}
+
 /// Convert a SPA content string (HTML or plain text) to clean markdown.
 pub(super) fn render_spa_content(content: &str) -> String {
-    // Serialized JSON is data, not markup: rendering it as HTML corrupts it,
-    // and `html.rs` inspects it as JSON.
-    let trimmed = content.trim();
-    if (trimmed.starts_with('{') || trimmed.starts_with('['))
-        && serde_json::from_str::<serde_json::Value>(trimmed).is_ok()
-    {
+    // Serialized Schema.org JSON is data, not markup: rendering it as HTML
+    // corrupts it, and `html.rs` inspects it as JSON. Any other JSON is rendered.
+    if is_schema_org_json(content) {
         return content.to_string();
     }
     if content.contains('<') && content.contains('>') {
@@ -128,6 +144,15 @@ mod tests {
     fn render_spa_content_returns_serialized_json_unchanged() {
         let input = r#"{"@type":"Article","description":"a <b>bold</b> claim"}"#;
         assert_eq!(render_spa_content(input), input);
+    }
+
+    #[test]
+    fn render_spa_content_renders_html_inside_non_schema_json() {
+        let out = render_spa_content(r#"{"body":"<p>Hello <b>world</b></p>"}"#);
+        assert!(
+            !out.contains("<b>"),
+            "non-schema JSON must still be rendered: {out}"
+        );
     }
 
     #[test]

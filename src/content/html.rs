@@ -375,19 +375,35 @@ fn is_metadata_only_spa_candidate(candidate: &str) -> bool {
     schema_shaped && !contains_body_text(&value)
 }
 
-/// Returns `true` when any object in `value` has an `articleBody`/`text` string
-/// of at least 200 bytes.
+/// Returns `true` when any article-typed object in `value` has an
+/// `articleBody`/`text` string of at least 200 bytes. A long `text` on an Answer,
+/// Comment or other non-article node is not an article body.
 fn contains_body_text(value: &serde_json::Value) -> bool {
-    // Mirrors `MIN_CONTENT_LEN` in `src/content/spa_extract/spa/jsonld.rs`.
+    // Mirrors `MIN_CONTENT_LEN` and the article-type gate in
+    // `src/content/spa_extract/spa/jsonld.rs`.
     const MIN_BODY_LEN: usize = 200;
+    fn is_article_type(name: &str) -> bool {
+        ["Article", "Posting", "Report"]
+            .iter()
+            .any(|marker| name.contains(marker))
+    }
     match value {
         serde_json::Value::Object(map) => {
-            if ["articleBody", "text"].iter().any(|key| {
-                matches!(
-                    map.get(*key),
-                    Some(serde_json::Value::String(body)) if body.len() >= MIN_BODY_LEN
-                )
-            }) {
+            let is_article = match map.get("@type") {
+                Some(serde_json::Value::String(name)) => is_article_type(name),
+                Some(serde_json::Value::Array(names)) => names
+                    .iter()
+                    .any(|name| name.as_str().is_some_and(is_article_type)),
+                _ => false,
+            };
+            if is_article
+                && ["articleBody", "text"].iter().any(|key| {
+                    matches!(
+                        map.get(*key),
+                        Some(serde_json::Value::String(body)) if body.len() >= MIN_BODY_LEN
+                    )
+                })
+            {
                 return true;
             }
             map.values().any(contains_body_text)
@@ -1645,6 +1661,17 @@ mod tests {
             r#"{"title":"no schema keys","body":"text"}"#
         ));
         assert!(!is_metadata_only_spa_candidate("{not json"));
+    }
+
+    #[test]
+    fn is_metadata_only_spa_candidate_ignores_long_text_on_non_article_nodes() {
+        let answer = "A long answer that is not the article. ".repeat(10);
+        assert!(is_metadata_only_spa_candidate(&format!(
+            r#"{{"@context":"https://schema.org","@graph":[{{"@type":"Article","headline":"H"}},{{"@type":"FAQPage","mainEntity":[{{"@type":"Question","acceptedAnswer":{{"@type":"Answer","text":"{answer}"}}}}]}}]}}"#
+        )));
+        assert!(!is_metadata_only_spa_candidate(&format!(
+            r#"{{"@context":"https://schema.org","@graph":[{{"@type":["NewsArticle"],"articleBody":"{answer}"}}]}}"#
+        )));
     }
 
     #[test]
