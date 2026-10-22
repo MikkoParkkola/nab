@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `nab fetch` no longer reports "Bot or browser challenge detected" on ordinary
+  pages that carry Cloudflare's passive bot-management script; the script counts
+  as a challenge only on HTTP 403 or 503. A Turnstile widget still counts on any
+  status.
+- A page whose embedded Schema.org JSON-LD holds only metadata (headline,
+  author, dates) no longer replaces the article text. When that JSON-LD carries
+  the article body, nab returns the body as readable text.
+
 ## [0.12.4] - 2026-10-02
 
 ### Added
