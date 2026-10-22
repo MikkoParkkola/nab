@@ -60,6 +60,14 @@ pub fn find_content_by_key(value: &serde_json::Value, key: &str) -> Option<Strin
 
 /// Convert a SPA content string (HTML or plain text) to clean markdown.
 pub(super) fn render_spa_content(content: &str) -> String {
+    // Serialized JSON is data, not markup: rendering it as HTML corrupts it,
+    // and `html.rs` inspects it as JSON.
+    let trimmed = content.trim();
+    if (trimmed.starts_with('{') || trimmed.starts_with('['))
+        && serde_json::from_str::<serde_json::Value>(trimmed).is_ok()
+    {
+        return content.to_string();
+    }
     if content.contains('<') && content.contains('>') {
         let md = html2md::parse_html(content);
         md.lines()
@@ -110,4 +118,20 @@ pub(super) fn strip_html_comment_wrapper(s: &str) -> &str {
     let s = s.strip_prefix("<!--").unwrap_or(s);
     let s = s.strip_suffix("-->").unwrap_or(s);
     s.trim()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_spa_content;
+
+    #[test]
+    fn render_spa_content_returns_serialized_json_unchanged() {
+        let input = r#"{"@type":"Article","description":"a <b>bold</b> claim"}"#;
+        assert_eq!(render_spa_content(input), input);
+    }
+
+    #[test]
+    fn render_spa_content_still_renders_html() {
+        assert!(!render_spa_content("<p>Hello <b>world</b></p>").contains("<p>"));
+    }
 }

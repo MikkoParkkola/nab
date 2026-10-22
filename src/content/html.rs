@@ -354,8 +354,9 @@ fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
 /// blob carries headline, description, author, and dates, but no article body, so
 /// treating it as content pre-empts readability extraction of the article that is
 /// server-rendered in the page. Invariant: only a candidate that parses as JSON, is
-/// Schema.org-shaped, and carries no `articleBody` is metadata-only; plain text and
-/// JSON carrying an `articleBody` are kept unchanged.
+/// Schema.org-shaped, and carries no `articleBody`/`text` of at least 200 bytes is
+/// metadata-only; plain text and JSON carrying an `articleBody`/`text` of at least
+/// 200 bytes are kept unchanged.
 fn is_metadata_only_spa_candidate(candidate: &str) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate.trim()) else {
         return false;
@@ -371,21 +372,27 @@ fn is_metadata_only_spa_candidate(candidate: &str) -> bool {
         }),
         _ => false,
     };
-    schema_shaped && !contains_article_body(&value)
+    schema_shaped && !contains_body_text(&value)
 }
 
-/// Returns `true` when any object in `value` has a non-empty string `articleBody`.
-fn contains_article_body(value: &serde_json::Value) -> bool {
+/// Returns `true` when any object in `value` has an `articleBody`/`text` string
+/// of at least 200 bytes.
+fn contains_body_text(value: &serde_json::Value) -> bool {
+    // Mirrors `MIN_CONTENT_LEN` in `src/content/spa_extract/spa/jsonld.rs`.
+    const MIN_BODY_LEN: usize = 200;
     match value {
         serde_json::Value::Object(map) => {
-            if let Some(serde_json::Value::String(body)) = map.get("articleBody")
-                && !body.is_empty()
-            {
+            if ["articleBody", "text"].iter().any(|key| {
+                matches!(
+                    map.get(*key),
+                    Some(serde_json::Value::String(body)) if body.len() >= MIN_BODY_LEN
+                )
+            }) {
                 return true;
             }
-            map.values().any(contains_article_body)
+            map.values().any(contains_body_text)
         }
-        serde_json::Value::Array(items) => items.iter().any(contains_article_body),
+        serde_json::Value::Array(items) => items.iter().any(contains_body_text),
         _ => false,
     }
 }
@@ -1624,9 +1631,13 @@ mod tests {
 
     #[test]
     fn is_metadata_only_spa_candidate_keeps_body_and_plain_text() {
-        assert!(!is_metadata_only_spa_candidate(
-            r#"{"@context":"https://schema.org","@type":"Article","headline":"H","articleBody":"The full article text."}"#
-        ));
+        let body = "The full article text. ".repeat(10);
+        assert!(!is_metadata_only_spa_candidate(&format!(
+            r#"{{"@context":"https://schema.org","@type":"Article","headline":"H","articleBody":"{body}"}}"#
+        )));
+        assert!(!is_metadata_only_spa_candidate(&format!(
+            r#"{{"@context":"https://schema.org","@type":"Article","headline":"H","text":"{body}"}}"#
+        )));
         assert!(!is_metadata_only_spa_candidate(
             "An article paragraph that is long enough to read."
         ));
@@ -1634,6 +1645,13 @@ mod tests {
             r#"{"title":"no schema keys","body":"text"}"#
         ));
         assert!(!is_metadata_only_spa_candidate("{not json"));
+    }
+
+    #[test]
+    fn is_metadata_only_spa_candidate_flags_stub_article_body() {
+        assert!(is_metadata_only_spa_candidate(
+            r#"{"@context":"https://schema.org","@type":"Article","headline":"H","articleBody":"Short stub."}"#
+        ));
     }
 
     #[test]
@@ -1665,6 +1683,34 @@ mod tests {
         );
         assert!(
             !markdown.contains("\"@context\""),
+            "markdown must not contain JSON-LD metadata: {markdown}"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_falls_through_when_json_ld_metadata_contains_html() {
+        const FIXTURE: &str = r#"<html><head><title>Product design with AI: Building It Was Never the Hard Part</title></head><body><script>window.__APOLLO_STATE__ = {"Post:05159682106d":{"__typename":"Post","seoMetaTags":{"__typename":"SEOMetaTags","jsonLd":"{\"@context\":\"https://schema.org\",\"@type\":\"SocialMediaPosting\",\"headline\":\"Product design with AI: Building It Was Never the Hard Part\",\"description\":\"Product design with AI: Building It Was Never the Hard Part TL;DR: Making things with AI became easy, but building an app that other people can use is a <b>bold</b> claim and a different story. Small details matter more\",\"author\":{\"@type\":\"Person\",\"name\":\"Yudit Lynn Lee\"},\"datePublished\":\"2026-09-27T18:54:04Z\",\"dateModified\":\"2026-10-19T06:43:10Z\"}"}}};</script><article><h1>Product design with AI: Building It Was Never the Hard Part</h1><p class="pw-post-body-paragraph">I have been having a lot of fun building my own applications using AI lately. An iOS app, a few small web apps that run locally, a few half-finished things, mostly so I can learn a new way of working.</p><p class="pw-post-body-paragraph">And honestly, it is exciting. Building an application is so easy now, and adding features is even easier, especially for someone like me who doesn't come from a development background.</p><p class="pw-post-body-paragraph">One of them is a small design inspiration library I made for myself, somewhere to keep design references and design systems together. I built it the way I build most things now: ideate the feature with AI, then build it.</p><p class="pw-post-body-paragraph">But I realised the more I added, the more the usability quietly slipped. It kept gaining features, but they started to feel bolted onto each other.</p></article></body></html>"#;
+
+        let spa = super::spa_extract::extract_spa_data(FIXTURE)
+            .expect("fixture must trigger the SPA extractor");
+        assert!(spa.contains("\"@context\"") && spa.contains("<b>bold</b>"));
+
+        let markdown = html_to_markdown_with_url(
+            FIXTURE,
+            Some(
+                "https://medium.muz.li/product-design-with-ai-building-it-was-never-the-hard-part-05159682106d",
+            ),
+        );
+        assert!(
+            markdown.contains("I have been having a lot of fun building my own applications"),
+            "expected article body in markdown: {markdown}"
+        );
+        assert!(
+            !markdown.contains("\"@context\""),
+            "markdown must not contain JSON-LD metadata: {markdown}"
+        );
+        assert!(
+            !markdown.contains("@context"),
             "markdown must not contain JSON-LD metadata: {markdown}"
         );
     }

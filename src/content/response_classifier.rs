@@ -406,7 +406,7 @@ fn classify_http_response_lower(status: u16, body_lower: &str) -> Option<Respons
         });
     }
 
-    if looks_like_turnstile(body_lower) {
+    if looks_like_turnstile(status, body_lower) {
         return Some(ResponseDiagnostic {
             kind: ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Turnstile),
             status,
@@ -532,9 +532,14 @@ fn looks_like_cloudflare_challenge(body_lower: &str) -> bool {
     )
 }
 
-// Passive `/scripts/` challenge-platform injections appear on normal pages;
-// only active paths, the widget class or turnstile.js count.
-fn looks_like_turnstile(body_lower: &str) -> bool {
+// On 403/503 any `challenge-platform` reference counts as a challenge; on
+// other statuses passive `/scripts/` challenge-platform injections (which
+// appear on normal pages) are suppressed, so only active paths, the widget
+// class or turnstile.js count.
+fn looks_like_turnstile(status: u16, body_lower: &str) -> bool {
+    if matches!(status, 403 | 503) && body_lower.contains("challenge-platform") {
+        return true;
+    }
     if contains_any(body_lower, &["cf-turnstile", "turnstile.js"]) {
         return true;
     }
@@ -979,6 +984,19 @@ mod tests {
     fn classify_http_response_detects_active_challenge_platform_orchestrate_path() {
         for status in [200, 403, 503] {
             let body = "<html><body><script>(function(){window._cf_chl_opt={cType:'managed'};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=8f00';document.head.appendChild(a);}());</script></body></html>";
+            let diagnostic =
+                classify_http_response(status, body).expect("turnstile classification");
+            assert_eq!(
+                diagnostic.kind,
+                ResponseDiagnosticKind::BrowserChallenge(BrowserChallengeKind::Turnstile)
+            );
+        }
+    }
+
+    #[test]
+    fn classify_http_response_keeps_challenge_platform_on_403_503() {
+        for status in [403, 503] {
+            let body = "<html><body><script src='/cdn-cgi/challenge-platform/scripts/jsd/main.js'></script></body></html>";
             let diagnostic =
                 classify_http_response(status, body).expect("turnstile classification");
             assert_eq!(
