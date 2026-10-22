@@ -1142,7 +1142,6 @@ struct FetchResponse<'a> {
 
 /// Print the response according to the requested output format.
 fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
-    let markdown = !cfg.raw_html;
     let out_path = cfg.output_file.as_deref();
 
     match cfg.format {
@@ -1153,9 +1152,8 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 resp.body_len,
                 resp.elapsed.as_secs_f64() * 1000.0
             ))?;
-            if cfg.show_body || out_path.is_some() || markdown || cfg.links {
-                output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
-            }
+            // The body is always written so a challenge or other diagnostic (printed to stderr) never hides the bytes, including under `--raw-html` (MIK-8673).
+            output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
         }
         OutputFormat::Json => {
             let metadata = serde_json::json!({
@@ -1209,9 +1207,7 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 }
             }
             write_stdout_line(&format!("\n📄 Body: {} bytes", resp.body_len))?;
-            if cfg.show_body || out_path.is_some() || markdown || cfg.links {
-                output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
-            }
+            output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
         }
     }
     Ok(())
