@@ -67,7 +67,7 @@ pub(super) fn is_article_type(name: &str) -> bool {
 }
 
 /// Parses `content` as Schema.org JSON: an object, or an array of objects, with
-/// `@type` or a `@context` naming schema.org. Other JSON (`ActivityStreams` uses
+/// `@type` or a `@context` that names schema.org anywhere in it. Other JSON (`ActivityStreams` uses
 /// `type`, not `@type`) is not Schema.org and returns `None`.
 fn parse_schema_org_json(content: &str) -> Option<serde_json::Value> {
     let trimmed = content.trim();
@@ -76,11 +76,12 @@ fn parse_schema_org_json(content: &str) -> Option<serde_json::Value> {
     }
     let is_schema = |value: &serde_json::Value| {
         value.as_object().is_some_and(|map| {
+            // `@context` may be a string, an array, or an object such as
+            // `{"@vocab": "https://schema.org/"}`.
             map.contains_key("@type")
                 || map
                     .get("@context")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|context| context.contains("schema.org"))
+                    .is_some_and(|context| context.to_string().contains("schema.org"))
         })
     };
     let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
@@ -204,6 +205,16 @@ mod tests {
             r#"{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H","description":"a <b>bold</b> claim"}"#,
             r#"[{"@context":"https://schema.org","@type":"SocialMediaPosting","headline":"H"}]"#,
             r#"{"@context":"https://schema.org","@type":"Article","articleBody":"Short stub."}"#,
+        ] {
+            assert_eq!(render_spa_content(input), "", "metadata-only: {input}");
+        }
+    }
+
+    #[test]
+    fn render_spa_content_recognises_array_and_vocab_contexts() {
+        for input in [
+            r#"{"@context":["https://schema.org"],"@graph":[{"headline":"H","description":"D"}]}"#,
+            r#"{"@context":{"@vocab":"https://schema.org/"},"@graph":[{"headline":"H"}]}"#,
         ] {
             assert_eq!(render_spa_content(input), "", "metadata-only: {input}");
         }
