@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.5] - 2026-10-23
 
+### Added
+
+- `nab-mcp` serves `tools/call` on MCP revision 2026-07-28 for every tool whose
+  call finishes without elicitation or sampling. A call that would need either
+  returns JSON-RPC error -32600 instead of sending a request back to the client.
+  This is in the GitHub release binaries and git builds; the crates.io package
+  is built without the vendored SDK patch and does not include it (#348).
+
 ### Fixed
 
 - `nab fetch` no longer reports "Bot or browser challenge detected" on ordinary
@@ -18,14 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A page whose embedded Schema.org JSON-LD holds only metadata (headline,
   author, dates) no longer replaces the article text. When that JSON-LD carries
   the article body, nab returns the body as readable text.
+- `nab analyze` removes its temporary audio file when analysis fails, not only
+  when it succeeds (#348).
 
 ### Security
 
-- Bumped `rustls` to 0.23.46 and the lockfile's `rustls-webpki`,
-  `webpki-roots` and `webpki-root-certs` (RUSTSEC-2026-0346 to 0349,
-  RUSTSEC-2026-0381 to 0383) (#356, #369).
+- Bumped `rustls` to 0.23.46 (RUSTSEC-2026-0346 to 0349) (#356) and the
+  lockfile's `rustls-webpki`, `webpki-roots` and `webpki-root-certs`
+  (RUSTSEC-2026-0381 to 0383) (#369).
 - Moved the optional Wasmtime runtime to 48.0.7 and `yara-x` to 1.22
-  (RUSTSEC-2026-0353 to 0364, RUSTSEC-2026-0378, RUSTSEC-2026-0379).
+  (RUSTSEC-2026-0353 to 0359, RUSTSEC-2026-0361 to 0364, RUSTSEC-2026-0378,
+  RUSTSEC-2026-0379).
   `yara-x` 1.22 builds against the same Wasmtime 48 line, so nab now carries
   one Wasmtime copy instead of two. Wasmtime stays on 48.x because 49 requires
   Rust 1.96 and nab's minimum is 1.95 (#356, #369).
@@ -34,8 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgraded `zip` to 9 (#354, #366).
 - `chromiumoxide` is built without its `rustls` and `zip8` features, which only
-  served its unused Chromium downloader. That drops its bundled zip 8 and the
-  advisories it carried (RUSTSEC-2026-0367 to 0369) (#356).
+  served its unused Chromium downloader, and no longer pulls zip 8 (#356).
+  RUSTSEC-2026-0367 to 0369 still match zip 2.4.2, a build dependency of the
+  optional `sherpa-onnx-sys` used only for an iOS archive nab does not build;
+  they stay as time-boxed exceptions in `.github/osv-scanner.toml`.
 
 ## [0.12.4] - 2026-10-02
 
