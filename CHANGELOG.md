@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-10-23
+
 ### Fixed
 
 - `nab fetch` no longer reports "Bot or browser challenge detected" on ordinary
@@ -16,6 +18,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A page whose embedded Schema.org JSON-LD holds only metadata (headline,
   author, dates) no longer replaces the article text. When that JSON-LD carries
   the article body, nab returns the body as readable text.
+
+### Security
+
+- Bumped `rustls` to 0.23.46 and the lockfile's `rustls-webpki`,
+  `webpki-roots` and `webpki-root-certs` (RUSTSEC-2026-0346 to 0349,
+  RUSTSEC-2026-0381 to 0383) (#356, #369).
+- Moved the optional Wasmtime runtime to 48.0.7 and `yara-x` to 1.22
+  (RUSTSEC-2026-0353 to 0364, RUSTSEC-2026-0378, RUSTSEC-2026-0379).
+  `yara-x` 1.22 builds against the same Wasmtime 48 line, so nab now carries
+  one Wasmtime copy instead of two. Wasmtime stays on 48.x because 49 requires
+  Rust 1.96 and nab's minimum is 1.95 (#356, #369).
+
+### Changed
+
+- Upgraded `zip` to 9 (#354, #366).
+- `chromiumoxide` is built without its `rustls` and `zip8` features, which only
+  served its unused Chromium downloader. That drops its bundled zip 8 and the
+  advisories it carried (RUSTSEC-2026-0367 to 0369) (#356).
 
 ## [0.12.4] - 2026-10-02
 
