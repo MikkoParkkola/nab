@@ -68,7 +68,7 @@ jobs:
           # README as crates.io renders it, which drops HTML comments and cannot
           # change after publish, so the marker must be visible text.
           mcp_name="$(jq -r '.name' server.json)"
-          if ! grep -F "mcp-name: $mcp_name" README.md | grep -qvF '<!--'; then
+          if ! perl -0777 -pe 's/<!--.*?-->//gs' README.md | grep -qwF "mcp-name: $mcp_name"; then
             echo "::error::README.md lacks a visible 'mcp-name: $mcp_name' line (not inside an HTML comment); the MCP registry refuses the crate without it."
             exit 1
           fi
