@@ -56,6 +56,14 @@ jobs:
             exit 1
           fi
           echo "server.json OK: matches Cargo.toml $ver"
+          # The MCP registry rejects a description over 100 characters (422 on
+          # body.description), and that publish runs last, after crates.io.
+          # Checking here fails the tag before anything irreversible happens.
+          desc_len="$(jq -r '.description | length' server.json)"
+          if [ "$desc_len" -gt 100 ]; then
+            echo "::error::server.json description is $desc_len characters; the MCP registry allows at most 100."
+            exit 1
+          fi
       - name: Scan Cargo dependencies against OSV
         uses: google/osv-scanner-action/osv-scanner-action@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
         with:
