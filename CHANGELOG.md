@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `yara-x` 1.22 builds against the same Wasmtime 48 line, so nab now carries
   one Wasmtime copy instead of two. Wasmtime stays on 48.x because 49 requires
   Rust 1.96 and nab's minimum is 1.95 (#356, #369).
+- Bumped `ctutils` from 0.4.3 to 0.4.4 (RUSTSEC-2026-0385): mask generation and
+  `u128` comparisons in earlier releases could branch on secret values.
 
 ### Changed
 
