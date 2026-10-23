@@ -65,10 +65,11 @@ jobs:
             exit 1
           fi
           # The registry proves crate ownership by finding this marker in the
-          # README published to crates.io, which cannot change after publish.
+          # README as crates.io renders it, which drops HTML comments and cannot
+          # change after publish, so the marker must be visible text.
           mcp_name="$(jq -r '.name' server.json)"
-          if ! grep -qF "mcp-name: $mcp_name" README.md; then
-            echo "::error::README.md lacks 'mcp-name: $mcp_name'; the MCP registry refuses the crate without it."
+          if ! grep -F "mcp-name: $mcp_name" README.md | grep -qvF '<!--'; then
+            echo "::error::README.md lacks a visible 'mcp-name: $mcp_name' line (not inside an HTML comment); the MCP registry refuses the crate without it."
             exit 1
           fi
       - name: Scan Cargo dependencies against OSV

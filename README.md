@@ -1,7 +1,5 @@
 # nab
 
-<!-- mcp-name: io.github.MikkoParkkola/nab -->
-
 [![CI](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml/badge.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/nab.svg)](https://crates.io/crates/nab)
 [![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
@@ -151,6 +149,8 @@ command; invoke the newer install by full path to diagnose, e.g.
 directory of the install you want comes first.
 
 ## MCP Configuration
+
+MCP Registry name: `mcp-name: io.github.MikkoParkkola/nab`
 
 Add to your MCP client config (Claude Desktop, Cursor, Windsurf, etc.):
 
