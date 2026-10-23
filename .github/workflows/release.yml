@@ -66,9 +66,11 @@ jobs:
           fi
           # The registry proves crate ownership by finding this marker in the
           # README as crates.io renders it, which drops HTML comments and cannot
-          # change after publish, so the marker must be visible text.
+          # change after publish, so the marker must be visible text. An unclosed
+          # comment runs to the end of the file, and like the registry's matcher
+          # the name must not continue with a server-name character.
           mcp_name="$(jq -r '.name' server.json)"
-          if ! perl -0777 -pe 's/<!--.*?-->//gs' README.md | grep -qwF "mcp-name: $mcp_name"; then
+          if ! MCP_NAME="$mcp_name" perl -0777 -ne 's/<!--.*?(?:-->|\z)//gs; exit(/mcp-name: \Q$ENV{MCP_NAME}\E(?![A-Za-z0-9._\/-])/ ? 0 : 1)' README.md; then
             echo "::error::README.md lacks a visible 'mcp-name: $mcp_name' line (not inside an HTML comment); the MCP registry refuses the crate without it."
             exit 1
           fi
