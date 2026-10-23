@@ -64,6 +64,13 @@ jobs:
             echo "::error::server.json description is $desc_len characters; the MCP registry allows at most 100."
             exit 1
           fi
+          # The registry proves crate ownership by finding this marker in the
+          # README published to crates.io, which cannot change after publish.
+          mcp_name="$(jq -r '.name' server.json)"
+          if ! grep -qF "mcp-name: $mcp_name" README.md; then
+            echo "::error::README.md lacks 'mcp-name: $mcp_name'; the MCP registry refuses the crate without it."
+            exit 1
+          fi
       - name: Scan Cargo dependencies against OSV
         uses: google/osv-scanner-action/osv-scanner-action@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
         with:

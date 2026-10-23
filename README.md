@@ -1,5 +1,7 @@
 # nab
 
+<!-- mcp-name: io.github.MikkoParkkola/nab -->
+
 [![CI](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml/badge.svg)](https://github.com/MikkoParkkola/nab/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/nab.svg)](https://crates.io/crates/nab)
 [![Downloads](https://img.shields.io/crates/d/nab.svg)](https://crates.io/crates/nab)
