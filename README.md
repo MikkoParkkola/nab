@@ -150,6 +150,8 @@ directory of the install you want comes first.
 
 ## MCP Configuration
 
+MCP Registry name: `mcp-name: io.github.MikkoParkkola/nab`
+
 Add to your MCP client config (Claude Desktop, Cursor, Windsurf, etc.):
 
 ```json
