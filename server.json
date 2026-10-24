@@ -3,7 +3,7 @@
   "name": "io.github.MikkoParkkola/nab",
   "title": "nab",
   "description": "Token-optimized HTTP client for LLMs: fetches any URL as clean markdown. CLI and MCP server.",
-  "version": "0.12.5",
+  "version": "0.12.6",
   "repository": {
     "url": "https://github.com/MikkoParkkola/nab",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "cargo",
       "registryBaseUrl": "https://crates.io",
       "identifier": "nab",
-      "version": "0.12.5",
+      "version": "0.12.6",
       "transport": {
         "type": "stdio"
       },
