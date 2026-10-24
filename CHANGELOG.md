@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-10-24
+
+### Fixed
+
+- nab can be listed in the MCP Registry. The README now carries a visible
+  `mcp-name: io.github.MikkoParkkola/nab` line, which the registry looks for in
+  the README crates.io serves (#373).
+- The MCP Registry server description is under the registry's 100-character
+  limit (#372).
+- A release tag now fails before anything is published when the registry
+  description is too long or the README lacks a visible `mcp-name` line
+  (#372, #373).
+
 ## [0.12.5] - 2026-10-23
 
 ### Added
