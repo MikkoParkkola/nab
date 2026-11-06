@@ -69,7 +69,7 @@ nab treats every fetched page as hostile input and runs two local, non-networked
 
 The net effect: hidden instructions become **visible to you, not executed by your model** — a strong reason to point your agent at `nab fetch` instead of a built-in web-fetch tool.
 
-> **Licensing:** both guards are Enterprise Edition modules — **free for personal and non-commercial use** under [PolyForm Noncommercial 1.0.0](LICENSE-EE.md); **commercial / business use requires a commercial license** (see [COMMERCIAL.md](COMMERCIAL.md) and the [License](#license) section).
+> **Licensing:** both guards are Enterprise Edition modules — **free for nonprofit and other permitted noncommercial use** under [PolyForm Noncommercial 1.0.0](LICENSE-EE.md) and the additional nonprofit permission in [COMMERCIAL.md](COMMERCIAL.md). Commercial use outside those permissions requires a commercial license (see the [License](#license) section).
 
 ## Installation
 
@@ -556,8 +556,10 @@ EE-designated paths (every file carries `// SPDX-License-Identifier: PolyForm-No
 - `crates/nab-yara-engine/` — fetch-time YARA-X signature guard for prompt injection, exfiltration, secrets, and obfuscation
 
 **What this means in practice**:
-- Free for noncommercial use, modification, redistribution.
-- Commercial use of EE modules requires a separate commercial license.
-- Companies can buy a standard commercial-use license via [GitHub Sponsors](https://github.com/sponsors/MikkoParkkola) at EUR 500/month per named project.
-- See [COMMERCIAL.md](COMMERCIAL.md) for business use, forks, wrappers, shared services, and managed-service deployments.
+- The MIT core is free for commercial and noncommercial use under MIT. EE modules remain free for nonprofit and other permitted noncommercial/public-benefit uses; sponsorship is optional.
+- Commercial use of EE modules outside those free-use permissions requires a separate commercial license for **one organization and one named Mikko Parkkola product** (`nab`), not each customer application or repository.
+- [GitHub Sponsors](https://github.com/sponsors/MikkoParkkola?metadata_project=nab): **USD 100/month** for a small business with up to five people in the whole organization, counting working owners, employees, and regular contractors; **USD 500/month** without a headcount limit. Separate direct-invoice offers are **EUR 100/month** and **EUR 500/month**, not currency conversions.
+- Both commercial tiers include internal use of the same published features with no per-tool, server, agent, or call charges. Support, SLA, unpublished repository access, resale, and third-party hosting rights are not included.
+- Optional support: **Coffee USD 5 one-time**, **Supporter USD 5/month**, or **Sustainer USD 25/month**. These support tiers do not purchase commercial rights.
+- Read [COMMERCIAL.md](COMMERCIAL.md) for the complete licensing, eligibility, registration, free-use, and custom-payment rules, or email **mikko.parkkola@iki.fi** for direct invoicing and custom terms.
 - All releases prior to v0.9.0 remain entirely MIT and stay MIT forever.
