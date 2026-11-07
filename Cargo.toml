@@ -120,7 +120,7 @@ toml = "1.1"                            # Plugin config parsing
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sandboxed WASM runtime for third-party site extractors.
 # No unsafe code needed — wasmtime's safe API is used throughout.
-wasmtime = { version = "48.0.7", optional = true, default-features = false, features = [
+wasmtime = { version = "48.0.8", optional = true, default-features = false, features = [
     "cranelift",         # JIT compiler backend
     "runtime",           # Core runtime
     "component-model",   # WIT Component Model (bindgen!, Linker<T>, Component)
@@ -155,7 +155,7 @@ chromiumoxide = { version = "0.9", optional = true, default-features = false }  
 # ═══════════════════════════════════════════════════════════════════════════════
 # sherpa-onnx: Parakeet TDT v3 ONNX runtime, 26-language EU set, ~30× RTFx CPU
 # Install model: `nab models fetch sherpa-onnx`
-sherpa-onnx = { version = "1.13", optional = true }
+sherpa-onnx = { version = "2.0.1", optional = true }
 # whisper-rs: whisper-large-v3-turbo GGUF, 99-language universal fallback
 # Install model: `nab models fetch whisper`
 whisper-rs = { version = "0.16", optional = true }
