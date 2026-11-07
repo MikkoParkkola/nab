@@ -98,7 +98,7 @@ jobs:
             net_tests: "0"
             rustflags: -Dwarnings
           - name: macos-lib
-            os: macos-14
+            os: macos-15
             command: cargo test --locked --lib
             net_tests: "0"
             rustflags: -Dwarnings
