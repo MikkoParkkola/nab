@@ -1,6 +1,6 @@
 # Fetch fidelity: binary `-o` saves and wrong-block extraction (MIK-9520, MIK-8684, MIK-9504)
 
-Status: revision 4, 2026-11-15, after two design review rounds (Muse and Grok, SHIP-WITH-FIXES both rounds; round-2 findings folded in). Scope: `nab fetch` CLI main path. **Implemented so far: Part 2 only** (branch `fix/mik-8684-extraction`). Part 1 (binary saves) and Part 3 (link-dense lists) are not yet shipped.
+Status: revision 4, 2026-11-15, after two rounds of independent design review (findings folded in). Scope: `nab fetch` CLI main path. **Implemented so far: Part 2 only** (branch `fix/mik-8684-extraction`). Part 1 (binary saves) and Part 3 (link-dense lists) are not yet shipped.
 
 ## Problem
 
@@ -10,7 +10,7 @@ Agents read every URL through `nab fetch`. Three defects make it return the wron
 2. **MIK-8684, wrong block wins.** Reproduced 2026-11-15 on nab 0.12.6 (= `origin/main` 65b1dca) on 5 of 8 saved pages (Flipboard is a YARA false positive, out of scope).
 3. **MIK-9504, dropped sections.** Part 3, separate piece.
 
-Out of scope: YARA policy for text output; the cookie default (MIK-9169); MCP-server and batch fetch paths; Flipboard (YARA false positive, MIK-8975 family, another session's work in progress); JS-rendered pages that need a browser; streaming saves larger than the 10 MiB body cap.
+Out of scope: YARA policy for text output; the cookie default (MIK-9169); MCP-server and batch fetch paths; Flipboard (YARA false positive, tracked with the MIK-8975 family); JS-rendered pages that need a browser; streaming saves larger than the 10 MiB body cap.
 
 ## Part 1: binary `-o` (MIK-9520)
 
