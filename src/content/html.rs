@@ -384,8 +384,8 @@ fn pick_html_result_for_page(html: &str, selection: HtmlSelection) -> HtmlPick {
 }
 
 /// Emit actionable guidance when the output looks thin.
-fn warn_thin_output(small_pick_replaced: bool, len: usize, html_len: usize) {
-    if small_pick_replaced {
+fn warn_thin_output(whole_page_replaced_small_pick: bool, len: usize, html_len: usize) {
+    if whole_page_replaced_small_pick {
         tracing::warn!(
             "The article extractor found only {len} chars on a {html_len} byte page, so the whole \
              page is returned instead. If the article is missing from it, the page likely \
@@ -1071,8 +1071,8 @@ mod tests {
         HtmlConversionOptions, HtmlPick, HtmlSelection, detect_empty_spa_shell,
         html_to_markdown_with_url, html_to_markdown_with_url_and_fetcher,
         html_to_markdown_with_url_and_sources, is_thin_content, looks_like_client_spa_shell,
-        pick_html_result, pick_html_result_for_page, strip_embedded_data_sections,
-        strip_hidden_sections, strip_noise_sections,
+        merge_spa_candidate, pick_html_result, pick_html_result_for_page,
+        strip_embedded_data_sections, strip_hidden_sections, strip_noise_sections,
     };
 
     #[test]
@@ -2015,5 +2015,38 @@ mod tests {
             nextjs_metadata_only: false,
         };
         assert_eq!(pick_html_result(none), HtmlPick::Direct);
+    }
+
+    #[test]
+    fn an_spa_candidate_that_replaces_the_result_clears_the_small_pick() {
+        use crate::content::spa_extract::{SpaCandidate, SpaSource};
+        let candidate = |source| SpaCandidate {
+            text: "Recovered article text from page data. ".repeat(40),
+            source,
+        };
+
+        // Framework data longer than the whole-page fallback replaces it.
+        let (text, small_pick) = merge_spa_candidate(
+            "short page".to_owned(),
+            Some(candidate(SpaSource::Framework)),
+            false,
+            Some(187),
+        );
+        assert!(text.starts_with("Recovered"));
+        assert_eq!(small_pick, None);
+
+        // A generic candidate fills a thin result and clears it too.
+        let (_, small_pick) = merge_spa_candidate(
+            "thin".to_owned(),
+            Some(candidate(SpaSource::GenericAssignment)),
+            false,
+            Some(187),
+        );
+        assert_eq!(small_pick, None);
+
+        // No replacement: the small pick is kept for the thin-content check.
+        let (text, small_pick) = merge_spa_candidate("x".repeat(5_000), None, false, Some(187));
+        assert_eq!(text.len(), 5_000);
+        assert_eq!(small_pick, Some(187));
     }
 }
