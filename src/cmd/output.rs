@@ -137,3 +137,177 @@ pub async fn output_response(response: reqwest::Response, show_headers: bool) ->
 
     Ok(())
 }
+
+/// Write a response body to `path` unchanged.
+pub(crate) fn write_file_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
+    std::fs::write(path, bytes).with_context(|| format!("Failed to write {}", path.display()))
+}
+
+/// Whether an `-o` path asks for text or for the file itself.
+///
+/// The final extension states the intent: `notes.md` wants the page's text,
+/// `logo.png` wants the image. Names without an extension keep the text
+/// behaviour nab always had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Destination {
+    /// Converted (or raw) text, exactly as before.
+    Text,
+    /// The response body, byte for byte.
+    File,
+}
+
+/// Classify an `-o` path by its final extension (ASCII case-insensitive).
+pub(crate) fn destination_for(path: &Path) -> Destination {
+    const TEXT_EXTENSIONS: &[&str] =
+        &["md", "markdown", "txt", "html", "htm", "json", "xml", "csv"];
+    match path.extension().and_then(|ext| ext.to_str()) {
+        None => Destination::Text,
+        Some(ext) if TEXT_EXTENSIONS.iter().any(|t| ext.eq_ignore_ascii_case(t)) => {
+            Destination::Text
+        }
+        Some(_) => Destination::File,
+    }
+}
+
+/// Whether a response body is text or a binary file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BodyClass {
+    /// HTML, plain text, JSON, XML, JavaScript and similar.
+    Text,
+    /// Everything that is not text: images (including SVG), PDF, audio, video, archives.
+    Binary,
+}
+
+/// Classify a response body from its `Content-Type` and, when the type is
+/// missing or generic, from the bytes themselves.
+pub(crate) fn body_class(content_type: &str, body: &[u8]) -> BodyClass {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let is_text_mime = mime.starts_with("text/")
+        || matches!(
+            mime.as_str(),
+            "application/xhtml+xml"
+                | "application/json"
+                | "application/xml"
+                | "application/javascript"
+        )
+        || ((mime.ends_with("+json") || mime.ends_with("+xml")) && mime != "image/svg+xml");
+    if is_text_mime {
+        return BodyClass::Text;
+    }
+    if mime.is_empty() || mime == "application/octet-stream" {
+        return if looks_like_text(body) {
+            BodyClass::Text
+        } else {
+            BodyClass::Binary
+        };
+    }
+    BodyClass::Binary
+}
+
+/// Text when the body is valid UTF-8, or starts with `<` after an optional
+/// UTF-8 byte-order mark and ASCII whitespace (HTML in another encoding).
+fn looks_like_text(body: &[u8]) -> bool {
+    let without_bom = body.strip_prefix(b"\xef\xbb\xbf").unwrap_or(body);
+    let first = without_bom.iter().find(|byte| !byte.is_ascii_whitespace());
+    first == Some(&b'<') || std::str::from_utf8(body).is_ok()
+}
+
+#[cfg(test)]
+mod file_output_tests {
+    use super::{BodyClass, Destination, body_class, destination_for};
+    use std::path::Path;
+
+    #[test]
+    fn text_extensions_and_bare_names_are_text_destinations() {
+        for name in [
+            "notes.md",
+            "NOTES.MD",
+            "a.markdown",
+            "a.txt",
+            "page.html",
+            "page.HTM",
+            "data.json",
+            "feed.xml",
+            "rows.csv",
+            "out",
+            "dir/out",
+        ] {
+            assert_eq!(
+                destination_for(Path::new(name)),
+                Destination::Text,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_extensions_are_file_destinations() {
+        for name in [
+            "logo.png",
+            "paper.PDF",
+            "clip.mp4",
+            "tool.cmd",
+            "archive.tar.gz",
+            "x.svg",
+        ] {
+            assert_eq!(
+                destination_for(Path::new(name)),
+                Destination::File,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn textual_content_types_are_text() {
+        for ct in [
+            "text/html; charset=utf-8",
+            "application/xhtml+xml",
+            "text/plain",
+            "application/json",
+            "application/ld+json",
+            "application/rss+xml",
+            "text/xml",
+            "application/javascript",
+        ] {
+            assert_eq!(body_class(ct, b"\x89\xff"), BodyClass::Text, "{ct}");
+        }
+    }
+
+    #[test]
+    fn file_content_types_are_binary() {
+        for ct in [
+            "image/png",
+            "image/svg+xml",
+            "application/pdf",
+            "audio/mpeg",
+            "video/mp4",
+            "application/zip",
+        ] {
+            assert_eq!(body_class(ct, b"plain words"), BodyClass::Binary, "{ct}");
+        }
+    }
+
+    #[test]
+    fn generic_type_is_sniffed_from_the_bytes() {
+        let generic = "application/octet-stream";
+        assert_eq!(
+            body_class(generic, b"\x89PNG\r\n\x1a\n\xff\x00"),
+            BodyClass::Binary
+        );
+        assert_eq!(
+            body_class(generic, b"\xef\xbb\xbf  <!doctype html>"),
+            BodyClass::Text
+        );
+        assert_eq!(
+            body_class(generic, b"just some utf-8 text"),
+            BodyClass::Text
+        );
+        assert_eq!(body_class("", b"\x00\xff\xfe"), BodyClass::Binary);
+    }
+}
