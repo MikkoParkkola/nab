@@ -530,4 +530,24 @@ mod tests {
 
         assert_eq!(source, SpaSource::GenericAssignment);
     }
+
+    #[test]
+    fn longest_generic_assignment_wins_regardless_of_script_order() {
+        let short = "A short config description that is just long enough to count. ".repeat(4);
+        let long = "The full article body that a client-rendered page keeps in state. ".repeat(12);
+        for (first, second) in [(&short, &long), (&long, &short)] {
+            let html = format!(
+                r#"<html><body>
+                <script>var config = {{"about":"{first}"}};</script>
+                <script>var state = {{"post":"{second}"}};</script>
+                </body></html>"#
+            );
+
+            let (text, source) =
+                extract_inline_script_json_with_source(&html).expect("a candidate");
+
+            assert_eq!(source, SpaSource::GenericAssignment);
+            assert!(text.contains("full article body"), "{text}");
+        }
+    }
 }

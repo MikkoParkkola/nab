@@ -1071,8 +1071,8 @@ mod tests {
         HtmlConversionOptions, HtmlPick, HtmlSelection, detect_empty_spa_shell,
         html_to_markdown_with_url, html_to_markdown_with_url_and_fetcher,
         html_to_markdown_with_url_and_sources, is_thin_content, looks_like_client_spa_shell,
-        pick_html_result, strip_embedded_data_sections, strip_hidden_sections,
-        strip_noise_sections,
+        pick_html_result, pick_html_result_for_page, strip_embedded_data_sections,
+        strip_hidden_sections, strip_noise_sections,
     };
 
     #[test]
@@ -1984,6 +1984,20 @@ mod tests {
         let mut sel = selection(187, 7_067, ArticleSource::Generic);
         sel.nextjs_metadata_only = true;
         assert_eq!(pick_html_result(sel), HtmlPick::Readability);
+    }
+
+    #[test]
+    fn page_level_pick_runs_the_nextjs_exemption_when_the_small_pick_fires() {
+        // GIVEN: a Next.js page whose __NEXT_DATA__ holds metadata only
+        let html = r#"<html><body><script id="__NEXT_DATA__" type="application/json">
+            {"props":{"pageProps":{"title":"Short title"}},"page":"/post"}
+            </script></body></html>"#;
+        let plain = "<html><body><p>No framework data here.</p></body></html>";
+
+        // WHEN/THEN: the small pick is kept on the Next.js page, yields elsewhere
+        let sel = selection(187, 7_067, ArticleSource::Generic);
+        assert_eq!(pick_html_result_for_page(html, sel), HtmlPick::Readability);
+        assert_eq!(pick_html_result_for_page(plain, sel), HtmlPick::Direct);
     }
 
     #[test]
