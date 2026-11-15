@@ -3,6 +3,7 @@
 
 use super::helpers::{collect_text_from_json, render_spa_content, strip_html_comment_wrapper};
 use super::nextjs::extract_nextjs_content;
+use crate::content::spa_extract::SpaSource;
 
 /// Extract content from inline `<script>` variable assignments.
 ///
@@ -15,6 +16,13 @@ use super::nextjs::extract_nextjs_content;
 /// This function scans all inline scripts for known variable assignment patterns
 /// and attempts to extract the JSON payload.
 pub fn extract_inline_script_json(html: &str) -> Option<String> {
+    extract_inline_script_json_with_source(html).map(|(text, _)| text)
+}
+
+/// Like [`extract_inline_script_json`], but also reports whether a named SSR
+/// assignment ([`SpaSource::Framework`]) or the catch-all scraper
+/// ([`SpaSource::GenericAssignment`]) produced the text.
+pub(crate) fn extract_inline_script_json_with_source(html: &str) -> Option<(String, SpaSource)> {
     const PATTERNS: &[&str] = &[
         "window.__NEXT_DATA__",
         "self.__NEXT_DATA__",
@@ -48,14 +56,14 @@ pub fn extract_inline_script_json(html: &str) -> Option<String> {
             if let Some(content) =
                 extract_content_from_named_inline_assignment(&script_text, pattern, MIN_CONTENT_LEN)
             {
-                return Some(content);
+                return Some((content, SpaSource::Framework));
             }
         }
 
         if let Some(content) =
             extract_content_from_generic_inline_assignments(&script_text, MIN_CONTENT_LEN)
         {
-            return Some(content);
+            return Some((content, SpaSource::GenericAssignment));
         }
     }
 
@@ -486,5 +494,39 @@ mod tests {
                 .unwrap()
                 .contains("Generic window.__DATA__ SSR pattern")
         );
+    }
+
+    #[test]
+    fn named_assignment_in_a_later_script_beats_an_earlier_generic_one() {
+        // GIVEN: script 1 holds a generic settings object with a long bio,
+        //        script 2 holds the article in window.__NEXT_DATA__
+        let bio = "A long author biography that is not the article at all. ".repeat(8);
+        let article = "The scheduler assigns each job to the least loaded worker. ".repeat(8);
+        let html = format!(
+            r#"<html><body>
+            <script>var settings = {{"author":{{"bio":"{bio}"}}}};</script>
+            <script>window.__NEXT_DATA__ = {{"props":{{"pageProps":{{"post":{{"content":"{article}"}}}}}}}};</script>
+            </body></html>"#
+        );
+
+        // WHEN: extracted with its source
+        let (text, source) =
+            extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        // THEN: the named framework assignment wins
+        assert_eq!(source, SpaSource::Framework);
+        assert!(text.contains("least loaded worker"), "{text}");
+    }
+
+    #[test]
+    fn generic_assignment_is_reported_as_generic() {
+        let bio = "A long author biography that is not the article at all. ".repeat(8);
+        let html = format!(
+            r#"<html><body><script>var settings = {{"author":{{"bio":"{bio}"}}}};</script></body></html>"#
+        );
+
+        let (_, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        assert_eq!(source, SpaSource::GenericAssignment);
     }
 }
