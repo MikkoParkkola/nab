@@ -61,10 +61,15 @@ pub(crate) fn extract_inline_script_json_with_source(html: &str) -> Option<(Stri
         }
     }
 
-    scripts.iter().find_map(|script_text| {
-        extract_content_from_generic_inline_assignments(script_text, MIN_CONTENT_LEN)
-            .map(|content| (content, SpaSource::GenericAssignment))
-    })
+    // Only fills thin pages now, so take the longest hit on the page rather
+    // than the first script's (often a short config object).
+    scripts
+        .iter()
+        .filter_map(|script_text| {
+            extract_content_from_generic_inline_assignments(script_text, MIN_CONTENT_LEN)
+        })
+        .max_by_key(String::len)
+        .map(|content| (content, SpaSource::GenericAssignment))
 }
 
 fn extract_content_from_named_inline_assignment(

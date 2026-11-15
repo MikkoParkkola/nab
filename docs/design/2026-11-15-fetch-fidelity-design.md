@@ -78,7 +78,7 @@ In `html_to_markdown_with_url_and_sources`:
 
 ### Cause B fix: a tiny generic-readability pick on a large page yields to the full conversion
 
-`Article` gains a source enum (`Substack`, `WordPress`, `Readability`, `Semantic`). The direct conversion is returned instead of readability when all hold: `prefer_readability` is false; the article source is `Readability` or `Semantic` (site-specific extractors are trusted); the page is not Next.js metadata-only (`is_nextjs_metadata_only`, so the existing chunk recovery still triggers); readability is under 2,000 bytes and under 10% of the direct conversion.
+`Article` gains a source enum (`Substack`, `WordPress`, `Generic`; `Generic` covers the readability crate, semantic `<article>`/`<main>` and text-density extraction). The direct conversion is returned instead of readability when all hold: `prefer_readability` is false; the article source is `Generic` (site-specific extractors are trusted); the page is not Next.js metadata-only (`is_nextjs_metadata_only`, so the existing chunk recovery still triggers); readability is under 2,000 bytes and under 10% of the direct conversion.
 
 The thin-content warning and opt-in Jina fallback are evaluated on the readability result when the fallback applies, so their signal is not masked. The chosen source and candidate lengths are logged at debug level.
 
