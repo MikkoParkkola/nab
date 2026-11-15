@@ -139,8 +139,21 @@ pub async fn output_response(response: reqwest::Response, show_headers: bool) ->
 }
 
 /// Write a response body to `path` unchanged.
+///
+/// Written to a temporary file in the same directory and renamed into place,
+/// so a failed write never leaves a truncated file over an existing one.
 pub(crate) fn write_file_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
-    std::fs::write(path, bytes).with_context(|| format!("Failed to write {}", path.display()))
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let mut temp = tempfile::NamedTempFile::new_in(dir)
+        .with_context(|| format!("Failed to create a temporary file in {}", dir.display()))?;
+    temp.write_all(bytes)
+        .with_context(|| format!("Failed to write {}", path.display()))?;
+    temp.persist(path)
+        .with_context(|| format!("Failed to write {}", path.display()))?;
+    Ok(())
 }
 
 /// Whether an `-o` path asks for text or for the file itself.

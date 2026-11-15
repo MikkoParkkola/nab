@@ -199,6 +199,23 @@ impl std::str::FromStr for WafMode {
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
 pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
+    // `-o logo.png` asks for the file itself, not its text: skip every path
+    // that produces markdown (browser rendering, transcription, site
+    // providers) so the real response can be saved byte for byte.
+    let file_destination = cfg
+        .output_file
+        .as_deref()
+        .filter(|path| destination_for(path) == Destination::File);
+    if let Some(path) = file_destination
+        && (cfg.render_dom || cfg.render || cfg.interactive)
+    {
+        return Err(anyhow::anyhow!(
+            "--render, --interactive and --render-dom produce text, so {} was not written; \
+             use a .md name for -o",
+            path.display()
+        ));
+    }
+
     // ── Authed DOM-render short-circuit ───────────────────────────────────
     // Fires for `--render-dom` (any URL) and, automatically, for X long-form
     // Article URLs whose body is painted by an authenticated post-hydration XHR
@@ -214,7 +231,8 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // chromiumoxide), the explicit `--render-dom` flag errors clearly, but the
     // automatic X-Article match falls through to the normal fetch ladder so
     // existing `nab fetch` behaviour is never broken (requirement 3).
-    let want_render_dom = cfg.render_dom || nab::url_class::is_x_article_url(&cfg.url);
+    let want_render_dom = cfg.render_dom
+        || (file_destination.is_none() && nab::url_class::is_x_article_url(&cfg.url));
     #[cfg(feature = "browser")]
     let render_dom_active = want_render_dom;
     #[cfg(not(feature = "browser"))]
@@ -254,13 +272,6 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     if cfg.batch_file.is_some() {
         return super::fetch_batch::cmd_fetch_batch(cfg).await;
     }
-
-    // `-o logo.png` asks for the file itself, not its text: skip transcription
-    // and site providers so the real response can be saved byte for byte.
-    let file_destination = cfg
-        .output_file
-        .as_deref()
-        .filter(|path| destination_for(path) == Destination::File);
 
     let client = build_client(cfg.no_redirect, cfg.proxy.as_deref(), cfg.tor)?;
     let profile = client.profile().await;
@@ -1262,7 +1273,9 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 resp.body_len,
                 resp.elapsed.as_secs_f64() * 1000.0
             ))?;
-            if prints_body {
+            if let Some((path, bytes)) = saved {
+                write_stdout_line(&format!("💾 Saved {bytes} bytes to {}", path.display()))?;
+            } else if prints_body {
                 output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
             }
         }
