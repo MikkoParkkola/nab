@@ -664,6 +664,7 @@ mod tests {
         assert!(article.text_content.contains("main article content"));
         assert!(!article.text_content.contains("Site Navigation"));
         assert!(!article.text_content.contains("Copyright"));
+        assert_eq!(article.source, ArticleSource::Generic);
     }
 
     #[test]
@@ -937,6 +938,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(article.title, "Actual Substack Post Title");
+        assert_eq!(article.source, ArticleSource::Substack);
         assert!(article.text_content.contains(body_1));
         assert!(article.text_content.contains(body_2));
         assert!(article.text_content.contains(footnote));
@@ -1000,6 +1002,7 @@ mod tests {
 
         let article =
             extract_article(&html, "https://developer.nvidia.com/blog/modelexpress/").unwrap();
+        assert_eq!(article.source, ArticleSource::WordPress);
         assert!(
             article.text_content.contains(NEEDLE),
             "missing authored sentence; text: {}",

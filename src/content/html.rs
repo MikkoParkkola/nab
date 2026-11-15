@@ -271,25 +271,26 @@ where
     let prefer_readability = options.force_readability || direct_exceeds_budget;
 
     let readability_len = readability.as_ref().map(|(md, _)| md.len());
-    let pick = pick_html_result(HtmlSelection {
-        readability_len,
-        readability_source: readability.as_ref().map(|(_, source)| *source),
-        direct_len: direct_md.len(),
-        prefer_readability,
-        nextjs_metadata_only: spa_extract::is_nextjs_metadata_only(html),
-    });
-    // Direct over a non-trivial readability result means the small-pick rule
-    // fired: the page was large and the pick was likely a teaser or a bio.
-    let small_pick_len = readability_len.filter(|len| *len >= MIN_READABILITY_LEN);
-    let small_pick_len = if pick == HtmlPick::Direct {
-        small_pick_len
-    } else {
-        None
-    };
+    let readability_source = readability.as_ref().map(|(_, source)| *source);
+    let pick = pick_html_result_for_page(
+        html,
+        HtmlSelection {
+            readability_len,
+            readability_source,
+            direct_len: direct_md.len(),
+            prefer_readability,
+            nextjs_metadata_only: false,
+        },
+    );
+    let small_pick_len =
+        readability_len.filter(|len| *len >= MIN_READABILITY_LEN && pick == HtmlPick::Direct);
     tracing::debug!(
         pick = ?pick,
         readability_len,
+        readability_source = ?readability_source,
         direct_len = direct_md.len(),
+        spa_source = ?spa_candidate.as_ref().map(|spa| spa.source),
+        spa_len = spa_candidate.as_ref().map(|spa| spa.text.len()),
         "html selection"
     );
     let markdown = match (pick, readability) {
@@ -299,23 +300,8 @@ where
 
     // Post-process: strip markdown noise from html2md output
     let markdown = clean_markdown_noise(&markdown);
-    let markdown = match spa_candidate {
-        Some(spa)
-            if spa.source == spa_extract::SpaSource::Framework
-                && spa.text.len() > markdown.len() =>
-        {
-            spa.text
-        }
-        Some(spa)
-            if spa.source == spa_extract::SpaSource::GenericAssignment
-                && !prefer_readability
-                && markdown.len() < THIN_MARKDOWN_LEN
-                && spa.text.len() > markdown.len() =>
-        {
-            spa.text
-        }
-        _ => markdown,
-    };
+    let (markdown, small_pick_len) =
+        merge_spa_candidate(markdown, spa_candidate, prefer_readability, small_pick_len);
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
@@ -343,32 +329,80 @@ where
         }
 
         // Remote fallback either wasn't enabled, had no URL, or failed.
-        // Emit actionable guidance as a warning.
-        if small_pick_len.is_some() {
-            tracing::warn!(
-                "The article extractor found only {} chars on a {} byte page, so the whole \
-                 page is returned instead. If the article is missing from it, the page likely \
-                 uses JavaScript rendering: try `nab spa <url>` or \
-                 `nab fetch --remote-fallback <url>` (public URLs only; sends the URL to r.jina.ai)",
-                thin_check_len,
-                html.len()
-            );
-        } else {
-            tracing::warn!(
-                "Output is suspiciously thin ({} chars from {} bytes of HTML). \
-                 The page likely uses JavaScript rendering. Try:\n  \
-                 1. nab spa <url>              (extract embedded SPA data)\n  \
-                 2. nab fetch <url>            (uses default browser cookies automatically)\n  \
-                 3. nab browser <url>          (explicit external-CDP browser rendering)\n  \
-                 4. nab fetch --cookies brave <url>  (override the browser profile if needed)\n  \
-                 5. nab fetch --remote-fallback <url>  (public URLs only; sends the URL to r.jina.ai)",
-                markdown.len(),
-                html.len()
-            );
-        }
+        warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
     }
 
     markdown
+}
+
+/// Let an SPA candidate replace the HTML result when it should.
+///
+/// Framework data replaces a shorter HTML result. The catch-all assignment
+/// scraper only fills a thin one, and never against an explicit readability
+/// preference. Returns the markdown and the small-pick length, which is
+/// cleared once the HTML result has been replaced.
+fn merge_spa_candidate(
+    markdown: String,
+    spa_candidate: Option<spa_extract::SpaCandidate>,
+    prefer_readability: bool,
+    small_pick_len: Option<usize>,
+) -> (String, Option<usize>) {
+    match spa_candidate {
+        Some(spa)
+            if spa.source == spa_extract::SpaSource::Framework
+                && spa.text.len() > markdown.len() =>
+        {
+            (spa.text, None)
+        }
+        Some(spa)
+            if spa.source == spa_extract::SpaSource::GenericAssignment
+                && !prefer_readability
+                && markdown.len() < THIN_MARKDOWN_LEN
+                && spa.text.len() > markdown.len() =>
+        {
+            (spa.text, None)
+        }
+        _ => (markdown, small_pick_len),
+    }
+}
+
+/// [`pick_html_result`], running the Next.js metadata check only when the
+/// small-pick rule fired: it parses the whole page, so it is not run on every fetch.
+fn pick_html_result_for_page(html: &str, selection: HtmlSelection) -> HtmlPick {
+    let pick = pick_html_result(selection);
+    let small_pick_fired = pick == HtmlPick::Direct
+        && selection
+            .readability_len
+            .is_some_and(|len| len >= MIN_READABILITY_LEN);
+    if small_pick_fired && spa_extract::is_nextjs_metadata_only(html) {
+        return pick_html_result(HtmlSelection {
+            nextjs_metadata_only: true,
+            ..selection
+        });
+    }
+    pick
+}
+
+/// Emit actionable guidance when the output looks thin.
+fn warn_thin_output(small_pick_replaced: bool, len: usize, html_len: usize) {
+    if small_pick_replaced {
+        tracing::warn!(
+            "The article extractor found only {len} chars on a {html_len} byte page, so the whole \
+             page is returned instead. If the article is missing from it, the page likely \
+             uses JavaScript rendering: try `nab spa <url>` or \
+             `nab fetch --remote-fallback <url>` (public URLs only; sends the URL to r.jina.ai)"
+        );
+    } else {
+        tracing::warn!(
+            "Output is suspiciously thin ({len} chars from {html_len} bytes of HTML). \
+             The page likely uses JavaScript rendering. Try:\n  \
+             1. nab spa <url>              (extract embedded SPA data)\n  \
+             2. nab fetch <url>            (uses default browser cookies automatically)\n  \
+             3. nab browser <url>          (explicit external-CDP browser rendering)\n  \
+             4. nab fetch --cookies brave <url>  (override the browser profile if needed)\n  \
+             5. nab fetch --remote-fallback <url>  (public URLs only; sends the URL to r.jina.ai)"
+        );
+    }
 }
 
 /// Which HTML-derived result the selection step returns.
