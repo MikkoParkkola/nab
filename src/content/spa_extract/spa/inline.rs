@@ -42,32 +42,29 @@ pub(crate) fn extract_inline_script_json_with_source(html: &str) -> Option<(Stri
     let document = scraper::Html::parse_document(html);
     let script_sel = scraper::Selector::parse("script").ok()?;
 
-    for script in document.select(&script_sel) {
-        if script.value().attr("src").is_some() {
-            continue;
-        }
+    let scripts: Vec<String> = document
+        .select(&script_sel)
+        .filter(|script| script.value().attr("src").is_none())
+        .map(|script| script.text().collect::<String>())
+        .filter(|text| !text.trim().is_empty())
+        .collect();
 
-        let script_text = script.text().collect::<String>();
-        if script_text.trim().is_empty() {
-            continue;
-        }
-
+    // Named framework state anywhere on the page outranks the catch-all
+    // scraper, which takes the longest string from any `= {...}` assignment.
+    for script_text in &scripts {
         for pattern in PATTERNS {
             if let Some(content) =
-                extract_content_from_named_inline_assignment(&script_text, pattern, MIN_CONTENT_LEN)
+                extract_content_from_named_inline_assignment(script_text, pattern, MIN_CONTENT_LEN)
             {
                 return Some((content, SpaSource::Framework));
             }
         }
-
-        if let Some(content) =
-            extract_content_from_generic_inline_assignments(&script_text, MIN_CONTENT_LEN)
-        {
-            return Some((content, SpaSource::GenericAssignment));
-        }
     }
 
-    None
+    scripts.iter().find_map(|script_text| {
+        extract_content_from_generic_inline_assignments(script_text, MIN_CONTENT_LEN)
+            .map(|content| (content, SpaSource::GenericAssignment))
+    })
 }
 
 fn extract_content_from_named_inline_assignment(
@@ -510,8 +507,7 @@ mod tests {
         );
 
         // WHEN: extracted with its source
-        let (text, source) =
-            extract_inline_script_json_with_source(&html).expect("a candidate");
+        let (text, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
 
         // THEN: the named framework assignment wins
         assert_eq!(source, SpaSource::Framework);
