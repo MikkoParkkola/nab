@@ -32,19 +32,10 @@ pub fn nab_lock() -> MutexGuard<'static, ()> {
 }
 
 pub(crate) fn server_bin() -> std::path::PathBuf {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_nab_mcp") {
-        return std::path::PathBuf::from(path);
-    }
-    let exe = std::env::current_exe().expect("harness: current_exe");
-    let name = if cfg!(windows) {
-        "nab-mcp.exe"
-    } else {
-        "nab-mcp"
-    };
-    exe.parent()
-        .and_then(|dir| dir.parent())
-        .expect("harness: profile dir")
-        .join(name)
+    // Cargo names this variable after the binary exactly as written, hyphen
+    // included. Guessing the path from the test executable broke on Rust 1.100,
+    // which builds test executables outside `target/<profile>/deps`.
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_nab-mcp"))
 }
 
 #[derive(Clone, Copy)]
