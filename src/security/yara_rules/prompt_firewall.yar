@@ -213,8 +213,8 @@ rule exfil_curl_secret_to_remote {
     $curl = /(^|[^A-Za-z0-9_-])curl(\.exe)?[ \t\\]/ nocase
     $url = /https?:\/\// nocase
     $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)s?[0-9]*(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
-    $secret_upload = /(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)(=|[ \t]*)['"]?([A-Za-z0-9_.-]+=?)?@[~\/.$A-Za-z0-9'"<]/
-    $secret_file = /(^|[ \t])(-T|--upload-file)[ \t=~\/.$'"]/
+    $secret_upload = /(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)(=|[ \t]*(\\\r?\n[ \t]*)?)['"]?([A-Za-z0-9_.-]+=?)?@[~\/.$A-Za-z0-9'"<]/
+    $secret_file = /(^|[ \t\n])(-T|--upload-file)[ \t=~\/.$'"A-Za-z0-9]/
     $secret_cat = /\$\(\s*cat\s|\$\(\s*<|`\s*cat\s/
     $secret_env = /\benv[ \t]*\||\bprintenv\b/
   condition:
