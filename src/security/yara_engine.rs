@@ -345,11 +345,27 @@ pub fn sanitize_notice(received: usize, guarded: &GuardedBody) -> Option<String>
     if guarded.bypassed || guarded.report.matches.is_empty() {
         return None;
     }
+    let matches = &guarded.report.matches;
+    let banner = sanitized_banner(matches);
+    let marker = redaction_marker(matches);
+    let added = if guarded.body.starts_with(&banner) {
+        banner.len() + guarded.body.matches(marker.as_str()).count() * marker.len()
+    } else {
+        0
+    };
     Some(format!(
         "⚠️  YARA-X screen redacted part of the response: kept {} of {received} bytes (rules: {})",
-        guarded.body.len(),
-        rule_list(&guarded.report.matches)
+        guarded.body.len().saturating_sub(added),
+        rule_list(matches)
     ))
+}
+
+fn sanitized_banner(matches: &[SignatureMatch]) -> String {
+    format!(
+        "[NAB YARA SANITIZED: {} signature match(es); rules: {}]\n\n",
+        matches.len(),
+        rule_list(matches)
+    )
 }
 
 fn redact_body(body: &str, matches: &[SignatureMatch]) -> String {
@@ -358,12 +374,7 @@ fn redact_body(body: &str, matches: &[SignatureMatch]) -> String {
         return body.to_owned();
     }
 
-    let mut out = String::new();
-    out.push_str("[NAB YARA SANITIZED: ");
-    out.push_str(&matches.len().to_string());
-    out.push_str(" signature match(es); rules: ");
-    out.push_str(&rule_list(matches));
-    out.push_str("]\n\n");
+    let mut out = sanitized_banner(matches);
 
     let mut cursor = 0;
     for range in ranges {
@@ -387,29 +398,33 @@ fn redaction_marker(matches: &[SignatureMatch]) -> String {
 fn redaction_ranges(bytes: &[u8], matches: &[SignatureMatch]) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     for signature in matches {
-        // Only a secret is wholly inside its match, so only a secret may be cut
-        // out of a long line; an injection or exfiltration match is a trigger
-        // inside a larger instruction, so its whole line goes. A pattern at the
-        // scanner's match cap may have unrecorded hits on the same line; a
-        // rule's patterns share one list, so a capped pattern fills it too.
-        let windowed =
-            signature.category == "secret" && signature.ranges.len() < MAX_MATCHES_PER_PATTERN;
+        // Only a rule whose match is the whole secret may be cut out of a long
+        // line. Marker or header matches (PEM block, bearer prefix, AWS key id)
+        // and injection or exfiltration triggers take the whole line. A pattern
+        // at the scanner's match cap may have unrecorded hits on the same line;
+        // a rule's patterns share one list, so a capped pattern fills it too.
+        let windowed = WINDOWED_RULES.contains(&signature.rule_id.as_str())
+            && signature.ranges.len() < MAX_MATCHES_PER_PATTERN;
         for range in &signature.ranges {
-            if range.start >= bytes.len() {
+            // A one-character prefix class can consume the newline that ends
+            // the previous line; that newline is not part of the match.
+            let first = if bytes.get(range.start) == Some(&b'\n') {
+                range.start + 1
+            } else {
+                range.start
+            };
+            if first >= bytes.len() {
                 continue;
             }
             let end = range.end.min(bytes.len());
-            let start_line = line_start(bytes, range.start);
+            let start_line = line_start(bytes, first);
             let end_line = line_end(bytes, end);
-            let one_line = !bytes[range.start..end].contains(&b'\n');
+            let one_line = !bytes[first..end].contains(&b'\n');
             let (start, end) = if windowed && one_line && end_line - start_line > LONG_LINE_BYTES {
                 (
                     char_start(
                         bytes,
-                        range
-                            .start
-                            .saturating_sub(SECRET_WINDOW_BYTES)
-                            .max(start_line),
+                        first.saturating_sub(SECRET_WINDOW_BYTES).max(start_line),
                     ),
                     char_end(bytes, (end + SECRET_WINDOW_BYTES).min(end_line)),
                 )
@@ -430,6 +445,12 @@ fn redaction_ranges(bytes: &[u8], matches: &[SignatureMatch]) -> Vec<Range<usize
 const LONG_LINE_BYTES: usize = 4096;
 /// On a longer line, a secret match is removed with this much text either side.
 const SECRET_WINDOW_BYTES: usize = 256;
+/// Rules whose every pattern matches the entire secret value.
+const WINDOWED_RULES: &[&str] = &[
+    "secret_openai_key",
+    "secret_github_token",
+    "secret_slack_token",
+];
 /// Hits the scanner records per pattern (`max_matches_per_pattern`).
 const MAX_MATCHES_PER_PATTERN: usize = 8;
 
@@ -620,17 +641,55 @@ mod tests {
 
     #[test]
     fn bounded_redaction_respects_multi_byte_characters() {
-        // "€" is 3 bytes; two spaces either side of the key put both
-        // 256-byte window edges inside a character, so an unsnapped cut panics.
+        // "€" is 3 bytes. The spacing puts both 256-byte window edges inside a
+        // character; the assertions below prove it, so each snap is exercised.
         let body = format!(
-            "{}  {}  {}",
+            "{} {}  {}",
             "€".repeat(300_000),
             fake_key(),
             "€".repeat(300_000)
         );
-        let out = redacted(&body);
+        let report = YaraEngine::default().scan(body.as_bytes()).unwrap();
+        let hit = &report.matches[0].ranges[0];
+        assert!(!body.is_char_boundary(hit.start - SECRET_WINDOW_BYTES));
+        assert!(!body.is_char_boundary(hit.end + SECRET_WINDOW_BYTES));
+        let out = redact_body(&body, &report.matches);
         assert!(!out.contains(&fake_key()));
         assert!(out.len() * 100 > body.len() * 99);
+    }
+
+    #[test]
+    fn a_key_at_the_start_of_a_line_leaves_the_line_before_it() {
+        let short = format!("keep this line\n{} rest\nnext line", fake_key());
+        let out = redacted(&short);
+        assert!(
+            out.contains("keep this line") && out.contains("next line"),
+            "{out}"
+        );
+        assert!(!out.contains(&fake_key()));
+
+        let long = format!("keep this line\n{} {}", fake_key(), "b".repeat(5_000));
+        let out = redacted(&long);
+        assert!(out.contains("keep this line") && out.contains("bbbb"));
+        assert!(!out.contains(&fake_key()));
+    }
+
+    #[test]
+    fn a_private_key_block_on_a_long_line_is_removed_whole() {
+        // JSON-escaped PEM in minified text: the rule matches only the BEGIN
+        // and END markers, so a window would keep the key body between them.
+        // Markers are assembled so secret scanners do not flag this file.
+        let marker = |edge: &str| format!("-----{edge} {}-----", ["PRIVATE", "KEY"].join(" "));
+        let body = format!(
+            "{}\"{}\\n{}\\n{}\"\nnext line",
+            "x".repeat(5_000),
+            marker("BEGIN"),
+            "M".repeat(1_600),
+            marker("END")
+        );
+        let out = redacted(&body);
+        assert!(!out.contains("MMMM"), "key body survived");
+        assert!(out.contains("next line"));
     }
 
     #[test]
@@ -694,9 +753,24 @@ mod tests {
         let guarded = guard_fetch_body(&body, &config).unwrap();
         let notice = sanitize_notice(body.len(), &guarded).expect("notice for a sanitized body");
         assert!(notice.contains(&body.len().to_string()), "{notice}");
-        assert!(notice.contains(&guarded.body.len().to_string()), "{notice}");
         assert!(notice.contains("secret_openai_key"), "{notice}");
         let clean = guard_fetch_body("ordinary page", &config).unwrap();
         assert_eq!(sanitize_notice("ordinary page".len(), &clean), None);
+    }
+
+    #[test]
+    fn the_notice_counts_only_original_bytes_kept() {
+        let config = FetchGuardConfig {
+            action: FetchGuardAction::Redact,
+            bypass: false,
+        };
+        // "keep one\n" and "\nkeep two" survive: 18 bytes of the original.
+        let body = format!("keep one\n{}\nkeep two", fake_key());
+        let guarded = guard_fetch_body(&body, &config).unwrap();
+        let notice = sanitize_notice(body.len(), &guarded).unwrap();
+        assert!(
+            notice.contains(&format!("kept 18 of {} bytes", body.len())),
+            "{notice}"
+        );
     }
 }

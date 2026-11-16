@@ -294,11 +294,14 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
             .await
         {
             Ok(result) => {
-                let markdown = nab::security::guard_fetch_output(
+                let (markdown, screen_notice) = nab::security::guard_fetch_output_with_notice(
                     &result.markdown,
                     "cli_fetch_media",
                     &cfg.url,
                 )?;
+                if let Some(notice) = screen_notice {
+                    eprintln!("{notice}");
+                }
                 let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
                 if !cfg.no_save {
                     save_to_hebb(&cfg.url, &markdown, "").await;
@@ -334,11 +337,14 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         let site_router = nab::site::SiteRouter::new();
         let cookie_opt = non_empty(&cookie_header);
         if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
-            let markdown = nab::security::guard_fetch_output(
+            let (markdown, screen_notice) = nab::security::guard_fetch_output_with_notice(
                 &site_content.markdown,
                 "cli_fetch_site_provider",
                 &cfg.url,
             )?;
+            if let Some(notice) = screen_notice {
+                eprintln!("{notice}");
+            }
             let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
             output_body(
                 &markdown,
