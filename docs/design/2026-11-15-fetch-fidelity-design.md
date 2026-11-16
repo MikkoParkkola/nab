@@ -74,7 +74,7 @@ All three bad SPA candidates come from the catch-all scraper `extract_content_fr
 In `html_to_markdown_with_url_and_sources`:
 
 - `Framework` candidates: unchanged, including the early return.
-- `GenericAssignment` candidates: never early-return. They replace the chosen HTML result only when `prefer_readability` is false, the chosen result is under 800 bytes, and the candidate is longer than it.
+- `GenericAssignment` candidates: never early-return. They replace the chosen HTML result only when it is the whole-page conversion (no article was picked), `prefer_readability` is false, the result is under 800 bytes, and the candidate is longer than it. An article an extractor picked stays, however short.
 
 ### Cause B fix: a tiny generic-readability pick on a large page yields to the full conversion
 
