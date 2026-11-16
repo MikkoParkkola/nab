@@ -212,10 +212,10 @@ rule exfil_curl_secret_to_remote {
     // segment, a file upload, a command substitution reading a file, or env.
     $curl = /(^|[^A-Za-z0-9_-])curl[ \t\\]/ nocase
     $url = /https?:\/\// nocase
-    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
-    $secret_upload = /(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)(=|[ \t]*)['"]?([A-Za-z0-9_.-]+=?)?@[~\/.A-Za-z0-9]/
+    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)[0-9]*(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
+    $secret_upload = /(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)(=|[ \t]*)['"]?([A-Za-z0-9_.-]+=?)?@[~\/.$A-Za-z0-9'"]/
     $secret_file = /(-T|--upload-file)[ =]/
-    $secret_cat = /\$\(cat |\$\(<|`cat /
+    $secret_cat = /\$\(\s*cat\s|\$\(\s*<|`\s*cat\s/
     $secret_env = /\benv[ \t]*\||\bprintenv\b/
   condition:
     $curl and $url and any of ($secret*)
@@ -231,9 +231,9 @@ rule exfil_wget_sensitive_payload {
   strings:
     $wget = /(^|[^A-Za-z0-9_-])wget[ \t\\]/ nocase
     $url = /https?:\/\// nocase
-    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
+    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)[0-9]*(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
     $secret_post = /--(post|body)-file[ =]/
-    $secret_cat = /\$\(cat |\$\(<|`cat /
+    $secret_cat = /\$\(\s*cat\s|\$\(\s*<|`\s*cat\s/
   condition:
     $wget and $url and any of ($secret*)
 }
@@ -266,9 +266,9 @@ rule exfil_dns_sensitive {
     // documented `dig`; only a backtick command reading a file counts.
     $lookup_dig = /(^|[^A-Za-z0-9_-])dig[ \t]/ nocase
     $lookup_nslookup = /(^|[^A-Za-z0-9_-])nslookup[ \t]/ nocase
-    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
+    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)[0-9]*(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
     $secret_sub = /\$\(/
-    $secret_cat = /`cat /
+    $secret_cat = /`\s*cat\s/
     $secret_token = "secret-token" nocase
   condition:
     any of ($lookup*) and any of ($secret*)
