@@ -1074,6 +1074,12 @@ pub fn is_boilerplate(line: &str) -> bool {
         || (lower.len() < 3 && !lower.chars().any(char::is_alphanumeric))
 }
 
+/// Headings the markdown keeps with nothing under them while the source had
+/// text under them (MIK-9504). Design: docs/design/2026-11-16-section-loss-warning.md
+pub(crate) fn emptied_sections(_cleaned_html: &str, _markdown: &str) -> Vec<String> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2226,5 +2232,138 @@ mod tests {
             HtmlPick::Readability,
         );
         assert_eq!(text, article);
+    }
+}
+
+// ── MIK-9504: headings kept with their section emptied ────────────────────
+// Design: docs/design/2026-11-16-section-loss-warning.md (tests E1-E8)
+#[cfg(test)]
+mod emptied_section_tests {
+    use super::{emptied_sections, html_to_markdown};
+
+    const LIST: &str = "<ul><li>Read the docs and try the quickstart guide</li>\
+        <li>Pick a renderer for your platform</li><li>Upgrade from the previous version</li>\
+        <li>File issues and discuss ideas</li></ul>";
+    const NEXT: &str =
+        "<h2>Next steps</h2><p>The roadmap covers the rest of the year in detail.</p>";
+
+    fn page(article: &str) -> String {
+        format!("<html><body><article>{article}</article></body></html>")
+    }
+
+    fn get_started(rest: &str) -> String {
+        page(&format!("<h2>Get started</h2>{rest}{NEXT}"))
+    }
+
+    #[test]
+    fn a_kept_heading_whose_list_was_dropped_is_reported() {
+        let source = get_started(LIST);
+        let markdown = html_to_markdown(&get_started(""));
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_heading_kept_with_its_list_is_not_reported() {
+        let source = get_started(LIST);
+        let markdown = html_to_markdown(&source);
+        assert!(
+            emptied_sections(&source, &markdown).is_empty(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_heading_dropped_with_its_section_is_not_reported() {
+        let source = get_started(LIST);
+        let markdown = html_to_markdown(&page(NEXT));
+        assert!(
+            emptied_sections(&source, &markdown).is_empty(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_dropped_segment_must_hold_twenty_characters() {
+        let nineteen = "<p>abcdefghijklmnopqrs</p>";
+        let twenty = "<p>abcdefghijklmnopqrst</p>";
+        let markdown = html_to_markdown(&get_started(""));
+        assert!(emptied_sections(&get_started(nineteen), &markdown).is_empty());
+        assert_eq!(
+            emptied_sections(&get_started(twenty), &markdown),
+            ["Get started"]
+        );
+    }
+
+    #[test]
+    fn a_linked_heading_counts_as_kept() {
+        let linked = |rest: &str| {
+            page(&format!(
+                "<h2><a href='/x'>Get started</a></h2>{rest}{NEXT}"
+            ))
+        };
+        let markdown = html_to_markdown(&linked(""));
+        assert_eq!(
+            emptied_sections(&linked(LIST), &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_parent_is_judged_on_its_own_segment() {
+        let child = "<h3>Child</h3><p>Child text that is kept in the output.</p>";
+        let parent = |own: &str| page(&format!("<h2>Parent</h2>{own}{child}{NEXT}"));
+        let markdown = html_to_markdown(&parent(""));
+        assert_eq!(
+            emptied_sections(&parent(LIST), &markdown),
+            ["Parent"],
+            "{markdown}"
+        );
+        assert!(
+            emptied_sections(&parent("<p>Short intro</p>"), &markdown).is_empty(),
+            "a parent with under 20 characters of its own is not reported"
+        );
+    }
+
+    #[test]
+    fn extra_headings_on_either_side_do_not_shift_the_pairing() {
+        let source = format!(
+            "<html><body><div><h2>Sign up</h2><p>Newsletter text that is long enough.</p></div>\
+             <article><h2>Get started</h2>{LIST}{NEXT}</article></body></html>"
+        );
+        let markdown = format!(
+            "Article title\n=============\n{}",
+            html_to_markdown(&page(&format!("<h2>Get started</h2>{NEXT}")))
+        );
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_segment_stops_at_the_end_of_its_article() {
+        let source = "<html><body><article><h2>Get started</h2></article>\
+            <footer><p>Footer text that is long enough to count as text.</p></footer></body></html>";
+        let markdown =
+            html_to_markdown("<html><body><article><h2>Get started</h2></article></body></html>");
+        assert!(emptied_sections(source, &markdown).is_empty(), "{markdown}");
+    }
+
+    #[test]
+    fn a_heading_inside_fenced_code_is_not_a_heading() {
+        let code = "<h2>Example</h2><pre><code>## Get started\nnpm install</code></pre>";
+        let source = page(&format!("{code}<h2>Get started</h2>{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("{code}<h2>Get started</h2>{NEXT}")));
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
     }
 }
