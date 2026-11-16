@@ -546,11 +546,7 @@ pub fn is_denied_ipv6_with_policy(ip: Ipv6Addr, policy: &SsrfPolicy) -> bool {
 
     // NAT64 local-use prefix (64:ff9b:1::/48) -- RFC 8215
     // Entire prefix is for local NAT64 deployment; not globally routable.
-    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001 {
-        return true;
-    }
-
-    false
+    segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001
 }
 
 /// Extracts the embedded IPv4 address from an IPv4-mapped IPv6 address.

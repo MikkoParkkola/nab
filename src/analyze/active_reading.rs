@@ -462,10 +462,7 @@ impl<'a> ActiveReader<'a> {
             .get(&reference.segment_idx)
             .copied()
             .unwrap_or(0);
-        if count >= self.config.max_refs_per_segment {
-            return false;
-        }
-        true
+        count < self.config.max_refs_per_segment
     }
 }
 
