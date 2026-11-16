@@ -550,4 +550,117 @@ mod tests {
             assert!(text.contains("full article body"), "{text}");
         }
     }
+
+    // ── MIK-8684: app-wide stores rank below page data ────────────────────
+    // Design: docs/design/2026-11-16-store-state-trust.md
+
+    const PAGE_DATA_PATTERNS: [&str; 3] =
+        ["window.__NEXT_DATA__", "self.__NEXT_DATA__", "__NEXT_DATA__"];
+
+    const STORE_PATTERNS: [&str; 8] = [
+        "window.__NUXT__",
+        "window.__INITIAL_STATE__",
+        "window.__PRELOADED_STATE__",
+        "window.__APOLLO_STATE__",
+        "window.__APP_STATE__",
+        "window.__STORE_STATE__",
+        "window.__DATA__",
+        "window.___GATSBY",
+    ];
+
+    fn long_text(seed: &str) -> String {
+        format!("{seed} is the sentence this fixture repeats to pass the length floor. ")
+            .repeat(6)
+    }
+
+    #[test]
+    fn only_next_data_is_labelled_page_data() {
+        let body = long_text("Labelled body");
+        for pattern in PAGE_DATA_PATTERNS {
+            let html = format!(
+                r#"<html><body><script>{pattern} = {{"props":{{"pageProps":{{"post":{{"content":"{body}"}}}}}}}};</script></body></html>"#
+            );
+            let (_, source) = extract_inline_script_json_with_source(&html).expect(pattern);
+            assert_eq!(source, SpaSource::Framework, "{pattern}");
+        }
+        for pattern in STORE_PATTERNS {
+            let html = format!(
+                r#"<html><body><script>{pattern} = {{"entities":{{"e1":{{"body":"{body}"}}}}}};</script></body></html>"#
+            );
+            let (_, source) = extract_inline_script_json_with_source(&html).expect(pattern);
+            assert_eq!(source, SpaSource::GenericAssignment, "{pattern}");
+        }
+    }
+
+    #[test]
+    fn next_data_in_a_later_script_beats_an_earlier_store() {
+        let store = long_text("Store profile text");
+        let page = long_text("Next page body");
+        let html = format!(
+            r#"<html><body>
+            <script>window.__PRELOADED_STATE__ = {{"profiles":{{"p1":{{"bio":"{store}"}}}}}};</script>
+            <script>window.__NEXT_DATA__ = {{"props":{{"pageProps":{{"post":{{"content":"{page}"}}}}}}}};</script>
+            </body></html>"#
+        );
+
+        let (text, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        assert_eq!(source, SpaSource::Framework);
+        assert!(text.contains("Next page body"), "{text}");
+    }
+
+    #[test]
+    fn a_store_outranks_a_longer_generic_assignment() {
+        let store = long_text("Store article body");
+        let generic = long_text("Generic config string").repeat(3);
+        for pattern in STORE_PATTERNS {
+            let store_script = format!(r#"{pattern} = {{"post":{{"body":"{store}"}}}};"#);
+            let generic_script = format!(r#"var cfg = {{"about":"{generic}"}};"#);
+            for (first, second) in [(&store_script, &generic_script), (&generic_script, &store_script)] {
+                let html = format!(
+                    "<html><body><script>{first}</script><script>{second}</script></body></html>"
+                );
+
+                let (text, source) =
+                    extract_inline_script_json_with_source(&html).expect(pattern);
+
+                assert_eq!(source, SpaSource::GenericAssignment, "{pattern}");
+                assert!(text.contains("Store article body"), "{pattern}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_store_that_yields_nothing_leaves_the_generic_scan_running() {
+        let body = long_text("Generic shell body");
+        let html = format!(
+            r#"<html><body><div id="root"></div><script>window.__PRELOADED_STATE__ = {{"user":"short"}}; var cfg = {{"post":"{body}"}};</script></body></html>"#
+        );
+
+        let (text, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        assert_eq!(source, SpaSource::GenericAssignment);
+        assert!(text.contains("Generic shell body"), "{text}");
+    }
+
+    #[test]
+    fn two_stores_keep_todays_order() {
+        let apollo = long_text("Apollo store body");
+        let preloaded = long_text("Preloaded store body");
+        let apollo_script = format!(r#"window.__APOLLO_STATE__ = {{"a":"{apollo}"}};"#);
+        let preloaded_script = format!(r#"window.__PRELOADED_STATE__ = {{"p":"{preloaded}"}};"#);
+
+        // Separate scripts: the first script's store wins.
+        let html = format!(
+            "<html><body><script>{apollo_script}</script><script>{preloaded_script}</script></body></html>"
+        );
+        let (text, _) = extract_inline_script_json_with_source(&html).expect("a candidate");
+        assert!(text.contains("Apollo store body"), "{text}");
+
+        // One script, written against the pattern list's order: the list decides.
+        let html =
+            format!("<html><body><script>{apollo_script} {preloaded_script}</script></body></html>");
+        let (text, _) = extract_inline_script_json_with_source(&html).expect("a candidate");
+        assert!(text.contains("Preloaded store body"), "{text}");
+    }
 }
