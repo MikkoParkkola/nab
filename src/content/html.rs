@@ -1921,6 +1921,152 @@ mod tests {
         assert!(markdown.contains("assigns each job"), "{markdown}");
     }
 
+    // ── MIK-8684: app-wide stores do not replace server-rendered pages ─────
+    //
+    // Design: docs/design/2026-11-16-store-state-trust.md. Shape measured on the
+    // Flipboard collection page: 34 server-rendered cards beside a 2.27 MB
+    // `window.__PRELOADED_STATE__` whose longest string is a keyword list.
+
+    /// The app-wide store assignments; page data is only `__NEXT_DATA__`.
+    const STORE_PATTERNS: [&str; 8] = [
+        "window.__NUXT__",
+        "window.__INITIAL_STATE__",
+        "window.__PRELOADED_STATE__",
+        "window.__APOLLO_STATE__",
+        "window.__APP_STATE__",
+        "window.__STORE_STATE__",
+        "window.__DATA__",
+        "window.___GATSBY",
+    ];
+
+    const SENTINEL: &str = "zqxsentinel";
+
+    fn card_page(script: &str) -> String {
+        use std::fmt::Write as _;
+        let mut cards = String::new();
+        for i in 0..12 {
+            let _ = write!(
+                cards,
+                "<article><h3><a href='/story/{i}'>Headline {i}: regulators weigh new platform rules</a></h3>\
+                 <p>Lawmakers in several countries are drafting rules for large platforms. \
+                 Story {i} follows the vote and what it changes for users.</p></article>"
+            );
+        }
+        format!(
+            "<html><head><title>How tech companies shape politics</title></head><body>\
+             <main><h1>How tech companies shape politics</h1>{cards}</main>\
+             <script>{script}</script></body></html>"
+        )
+    }
+
+    /// A keyword list longer than the cards' own markdown, so a store that is
+    /// allowed to replace a longer-is-better result would win.
+    fn sentinel_keywords() -> String {
+        let baseline = html_to_markdown_with_url(&card_page(""), Some(ARTICLE_URL));
+        assert!(
+            baseline.chars().count() >= 800,
+            "baseline cards must reach 800 characters: {}",
+            baseline.chars().count()
+        );
+        format!("{SENTINEL}, ").repeat(baseline.len() / 10 + 50)
+    }
+
+    fn assert_cards_not_store(markdown: &str, label: &str) {
+        assert!(
+            markdown.contains("Headline 3: regulators weigh new platform rules"),
+            "{label}: card headlines missing: {markdown}"
+        );
+        assert!(
+            !markdown.contains(SENTINEL),
+            "{label}: store string replaced the page: {markdown}"
+        );
+    }
+
+    #[test]
+    fn a_preloaded_store_does_not_replace_server_rendered_cards() {
+        // GIVEN: twelve server-rendered cards beside a store whose longest string is a keyword list
+        let keywords = sentinel_keywords();
+        let html = card_page(&format!(
+            r#"window.__PRELOADED_STATE__ = {{"profiles":{{"p1":{{"keywords":"{keywords}"}}}}}};"#
+        ));
+
+        // WHEN: converted
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        // THEN: the cards are returned, not the store's keyword list
+        assert_cards_not_store(&markdown, "__PRELOADED_STATE__");
+    }
+
+    #[test]
+    fn no_store_pattern_replaces_server_rendered_cards() {
+        let keywords = sentinel_keywords();
+        for pattern in STORE_PATTERNS {
+            let html = card_page(&format!(
+                r#"{pattern} = {{"profiles":{{"p1":{{"keywords":"{keywords}"}}}}}};"#
+            ));
+
+            let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+            assert_cards_not_store(&markdown, pattern);
+        }
+    }
+
+    #[test]
+    fn a_store_still_fills_an_empty_page_shell() {
+        // GIVEN: a client-rendered shell whose only text is a store article body
+        let body = "The council approved the transit budget after a long debate about \
+                    fares, routes and the new night buses. "
+            .repeat(10);
+        let html = format!(
+            r#"<html><body><div id="root"></div><script>window.__PRELOADED_STATE__ = {{"post":{{"body":"{body}"}}}};</script></body></html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        assert!(
+            markdown.contains("approved the transit budget"),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_next_data_mention_in_a_comment_is_not_page_data() {
+        // GIVEN: cards plus a script that only mentions __NEXT_DATA__, then
+        //        assigns an unrelated object holding a long sentinel string
+        let keywords = sentinel_keywords();
+        let html = card_page(&format!(
+            r#"/* reads window.__NEXT_DATA__ when present */ var cfg = {{"k":"{keywords}"}};"#
+        ));
+
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        assert_cards_not_store(&markdown, "mention");
+    }
+
+    #[test]
+    fn a_next_data_assignment_after_a_mention_is_still_page_data() {
+        // GIVEN: one script that mentions window.__NEXT_DATA__ in a comment and
+        //        then assigns it, beside long navigation chrome
+        let content = "The release notes describe the new scheduler, which assigns each job \
+                       to the least loaded worker and records why it chose it. "
+            .repeat(6);
+        let mut nav = String::new();
+        for i in 0..60 {
+            use std::fmt::Write as _;
+            let _ = write!(
+                nav,
+                "<li><a href='/docs/{i}'>Documentation page {i}</a></li>"
+            );
+        }
+        let html = format!(
+            r#"<html><body><nav><ul>{nav}</ul></nav><div id="__next"></div><script>/* hydrate from window.__NEXT_DATA__ below */ window.__NEXT_DATA__ = {{"props":{{"pageProps":{{"post":{{"content":"{content}"}}}}}}}};</script></body></html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        assert!(markdown.contains("assigns each job"), "{markdown}");
+    }
+
     use crate::content::readability::ArticleSource;
 
     fn selection(

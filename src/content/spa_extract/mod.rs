@@ -38,13 +38,15 @@ pub use spa::nextjs::{
 /// Which kind of extractor produced an SPA candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaSource {
-    /// A framework-specific block: Next.js, Nuxt, `SvelteKit`, Gatsby, Angular
-    /// Universal, JSON-LD `articleBody`, a named SSR assignment such as
-    /// `window.__NEXT_DATA__ = {...}`, or hidden `<code>` JSON.
+    /// Page data from a framework-specific block: Next.js, Nuxt, `SvelteKit`,
+    /// Gatsby, Angular Universal, JSON-LD `articleBody`, an inline
+    /// `window.__NEXT_DATA__ = {...}` assignment, or hidden `<code>` JSON.
+    /// Trusted to beat server-rendered HTML.
     Framework,
-    /// The catch-all scraper: the longest string from any `= {...}` assignment
-    /// in any inline script. On server-rendered pages it often returns a bio,
-    /// query variables or a CSS string, so it only fills an otherwise thin result.
+    /// An app-wide store assignment (`window.__PRELOADED_STATE__`,
+    /// `__APOLLO_STATE__`, `__NUXT__` and the like) or the catch-all scraper's
+    /// longest string from any `= {...}` assignment. Either can be a bio, a
+    /// keyword list, query variables or CSS, so it only fills a thin result.
     GenericAssignment,
 }
 
