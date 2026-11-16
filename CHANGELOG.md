@@ -20,10 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`$API_TOKEN`, `@file` uploads, `$(cat …)`, `env |`) instead of bare words
   such as `SECRET`, `token` or `-X POST`, so ordinary API documentation is
   kept (#410).
-- A secret on a very long minified line is removed with 256 bytes around it
-  instead of the whole line; a URL slug containing `sk-` is no longer treated
-  as an OpenAI key; and `nab fetch` says on stderr how much the screen removed
-  (#409).
+- On a line longer than 4,096 bytes, an OpenAI, GitHub or Slack key is now
+  removed with 256 bytes around it instead of the whole line; other secret and
+  injection matches still remove their line. A URL slug containing `sk-` is no
+  longer treated as an OpenAI key, and `nab fetch` says on stderr how much the
+  screen removed (#409).
 - Redaction stays fast with many matches on one line; a scan times out after
   5 s plus 1 s per MB of body, which refuses the fetch (#410).
 - `nab fetch -o` saves binary responses byte for byte instead of placeholder
@@ -35,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Rust toolchain image 1.100; dependency updates including yara-x 1.22.1,
   tokio 1.54.1, scraper 0.29.0, zip 9.3.0 and toml 1.2.0.
+
+### Security
+
+- Bumped the lockfile's `rustix` from 1.1.5 to 1.1.6 (RUSTSEC-2026-0486).
 
 ## [0.12.6] - 2026-10-24
 
