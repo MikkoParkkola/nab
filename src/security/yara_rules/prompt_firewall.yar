@@ -13,6 +13,8 @@ rule prompt_ignore_previous_instructions {
     category = "prompt_injection"
     severity = "high"
     description = "Agent-targeted instruction to ignore prior instructions"
+    proximity = "phrase*;ctx*"
+    window = 1024
   strings:
     $phrase1 = "ignore previous instructions" nocase
     $phrase2 = "ignore all previous instructions" nocase
@@ -27,6 +29,8 @@ rule prompt_disregard_prior_messages {
     category = "prompt_injection"
     severity = "high"
     description = "Agent-targeted instruction to disregard prior messages"
+    proximity = "phrase*;ctx*"
+    window = 1024
   strings:
     $phrase1 = "disregard prior messages" nocase
     $phrase2 = "disregard previous messages" nocase
@@ -42,6 +46,8 @@ rule prompt_system_prompt_exfil {
     category = "prompt_injection"
     severity = "critical"
     description = "Instruction to reveal hidden system or developer prompts"
+    proximity = "ctx;verb*"
+    window = 1024
   strings:
     $verb1 = "reveal the system prompt" nocase
     $verb2 = "print hidden developer instructions" nocase
@@ -56,6 +62,8 @@ rule prompt_developer_mode_override {
     category = "prompt_injection"
     severity = "high"
     description = "Developer-mode jailbreak or policy override"
+    proximity = "mode;assistant;ignore,limits"
+    window = 1024
   strings:
     $mode = "developer mode" nocase
     $ignore = "ignore policy" nocase
@@ -70,6 +78,8 @@ rule prompt_new_goal_hijack {
     category = "prompt_injection"
     severity = "high"
     description = "Instruction that replaces the agent objective"
+    proximity = "goal*;ctx*"
+    window = 1024
   strings:
     $goal1 = "your new objective is" nocase
     $goal2 = "your new goal is" nocase
@@ -84,6 +94,8 @@ rule prompt_tool_call_instruction {
     category = "prompt_injection"
     severity = "critical"
     description = "Instruction to use tools to send prior context away"
+    proximity = "ctx*;tool*;send*"
+    window = 1024
   strings:
     $ctx1 = "LLM agent" nocase
     $ctx2 = "AI agent" nocase
@@ -100,6 +112,8 @@ rule prompt_hidden_html_comment {
     category = "prompt_injection"
     severity = "high"
     description = "Prompt-injection directive hidden in an HTML comment"
+    proximity = "open;assistant;ignore,exfil"
+    window = 1024
   strings:
     $open = "<!--"
     $assistant = "assistant" nocase
@@ -114,6 +128,8 @@ rule prompt_hidden_style_directive {
     category = "prompt_injection"
     severity = "high"
     description = "Prompt directive hidden with display:none"
+    proximity = "hidden;system;ignore"
+    window = 1024
   strings:
     $hidden = "display:none" nocase
     $system = "system prompt" nocase
@@ -127,6 +143,8 @@ rule prompt_data_attr_directive {
     category = "prompt_injection"
     severity = "high"
     description = "Prompt directive embedded in data-agent attributes"
+    proximity = "attr*;ignore,tools"
+    window = 1024
   strings:
     $attr1 = "data-agent" nocase
     $attr2 = "data-ai" nocase
@@ -141,6 +159,8 @@ rule prompt_boundary_breakout {
     category = "prompt_injection"
     severity = "high"
     description = "Document attempts to mark a new trusted instruction boundary"
+    proximity = "end;begin;assistant"
+    window = 1024
   strings:
     $end = "END OF TRUSTED CONTENT" nocase
     $begin = "BEGIN NEW INSTRUCTIONS" nocase
@@ -154,6 +174,8 @@ rule prompt_do_not_summarize {
     category = "prompt_injection"
     severity = "medium"
     description = "Instruction to replace summarization with command execution"
+    proximity = "assistant;skip;instead"
+    window = 1024
   strings:
     $assistant = "assistant" nocase
     $skip = "do not summarize" nocase
@@ -167,6 +189,8 @@ rule prompt_disable_safety_filters {
     category = "prompt_injection"
     severity = "critical"
     description = "Instruction to disable safety filters and reveal context"
+    proximity = "agent;disable;reveal"
+    window = 1024
   strings:
     $agent = "agent override" nocase
     $disable = "disable safety filters" nocase
@@ -180,14 +204,21 @@ rule exfil_curl_secret_to_remote {
     category = "exfiltration"
     severity = "critical"
     description = "curl command sends token-like data to a remote host"
+    proximity = "curl;url;secret*"
+    window = 512
   strings:
-    $curl = "curl" nocase
-    $post = "-X POST" nocase
-    $token1 = "API_TOKEN" nocase
-    $token2 = "SECRET" nocase
-    $http = "https://" nocase
+    // Parts must sit within one command (MIK-9361): the command word, a URL, and
+    // a shell-shaped secret: a $VARIABLE with a token/key/secret/pass/cred
+    // segment, a file upload, a command substitution reading a file, or env.
+    $curl = /(^|[^A-Za-z0-9_-])curl[ \t\\]/ nocase
+    $url = /https?:\/\// nocase
+    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
+    $secret_upload = /(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)(=|[ \t]*)['"]?([A-Za-z0-9_.-]+=?)?@[~\/.A-Za-z0-9]/
+    $secret_file = /(-T|--upload-file)[ =]/
+    $secret_cat = /\$\(cat |\$\(<|`cat /
+    $secret_env = /\benv[ \t]*\||\bprintenv\b/
   condition:
-    $curl and $http and ($post or any of ($token*))
+    $curl and $url and any of ($secret*)
 }
 
 rule exfil_wget_sensitive_payload {
@@ -195,13 +226,16 @@ rule exfil_wget_sensitive_payload {
     category = "exfiltration"
     severity = "high"
     description = "wget command includes password or credential payload"
+    proximity = "wget;url;secret*"
+    window = 512
   strings:
-    $wget = "wget" nocase
-    $http = "https://" nocase
-    $password = "password" nocase
-    $credential = "credential" nocase
+    $wget = /(^|[^A-Za-z0-9_-])wget[ \t\\]/ nocase
+    $url = /https?:\/\// nocase
+    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
+    $secret_post = /--(post|body)-file[ =]/
+    $secret_cat = /\$\(cat |\$\(<|`cat /
   condition:
-    $wget and $http and ($password or $credential)
+    $wget and $url and any of ($secret*)
 }
 
 rule exfil_netcat_sensitive {
@@ -209,6 +243,8 @@ rule exfil_netcat_sensitive {
     category = "exfiltration"
     severity = "critical"
     description = "netcat command transmits SSH or password material"
+    proximity = "nc*;ssh,passwd"
+    window = 512
   strings:
     $nc1 = " nc " nocase
     $nc2 = " ncat " nocase
@@ -223,13 +259,19 @@ rule exfil_dns_sensitive {
     category = "exfiltration"
     severity = "high"
     description = "DNS query encodes secret material into a lookup"
+    proximity = "lookup*;secret*"
+    window = 512
   strings:
-    $dig = "dig " nocase
-    $nslookup = "nslookup " nocase
-    $secret = "secret-token" nocase
-    $token = "token" nocase
+    // A bare backtick is not a part: Markdown code spans put one beside every
+    // documented `dig`; only a backtick command reading a file counts.
+    $lookup_dig = /(^|[^A-Za-z0-9_-])dig[ \t]/ nocase
+    $lookup_nslookup = /(^|[^A-Za-z0-9_-])nslookup[ \t]/ nocase
+    $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
+    $secret_sub = /\$\(/
+    $secret_cat = /`cat /
+    $secret_token = "secret-token" nocase
   condition:
-    any of ($dig, $nslookup) and ($secret or $token)
+    any of ($lookup*) and any of ($secret*)
 }
 
 rule exfil_webhook_env_dump {
@@ -237,6 +279,8 @@ rule exfil_webhook_env_dump {
     category = "exfiltration"
     severity = "critical"
     description = "Environment dump to public webhook collector"
+    proximity = "env*;curl;webhook*"
+    window = 512
   strings:
     $env1 = "env |" nocase
     $env2 = "printenv |" nocase
@@ -253,6 +297,8 @@ rule exfil_cloud_metadata {
     category = "exfiltration"
     severity = "critical"
     description = "Cloud instance metadata credential fetch"
+    proximity = "curl,wget;ip;meta"
+    window = 512
   strings:
     $curl = "curl" nocase
     $wget = "wget" nocase
@@ -315,6 +361,7 @@ rule secret_bearer_token {
     category = "secret"
     severity = "high"
     description = "Long bearer token in an Authorization header"
+    proximity = "page"
   strings:
     $prefix = "Authorization: Bearer " nocase
     $token = /Bearer [A-Za-z0-9._-]{40,}/
@@ -327,6 +374,7 @@ rule secret_private_key_block {
     category = "secret"
     severity = "critical"
     description = "Private key block marker"
+    proximity = "page"
   strings:
     $begin = "-----BEGIN PRIVATE KEY-----"
     $end = "-----END PRIVATE KEY-----"
@@ -383,6 +431,7 @@ rule obf_powershell_encoded_command {
     category = "obfuscation"
     severity = "high"
     description = "PowerShell EncodedCommand payload"
+    proximity = "page"
   strings:
     $ps1 = "powershell.exe" nocase
     $ps2 = "powershell " nocase
@@ -397,6 +446,7 @@ rule obf_hex_encoded_curl {
     category = "obfuscation"
     severity = "high"
     description = "Shell string uses hex escapes to hide curl"
+    proximity = "page"
   strings:
     $sh = "sh -c" nocase
     $curl_hex = "\\x63\\x75\\x72\\x6c" nocase
