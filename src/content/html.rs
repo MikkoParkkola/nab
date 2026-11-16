@@ -323,17 +323,13 @@ where
 
     // Post-process: strip markdown noise from html2md output
     let markdown = clean_markdown_noise(&markdown);
-    let html_markdown_len = markdown.len();
-    let (markdown, small_pick_len) = merge_spa_candidate(
+    let (markdown, small_pick_len, replaced_by_spa) = merge_spa_candidate(
         markdown,
         spa_candidate,
         prefer_readability,
         small_pick_len,
         pick,
     );
-    // Both merge arms replace only with a strictly longer candidate, so an
-    // unchanged length means the markdown is still this HTML's conversion.
-    let from_html = markdown.len() == html_markdown_len;
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
@@ -364,7 +360,7 @@ where
         warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
     }
 
-    let emptied = if from_html {
+    let emptied = if !replaced_by_spa {
         emptied_sections(&cleaned_html, &markdown)
     } else {
         Vec::new()
@@ -376,21 +372,21 @@ where
 ///
 /// Framework data replaces a shorter HTML result. The catch-all assignment
 /// scraper only fills a thin one, and never against an explicit readability
-/// preference. Returns the markdown and the small-pick length, which is
-/// cleared once the HTML result has been replaced.
+/// preference. Returns the markdown, the small-pick length, which is
+/// cleared once the HTML result has been replaced, and whether it was.
 fn merge_spa_candidate(
     markdown: String,
     spa_candidate: Option<spa_extract::SpaCandidate>,
     prefer_readability: bool,
     small_pick_len: Option<usize>,
     pick: HtmlPick,
-) -> (String, Option<usize>) {
+) -> (String, Option<usize>, bool) {
     match spa_candidate {
         Some(spa)
             if spa.source == spa_extract::SpaSource::Framework
                 && spa.text.len() > markdown.len() =>
         {
-            (spa.text, None)
+            (spa.text, None, true)
         }
         // The catch-all scraper only fills a thin whole-page result: an
         // article an extractor chose stays, however short (MIK-8684).
@@ -401,9 +397,9 @@ fn merge_spa_candidate(
                 && markdown.len() < THIN_MARKDOWN_LEN
                 && spa.text.len() > markdown.len() =>
         {
-            (spa.text, None)
+            (spa.text, None, true)
         }
-        _ => (markdown, small_pick_len),
+        _ => (markdown, small_pick_len, false),
     }
 }
 
@@ -1142,7 +1138,10 @@ pub fn emptied_sections_warning(headings: &[String]) -> Option<String> {
 pub(crate) fn emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String> {
     const MIN_SEGMENT_CHARS: usize = 20;
 
-    let rendered = markdown_heading_sections(markdown);
+    let rendered: Vec<(String, bool)> = markdown_heading_sections(markdown)
+        .into_iter()
+        .map(|(heading, has_text)| (heading_key(&heading), has_text))
+        .collect();
     if rendered.iter().all(|(_, has_text)| *has_text) {
         return Vec::new();
     }
@@ -1151,7 +1150,8 @@ pub(crate) fn emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String
     // Monotonic pairing: an unmatched heading on either side is skipped
     // without moving the other side.
     for (heading, chars) in source_heading_segments(cleaned_html) {
-        let Some(offset) = rendered[next..].iter().position(|(h, _)| *h == heading) else {
+        let key = heading_key(&heading);
+        let Some(offset) = rendered[next..].iter().position(|(h, _)| *h == key) else {
             continue;
         };
         let (_, has_text) = &rendered[next + offset];
@@ -1196,6 +1196,14 @@ fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
                     .any(|c| c.value().as_text().is_some_and(|t| !t.trim().is_empty())))
     };
 
+    let in_skipped = |el: &ElementRef<'_>| {
+        el.ancestors().any(|a| {
+            a.value()
+                .as_element()
+                .is_some_and(|e| SKIPPED.contains(&e.name()))
+        })
+    };
+
     let document = Html::parse_document(html);
     let mut segments: Vec<(String, usize)> = Vec::new();
     let mut boundary = None;
@@ -1205,6 +1213,10 @@ fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
         };
         let name = el.value().name();
         if is_heading(name) {
+            // A sidebar or footer heading neither starts a segment nor ends one.
+            if in_skipped(&el) {
+                continue;
+            }
             segments.push((normalize_heading(&el.text().collect::<String>()), 0));
             boundary = el
                 .ancestors()
@@ -1229,17 +1241,13 @@ fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
             continue;
         }
         let inside = boundary.is_none_or(|id| el.ancestors().any(|a| a.id() == id));
-        let skipped = el.ancestors().any(|a| {
-            a.value()
-                .as_element()
-                .is_some_and(|e| SKIPPED.contains(&e.name()))
-        });
-        if inside && !skipped {
+        if inside && !in_skipped(&el) {
+            // Characters, not bytes, and not the spaces between words.
             *chars += el
                 .text()
                 .collect::<String>()
                 .split_whitespace()
-                .map(str::len)
+                .map(|word| word.chars().count())
                 .sum::<usize>();
         }
     }
@@ -1304,14 +1312,21 @@ fn atx_heading_text(line: &str) -> Option<&str> {
     Some(rest.trim().trim_end_matches('#').trim_end())
 }
 
-/// Link markup to its label, emphasis and code markers removed.
+/// Link markup to its label.
 fn strip_inline_markdown(text: &str) -> String {
     static LINK: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"!?\[([^\]]*)\]\([^)]*\)").expect("static link pattern")
     });
-    LINK.replace_all(text, "$1")
+    LINK.replace_all(text, "$1").into_owned()
+}
+
+/// The comparison key for a heading, applied to both sides: emphasis and code
+/// markers and markdown escapes removed, so `snake_case` in the page pairs with
+/// `snake\_case` or `*snake_case*` in the markdown.
+fn heading_key(heading: &str) -> String {
+    heading
         .chars()
-        .filter(|c| !matches!(c, '*' | '_' | '`'))
+        .filter(|c| !matches!(c, '*' | '_' | '`' | '\\'))
         .collect()
 }
 
@@ -2431,7 +2446,7 @@ mod tests {
         };
 
         // Framework data longer than the whole-page fallback replaces it.
-        let (text, small_pick) = merge_spa_candidate(
+        let (text, small_pick, _) = merge_spa_candidate(
             "short page".to_owned(),
             Some(candidate(SpaSource::Framework)),
             false,
@@ -2442,7 +2457,7 @@ mod tests {
         assert_eq!(small_pick, None);
 
         // A generic candidate fills a thin result and clears it too.
-        let (_, small_pick) = merge_spa_candidate(
+        let (_, small_pick, _) = merge_spa_candidate(
             "thin".to_owned(),
             Some(candidate(SpaSource::GenericAssignment)),
             false,
@@ -2452,7 +2467,7 @@ mod tests {
         assert_eq!(small_pick, None);
 
         // No replacement: the small pick is kept for the thin-content check.
-        let (text, small_pick) =
+        let (text, small_pick, _) =
             merge_spa_candidate("x".repeat(5_000), None, false, Some(187), HtmlPick::Direct);
         assert_eq!(text.len(), 5_000);
         assert_eq!(small_pick, Some(187));
@@ -2468,7 +2483,7 @@ mod tests {
             text: "author bio or font CSS ".repeat(200),
             source: SpaSource::GenericAssignment,
         };
-        let (text, _) = merge_spa_candidate(
+        let (text, _, _) = merge_spa_candidate(
             article.clone(),
             Some(generic),
             false,
@@ -2764,5 +2779,68 @@ mod emptied_section_tests {
             "{:?}",
             emptied[0]
         );
+    }
+
+    // ── Final-review fixes ─────────────────────────────────────────────────
+
+    #[test]
+    fn a_sidebar_heading_does_not_take_the_section() {
+        let aside =
+            "<aside><h3>Sponsored</h3><p>Advertising copy long enough to count.</p></aside>";
+        let source = page(&format!("<h2>Get started</h2>{aside}{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("<h2>Get started</h2>{aside}{NEXT}")));
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn the_floor_counts_characters_not_bytes() {
+        let markdown = html_to_markdown(&get_started(""));
+        // Seven CJK characters are 21 bytes but 7 characters.
+        assert_eq!(
+            emptied_sections(&get_started("<p>一二三四五六七</p>"), &markdown),
+            Vec::<String>::new()
+        );
+        let twenty = "<p>一二三四五六七八九十一二三四五六七八九十</p>";
+        assert_eq!(
+            emptied_sections(&get_started(twenty), &markdown),
+            ["Get started"]
+        );
+    }
+
+    #[test]
+    fn a_heading_with_underscores_pairs_with_its_markdown() {
+        let snake = |rest: &str| page(&format!("<h2>snake_case setup</h2>{rest}{NEXT}"));
+        let markdown = html_to_markdown(&snake(""));
+        assert_eq!(
+            emptied_sections(&snake(LIST), &markdown),
+            ["snake_case setup"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn page_data_that_returns_early_reports_nothing() {
+        let shell = "<html><body><div id='root'><h2>Get started</h2>\
+            <p>Loading the application, please wait a moment.</p></div></body></html>";
+        let body = format!(
+            "{}\n\nGet started\n----------\n",
+            "The article body carried in the page's own props. ".repeat(20)
+        );
+        let page_data = SpaCandidate {
+            text: body.clone(),
+            source: SpaSource::Framework,
+        };
+        let (markdown, emptied) = convert(
+            shell,
+            HtmlConversionOptions::default(),
+            Some(&page_data),
+            None,
+        );
+        assert_eq!(markdown, body, "page data must return early");
+        assert_eq!(emptied, Vec::<String>::new());
     }
 }
