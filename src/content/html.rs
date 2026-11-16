@@ -1138,18 +1138,13 @@ pub fn emptied_sections_warning(headings: &[String]) -> Option<String> {
 pub(crate) fn emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String> {
     const MIN_SEGMENT_CHARS: usize = 20;
 
-    let rendered: Vec<(String, bool)> = markdown_heading_sections(markdown)
-        .into_iter()
-        .map(|(heading, has_text)| (heading_key(&heading), has_text))
-        .collect();
-    if rendered.iter().all(|(_, has_text)| *has_text) {
-        return Vec::new();
-    }
+    let source = source_heading_segments(cleaned_html);
+    let rendered = markdown_heading_sections(markdown, &source.skipped);
     let mut emptied = Vec::new();
     let mut next = 0;
     // Monotonic pairing: an unmatched heading on either side is skipped
     // without moving the other side.
-    for (heading, chars) in source_heading_segments(cleaned_html) {
+    for (heading, chars) in source.segments {
         let key = heading_key(&heading);
         let Some(offset) = rendered[next..].iter().position(|(h, _)| *h == key) else {
             continue;
@@ -1163,11 +1158,27 @@ pub(crate) fn emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String
     emptied
 }
 
-/// Each source heading with the characters of text in its own segment: the
-/// innermost leaf blocks after it, up to the next heading of any level, inside
-/// its nearest `article`, `main`, `section` or `body`, outside `aside`, `nav`,
-/// `footer` and `form`.
-fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
+/// What the source analysis found: each heading with the characters of text in
+/// its own segment, and the sidebars it skipped.
+struct SourceSections {
+    segments: Vec<(String, usize)>,
+    skipped: SkippedText,
+}
+
+/// Headings and text inside `aside`, `nav`, `footer` and `form`. On the
+/// markdown side such a heading neither starts nor ends a section, and such a
+/// line is not counted as kept text, so a headed sidebar cannot make a kept
+/// section look emptied or an emptied section look kept.
+#[derive(Default)]
+struct SkippedText {
+    heading_keys: std::collections::HashSet<String>,
+    lines: std::collections::HashSet<String>,
+}
+
+/// A heading's segment is the innermost leaf blocks after it, up to the next
+/// heading of any level, inside its nearest `article`, `main`, `section` or
+/// `body`, outside `aside`, `nav`, `footer` and `form`.
+fn source_heading_segments(html: &str) -> SourceSections {
     use scraper::{ElementRef, Html};
 
     const LEAVES: &[&str] = &[
@@ -1206,6 +1217,7 @@ fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
 
     let document = Html::parse_document(html);
     let mut segments: Vec<(String, usize)> = Vec::new();
+    let mut skipped = SkippedText::default();
     let mut boundary = None;
     for node in document.root_element().descendants() {
         let Some(el) = ElementRef::wrap(node) else {
@@ -1213,11 +1225,13 @@ fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
         };
         let name = el.value().name();
         if is_heading(name) {
+            let text = normalize_heading(&el.text().collect::<String>());
             // A sidebar or footer heading neither starts a segment nor ends one.
             if in_skipped(&el) {
+                skipped.heading_keys.insert(heading_key(&text));
                 continue;
             }
-            segments.push((normalize_heading(&el.text().collect::<String>()), 0));
+            segments.push((text, 0));
             boundary = el
                 .ancestors()
                 .find(|a| {
@@ -1241,7 +1255,11 @@ fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
             continue;
         }
         let inside = boundary.is_none_or(|id| el.ancestors().any(|a| a.id() == id));
-        if inside && !in_skipped(&el) {
+        if in_skipped(&el) {
+            skipped
+                .lines
+                .insert(normalize_heading(&el.text().collect::<String>()));
+        } else if inside {
             // Characters, not bytes, and not the spaces between words.
             *chars += el
                 .text()
@@ -1251,14 +1269,20 @@ fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
                 .sum::<usize>();
         }
     }
-    segments
+    // A text that is also a real heading is not a sidebar-only heading.
+    for (heading, _) in &segments {
+        skipped.heading_keys.remove(&heading_key(heading));
+    }
+    SourceSections { segments, skipped }
 }
 
-/// Each markdown heading, normalized, and whether any text sits under it before
-/// the next heading. Headings are ATX lines and the converter's setext form (a
-/// line followed by exactly ten `=` or `-`); a `---` line is its horizontal
-/// rule. Lines inside fenced code are text, never headings.
-fn markdown_heading_sections(markdown: &str) -> Vec<(String, bool)> {
+/// Each markdown heading's comparison key, and whether any text sits under it
+/// before the next heading. Headings are ATX lines and the converter's setext
+/// form (a line followed by exactly ten `=` or `-`); a `---` line is its
+/// horizontal rule. Lines inside fenced code are text, never headings. A
+/// sidebar heading is neither a section nor a boundary, and a line matching
+/// sidebar text exactly is not counted as text.
+fn markdown_heading_sections(markdown: &str, skipped: &SkippedText) -> Vec<(String, bool)> {
     const H1_UNDERLINE: &str = "==========";
     const H2_UNDERLINE: &str = "----------";
 
@@ -1281,18 +1305,28 @@ fn markdown_heading_sections(markdown: &str) -> Vec<(String, bool)> {
         }
         if !in_fence {
             if let Some(text) = atx_heading_text(line) {
-                sections.push((normalize_heading(&strip_inline_markdown(text)), false));
+                let key = heading_key(&normalize_heading(&strip_inline_markdown(text)));
+                if !skipped.heading_keys.contains(&key) {
+                    sections.push((key, false));
+                }
                 continue;
             }
             if !line.is_empty() && !is_underline(line) && !is_rule(line) {
                 let next = lines[i..].iter().position(|l| !l.is_empty());
                 if let Some(offset) = next.filter(|&o| is_underline(lines[i + o])) {
-                    sections.push((normalize_heading(&strip_inline_markdown(line)), false));
+                    let key = heading_key(&normalize_heading(&strip_inline_markdown(line)));
+                    if !skipped.heading_keys.contains(&key) {
+                        sections.push((key, false));
+                    }
                     i += offset + 1;
                     continue;
                 }
             }
-            if line.is_empty() || is_underline(line) || is_rule(line) {
+            if line.is_empty()
+                || is_underline(line)
+                || is_rule(line)
+                || skipped.lines.contains(&plain_line(line))
+            {
                 continue;
             }
         }
@@ -1310,6 +1344,17 @@ fn atx_heading_text(line: &str) -> Option<&str> {
         return None;
     }
     Some(rest.trim().trim_end_matches('#').trim_end())
+}
+
+/// A markdown text line as plain text, for comparing with sidebar text: list
+/// marker and link markup removed, whitespace collapsed.
+fn plain_line(line: &str) -> String {
+    let unmarked = line
+        .strip_prefix("* ")
+        .or_else(|| line.strip_prefix("- "))
+        .or_else(|| line.strip_prefix("+ "))
+        .unwrap_or(line);
+    normalize_heading(&strip_inline_markdown(unmarked))
 }
 
 /// Link markup to its label.
@@ -2792,6 +2837,21 @@ mod emptied_section_tests {
         assert_eq!(
             emptied_sections(&source, &markdown),
             ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_kept_section_after_a_headed_sidebar_is_not_reported() {
+        // The full-page conversion keeps the sidebar heading; it must not cut
+        // "Get started" short on the markdown side when the source skips it.
+        let aside =
+            "<aside><h3>Sponsored</h3><p>Advertising copy long enough to count.</p></aside>";
+        let source = page(&format!("<h2>Get started</h2>{aside}{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&source);
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            Vec::<String>::new(),
             "{markdown}"
         );
     }
