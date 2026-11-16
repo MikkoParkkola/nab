@@ -72,6 +72,23 @@ pub struct Article {
     pub excerpt: String,
     /// Text-only version of the content.
     pub text_content: String,
+    /// Which extractor produced this article.
+    pub source: ArticleSource,
+}
+
+/// Which extractor produced an [`Article`].
+///
+/// Site-specific extractors are trusted as-is; a generic pick can be a wrong
+/// block (a teaser, a bio, image credits), so the HTML selection step checks
+/// it against the size of the whole page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArticleSource {
+    /// `extract_substack_article`.
+    Substack,
+    /// `extract_wordpress_article`.
+    WordPress,
+    /// The readability crate, semantic `<article>`/`<main>` or text-density extraction.
+    Generic,
 }
 
 /// Extract article content using readability algorithm.
@@ -211,6 +228,7 @@ fn extract_substack_article(html: &str) -> Option<Article> {
         content_html,
         excerpt,
         text_content,
+        source: ArticleSource::Substack,
     })
 }
 
@@ -286,6 +304,7 @@ fn extract_wordpress_article(html: &str) -> Option<Article> {
         content_html,
         excerpt,
         text_content,
+        source: ArticleSource::WordPress,
     })
 }
 
@@ -402,6 +421,7 @@ fn extract_with_readability_crate(html: &str, url: &str) -> Option<Article> {
         content_html: product.content,
         excerpt,
         text_content,
+        source: ArticleSource::Generic,
     })
 }
 
@@ -483,6 +503,7 @@ fn extract_from_element(
         content_html,
         excerpt,
         text_content,
+        source: ArticleSource::Generic,
     })
 }
 
@@ -531,6 +552,7 @@ fn find_main_content_by_density(document: &Html) -> Option<Article> {
             content_html: element.html(),
             excerpt,
             text_content,
+            source: ArticleSource::Generic,
         });
     }
 
@@ -642,6 +664,7 @@ mod tests {
         assert!(article.text_content.contains("main article content"));
         assert!(!article.text_content.contains("Site Navigation"));
         assert!(!article.text_content.contains("Copyright"));
+        assert_eq!(article.source, ArticleSource::Generic);
     }
 
     #[test]
@@ -915,6 +938,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(article.title, "Actual Substack Post Title");
+        assert_eq!(article.source, ArticleSource::Substack);
         assert!(article.text_content.contains(body_1));
         assert!(article.text_content.contains(body_2));
         assert!(article.text_content.contains(footnote));
@@ -978,6 +1002,7 @@ mod tests {
 
         let article =
             extract_article(&html, "https://developer.nvidia.com/blog/modelexpress/").unwrap();
+        assert_eq!(article.source, ArticleSource::WordPress);
         assert!(
             article.text_content.contains(NEEDLE),
             "missing authored sentence; text: {}",
