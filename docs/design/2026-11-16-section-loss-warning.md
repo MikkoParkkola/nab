@@ -1,6 +1,6 @@
 # Say when extraction empties a section
 
-MIK-9504. Status: design revision 3, for review before code.
+MIK-9504. Status: design revision 4; revisions 1 to 3 reviewed by Grok and Muse.
 
 ## Problem
 
@@ -22,18 +22,28 @@ Revision 1 proposed restoring content between readability's first and last ancho
 
 ## Design
 
-D1. One pure function, `emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String>` in `src/content/html.rs`. It reports a heading that the markdown keeps with nothing under it, while the source had text under it:
-- Source side: walk `cleaned_html` in document order. Headings are `h1` to `h6`. A heading's own segment is the leaf text blocks (`p`, `li`, `figcaption`, `blockquote`, `pre`, `td`, `dd`) after it up to the next heading of any level, so a kept subsection cannot hide its parent's loss. The segment counts as having text when its leaves hold 20 or more characters in total.
-- Markdown side: heading lines are ATX (`## Get started`) and setext (a line followed by `---` or `===`). A heading's text is compared after stripping the hashes, link markup (keeping the label), emphasis markers and surrounding whitespace, then collapsing inner whitespace. Source headings are matched to markdown headings in order, so a repeated heading text pairs occurrence by occurrence.
-- Reported: a matched heading whose markdown interval (the lines after it up to the next markdown heading or the end) holds no text, while its source segment has text.
+D1. One pure function, `emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String>` in `src/content/html.rs`. It reports a heading that the markdown keeps with nothing under it, while the source had text under it.
 
-No body text is matched, so list bullets, table pipes, code fences and wrapped lines cannot cause a false alarm. A heading that disappears with its section is not reported: removing a whole "Related posts" block is intended. Partial loss, where some text survives under the heading, is not reported either (see Out of scope).
+Source side, on `cleaned_html`:
+- Headings are `h1` to `h6`. A heading's segment is the leaf blocks after it in document order, up to the next heading of any level, so a kept subsection cannot hide its parent's loss.
+- The segment stops where the heading's nearest `article`, `main`, `section` or `body` ends, and skips `aside`, `nav`, `footer` and `form` subtrees, so trailing boilerplate cannot make an intentionally empty heading look emptied.
+- Leaf blocks are the innermost elements among `p`, `li`, `dt`, `dd`, `th`, `td`, `caption`, `figcaption`, `blockquote`, `pre`, `summary`, plus a `div` holding text directly; an element containing another leaf block is not counted itself, so `li > p` counts once.
+- The segment has text when its leaves hold 20 or more characters in total.
 
-D2. Placement: computed inside the HTML pipeline, beside the pick in `html_to_markdown_with_url_and_sources`, on the same `cleaned_html` readability and the direct conversion read and on the markdown before security screening, focus and the token budget. It is skipped, returning nothing, when the final markdown did not come from that HTML: an SPA candidate replaced it or Jina recovery supplied it. The private pipeline function returns the headings beside the markdown; the public `String`-returning functions are unchanged. `ConversionResult` gains `emptied_sections: Vec<String>`, empty for every non-HTML handler.
+Markdown side, on the final markdown:
+- Heading lines are ATX (`## Get started`) and setext (a text line followed by a `---` or `===` line, which is how nab's converter writes `h1` and `h2`). Lines inside fenced code are never headings.
+- A heading's text is compared after stripping hashes, link markup (keeping the label), emphasis markers and control characters, then collapsing whitespace.
+- A heading's interval is the lines after it up to the next markdown heading or the end. It holds text when any line in it is not blank, not a setext underline and not a horizontal rule; an image line counts as text (something was kept).
 
-D3. Surfaces, one line each:
-- `nab fetch` adds a diagnostic through the existing `⚠️` channel: `extraction dropped the content under "Get started"; --raw-html has the full page` (more than three headings: the first three and a count).
-- The MCP fetch tool adds `⚠️ Extraction dropped the content under "Get started".` to its text output, without the CLI-only flag, and `emptied_sections` to its structured output, carried through `FetchDiagnosticMetadata` from the conversion result.
+Pairing: source headings are matched to markdown headings as a monotonic subsequence. Each source heading searches forward from the last matched markdown heading; unmatched headings on either side are skipped without moving the other side.
+
+Reported: a matched heading whose markdown interval holds no text while its source segment has text. The reported text is the normalized heading with control characters removed and cut to 80 characters.
+
+D2. Placement: computed once, on the final markdown after SPA merge and Jina recovery, inside `html_to_markdown_with_url_and_sources`, and only when that markdown came from `cleaned_html` (readability or direct pick, no SPA replacement, no Jina recovery); otherwise empty, and the source is never parsed. The early SPA return yields an empty list. A new private entry point returns `(String, Vec<String>)` and is threaded through `html_to_markdown_with_url_and_fetcher` and `html_to_markdown_sanitized_with_url_and_options` to `HtmlHandler::to_markdown_with_url_and_options`; the public `String`-returning functions keep their signatures. `ConversionResult` gains `emptied_sections: Vec<String>`, empty for every non-HTML handler.
+
+D3. Surfaces, through one formatter `emptied_sections_warning(&[String]) -> Option<String>` (first three headings, quoted, then a count):
+- `nab fetch` prints it through the existing `⚠️` diagnostics with `; --raw-html has the full page` appended.
+- The MCP fetch tool adds it to its text output without the CLI flag, and `emptied_sections` to its structured output, carried from the conversion result through `FetchDiagnosticMetadata`.
 
 D4. Nothing else changes: no output rewrite, no new option, the response classifier untouched.
 
@@ -41,22 +51,24 @@ Out of scope, recorded on the ticket: partial loss (captions dropped from a sect
 
 ## Tests, written failing first
 
-Markdown inputs in E1 to E5 come from nab's own converter (`html_to_markdown`), so they carry its real heading and list spelling.
+Markdown inputs in E1 to E6 come from nab's own converter (`html_to_markdown`), so they carry its real heading and list spelling.
 
 | ID | Test | Fails today because |
 |---|---|---|
 | E1 | Source `<h2>Get started</h2><ul>` of four items, then `<h2>Next</h2><p>…</p>`; markdown converted from the same HTML with the `ul` removed: returns `["Get started"]` | function absent |
 | E2 | Same source, markdown converted with the list kept: returns nothing | function absent |
 | E3 | Markdown converted with the heading and list both removed: returns nothing | function absent |
-| E4 | Segment of 19 characters in total, removed from the markdown: returns nothing | function absent |
-| E5 | Markdown heading written as a link, `## [Get started](/x)`, with the list removed: returns `["Get started"]` | function absent |
-| E6 | Parent `h2` whose own list is removed and whose `h3` subsection is kept: returns the `h2` only | function absent |
-| E7 | Silence on unchanged conversions: the existing Substack fixture in `readability.rs` and a page with a kept table, each through the full pipeline: returns nothing | function absent |
-| E8 | A controlled drop through the full pipeline (readability forced, `ul` of link-only items under a heading): `ConversionResult.emptied_sections` names the heading; and a shell page whose store body replaces the output returns nothing | field absent |
-| E9 | `build_fetch_diagnostics` and the MCP text both carry the line when the vector is non-empty, and nothing when it is empty | no such line |
+| E4 | Removed segment of 19 characters in total: nothing; of exactly 20: the heading | function absent |
+| E5 | Markdown heading written as a link, `## [Get started](/x)`, list removed: returns `["Get started"]` | function absent |
+| E6 | Parent `h2` with its own list removed and a kept `h3` subsection: returns the `h2` only; parent `h2` with under 20 characters of its own text and a kept `h3`: returns nothing | function absent |
+| E7 | Pairing: an extra source-only heading before the article and an extra markdown-only title heading, list removed under "Get started": returns `["Get started"]` | function absent |
+| E8 | Boundaries: a kept empty heading at the end of `<article>` followed by footer text, and a fenced code block holding `## Not a heading` under a kept heading: returns nothing | function absent |
+| E9 | Silence on unchanged conversions: the existing Substack fixture in `readability.rs` and a page with a kept table, each through the full pipeline: nothing | field absent |
+| E10 | Pipeline: a controlled drop (readability forced, `ul` of link-only items under a heading) puts the heading on `ConversionResult.emptied_sections`; a shell page whose store body (holding the same heading with nothing under it) replaces the output yields nothing; the same with the injected Jina fetcher supplying the markdown yields nothing | field absent |
+| E11 | Surfaces: the formatter's wording and cap; `build_fetch_diagnostics` and the MCP text and structured output carry it for a non-empty list and nothing for an empty one; a heading holding an escape character is printed without it | no such line |
 
 Characterization, not a pass condition: the saved A2UI page through the pipeline names "Get started". If readability starts keeping the list, this flips and is a prompt to revisit, not a regression.
 
 Before/after on saved pages (A2UI, Medium, nuxtjs.org, Flipboard, Bilibili, Xiaohongshu): the line appears on A2UI only, and markdown is byte-identical to main on all six.
 
-Sabotage: drop the "heading kept" condition (E3 fails); drop the 20-character floor (E4 fails); compare headings without stripping link markup (E5 fails); end segments at the next equal-or-higher heading instead of any heading (E6 fails); return headings when an SPA candidate replaced the output (a pipeline case in E8 fails).
+Sabotage: drop the "heading kept" condition (E3 fails); compare the floor with `>` instead of `>=` (E4 fails); compare headings without stripping link markup (E5 fails); end source segments at the next equal-or-higher heading (E6 fails); advance both sides on a mismatch (E7 fails); let segments cross the article boundary (E8 fails); treat fenced lines as headings (E8 fails); compute before the SPA merge (E10 fails); skip the Jina check (E10 fails); drop the control-character strip (E11 fails).
