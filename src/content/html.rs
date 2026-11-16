@@ -300,8 +300,13 @@ where
 
     // Post-process: strip markdown noise from html2md output
     let markdown = clean_markdown_noise(&markdown);
-    let (markdown, small_pick_len) =
-        merge_spa_candidate(markdown, spa_candidate, prefer_readability, small_pick_len);
+    let (markdown, small_pick_len) = merge_spa_candidate(
+        markdown,
+        spa_candidate,
+        prefer_readability,
+        small_pick_len,
+        pick,
+    );
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
@@ -346,6 +351,7 @@ fn merge_spa_candidate(
     spa_candidate: Option<spa_extract::SpaCandidate>,
     prefer_readability: bool,
     small_pick_len: Option<usize>,
+    pick: HtmlPick,
 ) -> (String, Option<usize>) {
     match spa_candidate {
         Some(spa)
@@ -354,8 +360,11 @@ fn merge_spa_candidate(
         {
             (spa.text, None)
         }
+        // The catch-all scraper only fills a thin whole-page result: an
+        // article an extractor chose stays, however short (MIK-8684).
         Some(spa)
             if spa.source == spa_extract::SpaSource::GenericAssignment
+                && pick == HtmlPick::Direct
                 && !prefer_readability
                 && markdown.len() < THIN_MARKDOWN_LEN
                 && spa.text.len() > markdown.len() =>
@@ -2031,6 +2040,7 @@ mod tests {
             Some(candidate(SpaSource::Framework)),
             false,
             Some(187),
+            HtmlPick::Direct,
         );
         assert!(text.starts_with("Recovered"));
         assert_eq!(small_pick, None);
@@ -2041,12 +2051,34 @@ mod tests {
             Some(candidate(SpaSource::GenericAssignment)),
             false,
             Some(187),
+            HtmlPick::Direct,
         );
         assert_eq!(small_pick, None);
 
         // No replacement: the small pick is kept for the thin-content check.
-        let (text, small_pick) = merge_spa_candidate("x".repeat(5_000), None, false, Some(187));
+        let (text, small_pick) =
+            merge_spa_candidate("x".repeat(5_000), None, false, Some(187), HtmlPick::Direct);
         assert_eq!(text.len(), 5_000);
         assert_eq!(small_pick, Some(187));
+    }
+
+    #[test]
+    fn a_generic_candidate_never_replaces_a_short_picked_article() {
+        use crate::content::spa_extract::{SpaCandidate, SpaSource};
+        // A short genuine post (under the thin threshold) that the extractor
+        // chose as the article stays, however long the scraped string is.
+        let article = "A short genuine post. ".repeat(20);
+        let generic = SpaCandidate {
+            text: "author bio or font CSS ".repeat(200),
+            source: SpaSource::GenericAssignment,
+        };
+        let (text, _) = merge_spa_candidate(
+            article.clone(),
+            Some(generic),
+            false,
+            None,
+            HtmlPick::Readability,
+        );
+        assert_eq!(text, article);
     }
 }
