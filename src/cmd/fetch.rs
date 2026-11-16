@@ -599,7 +599,12 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     } else {
         body_text
     };
-    let body_text = nab::security::guard_fetch_output(&body_text, "cli_fetch", &cfg.url)?;
+    let (body_text, screen_notice) =
+        nab::security::guard_fetch_output_with_notice(&body_text, "cli_fetch", &cfg.url)?;
+    // Default verbosity: say when the screen removed part of the page (MIK-8684 RAW.1).
+    if let Some(notice) = screen_notice {
+        eprintln!("{notice}");
+    }
 
     for warning in build_fetch_diagnostics(
         status.as_u16(),

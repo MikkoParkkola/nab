@@ -37,6 +37,25 @@ pub fn guard_fetch_output_with_config(
     Ok(guarded.body)
 }
 
+/// Like [`guard_fetch_output`], also returning a one-line notice for stderr
+/// when the screen redacted part of the body (bytes received and kept, rules).
+///
+/// # Errors
+///
+/// Returns an error when scanning fails or the configured policy refuses
+/// a matched body.
+pub fn guard_fetch_output_with_notice(
+    body: &str,
+    surface: &str,
+    url: &str,
+) -> Result<(String, Option<String>)> {
+    let guarded =
+        crate::security::yara_engine::guard_fetch_body(body, &FetchGuardConfig::from_env())?;
+    audit_guard_result(&guarded, surface, url);
+    let notice = crate::security::yara_engine::sanitize_notice(body.len(), &guarded);
+    Ok((guarded.body, notice))
+}
+
 /// Scan bytes that are about to be written to a file unchanged.
 ///
 /// Bytes cannot be redacted the way text is, so any signature match refuses
