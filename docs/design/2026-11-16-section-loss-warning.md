@@ -26,13 +26,13 @@ D1. One pure function, `emptied_sections(cleaned_html: &str, markdown: &str) -> 
 
 Source side, on `cleaned_html`:
 - Headings are `h1` to `h6`. A heading's segment is the leaf blocks after it in document order, up to the next heading of any level, so a kept subsection cannot hide its parent's loss.
-- The segment stops where the heading's nearest `article`, `main`, `section` or `body` ends, and skips `aside`, `nav`, `footer` and `form` subtrees, so trailing boilerplate cannot make an intentionally empty heading look emptied.
+- The segment stops where the heading's nearest `article`, `main`, `section` or `body` ends, and skips `aside`, `nav`, `footer` and `form` subtrees, headings inside them included, so trailing boilerplate cannot make an intentionally empty heading look emptied and a sidebar heading cannot take a section's text.
 - Leaf blocks are the innermost elements among `p`, `li`, `dt`, `dd`, `th`, `td`, `caption`, `figcaption`, `blockquote`, `pre`, `summary`, plus a `div` holding text directly; an element containing another leaf block is not counted itself, so `li > p` counts once.
-- The segment has text when its leaves hold 20 or more characters in total.
+- The segment has text when its leaves hold 20 or more characters in total, counted as characters (not bytes) without the spaces between words.
 
 Markdown side, on the final markdown:
 - Heading lines are ATX (`## Get started`, a closing run of `#` stripped) and nab's converter's setext form: a text line followed, after optional blank lines, by exactly `==========` (`h1`) or `----------` (`h2`). A `---` line is the converter's horizontal rule: neither a heading nor text. Lines inside fenced code are never headings.
-- A heading's text is compared after stripping hashes, link markup (keeping the label), emphasis markers and control characters, then collapsing whitespace.
+- A heading's text is compared after stripping hashes, link markup (keeping the label) and control characters, then collapsing whitespace. Both sides then share one comparison key without `*`, `_`, backticks and backslashes, so `snake_case` in the page pairs with `snake\_case` in the markdown.
 - A heading's interval is the lines after it up to the next markdown heading or the end. It holds text when any line in it is not blank, not a setext underline and not a horizontal rule; an image line counts as text (something was kept).
 
 Pairing: source headings are matched to markdown headings as a monotonic subsequence. Each source heading searches forward from the last matched markdown heading; unmatched headings on either side are skipped without moving the other side.
@@ -42,7 +42,7 @@ Reported: a matched heading whose markdown interval holds no text while its sour
 D2. Placement: computed once, on the final markdown after SPA merge and Jina recovery, inside `html_to_markdown_with_url_and_sources`, and only when that markdown came from `cleaned_html` (readability or direct pick, no SPA replacement, no Jina recovery); otherwise empty, and the source is never parsed. Next.js chunk recovery, which replaces the body after conversion (`recover_nextjs_content_chunks` in the CLI, `recover_nextjs_chunks` in MCP), clears the list. The early SPA return yields an empty list. A new private entry point returns `(String, Vec<String>)` and is threaded through `html_to_markdown_with_url_and_fetcher` and `html_to_markdown_sanitized_with_url_and_options` to `HtmlHandler::to_markdown_with_url_and_options`; the public `String`-returning functions keep their signatures. `ConversionResult` gains `emptied_sections: Vec<String>`, empty for every non-HTML handler.
 
 D3. Surfaces, through one formatter `emptied_sections_warning(&[String]) -> Option<String>` (first three headings, quoted, then a count):
-- `nab fetch` prints it through the existing `⚠️` diagnostics with `; --raw-html has the full page` appended.
+- `nab fetch` prints it through the existing `⚠️` diagnostics, followed by a second line, `The full page is in --raw-html.`
 - The MCP fetch tool adds it to its text output without the CLI flag, and `emptied_sections` to its structured output when non-empty, as `thin_content_detected` appears only when true, carried from the conversion result through `FetchDiagnosticMetadata`.
 
 D4. Nothing else changes: no output rewrite, no new option, the response classifier untouched.
