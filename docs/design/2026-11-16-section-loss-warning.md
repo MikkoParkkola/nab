@@ -31,7 +31,7 @@ Source side, on `cleaned_html`:
 - The segment has text when its leaves hold 20 or more characters in total.
 
 Markdown side, on the final markdown:
-- Heading lines are ATX (`## Get started`) and setext (a text line followed by a `---` or `===` line, which is how nab's converter writes `h1` and `h2`). Lines inside fenced code are never headings.
+- Heading lines are ATX (`## Get started`, a closing run of `#` stripped) and nab's converter's setext form: a text line followed, after optional blank lines, by exactly `==========` (`h1`) or `----------` (`h2`). A `---` line is the converter's horizontal rule: neither a heading nor text. Lines inside fenced code are never headings.
 - A heading's text is compared after stripping hashes, link markup (keeping the label), emphasis markers and control characters, then collapsing whitespace.
 - A heading's interval is the lines after it up to the next markdown heading or the end. It holds text when any line in it is not blank, not a setext underline and not a horizontal rule; an image line counts as text (something was kept).
 
@@ -39,7 +39,7 @@ Pairing: source headings are matched to markdown headings as a monotonic subsequ
 
 Reported: a matched heading whose markdown interval holds no text while its source segment has text. The reported text is the normalized heading with control characters removed and cut to 80 characters.
 
-D2. Placement: computed once, on the final markdown after SPA merge and Jina recovery, inside `html_to_markdown_with_url_and_sources`, and only when that markdown came from `cleaned_html` (readability or direct pick, no SPA replacement, no Jina recovery); otherwise empty, and the source is never parsed. The early SPA return yields an empty list. A new private entry point returns `(String, Vec<String>)` and is threaded through `html_to_markdown_with_url_and_fetcher` and `html_to_markdown_sanitized_with_url_and_options` to `HtmlHandler::to_markdown_with_url_and_options`; the public `String`-returning functions keep their signatures. `ConversionResult` gains `emptied_sections: Vec<String>`, empty for every non-HTML handler.
+D2. Placement: computed once, on the final markdown after SPA merge and Jina recovery, inside `html_to_markdown_with_url_and_sources`, and only when that markdown came from `cleaned_html` (readability or direct pick, no SPA replacement, no Jina recovery); otherwise empty, and the source is never parsed. Next.js chunk recovery, which replaces the body after conversion (`recover_nextjs_content_chunks` in the CLI, `recover_nextjs_chunks` in MCP), clears the list. The early SPA return yields an empty list. A new private entry point returns `(String, Vec<String>)` and is threaded through `html_to_markdown_with_url_and_fetcher` and `html_to_markdown_sanitized_with_url_and_options` to `HtmlHandler::to_markdown_with_url_and_options`; the public `String`-returning functions keep their signatures. `ConversionResult` gains `emptied_sections: Vec<String>`, empty for every non-HTML handler.
 
 D3. Surfaces, through one formatter `emptied_sections_warning(&[String]) -> Option<String>` (first three headings, quoted, then a count):
 - `nab fetch` prints it through the existing `⚠️` diagnostics with `; --raw-html has the full page` appended.
