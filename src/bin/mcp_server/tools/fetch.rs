@@ -25,12 +25,14 @@ use crate::helpers::{
 use crate::structured::{FetchStructuredParams, build_fetch_structured_v2, truncate_markdown};
 use crate::tools::client::{get_client, persist_session, resolve_session_client};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct FetchDiagnosticMetadata {
     response_class: Option<&'static str>,
     response_confidence: Option<f32>,
     response_reason: Option<&'static str>,
     thin_content_detected: bool,
+    /// Headings extraction kept with their whole section dropped (MIK-9504).
+    emptied_sections: Vec<String>,
 }
 
 // ─── Tool definition ─────────────────────────────────────────────────────────
@@ -258,7 +260,7 @@ impl FetchTool {
                 self.html_options(),
             )
             .await?;
-            let diagnostics = trace_fetch_classification(
+            let mut diagnostics = trace_fetch_classification(
                 status.as_u16(),
                 &content_type,
                 &raw_text,
@@ -266,6 +268,7 @@ impl FetchTool {
                 &conversion.markdown,
                 conversion.quality.as_ref(),
             );
+            diagnostics.emptied_sections = conversion.emptied_sections;
 
             if let Some(pages) = conversion.page_count {
                 let _ = writeln!(
@@ -285,7 +288,7 @@ impl FetchTool {
                 status_u16,
                 &content_type,
                 elapsed_ms,
-                diagnostics,
+                &diagnostics,
             );
         }
 
@@ -372,6 +375,7 @@ impl FetchTool {
                 .quality
                 .as_ref()
                 .is_some_and(|q| q.confidence < 0.5);
+            let mut emptied_sections = conversion.emptied_sections;
             let final_markdown = if content_type.contains("html")
                 && (conversion.markdown.len() < 800 || quality_is_low)
                 && body_bytes.len() > 5_000
@@ -385,6 +389,8 @@ impl FetchTool {
                         "   Recovered {} chars from Next.js content chunk",
                         recovered.len()
                     );
+                    // The recovered body is not the converted HTML.
+                    emptied_sections.clear();
                     recovered
                 } else {
                     conversion.markdown
@@ -392,7 +398,7 @@ impl FetchTool {
             } else {
                 conversion.markdown
             };
-            let diagnostics = trace_fetch_classification(
+            let mut diagnostics = trace_fetch_classification(
                 status.as_u16(),
                 &content_type,
                 &raw_text,
@@ -400,6 +406,7 @@ impl FetchTool {
                 &final_markdown,
                 conversion.quality.as_ref(),
             );
+            diagnostics.emptied_sections = emptied_sections;
 
             (
                 final_markdown,
@@ -417,7 +424,7 @@ impl FetchTool {
             status_u16,
             &content_type,
             elapsed_ms,
-            diagnostics,
+            &diagnostics,
         )
     }
 
@@ -430,10 +437,15 @@ impl FetchTool {
         status_u16: u16,
         content_type: &str,
         elapsed_ms: f64,
-        diagnostics: FetchDiagnosticMetadata,
+        diagnostics: &FetchDiagnosticMetadata,
     ) -> Result<CallToolResult, CallToolError> {
         let markdown = nab::security::guard_fetch_output(markdown, "mcp_fetch", &self.url)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        if let Some(warning) =
+            nab::content::html::emptied_sections_warning(&diagnostics.emptied_sections)
+        {
+            let _ = writeln!(output, "⚠️ {warning}");
+        }
 
         // Unified post-processing pipeline: diff → focus → budget
         let has_diff = if self.diff {
@@ -485,6 +497,7 @@ impl FetchTool {
             response_confidence: diagnostics.response_confidence,
             response_reason: diagnostics.response_reason,
             thin_content_detected: diagnostics.thin_content_detected,
+            emptied_sections: &diagnostics.emptied_sections,
         });
 
         let mut result = CallToolResult::text_content(vec![TextContent::from(output)]);
@@ -561,6 +574,7 @@ fn trace_fetch_classification(
         response_reason: primary.map(|signal| signal.reason),
         thin_content_detected: thin_content_detected
             || classification.has_class(ResponseClass::ThinContent),
+        emptied_sections: Vec::new(),
     }
 }
 

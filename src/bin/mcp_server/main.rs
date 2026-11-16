@@ -181,6 +181,12 @@ fn fetch_output_schema() -> ToolOutputSchema {
         "thin_content_detected".into(),
         bool_prop("True when HTML extraction looked suspiciously thin relative to the source body"),
     );
+    let mut emptied = schema_prop(
+        "array",
+        "Headings extraction kept while dropping all the text under them; present only when non-empty",
+    );
+    emptied.insert("items".into(), serde_json::json!({"type": "string"}));
+    props.insert("emptied_sections".into(), emptied);
     ToolOutputSchema::new(
         vec![
             "url".into(),

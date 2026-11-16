@@ -121,8 +121,13 @@ impl HtmlHandler {
         let html = String::from_utf8_lossy(bytes);
         let (sanitized_html, report) = crate::security::sanitize_with_env_policy(&html, url)?;
         log_secure_ingestion_report(&report);
-        let markdown =
-            html_to_markdown_sanitized_with_url_and_options(&sanitized_html, url, options);
+        let (markdown, emptied_sections) = convert_html_with_sources(
+            &sanitized_html,
+            url,
+            options,
+            spa_extract::extract_spa_candidate,
+            fetch_jina_reader,
+        );
         let quality = quality::score_extraction(bytes, &markdown);
 
         Ok(ConversionResult {
@@ -131,6 +136,7 @@ impl HtmlHandler {
             content_type: content_type.to_string(),
             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
             quality: Some(quality),
+            emptied_sections,
         })
     }
 }
@@ -217,6 +223,23 @@ where
     S: Fn(&str) -> Option<spa_extract::SpaCandidate>,
     F: Fn(&str) -> Option<String>,
 {
+    convert_html_with_sources(html, url, options, spa_extractor, jina_fetcher).0
+}
+
+/// The HTML pipeline: the markdown, and the headings it kept with their
+/// section emptied (see [`emptied_sections`]). The headings are only computed
+/// when the markdown came from this HTML, not from an SPA candidate or Jina.
+fn convert_html_with_sources<S, F>(
+    html: &str,
+    url: Option<&str>,
+    options: HtmlConversionOptions,
+    spa_extractor: S,
+    jina_fetcher: F,
+) -> (String, Vec<String>)
+where
+    S: Fn(&str) -> Option<spa_extract::SpaCandidate>,
+    F: Fn(&str) -> Option<String>,
+{
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     let spa_candidate = if options.allow_spa_extraction {
         // An empty candidate is metadata-only JSON-LD (see `render_spa_content`).
@@ -233,7 +256,7 @@ where
         if spa.source == spa_extract::SpaSource::Framework
             && !is_thin_content(html.len(), spa.text.len())
         {
-            return spa.text.clone();
+            return (spa.text.clone(), Vec::new());
         }
 
         tracing::debug!(
@@ -300,6 +323,7 @@ where
 
     // Post-process: strip markdown noise from html2md output
     let markdown = clean_markdown_noise(&markdown);
+    let html_markdown_len = markdown.len();
     let (markdown, small_pick_len) = merge_spa_candidate(
         markdown,
         spa_candidate,
@@ -307,6 +331,9 @@ where
         small_pick_len,
         pick,
     );
+    // Both merge arms replace only with a strictly longer candidate, so an
+    // unchanged length means the markdown is still this HTML's conversion.
+    let from_html = markdown.len() == html_markdown_len;
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
@@ -330,14 +357,19 @@ where
                 "Thin content recovered via Jina reader ({} chars)",
                 jina_md.len()
             );
-            return jina_md;
+            return (jina_md, Vec::new());
         }
 
         // Remote fallback either wasn't enabled, had no URL, or failed.
         warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
     }
 
-    markdown
+    let emptied = if from_html {
+        emptied_sections(&cleaned_html, &markdown)
+    } else {
+        Vec::new()
+    };
+    (markdown, emptied)
 }
 
 /// Let an SPA candidate replace the HTML result when it should.
@@ -1074,10 +1106,222 @@ pub fn is_boilerplate(line: &str) -> bool {
         || (lower.len() < 3 && !lower.chars().any(char::is_alphanumeric))
 }
 
+/// One warning naming the headings [`emptied_sections`] reported, or `None`
+/// when nothing was dropped. Shared by `nab fetch` and the MCP fetch tool.
+#[must_use]
+pub fn emptied_sections_warning(headings: &[String]) -> Option<String> {
+    let quoted: Vec<String> = headings
+        .iter()
+        .take(3)
+        .map(|h| format!("\"{h}\""))
+        .collect();
+    match headings.len() {
+        0 => None,
+        1 => Some(format!(
+            "Extraction dropped the content under the heading {}.",
+            quoted[0]
+        )),
+        n @ 2..=3 => Some(format!(
+            "Extraction dropped the content under {n} headings: {}.",
+            quoted.join(", ")
+        )),
+        n => Some(format!(
+            "Extraction dropped the content under {n} headings: {} and {} more.",
+            quoted.join(", "),
+            n - 3
+        )),
+    }
+}
+
 /// Headings the markdown keeps with nothing under them while the source had
-/// text under them (MIK-9504). Design: docs/design/2026-11-16-section-loss-warning.md
-pub(crate) fn emptied_sections(_cleaned_html: &str, _markdown: &str) -> Vec<String> {
-    Vec::new()
+/// text under them (MIK-9504). Readability drops link-dense lists and caption
+/// blocks it scores as boilerplate; this names the heading so the loss is not
+/// silent. Only headings are matched, never body text, so list bullets, table
+/// pipes and wrapped lines cannot raise a false alarm.
+/// Design: docs/design/2026-11-16-section-loss-warning.md
+pub(crate) fn emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String> {
+    const MIN_SEGMENT_CHARS: usize = 20;
+
+    let rendered = markdown_heading_sections(markdown);
+    if rendered.iter().all(|(_, has_text)| *has_text) {
+        return Vec::new();
+    }
+    let mut emptied = Vec::new();
+    let mut next = 0;
+    // Monotonic pairing: an unmatched heading on either side is skipped
+    // without moving the other side.
+    for (heading, chars) in source_heading_segments(cleaned_html) {
+        let Some(offset) = rendered[next..].iter().position(|(h, _)| *h == heading) else {
+            continue;
+        };
+        let (_, has_text) = &rendered[next + offset];
+        if !has_text && chars >= MIN_SEGMENT_CHARS {
+            emptied.push(heading.chars().take(80).collect());
+        }
+        next += offset + 1;
+    }
+    emptied
+}
+
+/// Each source heading with the characters of text in its own segment: the
+/// innermost leaf blocks after it, up to the next heading of any level, inside
+/// its nearest `article`, `main`, `section` or `body`, outside `aside`, `nav`,
+/// `footer` and `form`.
+fn source_heading_segments(html: &str) -> Vec<(String, usize)> {
+    use scraper::{ElementRef, Html};
+
+    const LEAVES: &[&str] = &[
+        "p",
+        "li",
+        "dt",
+        "dd",
+        "th",
+        "td",
+        "caption",
+        "figcaption",
+        "blockquote",
+        "pre",
+        "summary",
+    ];
+    const BOUNDARIES: &[&str] = &["article", "main", "section", "body"];
+    const SKIPPED: &[&str] = &["aside", "nav", "footer", "form"];
+
+    let is_heading = |name: &str| matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
+    let is_leaf_candidate = |el: &ElementRef<'_>| {
+        let name = el.value().name();
+        LEAVES.contains(&name)
+            || (name == "div"
+                && el
+                    .children()
+                    .any(|c| c.value().as_text().is_some_and(|t| !t.trim().is_empty())))
+    };
+
+    let document = Html::parse_document(html);
+    let mut segments: Vec<(String, usize)> = Vec::new();
+    let mut boundary = None;
+    for node in document.root_element().descendants() {
+        let Some(el) = ElementRef::wrap(node) else {
+            continue;
+        };
+        let name = el.value().name();
+        if is_heading(name) {
+            segments.push((normalize_heading(&el.text().collect::<String>()), 0));
+            boundary = el
+                .ancestors()
+                .find(|a| {
+                    a.value()
+                        .as_element()
+                        .is_some_and(|e| BOUNDARIES.contains(&e.name()))
+                })
+                .map(|a| a.id());
+            continue;
+        }
+        let Some((_, chars)) = segments.last_mut() else {
+            continue;
+        };
+        if !is_leaf_candidate(&el)
+            || el
+                .descendants()
+                .skip(1)
+                .filter_map(ElementRef::wrap)
+                .any(|d| is_leaf_candidate(&d) || is_heading(d.value().name()))
+        {
+            continue;
+        }
+        let inside = boundary.is_none_or(|id| el.ancestors().any(|a| a.id() == id));
+        let skipped = el.ancestors().any(|a| {
+            a.value()
+                .as_element()
+                .is_some_and(|e| SKIPPED.contains(&e.name()))
+        });
+        if inside && !skipped {
+            *chars += el
+                .text()
+                .collect::<String>()
+                .split_whitespace()
+                .map(str::len)
+                .sum::<usize>();
+        }
+    }
+    segments
+}
+
+/// Each markdown heading, normalized, and whether any text sits under it before
+/// the next heading. Headings are ATX lines and the converter's setext form (a
+/// line followed by exactly ten `=` or `-`); a `---` line is its horizontal
+/// rule. Lines inside fenced code are text, never headings.
+fn markdown_heading_sections(markdown: &str) -> Vec<(String, bool)> {
+    const H1_UNDERLINE: &str = "==========";
+    const H2_UNDERLINE: &str = "----------";
+
+    let lines: Vec<&str> = markdown.lines().map(str::trim).collect();
+    let is_underline = |line: &str| line == H1_UNDERLINE || line == H2_UNDERLINE;
+    let is_rule =
+        |line: &str| line.len() >= 3 && line.chars().all(|c| matches!(c, '-' | '*' | '_' | ' '));
+    let mut sections: Vec<(String, bool)> = Vec::new();
+    let mut in_fence = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        i += 1;
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_fence = !in_fence;
+            if let Some(last) = sections.last_mut() {
+                last.1 = true;
+            }
+            continue;
+        }
+        if !in_fence {
+            if let Some(text) = atx_heading_text(line) {
+                sections.push((normalize_heading(&strip_inline_markdown(text)), false));
+                continue;
+            }
+            if !line.is_empty() && !is_underline(line) && !is_rule(line) {
+                let next = lines[i..].iter().position(|l| !l.is_empty());
+                if let Some(offset) = next.filter(|&o| is_underline(lines[i + o])) {
+                    sections.push((normalize_heading(&strip_inline_markdown(line)), false));
+                    i += offset + 1;
+                    continue;
+                }
+            }
+            if line.is_empty() || is_underline(line) || is_rule(line) {
+                continue;
+            }
+        }
+        if let Some(last) = sections.last_mut() {
+            last.1 = true;
+        }
+    }
+    sections
+}
+
+fn atx_heading_text(line: &str) -> Option<&str> {
+    let rest = line.trim_start_matches('#');
+    let hashes = line.len() - rest.len();
+    if !(1..=6).contains(&hashes) || !rest.starts_with(' ') {
+        return None;
+    }
+    Some(rest.trim().trim_end_matches('#').trim_end())
+}
+
+/// Link markup to its label, emphasis and code markers removed.
+fn strip_inline_markdown(text: &str) -> String {
+    static LINK: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"!?\[([^\]]*)\]\([^)]*\)").expect("static link pattern")
+    });
+    LINK.replace_all(text, "$1")
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '`'))
+        .collect()
+}
+
+/// Whitespace collapsed, control characters removed.
+fn normalize_heading(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| word.chars().filter(|c| !c.is_control()).collect::<String>())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -2291,7 +2535,10 @@ mod emptied_section_tests {
         let nineteen = "<p>abcdefghijklmnopqrs</p>";
         let twenty = "<p>abcdefghijklmnopqrst</p>";
         let markdown = html_to_markdown(&get_started(""));
-        assert!(emptied_sections(&get_started(nineteen), &markdown).is_empty());
+        assert_eq!(
+            emptied_sections(&get_started(nineteen), &markdown),
+            Vec::<String>::new()
+        );
         assert_eq!(
             emptied_sections(&get_started(twenty), &markdown),
             ["Get started"]
@@ -2331,12 +2578,15 @@ mod emptied_section_tests {
 
     #[test]
     fn extra_headings_on_either_side_do_not_shift_the_pairing() {
+        // Two source-only headings against one markdown-only title, so pairing
+        // by position cannot line "Get started" up by luck.
         let source = format!(
-            "<html><body><div><h2>Sign up</h2><p>Newsletter text that is long enough.</p></div>\
+            "<html><body><div><h2>Sign up</h2><p>Newsletter text that is long enough.</p>\
+             <h3>Follow us</h3><p>Social links and other text long enough.</p></div>\
              <article><h2>Get started</h2>{LIST}{NEXT}</article></body></html>"
         );
         let markdown = format!(
-            "Article title\n=============\n{}",
+            "Article title\n==========\n{}",
             html_to_markdown(&page(&format!("<h2>Get started</h2>{NEXT}")))
         );
         assert_eq!(
@@ -2348,8 +2598,10 @@ mod emptied_section_tests {
 
     #[test]
     fn a_segment_stops_at_the_end_of_its_article() {
+        // The trailing block is a plain div, not a skipped footer, so only the
+        // article boundary keeps it out of the heading's segment.
         let source = "<html><body><article><h2>Get started</h2></article>\
-            <footer><p>Footer text that is long enough to count as text.</p></footer></body></html>";
+            <div class='related'><p>Related text that is long enough to count as text.</p></div></body></html>";
         let markdown =
             html_to_markdown("<html><body><article><h2>Get started</h2></article></body></html>");
         assert!(emptied_sections(source, &markdown).is_empty(), "{markdown}");
@@ -2364,6 +2616,150 @@ mod emptied_section_tests {
             emptied_sections(&source, &markdown),
             ["Get started"],
             "{markdown}"
+        );
+    }
+
+    // ── Pipeline and surfaces (E9-E11) ─────────────────────────────────────
+
+    use super::{HtmlConversionOptions, convert_html_with_sources, emptied_sections_warning};
+    use crate::content::spa_extract::{SpaCandidate, SpaSource};
+
+    fn convert(
+        html: &str,
+        options: HtmlConversionOptions,
+        spa: Option<&SpaCandidate>,
+        jina: Option<&str>,
+    ) -> (String, Vec<String>) {
+        convert_html_with_sources(
+            html,
+            Some("https://blog.nab.test/post"),
+            options,
+            |_| spa.cloned(),
+            |_| jina.map(str::to_string),
+        )
+    }
+
+    fn paragraphs() -> String {
+        (0..6)
+            .map(|i| {
+                format!(
+                    "<p>Paragraph {i} explains how the renderer keeps the interface native on \
+                     every platform, and why the protocol stays small enough to audit.</p>"
+                )
+            })
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    #[test]
+    fn unchanged_conversions_report_nothing() {
+        let substack = format!(
+            "<html><body><article class='post'><div class='post-header'>\
+             <h1 class='post-title'>Actual Post Title</h1><h3 class='subtitle'>A useful subtitle</h3>\
+             <div class='post-ufi'>451 90 Share</div><div class='byline-wrapper'>Author avatar and profile chrome</div>\
+             </div><div class='available-content'><div class='body markup'>{}</div></div></article></body></html>",
+            paragraphs()
+        );
+        let table = format!(
+            "<html><body><article><h2>Pricing</h2><table><tr><th>Plan</th><th>Price</th></tr>\
+             <tr><td>Starter plan for small teams</td><td>10 euros</td></tr></table>{}</article></body></html>",
+            paragraphs()
+        );
+        for html in [substack, table] {
+            let (markdown, emptied) = convert(&html, HtmlConversionOptions::default(), None, None);
+            assert!(emptied.is_empty(), "{emptied:?}\n{markdown}");
+        }
+    }
+
+    #[test]
+    fn a_pipeline_drop_reaches_the_conversion_result() {
+        // A page too short for readability, so the direct conversion is
+        // picked, and its boilerplate filter deletes the one line under
+        // "Storage" for mentioning a cookie. The readability crate's own drops
+        // depend on page-wide scoring no small fixture reproduces; the saved
+        // A2UI page is checked in the before/after run instead.
+        let html = "<html><body><h2>Storage</h2><ul><li>We keep a cookie for your session.</li></ul>\
+            <h2>Contact</h2><p>Write to the team at any time.</p></body></html>";
+        let (markdown, emptied) = convert(html, HtmlConversionOptions::default(), None, None);
+        assert!(
+            !markdown.contains("cookie"),
+            "the filter must drop the line: {markdown}"
+        );
+        assert_eq!(emptied, ["Storage"], "{markdown}");
+    }
+
+    #[test]
+    fn markdown_that_did_not_come_from_the_html_reports_nothing() {
+        // The page's own conversion keeps "Get started" with text under it;
+        // each replacement keeps the heading with nothing under it, so a
+        // check run on the replacement would report it.
+        let shell = "<html><body><div id='root'><h2>Get started</h2>\
+            <p>Loading the application, please wait a moment.</p></div></body></html>";
+        let replacement = format!(
+            "{}\n\nGet started\n----------\n",
+            "The full article body that the store carried. ".repeat(12)
+        );
+        let store = SpaCandidate {
+            text: replacement.clone(),
+            source: SpaSource::GenericAssignment,
+        };
+        let (markdown, emptied) =
+            convert(shell, HtmlConversionOptions::default(), Some(&store), None);
+        assert_eq!(
+            markdown, replacement,
+            "the store body must replace the shell"
+        );
+        assert!(emptied.is_empty(), "{emptied:?}");
+
+        let padded = format!(
+            "<html><head><script>var pad = '{}';</script></head><body><div id='root'>\
+             <h2>Get started</h2><p>Loading the application, please wait a moment.</p></div></body></html>",
+            "x".repeat(8_000)
+        );
+        let options = HtmlConversionOptions {
+            allow_jina_fallback: true,
+            ..HtmlConversionOptions::default()
+        };
+        let (markdown, emptied) = convert(&padded, options, None, Some(&replacement));
+        assert_eq!(
+            markdown, replacement,
+            "the remote reader must supply the output"
+        );
+        assert!(emptied.is_empty(), "{emptied:?}");
+    }
+
+    #[test]
+    fn the_warning_names_up_to_three_headings() {
+        let names = |n: usize| (1..=n).map(|i| format!("Part {i}")).collect::<Vec<_>>();
+        assert_eq!(emptied_sections_warning(&[]), None);
+        assert_eq!(
+            emptied_sections_warning(&names(1)).as_deref(),
+            Some("Extraction dropped the content under the heading \"Part 1\".")
+        );
+        assert_eq!(
+            emptied_sections_warning(&names(3)).as_deref(),
+            Some(
+                "Extraction dropped the content under 3 headings: \"Part 1\", \"Part 2\", \"Part 3\"."
+            )
+        );
+        assert_eq!(
+            emptied_sections_warning(&names(5)).as_deref(),
+            Some(
+                "Extraction dropped the content under 5 headings: \"Part 1\", \"Part 2\", \"Part 3\" and 2 more."
+            )
+        );
+    }
+
+    #[test]
+    fn a_reported_heading_carries_no_control_characters() {
+        let source = page(&format!("<h2>Get\u{1b} started</h2>{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("<h2>Get\u{1b} started</h2>{NEXT}")));
+        let emptied = emptied_sections(&source, &markdown);
+        assert_eq!(emptied.len(), 1, "{markdown}");
+        assert!(
+            !emptied[0].chars().any(char::is_control),
+            "{:?}",
+            emptied[0]
         );
     }
 }

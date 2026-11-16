@@ -105,6 +105,7 @@ impl ContentHandler for PdfLightHandler {
             content_type: content_type.to_string(),
             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
             quality: None,
+            emptied_sections: Vec::new(),
         })
     }
 }
