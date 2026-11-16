@@ -11,28 +11,36 @@ Path, read at origin/main 6fdde661f:
 1. `spa_extract::spa::inline::extract_inline_script_json_with_source` matches `window.__PRELOADED_STATE__` among its named patterns and returns `find_longest_string(state, 200)` labelled `SpaSource::Framework`.
 2. `html::html_to_markdown_with_url_and_sources` returns a `Framework` candidate immediately unless `is_thin_content(html_len, candidate_len)`. `is_thin_content` is false for any text of 800 characters or more, and the keywords string is about 1,600, so the HTML is never extracted. No "html selection" debug line is logged on this fetch, which confirms the early return.
 
-The longest string in an app-wide store is arbitrary: a Redux or Apollo store holds every entity the app loaded (profiles, sections, ads, navigation), and its longest string is whichever field happens to be longest. `__NEXT_DATA__` and `__NUXT__` are different: they carry the current page's own props.
+The longest string in an app-wide store is arbitrary: a Redux or Apollo store holds every entity the app loaded (profiles, sections, ads, navigation), and its longest string is whichever field happens to be longest. `__NEXT_DATA__` is different: it carries the current page's own props.
 
 ## Design
 
-D1. The named patterns split in two. Page data, still `SpaSource::Framework` (trusted to beat page chrome): `window.__NEXT_DATA__`, `self.__NEXT_DATA__`, `__NEXT_DATA__`, `window.__NUXT__`, `window.___GATSBY`. App-wide stores, now `SpaSource::GenericAssignment` (used only to fill a thin HTML result): `window.__INITIAL_STATE__`, `window.__PRELOADED_STATE__`, `window.__APOLLO_STATE__`, `window.__APP_STATE__`, `window.__STORE_STATE__`, `window.__DATA__`.
+D1. Only the current page's own props stay trusted. Page data, still `SpaSource::Framework` (allowed to beat page chrome): `window.__NEXT_DATA__`, `self.__NEXT_DATA__`, `__NEXT_DATA__`. Everything else becomes a store, labelled `SpaSource::GenericAssignment` (used only to fill a thin HTML result): `window.__INITIAL_STATE__`, `window.__PRELOADED_STATE__`, `window.__APOLLO_STATE__`, `window.__APP_STATE__`, `window.__STORE_STATE__`, `window.__DATA__`, and also:
+- `window.__NUXT__`: a JSON `__NUXT__` carries the Vuex `state` beside the page `data`, and `find_longest_string` walks both, so its longest string can be store content exactly as on Flipboard.
+- `window.___GATSBY`: the loader bootstrap, not the page envelope. Gatsby page data is read from `data-gatsby-ssr` tags by `extract_gatsby_data` (`spa/gatsby.rs:16`), which this change does not touch.
 
-D2. Order is unchanged: a page-data match anywhere on the page still outranks everything; a store match now ranks with the generic assignments, and the longest store-or-generic hit is the candidate, as `GenericAssignment` already does.
+D2. Two passes, so script order cannot decide trust. Pass 1 searches every script for page data and returns the first hit as `Framework`. Pass 2 runs only if pass 1 found nothing: each script contributes one candidate, from its named store assignment when it has one (parsed once, and the every-`=` generic scan is skipped for that script, so a 2.27 MB store is not rescanned at each `=` inside its strings), otherwise from the generic scan. The longest candidate on the page is returned as `GenericAssignment`, as generic hits are today.
 
-D3. Nothing else changes. `merge_spa_candidate` still lets a `GenericAssignment` candidate replace the HTML result when the pick is the direct conversion, readability is not preferred, the result is under 800 characters and the candidate is longer. An SPA shell that renders only from a store therefore keeps working: the existing test `html_to_markdown_keeps_spa_result_that_carries_article_body` (an `__APOLLO_STATE__` body beside `<div id="root">Loading</div>`) must still pass. Flipboard's 34 cards extract to well over 800 characters, so they stay.
+D3. `merge_spa_candidate` is unchanged: a `GenericAssignment` candidate still replaces the HTML result when the pick is the direct conversion, readability is not preferred, the result is under 800 characters and the candidate is longer. A shell that renders only from a store keeps working (`html_to_markdown_keeps_spa_result_that_carries_article_body`, an `__APOLLO_STATE__` body beside `<div id="root">Loading</div>`).
 
-Out of scope: rendering a store's item lists (titles and links) as markdown; listing-page extraction quality beyond not being replaced by a store string; MIK-9504 (readability dropping sections).
+Accepted loss: a page whose article text lives only in a store now loses it when the HTML result is 800 or more characters of chrome, or when readability picked a short server-rendered teaser (a readability pick is never filled). No such page is known; the live check below looks for one, and finding one stops the merge.
+
+Out of scope: rendering a store's item lists as markdown; listing-page quality beyond not being replaced by a store string; restricting the `__NEXT_DATA__` longest-string fallback to `props.pageProps` (follow-up); MIK-9504 (readability dropping sections).
 
 ## Tests, written failing first
 
 | ID | Test | Fails today because |
 |---|---|---|
-| T1 | HTML with 12 `<article>` cards (heading, link, two-sentence summary) and a `window.__PRELOADED_STATE__` whose longest string is a 1,600-character keyword list: the output contains the card headlines and not the keyword list | the store string returns early |
-| T2 | The same with `window.__INITIAL_STATE__` and `window.__APOLLO_STATE__` | same |
-| T3 | An SPA shell (`<div id="root"></div>`, no text) with a `window.__PRELOADED_STATE__` holding a 1,200-character article body: the output is that body | guards D3; passes today |
-| T4 | A page with `__NEXT_DATA__` whose page props hold an article body, beside navigation chrome: the output is the body | guards D1's page-data branch; passes today |
-| T5 | The source label: `extract_inline_script_json_with_source` returns `Framework` for `__NEXT_DATA__` and `GenericAssignment` for `__PRELOADED_STATE__` | label is `Framework` for both today |
+| T1 | 12 `<article>` cards (heading, link, two-sentence summary; at least 800 characters of markdown) beside a `window.__PRELOADED_STATE__` whose longest string is a 1,600-character keyword list built from a sentinel word that appears in no card: output has the card headlines and no sentinel | the store string returns early |
+| T2 | T1's page once per store pattern (all eight in D1) | same |
+| T3 | Shell (`<div id="root"></div>`, no text) with a `window.__PRELOADED_STATE__` holding a 1,200-character body: output is that body | guards D3; passes today |
+| T4 | Existing `named_next_data_assignment_still_beats_page_chrome` (60 navigation links, body only in `__NEXT_DATA__`), kept as is | guards D1's trusted branch; passes today, fails if `__NEXT_DATA__` is demoted |
+| T5 | Source label for all eleven patterns: `Framework` for the three `__NEXT_DATA__` forms, `GenericAssignment` for the eight stores | stores are `Framework` today |
+| T6 | A `__PRELOADED_STATE__` script before a `window.__NEXT_DATA__` script, each holding a different long body: result is the `__NEXT_DATA__` body, labelled `Framework` | today the first script wins with the store body |
 
-Live check before merge, recorded in the PR: the Flipboard collection page's markdown contains several of its article headlines and not the keyword list.
+Live check before merge, old and new binary side by side, recorded in the PR:
+- Flipboard collection page: markdown contains several card headlines and not the keyword list; fetch time within 20% of the old binary.
+- One Flipboard article page and the Medium article behind the `__APOLLO_STATE__` fixtures: new output keeps the article body.
+- Counter-sample: at least five public pages carrying a demoted pattern (one per framework where one can be found). Any page whose main text disappears stops the merge and reopens D1.
 
-Sabotage: put `__PRELOADED_STATE__` back among page data (T1, T5 fail); return early for `GenericAssignment` too (T1 fails); drop the thin fill (T3 fails).
+Sabotage: put `__PRELOADED_STATE__` back among page data (T1, T5 fail); return early for `GenericAssignment` too (T1, T2 fail); drop the thin fill (T3 fails); collapse the two passes into one first-match loop (T6 fails).
