@@ -21,36 +21,42 @@ D1. Only the current page's own props stay trusted. Page data, still `SpaSource:
 
 D2. Three ordered passes over all inline scripts, so script order cannot decide trust:
 1. Page data: the first `__NEXT_DATA__` assignment that yields text is returned as `Framework`.
-2. Stores: otherwise the first store assignment that yields text, labelled `GenericAssignment`. This is today's first-match order with a new label, so a store still outranks any generic hit, and a multi-megabyte store is never rescanned at each `=` inside its strings.
+2. Stores: otherwise the first store assignment that yields text, in script order and then the pattern list's order within a script, labelled `GenericAssignment`. This is today's first-match order with a new label, so a store still outranks any generic hit, and a multi-megabyte store is never rescanned at each `=` inside its strings.
 3. Generic: otherwise the longest generic `= {...}` hit on the page, as today. It runs whenever no store yielded text, including when a store assignment is present but unparseable or under 200 characters.
 
-A named pattern counts only as an assignment: the name, optional whitespace, then `=`. Today `script_text.find(pattern)` followed by the next `=` anywhere later accepts a store string that merely mentions `__NEXT_DATA__`, which would keep the Flipboard failure under a page-data label.
+A named pattern counts only as an assignment: the name, optional whitespace, then `=`. Today `script_text.find(pattern)` followed by the next `=` anywhere later accepts a store string that merely mentions `__NEXT_DATA__`, which would keep the Flipboard failure under a page-data label. Matching advances past every occurrence that is not an assignment or yields no text, so a mention before a real assignment in the same script still finds the assignment.
 
-Audit of the other `Framework` producers in `extract_spa_candidate` (`spa_extract/mod.rs:74`): `script#__NEXT_DATA__`, `script#__NUXT_DATA__`/`#__nuxt-data`, SvelteKit, Gatsby `data-gatsby-ssr`, Angular transfer state, JSON-LD and hidden `<code>` JSON. Each reads its own script tag or element; none reads a `window.` store assignment, so none can carry a demoted store.
+Other `Framework` producers in `extract_spa_candidate` (`spa_extract/mod.rs:74`): `script#__NEXT_DATA__`, `script#__NUXT_DATA__`/`#__nuxt-data`, SvelteKit, Gatsby `data-gatsby-ssr`, Angular transfer state, JSON-LD and hidden `<code>` JSON. None reads a `window.` store assignment, so none carries a demoted store. Whether their own payloads can hold app-wide state (Nuxt and Angular payloads, and the `script#__NEXT_DATA__` envelope) is not settled here; it is recorded in MIK-9717.
+
+The `SpaSource` comments (`spa_extract/mod.rs:41`) are updated so `Framework` no longer reads as every named SSR assignment and `GenericAssignment` no longer reads as only the catch-all scan.
 
 D3. `merge_spa_candidate` is unchanged: a `GenericAssignment` candidate still replaces the HTML result when the pick is the direct conversion, readability is not preferred, the result is under 800 characters and the candidate is longer. A shell that renders only from a store keeps working (`html_to_markdown_keeps_spa_result_that_carries_article_body`, an `__APOLLO_STATE__` body beside `<div id="root">Loading</div>`).
 
+Other expected output changes, so the before/after check does not read them as regressions: on a shell, a later `__NEXT_DATA__` now replaces an earlier store's text; the anchor can change which string fills a thin page; with `force_readability`, a store no longer fills an empty readability result.
+
 Accepted loss: a page whose article text lives only in a store now loses it when the HTML result is 800 or more characters of chrome, or when readability picked a short server-rendered teaser (a readability pick is never filled). No such page is known; the live check below looks for one, and finding one stops the merge.
 
-Out of scope: rendering a store's item lists as markdown; listing-page quality beyond not being replaced by a store string; restricting the `__NEXT_DATA__` longest-string fallback to `props.pageProps`, which can still return app-wide state embedded in the Next.js envelope (follow-up ticket); MIK-9504 (readability dropping sections).
+Out of scope: rendering a store's item lists as markdown; listing-page quality beyond not being replaced by a store string; restricting the `__NEXT_DATA__` longest-string fallback to `props.pageProps`, which can still return app-wide state embedded in the Next.js envelope (MIK-9717); MIK-9504 (readability dropping sections).
 
 ## Tests, written failing first
 
 | ID | Test | Fails today because |
 |---|---|---|
-| T1 | 12 `<article>` cards (heading, link, two-sentence summary; at least 800 characters of markdown) beside a `window.__PRELOADED_STATE__` whose longest string is a 1,600-character keyword list built from a sentinel word that appears in no card: the page without the script converts to at least 800 characters (baseline), and with it the output has the card headlines and no sentinel | the store string returns early |
+| T1 | 12 `<article>` cards (heading, link, two-sentence summary; at least 800 characters of markdown) beside a `window.__PRELOADED_STATE__` whose longest string is a keyword list, longer than the cards' markdown, built from a sentinel word that appears in no card: the page without the script converts to at least 800 characters (baseline), and with it the output has the card headlines and no sentinel | the store string returns early |
 | T2 | T1's page once per store pattern (all eight in D1) | same |
 | T3 | Shell (`<div id="root"></div>`, no text) with a `window.__PRELOADED_STATE__` holding a 1,200-character body: output is that body | guards D3; passes today only through the `Framework` early return, so it guards the thin fill once the label changes |
 | T4 | Existing `named_next_data_assignment_still_beats_page_chrome` (60 navigation links, body only in `__NEXT_DATA__`), kept as is | guards D1's trusted branch; passes today, fails if `__NEXT_DATA__` is demoted |
 | T5 | Source label for all eleven patterns: `Framework` for the three `__NEXT_DATA__` forms, `GenericAssignment` for the eight stores | stores are `Framework` today |
 | T6 | A `__PRELOADED_STATE__` script before a `window.__NEXT_DATA__` script, each holding a different long body: result is the `__NEXT_DATA__` body, labelled `Framework` | today the first script wins with the store body |
-| T7 | Shell with a `__PRELOADED_STATE__` script holding a 1,200-character body and another script with a longer generic `= {...}` string, in both script orders: output is the store body | guards pass order 2 before 3; passes today |
+| T7 | Shell with a `__PRELOADED_STATE__` script holding a 1,200-character body and another script with a longer generic `= {...}` string, in both script orders: output is the store body | guards pass order 2 before 3, once per store pattern (all eight); passes today |
 | T8 | Shell whose only script assigns `window.__PRELOADED_STATE__` with a short (under 200 characters) store, then a generic `= {...}` with a 1,200-character body: output is the generic body | guards pass 3 running after a store that yields nothing; passes today |
-| T9 | 12-card page plus a store whose string mentions `__NEXT_DATA__` and later holds `= {"k":"<1,600-character string>"}`: output has the card headlines and not that string | today the unanchored match labels it `Framework` |
+| T9 | 12-card page plus `<script>/* reads __NEXT_DATA__ */ var cfg = {"k":"<sentinel string longer than the cards>"};</script>`: output has the card headlines and no sentinel | today the comment's mention, the later `=` and the parseable object are taken as page data and returned early |
+| T10 | Shell with two different stores, once in separate scripts and once in one script written in reverse pattern-list order: output is the store today's order picks | pins pass 2's order; passes today |
+| T11 | One script that mentions `__NEXT_DATA__` in a comment and then assigns `window.__NEXT_DATA__ = {...}` with a body, beside 60 navigation links: output is the body | guards matching past a non-assignment occurrence; passes today |
 
 Before/after check, recorded in the PR: old and new binary convert the same saved copies of real pages, served from localhost, so network variance and live-site drift drop out.
 - Flipboard collection page (`__PRELOADED_STATE__`, 2.47 MB): markdown contains several card headlines and not the keyword list. Conversion time for both binaries is recorded, without a threshold: the new path runs the HTML extraction the old early return skipped, and pass 2 keeps the generic scan off store scripts exactly as today.
 - One Flipboard article page and the Medium article behind the `__APOLLO_STATE__` fixtures: new output keeps the article body.
-- Counter-sample, pages carrying a demoted pattern: Bilibili and Xiaohongshu (`__INITIAL_STATE__`), Medium (`__PRELOADED_STATE__`, `__APOLLO_STATE__`), nuxtjs.org and Juejin (`__NUXT__`). Any page whose main text disappears stops the merge and reopens D1.
+- Counter-sample, pages carrying a demoted pattern: Bilibili and Xiaohongshu (`__INITIAL_STATE__`), Medium (`__PRELOADED_STATE__`, `__APOLLO_STATE__`), nuxtjs.org and Juejin (`__NUXT__`). Before the new binary runs, one headline or body sentence per page is written down from the old output or the saved HTML; a page whose sentence is missing from the new output stops the merge and reopens D1.
 
-Sabotage: put `__PRELOADED_STATE__` back among page data (T1, T5 fail); return early for `GenericAssignment` too (T1, T2 fail); drop the thin fill (T3 fails); collapse the passes into one first-match loop (T6 fails); pool stores with generic hits by length (T7 fails); skip pass 3 whenever a store name is present (T8 fails); drop the assignment anchor (T9 fails).
+Sabotage: put `__PRELOADED_STATE__` back among page data (T1, T5 fail); return early for `GenericAssignment` too (T1, T2 fail); drop the thin fill (T3 fails); collapse the passes into one first-match loop (T6 fails); pool stores with generic hits by length (T7 fails); skip pass 3 whenever a store name is present (T8 fails); drop the assignment anchor (T9 fails); check the anchor only at the first occurrence (T11 fails).
