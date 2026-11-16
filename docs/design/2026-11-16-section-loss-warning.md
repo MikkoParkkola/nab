@@ -43,7 +43,7 @@ D2. Placement: computed once, on the final markdown after SPA merge and Jina rec
 
 D3. Surfaces, through one formatter `emptied_sections_warning(&[String]) -> Option<String>` (first three headings, quoted, then a count):
 - `nab fetch` prints it through the existing `⚠️` diagnostics with `; --raw-html has the full page` appended.
-- The MCP fetch tool adds it to its text output without the CLI flag, and `emptied_sections` to its structured output, carried from the conversion result through `FetchDiagnosticMetadata`.
+- The MCP fetch tool adds it to its text output without the CLI flag, and `emptied_sections` to its structured output when non-empty, as `thin_content_detected` appears only when true, carried from the conversion result through `FetchDiagnosticMetadata`.
 
 D4. Nothing else changes: no output rewrite, no new option, the response classifier untouched.
 
@@ -64,8 +64,10 @@ Markdown inputs in E1 to E6 come from nab's own converter (`html_to_markdown`), 
 | E7 | Pairing: an extra source-only heading before the article and an extra markdown-only title heading, list removed under "Get started": returns `["Get started"]` | function absent |
 | E8 | Boundaries: a kept empty heading at the end of `<article>` followed by footer text, and a fenced code block holding `## Not a heading` under a kept heading: returns nothing | function absent |
 | E9 | Silence on unchanged conversions: the existing Substack fixture in `readability.rs` and a page with a kept table, each through the full pipeline: nothing | field absent |
-| E10 | Pipeline: a controlled drop (readability forced, `ul` of link-only items under a heading) puts the heading on `ConversionResult.emptied_sections`; a shell page whose store body (holding the same heading with nothing under it) replaces the output yields nothing; the same with the injected Jina fetcher supplying the markdown yields nothing | field absent |
+| E10 | Pipeline: a page too short for readability, whose direct conversion's boilerplate filter deletes the one line under "Storage" (it mentions a cookie), puts "Storage" on the result; a shell whose store body (holding the heading with nothing under it) replaces the output yields nothing; the same with the injected Jina fetcher supplying the markdown yields nothing | function absent |
 | E11 | Surfaces: the formatter's wording and cap; `build_fetch_diagnostics` and the MCP text and structured output carry it for a non-empty list and nothing for an empty one; a heading holding an escape character is printed without it | no such line |
+
+E1 to E8 were run against a stub first (6 failed, the 3 silence cases passed trivially); E9 to E11 were written with the implementation and are held to the sabotage list instead. The readability crate's own drop needs page-wide scoring: a 5 KB slice of the A2UI page keeps the list, the 20 KB article section and the full page drop it. So the real page is checked in the before/after run, not as a fixture.
 
 Characterization, not a pass condition: the saved A2UI page through the pipeline names "Get started". If readability starts keeping the list, this flips and is a prompt to revisit, not a regression.
 
