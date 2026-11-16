@@ -215,8 +215,8 @@ rule exfil_curl_secret_to_remote {
     $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)s?[0-9]*(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
     // ([ \t]|\\\r?\n)* is "space or a backslash continuation", allowed at every
     // separator of an upload flag, its form field and its file operand.
-    $secret_upload = /(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)([ \t]|\\\r?\n)*=?([ \t]|\\\r?\n)*['"]?([A-Za-z0-9_.-]+=?)?([ \t]|\\\r?\n)*@([ \t]|\\\r?\n)*[~\/.$A-Za-z0-9'"<]/
-    $secret_file = /(^|[ \t\n])(-T|--upload-file)([ \t=]|\\\r?\n)*[~\/.$'"A-Za-z0-9_]/
+    $secret_upload = /(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)([ \t]|\\\r?\n)*=?([ \t]|\\\r?\n)*['"]?([A-Za-z0-9_.-]+=?)?([ \t]|\\\r?\n)*@([ \t]|\\\r?\n)*[~\/.$A-Za-z0-9_'"<]/
+    $secret_file = /(^|[ \t\n])(-T|--upload-file)([ \t=]|\\\r?\n)*[~\/.$'"<A-Za-z0-9_]/
     $secret_cat = /\$\(\s*cat\s|\$\(\s*<|`\s*cat\s/
     $secret_env = /\benv[ \t]*\||\bprintenv\b/
   condition:
