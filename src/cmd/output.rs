@@ -158,9 +158,10 @@ pub(crate) fn write_file_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Whether an `-o` path asks for text or for the file itself.
 ///
-/// The final extension states the intent: `notes.md` wants the page's text,
-/// `logo.png` wants the image. Names without an extension keep the text
-/// behaviour nab always had.
+/// The final extension states the intent: `logo.png` wants the image. Only
+/// extensions that clearly name binary content are file destinations; every
+/// other name, `notes.md` and `script.py` alike, keeps the text behaviour nab
+/// always had.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Destination {
     /// Converted (or raw) text, exactly as before.
@@ -171,14 +172,23 @@ pub(crate) enum Destination {
 
 /// Classify an `-o` path by its final extension (ASCII case-insensitive).
 pub(crate) fn destination_for(path: &Path) -> Destination {
-    const TEXT_EXTENSIONS: &[&str] =
-        &["md", "markdown", "txt", "html", "htm", "json", "xml", "csv"];
+    // Images, documents, archives, audio, video, fonts, programs and packages.
+    const BINARY_EXTENSIONS: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "tif", "tiff", "heic", "svg",
+        "pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "epub", "zip", "gz", "tgz", "bz2",
+        "xz", "zst", "7z", "rar", "tar", "mp3", "wav", "ogg", "oga", "flac", "m4a", "aac", "opus",
+        "mp4", "m4v", "mov", "webm", "mkv", "avi", "woff", "woff2", "ttf", "otf", "wasm", "exe",
+        "dmg", "pkg", "deb", "rpm", "apk", "iso", "bin",
+    ];
     match path.extension().and_then(|ext| ext.to_str()) {
-        None => Destination::Text,
-        Some(ext) if TEXT_EXTENSIONS.iter().any(|t| ext.eq_ignore_ascii_case(t)) => {
-            Destination::Text
+        Some(ext)
+            if BINARY_EXTENSIONS
+                .iter()
+                .any(|b| ext.eq_ignore_ascii_case(b)) =>
+        {
+            Destination::File
         }
-        Some(_) => Destination::File,
+        _ => Destination::Text,
     }
 }
 
@@ -209,6 +219,14 @@ pub(crate) fn body_class(content_type: &str, body: &[u8]) -> BodyClass {
                 | "application/javascript"
         )
         || ((mime.ends_with("+json") || mime.ends_with("+xml")) && mime != "image/svg+xml");
+    let xml_or_generic = matches!(
+        mime.as_str(),
+        "text/xml" | "application/xml" | "application/octet-stream" | ""
+    );
+    // An SVG image served under an XML or generic type is still an image.
+    if xml_or_generic && has_svg_root(body) {
+        return BodyClass::Binary;
+    }
     if is_text_mime {
         return BodyClass::Text;
     }
@@ -220,6 +238,23 @@ pub(crate) fn body_class(content_type: &str, body: &[u8]) -> BodyClass {
         };
     }
     BodyClass::Binary
+}
+
+/// Whether the first element of an XML body, after any declaration, comments
+/// and doctype, is `<svg`.
+fn has_svg_root(body: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&body[..body.len().min(1024)]).to_ascii_lowercase();
+    let mut rest = head.trim_start_matches('\u{feff}').trim_start();
+    while rest.starts_with("<?") || rest.starts_with("<!") {
+        let end = if rest.starts_with("<!--") {
+            rest.find("-->").map(|i| i + 3)
+        } else {
+            rest.find('>').map(|i| i + 1)
+        };
+        let Some(end) = end else { return false };
+        rest = rest[end..].trim_start();
+    }
+    rest.starts_with("<svg")
 }
 
 /// Text when the body is valid UTF-8, or starts with `<` after an optional
@@ -259,14 +294,15 @@ mod file_output_tests {
     }
 
     #[test]
-    fn other_extensions_are_file_destinations() {
+    fn binary_extensions_are_file_destinations() {
         for name in [
             "logo.png",
             "paper.PDF",
             "clip.mp4",
-            "tool.cmd",
             "archive.tar.gz",
             "x.svg",
+            "font.woff2",
+            "report.docx",
         ] {
             assert_eq!(
                 destination_for(Path::new(name)),
@@ -274,6 +310,47 @@ mod file_output_tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn text_assets_and_unknown_extensions_keep_the_text_behaviour() {
+        // Saving raw source and text assets worked before file destinations
+        // existed; only names that clearly want binary bytes changed.
+        for name in [
+            "script.py",
+            "style.css",
+            "app.js",
+            "rows.tsv",
+            "config.yaml",
+            "tool.cmd",
+            "page.php",
+            "notes.weird",
+        ] {
+            assert_eq!(
+                destination_for(Path::new(name)),
+                Destination::Text,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn svg_served_as_xml_or_untyped_is_binary() {
+        let svg =
+            b"<?xml version=\"1.0\"?>\n<!-- logo -->\n<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+        for ct in [
+            "text/xml",
+            "application/xml",
+            "application/octet-stream",
+            "",
+        ] {
+            assert_eq!(body_class(ct, svg), BodyClass::Binary, "{ct}");
+        }
+        // Other XML stays text.
+        assert_eq!(
+            body_class("text/xml", b"<rss version=\"2.0\"/>"),
+            BodyClass::Text
+        );
     }
 
     #[test]
