@@ -360,10 +360,10 @@ where
         warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
     }
 
-    let emptied = if !replaced_by_spa {
-        emptied_sections(&cleaned_html, &markdown)
-    } else {
+    let emptied = if replaced_by_spa {
         Vec::new()
+    } else {
+        emptied_sections(&cleaned_html, &markdown)
     };
     (markdown, emptied)
 }
