@@ -2522,8 +2522,11 @@ mod emptied_section_tests {
 
     #[test]
     fn a_heading_dropped_with_its_section_is_not_reported() {
-        let source = get_started(LIST);
-        let markdown = html_to_markdown(&page(NEXT));
+        // "Aside" keeps an empty interval (its five characters were dropped),
+        // so the all-sections-have-text shortcut cannot answer for this test.
+        let aside = "<h2>Aside</h2><p>Short</p>";
+        let source = page(&format!("<h2>Get started</h2>{LIST}{aside}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("<h2>Aside</h2>{NEXT}")));
         assert!(
             emptied_sections(&source, &markdown).is_empty(),
             "{markdown}"
