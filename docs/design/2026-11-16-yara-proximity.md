@@ -61,3 +61,19 @@ Python regexes standing in for YARA-X, 512-byte window, curl rule, over the save
 Live check before merge, recorded in the PR: Flipboard raw keeps over 90% of its bytes; swamp-club.com reports no redaction. Third-party pages are not committed as fixtures (licence); T6 and T7 reproduce their shapes.
 
 Sabotage: drop the cluster check (T1, T6 fail); keep only the first cluster (T2 fails); restore the cap of 8 (T3 fails); remove the saturation fallback (T4 fails); delete one rule's `proximity` or regroup it (T5 fails); apply a 512-byte window to the PEM rule (T6 fails); restore bare `SECRET` (T7 fails); restore bare DNS `token` (T9 fails).
+
+## Revision 3.1: round 3 amendments (Grok, Muse, both SHIP-WITH-FIXES, no critical)
+
+- URL group, curl and wget: `https?://` (plain `http://` included).
+- Secret variable, as written in the rule: `/\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase`. T7 adds positives `${API_TOKEN}` and lowercase `$api_token`, and negatives `$KEYBOARD`, `$TOKENIZER`, `$passport`, `$monkey`.
+- `@` uploads, as written: `/(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?)(=|[ \t]*)['"]?([A-Za-z0-9_.-]+=?)?@[~\/.A-Za-z0-9]/`. `@-` (stdin) is not a part. T7 gets one fixture per form: `-d @~/.netrc`, `-d@~/.netrc`, `--data=@/etc/passwd`, `--data-binary @~/.aws/credentials`, `-F file=@~/.ssh/id_rsa`, `--data-urlencode key@/etc/hosts`.
+- T2b (boolean-gate guard): one qualifying cluster plus lone curl, URL and secret hits on other lines more than a window away; only the cluster lines go.
+- T2c (overlap): two clusters sharing one hit; every hit inside either cluster's span is removed. D2's sweep invariant: a hit is redacted when it lies inside the span of any window holding one hit of every group within `window` bytes.
+- T2d: an early curl and URL more than a window before a later complete command; only the later lines go.
+- T3b (cap above load): 6,000 scattered URL hits before one real cluster and a benign line after it; the cluster lines go, the benign line stays, so a cap below 6,000 fails.
+- T4: saturation is judged on raw per-pattern hit counts before ranges are replaced by the cluster union; the fixture holds a non-hit line that must disappear with the body.
+- T8 adds the negative `wget https://site.invalid/credentials-help`.
+- T1 adds a `curl\` continuation glued to its next line.
+- #409's `a_secret_pattern_at_the_match_cap_removes_the_whole_line` moves from 9 keys to one past the new cap.
+- D1 and T5 classify by condition groups, not strings: `secret_openai_key` has two strings in one group and needs no `proximity`.
+- T10 also times the sort, sweep and redaction on a body repeating several rules' trigger phrases; T6 adds paragraph-spaced variants of the prompt fixtures (parts 900 bytes apart fire, 1,025 do not).
