@@ -685,4 +685,18 @@ mod tests {
         let (text, _) = extract_inline_script_json_with_source(&html).expect("a candidate");
         assert!(text.contains("Preloaded store body"), "{text}");
     }
+
+    #[test]
+    fn a_next_data_comparison_is_not_an_assignment() {
+        // GIVEN: a `==` test of __NEXT_DATA__, then an unrelated parseable object
+        let other = long_text("Unrelated config string");
+        let html = format!(
+            r#"<html><body><script>var ready = window.__NEXT_DATA__ == null; var cfg = {{"about":"{other}"}};</script></body></html>"#
+        );
+
+        let (_, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        // THEN: the object is a generic hit, not page data
+        assert_eq!(source, SpaSource::GenericAssignment);
+    }
 }
