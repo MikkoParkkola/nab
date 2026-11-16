@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-11-16
+
+### Fixed
+
+- The fetch-time YARA-X screen no longer removes most of a page because a
+  rule's words appear far apart. The prompt-injection and exfiltration rules
+  now fire only when their parts sit within one command or paragraph (512 or
+  1,024 bytes), and only those lines are removed. A Flipboard collection page
+  that kept 19 KB of its raw HTML now keeps all 2.5 MB (#410).
+- curl, wget and DNS exfiltration rules match shell-shaped secrets
+  (`$API_TOKEN`, `@file` uploads, `$(cat …)`, `env |`) instead of bare words
+  such as `SECRET`, `token` or `-X POST`, so ordinary API documentation is
+  kept (#410).
+- A secret on a very long minified line is removed with 256 bytes around it
+  instead of the whole line; a URL slug containing `sk-` is no longer treated
+  as an OpenAI key; and `nab fetch` says on stderr how much the screen removed
+  (#409).
+- Redaction stays fast with many matches on one line; a scan times out after
+  5 s plus 1 s per MB of body, which refuses the fetch (#410).
+- `nab fetch -o` saves binary responses byte for byte instead of placeholder
+  text or a lossy UTF-8 copy (#399).
+- Article extraction no longer replaces the article with a teaser, an author
+  bio or inline CSS (#398).
+
+### Changed
+
+- Rust toolchain image 1.100; dependency updates including yara-x 1.22.1,
+  tokio 1.54.1, scraper 0.29.0, zip 9.3.0 and toml 1.2.0.
+
 ## [0.12.6] - 2026-10-24
 
 ### Fixed
