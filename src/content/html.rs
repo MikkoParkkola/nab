@@ -201,7 +201,7 @@ where
         html,
         url,
         options,
-        spa_extract::extract_spa_data,
+        spa_extract::extract_spa_candidate,
         jina_fetcher,
     )
 }
@@ -214,27 +214,32 @@ fn html_to_markdown_with_url_and_sources<S, F>(
     jina_fetcher: F,
 ) -> String
 where
-    S: Fn(&str) -> Option<String>,
+    S: Fn(&str) -> Option<spa_extract::SpaCandidate>,
     F: Fn(&str) -> Option<String>,
 {
-    const MIN_READABILITY_LEN: usize = 50;
-
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     let spa_candidate = if options.allow_spa_extraction {
         // An empty candidate is metadata-only JSON-LD (see `render_spa_content`).
-        spa_extractor(html).filter(|candidate| !candidate.trim().is_empty())
+        spa_extractor(html).filter(|candidate| !candidate.text.trim().is_empty())
     } else {
         None
     };
 
-    if let Some(spa_content) = spa_candidate.as_ref() {
-        if !is_thin_content(html.len(), spa_content.len()) {
-            return spa_content.clone();
+    if let Some(spa) = spa_candidate.as_ref() {
+        // Framework data is trusted to beat page chrome. The catch-all
+        // assignment scraper is not: on server-rendered pages its longest
+        // string is often a bio, query variables or CSS, so it only fills a
+        // thin HTML result below.
+        if spa.source == spa_extract::SpaSource::Framework
+            && !is_thin_content(html.len(), spa.text.len())
+        {
+            return spa.text.clone();
         }
 
         tracing::debug!(
-            "Thin SPA extraction detected ({} chars from {} bytes HTML) — continuing to fallback paths",
-            spa_content.len(),
+            source = ?spa.source,
+            "SPA candidate deferred ({} chars from {} bytes HTML) — continuing to HTML extraction",
+            spa.text.len(),
             html.len()
         );
     }
@@ -248,8 +253,8 @@ where
 
     // Try readability extraction with real URL (or fallback placeholder)
     let effective_url = url.unwrap_or("https://example.com");
-    let readability_md = readability::extract_article(&cleaned_html, effective_url)
-        .map(|article| readability::article_to_markdown(&article));
+    let readability = readability::extract_article(&cleaned_html, effective_url)
+        .map(|article| (readability::article_to_markdown(&article), article.source));
 
     // Direct html2md on cleaned HTML (preserves tables, lists, etc.)
     let direct_md = html_to_markdown(&cleaned_html);
@@ -265,35 +270,53 @@ where
     }
     let prefer_readability = options.force_readability || direct_exceeds_budget;
 
-    // Pick the better result.  Readability produces clean article content but
-    // is much shorter than direct conversion (which includes navigation, CSS,
-    // JSON-LD, footers, etc.).  Prefer readability whenever it extracted
-    // non-trivial content (>= 50 chars), since readability strips boilerplate
-    // that direct_md preserves.  Only fall back to direct when readability
-    // produced nearly nothing.
-    let markdown = match readability_md {
-        Some(ref r_md) if prefer_readability && r_md.len() >= MIN_READABILITY_LEN => r_md.clone(),
-        Some(ref r_md) if r_md.len() >= MIN_READABILITY_LEN => r_md.clone(),
-        Some(ref r_md) if r_md.len() > direct_md.len() => r_md.clone(),
+    let readability_len = readability.as_ref().map(|(md, _)| md.len());
+    let readability_source = readability.as_ref().map(|(_, source)| *source);
+    let pick = pick_html_result_for_page(
+        html,
+        HtmlSelection {
+            readability_len,
+            readability_source,
+            direct_len: direct_md.len(),
+            prefer_readability,
+            nextjs_metadata_only: false,
+        },
+    );
+    let small_pick_len =
+        readability_len.filter(|len| *len >= MIN_READABILITY_LEN && pick == HtmlPick::Direct);
+    tracing::debug!(
+        pick = ?pick,
+        readability_len,
+        readability_source = ?readability_source,
+        direct_len = direct_md.len(),
+        spa_source = ?spa_candidate.as_ref().map(|spa| spa.source),
+        spa_len = spa_candidate.as_ref().map(|spa| spa.text.len()),
+        "html selection"
+    );
+    let markdown = match (pick, readability) {
+        (HtmlPick::Readability, Some((r_md, _))) => r_md,
         _ => direct_md,
     };
 
     // Post-process: strip markdown noise from html2md output
     let markdown = clean_markdown_noise(&markdown);
-    let markdown = match spa_candidate {
-        Some(spa_content) if spa_content.len() > markdown.len() => spa_content,
-        _ => markdown,
-    };
+    let (markdown, small_pick_len) = merge_spa_candidate(
+        markdown,
+        spa_candidate,
+        prefer_readability,
+        small_pick_len,
+        pick,
+    );
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
-    // Re-try SPA extraction on the *original* (uncleaned) HTML — the first
-    // extraction pass may have missed embedded JSON that only appears in
-    // deeply nested script tags or variable assignments.
-    if is_thin_content(html.len(), markdown.len()) {
+    // When a small pick was replaced by the whole page, judge thinness on the
+    // pick: the whole page may be only navigation.
+    let thin_check_len = small_pick_len.unwrap_or(markdown.len());
+    if is_thin_content(html.len(), thin_check_len) {
         tracing::debug!(
             "Thin content detected ({} chars from {} bytes HTML) — attempting recovery",
-            markdown.len(),
+            thin_check_len,
             html.len()
         );
 
@@ -311,22 +334,149 @@ where
         }
 
         // Remote fallback either wasn't enabled, had no URL, or failed.
-        // Emit actionable guidance as a warning.
+        warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
+    }
+
+    markdown
+}
+
+/// Let an SPA candidate replace the HTML result when it should.
+///
+/// Framework data replaces a shorter HTML result. The catch-all assignment
+/// scraper only fills a thin one, and never against an explicit readability
+/// preference. Returns the markdown and the small-pick length, which is
+/// cleared once the HTML result has been replaced.
+fn merge_spa_candidate(
+    markdown: String,
+    spa_candidate: Option<spa_extract::SpaCandidate>,
+    prefer_readability: bool,
+    small_pick_len: Option<usize>,
+    pick: HtmlPick,
+) -> (String, Option<usize>) {
+    match spa_candidate {
+        Some(spa)
+            if spa.source == spa_extract::SpaSource::Framework
+                && spa.text.len() > markdown.len() =>
+        {
+            (spa.text, None)
+        }
+        // The catch-all scraper only fills a thin whole-page result: an
+        // article an extractor chose stays, however short (MIK-8684).
+        Some(spa)
+            if spa.source == spa_extract::SpaSource::GenericAssignment
+                && pick == HtmlPick::Direct
+                && !prefer_readability
+                && markdown.len() < THIN_MARKDOWN_LEN
+                && spa.text.len() > markdown.len() =>
+        {
+            (spa.text, None)
+        }
+        _ => (markdown, small_pick_len),
+    }
+}
+
+/// [`pick_html_result`], running the Next.js metadata check only when the
+/// small-pick rule fired: it parses the whole page, so it is not run on every fetch.
+fn pick_html_result_for_page(html: &str, selection: HtmlSelection) -> HtmlPick {
+    let pick = pick_html_result(selection);
+    let small_pick_fired = pick == HtmlPick::Direct
+        && selection
+            .readability_len
+            .is_some_and(|len| len >= MIN_READABILITY_LEN);
+    if small_pick_fired && spa_extract::is_nextjs_metadata_only(html) {
+        return pick_html_result(HtmlSelection {
+            nextjs_metadata_only: true,
+            ..selection
+        });
+    }
+    pick
+}
+
+/// Emit actionable guidance when the output looks thin.
+fn warn_thin_output(whole_page_replaced_small_pick: bool, len: usize, html_len: usize) {
+    if whole_page_replaced_small_pick {
         tracing::warn!(
-            "Output is suspiciously thin ({} chars from {} bytes of HTML). \
+            "The article extractor found only {len} chars on a {html_len} byte page, so the whole \
+             page is returned instead. If the article is missing from it, the page likely \
+             uses JavaScript rendering: try `nab spa <url>` or \
+             `nab fetch --remote-fallback <url>` (public URLs only; sends the URL to r.jina.ai)"
+        );
+    } else {
+        tracing::warn!(
+            "Output is suspiciously thin ({len} chars from {html_len} bytes of HTML). \
              The page likely uses JavaScript rendering. Try:\n  \
              1. nab spa <url>              (extract embedded SPA data)\n  \
              2. nab fetch <url>            (uses default browser cookies automatically)\n  \
              3. nab browser <url>          (explicit external-CDP browser rendering)\n  \
              4. nab fetch --cookies brave <url>  (override the browser profile if needed)\n  \
-             5. nab fetch --remote-fallback <url>  (public URLs only; sends the URL to r.jina.ai)",
-            markdown.len(),
-            html.len()
+             5. nab fetch --remote-fallback <url>  (public URLs only; sends the URL to r.jina.ai)"
         );
     }
-
-    markdown
 }
+
+/// Which HTML-derived result the selection step returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HtmlPick {
+    /// The extracted article.
+    Readability,
+    /// The whole cleaned page converted to markdown.
+    Direct,
+}
+
+/// Inputs to [`pick_html_result`]; lengths are in bytes.
+#[derive(Debug, Clone, Copy)]
+struct HtmlSelection {
+    readability_len: Option<usize>,
+    readability_source: Option<readability::ArticleSource>,
+    direct_len: usize,
+    prefer_readability: bool,
+    nextjs_metadata_only: bool,
+}
+
+/// Choose between the extracted article and the whole-page conversion.
+///
+/// Readability strips navigation and footers, so it wins whenever it found
+/// non-trivial content, with one exception: a small pick by a generic
+/// extractor on a page more than ten times its size is more likely a teaser,
+/// a bio or image credits than the article. Returning the whole page then
+/// keeps the article recoverable; returning the wrong block does not.
+/// Site-specific extractors, an explicit readability preference and Next.js
+/// metadata-only pages (which have their own chunk recovery) are exempt.
+fn pick_html_result(selection: HtmlSelection) -> HtmlPick {
+    let Some(len) = selection.readability_len else {
+        return HtmlPick::Direct;
+    };
+    if len < MIN_READABILITY_LEN {
+        return if len > selection.direct_len {
+            HtmlPick::Readability
+        } else {
+            HtmlPick::Direct
+        };
+    }
+
+    let generic = selection.readability_source == Some(readability::ArticleSource::Generic);
+    let small_on_large_page =
+        len < SMALL_PICK_LEN && len * 100 < selection.direct_len * SMALL_PICK_PERCENT;
+    if generic
+        && small_on_large_page
+        && !selection.prefer_readability
+        && !selection.nextjs_metadata_only
+    {
+        HtmlPick::Direct
+    } else {
+        HtmlPick::Readability
+    }
+}
+
+/// Below this many bytes an extraction result counts as empty.
+const MIN_READABILITY_LEN: usize = 50;
+/// A generic readability pick shorter than this (bytes) and under
+/// [`SMALL_PICK_PERCENT`] of the whole-page conversion yields to the page.
+/// Measured 2026-11-15: correct picks were 39-57% of the page, wrong ones 1.8-6%.
+const SMALL_PICK_LEN: usize = 2_000;
+const SMALL_PICK_PERCENT: usize = 10;
+/// Markdown shorter than this (bytes) counts as thin.
+const THIN_MARKDOWN_LEN: usize = 800;
 
 /// Check if markdown output is suspiciously thin relative to HTML input size.
 ///
@@ -337,10 +487,9 @@ where
 #[must_use]
 fn is_thin_content(html_len: usize, markdown_len: usize) -> bool {
     const MIN_HTML_LEN: usize = 5_000;
-    const MIN_MARKDOWN_LEN: usize = 800;
     const THIN_RATIO_PERCENT: usize = 2;
 
-    if html_len < MIN_HTML_LEN || markdown_len >= MIN_MARKDOWN_LEN {
+    if html_len < MIN_HTML_LEN || markdown_len >= THIN_MARKDOWN_LEN {
         return false;
     }
 
@@ -928,10 +1077,11 @@ pub fn is_boilerplate(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        HtmlConversionOptions, detect_empty_spa_shell, html_to_markdown_with_url,
-        html_to_markdown_with_url_and_fetcher, html_to_markdown_with_url_and_sources,
-        is_thin_content, looks_like_client_spa_shell, strip_embedded_data_sections,
-        strip_hidden_sections, strip_noise_sections,
+        HtmlConversionOptions, HtmlPick, HtmlSelection, detect_empty_spa_shell,
+        html_to_markdown_with_url, html_to_markdown_with_url_and_fetcher,
+        html_to_markdown_with_url_and_sources, is_thin_content, looks_like_client_spa_shell,
+        merge_spa_candidate, pick_html_result, pick_html_result_for_page,
+        strip_embedded_data_sections, strip_hidden_sections, strip_noise_sections,
     };
 
     #[test]
@@ -1096,7 +1246,12 @@ mod tests {
                 allow_jina_fallback: true,
                 ..HtmlConversionOptions::default()
             },
-            |_html| Some(code_sample.clone()),
+            |_html| {
+                Some(super::spa_extract::SpaCandidate {
+                    text: code_sample.clone(),
+                    source: super::spa_extract::SpaSource::Framework,
+                })
+            },
             |url| {
                 calls.set(calls.get() + 1);
                 Some(format!("Recovered remotely from {url}"))
@@ -1178,7 +1333,12 @@ mod tests {
                 allow_jina_fallback: false,
                 ..HtmlConversionOptions::default()
             },
-            |_html| Some(code_sample.clone()),
+            |_html| {
+                Some(super::spa_extract::SpaCandidate {
+                    text: code_sample.clone(),
+                    source: super::spa_extract::SpaSource::Framework,
+                })
+            },
             |_url| {
                 calls.set(calls.get() + 1);
                 Some("Recovered remotely".to_string())
@@ -1652,5 +1812,273 @@ mod tests {
                 .contains("SPA article body sentence that only exists in the hydration payload."),
             "expected SPA body in markdown: {markdown}"
         );
+    }
+
+    // ── MIK-8684: wrong block wins ────────────────────────────────────────
+    //
+    // Synthetic pages: real-page measurements are in
+    // docs/design/2026-11-15-fetch-fidelity-design.md (Part 2 evidence table).
+
+    const ARTICLE_URL: &str = "https://blog.nab.test/2026/11/thin-orchestrator";
+
+    fn article_body() -> String {
+        use std::fmt::Write as _;
+        let mut body = String::new();
+        for i in 0..6 {
+            let _ = write!(
+                body,
+                "<p>The thin orchestrator routes each request to one specialised worker \
+                 and keeps no business logic of its own, so a failure points at one worker. \
+                 Section {i} covers how retries, timeouts and budgets live in the workers.</p>"
+            );
+        }
+        body
+    }
+
+    fn page_with_script(script: &str) -> String {
+        format!(
+            "<html><head><title>Thin orchestrator</title><script>{script}</script></head>\
+             <body><nav><a href='/'>Home</a> <a href='/blog'>Blog</a></nav>\
+             <article><h1>The Thin Orchestrator</h1>{}</article>\
+             <footer>Footer text</footer></body></html>",
+            article_body()
+        )
+    }
+
+    #[test]
+    fn generic_assignment_bio_does_not_replace_the_article() {
+        // GIVEN: an article page whose settings script holds a 1,000-byte author bio
+        let bio = "Jo Writer is a principal security engineer with two decades of experience \
+                   in application security and threat modelling. "
+            .repeat(8);
+        let html = page_with_script(&format!(
+            r#"var settings = {{"author":{{"name":"Jo","bio":"{bio}"}}}};"#
+        ));
+
+        // WHEN: converted
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        // THEN: the article is returned, not the bio
+        assert!(
+            markdown.contains("routes each request to one specialised worker"),
+            "article missing: {markdown}"
+        );
+        assert!(!markdown.starts_with("Jo Writer"), "bio won: {markdown}");
+    }
+
+    #[test]
+    fn generic_assignment_css_does_not_replace_the_article() {
+        // GIVEN: an article page whose theme script holds a font-face CSS string
+        let css = "/* latin */ @font-face { font-family: 'Archivo'; font-style: normal; \
+                   font-weight: 400; src: url(/f.woff2) format('woff2'); } "
+            .repeat(10);
+        let html = page_with_script(&format!(r#"var theme = {{"css":"{css}"}};"#));
+
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        assert!(!markdown.contains("@font-face"), "CSS won: {markdown}");
+        assert!(markdown.contains("routes each request to one specialised worker"));
+    }
+
+    #[test]
+    fn generic_assignment_still_fills_an_empty_page_shell() {
+        // GIVEN: a client-rendered shell whose only text is in a state assignment
+        let body = "This post explains how the build cache is keyed and why it is rebuilt \
+                    whenever the toolchain changes. "
+            .repeat(6);
+        let html = format!(
+            r#"<html><body><div id="app"></div><script>var state = {{"post":{{"body":"{body}"}}}};</script></body></html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        assert!(
+            markdown.contains("how the build cache is keyed"),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn named_next_data_assignment_still_beats_page_chrome() {
+        // GIVEN: article text only in window.__NEXT_DATA__, plus long navigation
+        let content = "The release notes describe the new scheduler, which assigns each job \
+                       to the least loaded worker and records why it chose it. "
+            .repeat(6);
+        let mut nav = String::new();
+        for i in 0..60 {
+            use std::fmt::Write as _;
+            let _ = write!(
+                nav,
+                "<li><a href='/docs/{i}'>Documentation page {i}</a></li>"
+            );
+        }
+        let html = format!(
+            r#"<html><body><nav><ul>{nav}</ul></nav><div id="__next"></div><script>window.__NEXT_DATA__ = {{"props":{{"pageProps":{{"post":{{"content":"{content}"}}}}}}}};</script></body></html>"#
+        );
+
+        let markdown = html_to_markdown_with_url(&html, Some(ARTICLE_URL));
+
+        assert!(markdown.contains("assigns each job"), "{markdown}");
+    }
+
+    use crate::content::readability::ArticleSource;
+
+    fn selection(
+        readability_len: usize,
+        direct_len: usize,
+        source: ArticleSource,
+    ) -> HtmlSelection {
+        HtmlSelection {
+            readability_len: Some(readability_len),
+            readability_source: Some(source),
+            direct_len,
+            prefer_readability: false,
+            nextjs_metadata_only: false,
+        }
+    }
+
+    #[test]
+    fn tiny_generic_pick_on_a_large_page_yields_to_direct() {
+        // Measured on real pages, 2026-11-15: readability vs direct lengths.
+        for (name, r_len, d_len) in [
+            ("threadreaderapp teaser", 187, 7_067),
+            ("gradium image credits", 1_462, 24_505),
+            ("thenerve home page", 459, 25_037),
+        ] {
+            assert_eq!(
+                pick_html_result(selection(r_len, d_len, ArticleSource::Generic)),
+                HtmlPick::Direct,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn healthy_generic_pick_stays_readability() {
+        for (name, r_len, d_len) in [
+            ("engineering.fb.com", 12_913, 32_839),
+            ("salesforce", 22_169, 38_901),
+            ("a2ui", 11_362, 19_965),
+            ("short post on a light page", 550, 3_000),
+            ("long article on a huge page", 5_000, 200_000),
+        ] {
+            assert_eq!(
+                pick_html_result(selection(r_len, d_len, ArticleSource::Generic)),
+                HtmlPick::Readability,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_readability_preference_is_kept() {
+        let mut sel = selection(187, 7_067, ArticleSource::Generic);
+        sel.prefer_readability = true;
+        assert_eq!(pick_html_result(sel), HtmlPick::Readability);
+    }
+
+    #[test]
+    fn site_specific_extractors_are_trusted() {
+        for source in [ArticleSource::Substack, ArticleSource::WordPress] {
+            assert_eq!(
+                pick_html_result(selection(1_500, 54_133, source)),
+                HtmlPick::Readability,
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nextjs_metadata_only_pages_keep_readability_for_chunk_recovery() {
+        let mut sel = selection(187, 7_067, ArticleSource::Generic);
+        sel.nextjs_metadata_only = true;
+        assert_eq!(pick_html_result(sel), HtmlPick::Readability);
+    }
+
+    #[test]
+    fn page_level_pick_runs_the_nextjs_exemption_when_the_small_pick_fires() {
+        // GIVEN: a Next.js page whose __NEXT_DATA__ holds metadata only
+        let html = r#"<html><body><script id="__NEXT_DATA__" type="application/json">
+            {"props":{"pageProps":{"title":"Short title"}},"page":"/post"}
+            </script></body></html>"#;
+        let plain = "<html><body><p>No framework data here.</p></body></html>";
+
+        // WHEN/THEN: the small pick is kept on the Next.js page, yields elsewhere
+        let sel = selection(187, 7_067, ArticleSource::Generic);
+        assert_eq!(pick_html_result_for_page(html, sel), HtmlPick::Readability);
+        assert_eq!(pick_html_result_for_page(plain, sel), HtmlPick::Direct);
+    }
+
+    #[test]
+    fn near_empty_readability_still_falls_back_to_direct() {
+        // Unchanged rule: under 50 bytes and shorter than direct.
+        assert_eq!(
+            pick_html_result(selection(20, 400, ArticleSource::Generic)),
+            HtmlPick::Direct
+        );
+        let none = HtmlSelection {
+            readability_len: None,
+            readability_source: None,
+            direct_len: 400,
+            prefer_readability: false,
+            nextjs_metadata_only: false,
+        };
+        assert_eq!(pick_html_result(none), HtmlPick::Direct);
+    }
+
+    #[test]
+    fn an_spa_candidate_that_replaces_the_result_clears_the_small_pick() {
+        use crate::content::spa_extract::{SpaCandidate, SpaSource};
+        let candidate = |source| SpaCandidate {
+            text: "Recovered article text from page data. ".repeat(40),
+            source,
+        };
+
+        // Framework data longer than the whole-page fallback replaces it.
+        let (text, small_pick) = merge_spa_candidate(
+            "short page".to_owned(),
+            Some(candidate(SpaSource::Framework)),
+            false,
+            Some(187),
+            HtmlPick::Direct,
+        );
+        assert!(text.starts_with("Recovered"));
+        assert_eq!(small_pick, None);
+
+        // A generic candidate fills a thin result and clears it too.
+        let (_, small_pick) = merge_spa_candidate(
+            "thin".to_owned(),
+            Some(candidate(SpaSource::GenericAssignment)),
+            false,
+            Some(187),
+            HtmlPick::Direct,
+        );
+        assert_eq!(small_pick, None);
+
+        // No replacement: the small pick is kept for the thin-content check.
+        let (text, small_pick) =
+            merge_spa_candidate("x".repeat(5_000), None, false, Some(187), HtmlPick::Direct);
+        assert_eq!(text.len(), 5_000);
+        assert_eq!(small_pick, Some(187));
+    }
+
+    #[test]
+    fn a_generic_candidate_never_replaces_a_short_picked_article() {
+        use crate::content::spa_extract::{SpaCandidate, SpaSource};
+        // A short genuine post (under the thin threshold) that the extractor
+        // chose as the article stays, however long the scraped string is.
+        let article = "A short genuine post. ".repeat(20);
+        let generic = SpaCandidate {
+            text: "author bio or font CSS ".repeat(200),
+            source: SpaSource::GenericAssignment,
+        };
+        let (text, _) = merge_spa_candidate(
+            article.clone(),
+            Some(generic),
+            false,
+            None,
+            HtmlPick::Readability,
+        );
+        assert_eq!(text, article);
     }
 }
