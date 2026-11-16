@@ -290,9 +290,13 @@ rule secret_openai_key {
     severity = "critical"
     description = "OpenAI API key shape"
   strings:
-    $key = /sk-(proj-)?[A-Za-z0-9_-]{40,}/
+    // Project, service-account and admin keys carry a family prefix and may
+    // hold '-' or '_'; legacy keys are alphanumeric. A hyphenated slug such as
+    // "sk-hynix-earnings-..." fits neither; any non-alphanumeric may precede.
+    $key = /(^|[^A-Za-z0-9])sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{40,}/
+    $legacy = /(^|[^A-Za-z0-9])sk-[A-Za-z0-9]{40,}/
   condition:
-    $key
+    any of them
 }
 
 rule secret_slack_token {
