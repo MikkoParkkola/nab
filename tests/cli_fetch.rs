@@ -416,7 +416,7 @@ fn fetch_custom_method_head() {
 #[test]
 fn fetch_custom_header() {
     let body = r#"{"headers":{"X-Nab-Test":"integration"}}"#;
-    let (proxy_url, proxy_result) = spawn_test_proxy(&http_response("200 OK", body), |request| {
+    let (proxy_url, proxy_result) = spawn_test_proxy(http_response("200 OK", body), |request| {
         assert!(
             request.starts_with("GET http://93.184.216.34/headers HTTP/1.1\r\n"),
             "unexpected request line: {request}"
@@ -609,7 +609,7 @@ fn fetch_no_redirect_captures_302() {
 #[test]
 fn fetch_post_with_data() {
     let body = r#"{"json":{"key": "value"}}"#;
-    let (proxy_url, proxy_result) = spawn_test_proxy(&http_response("200 OK", body), |request| {
+    let (proxy_url, proxy_result) = spawn_test_proxy(http_response("200 OK", body), |request| {
         assert!(
             request.starts_with("POST http://93.184.216.34/post HTTP/1.1\r\n"),
             "unexpected request line: {request}"
@@ -682,14 +682,13 @@ const PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\x00\x10ta
 const PDF_BYTES: &[u8] = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n\xff\x00%%EOF\n";
 
 fn http_bytes_response(status: &str, content_type: Option<&str>, body: &[u8]) -> Vec<u8> {
-    let mut head = format!("HTTP/1.1 {status}\r\n");
-    if let Some(content_type) = content_type {
-        head.push_str(&format!("Content-Type: {content_type}\r\n"));
-    }
-    head.push_str(&format!(
-        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+    let content_type_line = content_type
+        .map(|content_type| format!("Content-Type: {content_type}\r\n"))
+        .unwrap_or_default();
+    let head = format!(
+        "HTTP/1.1 {status}\r\n{content_type_line}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
-    ));
+    );
     let mut response = head.into_bytes();
     response.extend_from_slice(body);
     response
