@@ -1,6 +1,6 @@
 # Replace chrono with time
 
-Status: design, for review before code. Unblocks the release: the release security gate (osv-scanner) fails on RUSTSEC-2026-0543, "chrono is unmaintained", which has no patched version. Rule for unfixable advisories: a time-boxed ignore only when the upstream is maintained; otherwise replace the dependency. chrono is a direct dependency of nab only (`cargo tree -i chrono`), so nab can remove it.
+Status: implemented after one review round (Grok, Muse). Meant to unblock the release: the release security gate (osv-scanner) fails on RUSTSEC-2026-0543, "chrono is unmaintained", which has no patched version. Rule for unfixable advisories: a time-boxed ignore only when the upstream is maintained; otherwise replace the dependency. chrono is a direct dependency of nab only (`cargo tree -i chrono`), so nab can remove it.
 
 ## Choice
 
@@ -40,3 +40,15 @@ Characterization tests written before the swap, green on chrono and required gre
 - C4. `timestamp_from_activity_urn` keeps its current output for the existing doc-test URN.
 
 Then the swap; `cargo tree -i chrono` must report nothing, and the release gate's osv-scanner run must pass on the branch.
+
+## What review and the build changed
+
+- Timestamps are read through `util::utc_rfc3339`, which converts to UTC on read as chrono's `DateTime<Utc>` did; `time::serde::rfc3339` alone keeps a stored offset, and nab prints these stamps with a literal `Z`. `Option` fields carry `#[serde(default)]` so a missing key still reads as `None`.
+- The watch id hashes `i64::try_from(unix_timestamp_nanos()).unwrap_or(0)`, the same 8 bytes as before.
+- The telemetry day check converts month and day with `u8::try_from` before building a `Date`; years outside ±9999 are now rejected where chrono accepted them, which no 10-character day string can reach except `10000-1-01`.
+- File birth times go through `duration_since(UNIX_EPOCH)`, so an odd birth time reads as `None` instead of panicking.
+- The CLI and MCP watch listings formatted timestamps with chrono methods without naming chrono; they now use `util::format_utc_seconds`.
+
+## What it does not fix
+
+chrono stays in `Cargo.lock`: the optional `pdf` feature depends on `pdfium-render`, whose latest release (0.9.5) still requires chrono. No default or release build enables `pdf`, so no released binary links chrono, but osv-scanner reads the lock file. Shipping still needs either a dated exception for RUSTSEC-2026-0543 or pdfium-render moving off chrono; that is the operator's decision.
