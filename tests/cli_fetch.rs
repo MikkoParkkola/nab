@@ -326,6 +326,39 @@ fn fetch_raw_html_flag() {
         .stdout(predicate::str::contains("Example Domain"));
 }
 
+/// `--raw-html` asks for the page itself, so it must print without `--body`.
+#[test]
+fn raw_html_prints_the_page_without_body_flag() {
+    let html = r#"<html><body><p id="raw-marker">The page nab read, verbatim.</p></body></html>"#;
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
+        html.len()
+    );
+    for format in [None, Some("compact")] {
+        let (proxy_url, proxy_result) = spawn_test_proxy(&response, |_| {});
+        let mut cmd = nab();
+        cmd.args([
+            "fetch",
+            "--raw-html",
+            "--cookies",
+            "none",
+            "--proxy",
+            &proxy_url,
+        ]);
+        if let Some(format) = format {
+            cmd.args(["--format", format]);
+        }
+        cmd.arg(format!("{PROXY_TEST_ORIGIN}/page"))
+            .timeout(PROXY_COMMAND_TIMEOUT)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(
+                r#"<p id="raw-marker">The page nab read, verbatim.</p>"#,
+            ));
+        wait_for_test_proxy(&proxy_result);
+    }
+}
+
 #[test]
 fn fetch_links_flag() {
     if !net_tests_enabled() {
