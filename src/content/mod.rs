@@ -65,6 +65,10 @@ pub struct ConversionResult {
     /// Present for HTML content; `None` for plain-text passthrough and PDF,
     /// where a "quality" signal is not meaningful.
     pub quality: Option<quality::QualityScore>,
+    /// Headings the HTML extraction kept with their whole section dropped
+    /// (MIK-9504), so callers can say the page lost content. Empty for
+    /// non-HTML content and when nothing was dropped.
+    pub emptied_sections: Vec<String>,
 }
 
 /// Converts response bytes into markdown.

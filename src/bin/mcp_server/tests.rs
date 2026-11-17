@@ -157,6 +157,7 @@ fn fetch_structured_has_all_required_fields() {
         response_confidence: None,
         response_reason: None,
         thin_content_detected: false,
+        emptied_sections: &[],
     });
     // WHEN inspected
     // THEN all outputSchema fields are present
@@ -273,6 +274,7 @@ fn fetch_structured_preserves_content_verbatim() {
         response_confidence: None,
         response_reason: None,
         thin_content_detected: false,
+        emptied_sections: &[],
     });
     // WHEN inspected
     // THEN content is stored verbatim (no internal truncation)
@@ -298,6 +300,7 @@ fn fetch_structured_includes_truncation_metadata_when_flagged() {
         response_confidence: None,
         response_reason: None,
         thin_content_detected: false,
+        emptied_sections: &[],
     });
     // THEN truncation metadata fields are present
     assert_eq!(map["truncated"], serde_json::Value::Bool(true));
@@ -321,6 +324,7 @@ fn fetch_structured_includes_response_diagnostics_when_present() {
         response_confidence: Some(0.97),
         response_reason: Some("browser-challenge or CAPTCHA markers detected"),
         thin_content_detected: true,
+        emptied_sections: &[],
     });
     assert_eq!(
         map["response_class"],
@@ -668,4 +672,30 @@ fn apply_diff_changed_content_returns_diff_with_has_diff_true() {
         "got: {output}"
     );
     assert!(has_diff);
+}
+
+#[test]
+fn fetch_structured_lists_emptied_sections_only_when_present() {
+    let headings = vec!["Get started".to_string()];
+    let params = |emptied_sections| FetchStructuredParams {
+        url: "https://blog.nab.test/post",
+        status: 200,
+        content_type: "text/html",
+        markdown: "Get started\n----------\n",
+        timing_ms: 10.0,
+        has_diff: false,
+        omitted_sections: 0,
+        total_sections: 0,
+        truncated: false,
+        full_tokens: 0,
+        response_class: None,
+        response_confidence: None,
+        response_reason: None,
+        thin_content_detected: false,
+        emptied_sections,
+    };
+    let map = build_fetch_structured_v2(&params(&headings));
+    assert_eq!(map["emptied_sections"], serde_json::json!(["Get started"]));
+    let map = build_fetch_structured_v2(&params(&[]));
+    assert!(!map.contains_key("emptied_sections"));
 }

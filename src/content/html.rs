@@ -121,8 +121,13 @@ impl HtmlHandler {
         let html = String::from_utf8_lossy(bytes);
         let (sanitized_html, report) = crate::security::sanitize_with_env_policy(&html, url)?;
         log_secure_ingestion_report(&report);
-        let markdown =
-            html_to_markdown_sanitized_with_url_and_options(&sanitized_html, url, options);
+        let (markdown, emptied_sections) = convert_html_with_sources(
+            &sanitized_html,
+            url,
+            options,
+            spa_extract::extract_spa_candidate,
+            fetch_jina_reader,
+        );
         let quality = quality::score_extraction(bytes, &markdown);
 
         Ok(ConversionResult {
@@ -131,6 +136,7 @@ impl HtmlHandler {
             content_type: content_type.to_string(),
             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
             quality: Some(quality),
+            emptied_sections,
         })
     }
 }
@@ -217,6 +223,23 @@ where
     S: Fn(&str) -> Option<spa_extract::SpaCandidate>,
     F: Fn(&str) -> Option<String>,
 {
+    convert_html_with_sources(html, url, options, spa_extractor, jina_fetcher).0
+}
+
+/// The HTML pipeline: the markdown, and the headings it kept with their
+/// section emptied (see [`emptied_sections`]). The headings are only computed
+/// when the markdown came from this HTML, not from an SPA candidate or Jina.
+fn convert_html_with_sources<S, F>(
+    html: &str,
+    url: Option<&str>,
+    options: HtmlConversionOptions,
+    spa_extractor: S,
+    jina_fetcher: F,
+) -> (String, Vec<String>)
+where
+    S: Fn(&str) -> Option<spa_extract::SpaCandidate>,
+    F: Fn(&str) -> Option<String>,
+{
     // Try SPA data extraction first (Next.js, Nuxt, etc.)
     let spa_candidate = if options.allow_spa_extraction {
         // An empty candidate is metadata-only JSON-LD (see `render_spa_content`).
@@ -233,7 +256,7 @@ where
         if spa.source == spa_extract::SpaSource::Framework
             && !is_thin_content(html.len(), spa.text.len())
         {
-            return spa.text.clone();
+            return (spa.text.clone(), Vec::new());
         }
 
         tracing::debug!(
@@ -300,7 +323,7 @@ where
 
     // Post-process: strip markdown noise from html2md output
     let markdown = clean_markdown_noise(&markdown);
-    let (markdown, small_pick_len) = merge_spa_candidate(
+    let (markdown, small_pick_len, replaced_by_spa) = merge_spa_candidate(
         markdown,
         spa_candidate,
         prefer_readability,
@@ -330,35 +353,40 @@ where
                 "Thin content recovered via Jina reader ({} chars)",
                 jina_md.len()
             );
-            return jina_md;
+            return (jina_md, Vec::new());
         }
 
         // Remote fallback either wasn't enabled, had no URL, or failed.
         warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
     }
 
-    markdown
+    let emptied = if replaced_by_spa {
+        Vec::new()
+    } else {
+        emptied_sections(&cleaned_html, &markdown)
+    };
+    (markdown, emptied)
 }
 
 /// Let an SPA candidate replace the HTML result when it should.
 ///
 /// Framework data replaces a shorter HTML result. The catch-all assignment
 /// scraper only fills a thin one, and never against an explicit readability
-/// preference. Returns the markdown and the small-pick length, which is
-/// cleared once the HTML result has been replaced.
+/// preference. Returns the markdown, the small-pick length, which is
+/// cleared once the HTML result has been replaced, and whether it was.
 fn merge_spa_candidate(
     markdown: String,
     spa_candidate: Option<spa_extract::SpaCandidate>,
     prefer_readability: bool,
     small_pick_len: Option<usize>,
     pick: HtmlPick,
-) -> (String, Option<usize>) {
+) -> (String, Option<usize>, bool) {
     match spa_candidate {
         Some(spa)
             if spa.source == spa_extract::SpaSource::Framework
                 && spa.text.len() > markdown.len() =>
         {
-            (spa.text, None)
+            (spa.text, None, true)
         }
         // The catch-all scraper only fills a thin whole-page result: an
         // article an extractor chose stays, however short (MIK-8684).
@@ -369,9 +397,9 @@ fn merge_spa_candidate(
                 && markdown.len() < THIN_MARKDOWN_LEN
                 && spa.text.len() > markdown.len() =>
         {
-            (spa.text, None)
+            (spa.text, None, true)
         }
-        _ => (markdown, small_pick_len),
+        _ => (markdown, small_pick_len, false),
     }
 }
 
@@ -1072,6 +1100,265 @@ pub fn is_boilerplate(line: &str) -> bool {
         || lower.starts_with("©")
         || lower.starts_with("copyright")
         || (lower.len() < 3 && !lower.chars().any(char::is_alphanumeric))
+}
+
+/// One warning naming the headings [`emptied_sections`] reported, or `None`
+/// when nothing was dropped. Shared by `nab fetch` and the MCP fetch tool.
+#[must_use]
+pub fn emptied_sections_warning(headings: &[String]) -> Option<String> {
+    let quoted: Vec<String> = headings
+        .iter()
+        .take(3)
+        .map(|h| format!("\"{h}\""))
+        .collect();
+    match headings.len() {
+        0 => None,
+        1 => Some(format!(
+            "Extraction dropped the content under the heading {}.",
+            quoted[0]
+        )),
+        n @ 2..=3 => Some(format!(
+            "Extraction dropped the content under {n} headings: {}.",
+            quoted.join(", ")
+        )),
+        n => Some(format!(
+            "Extraction dropped the content under {n} headings: {} and {} more.",
+            quoted.join(", "),
+            n - 3
+        )),
+    }
+}
+
+/// Headings the markdown keeps with nothing under them while the source had
+/// text under them (MIK-9504). Readability drops link-dense lists and caption
+/// blocks it scores as boilerplate; this names the heading so the loss is not
+/// silent. Only headings are matched, never body text, so list bullets, table
+/// pipes and wrapped lines cannot raise a false alarm.
+/// Design: docs/design/2026-11-16-section-loss-warning.md
+pub(crate) fn emptied_sections(cleaned_html: &str, markdown: &str) -> Vec<String> {
+    const MIN_SEGMENT_CHARS: usize = 20;
+
+    let source = source_heading_segments(cleaned_html);
+    let rendered = markdown_heading_sections(markdown, &source.sidebar_heading_keys);
+    let mut emptied = Vec::new();
+    let mut next = 0;
+    // Monotonic pairing: an unmatched heading on either side is skipped
+    // without moving the other side.
+    for (heading, chars) in source.segments {
+        let key = heading_key(&heading);
+        let Some(offset) = rendered[next..].iter().position(|(h, _)| *h == key) else {
+            continue;
+        };
+        let (_, has_text) = &rendered[next + offset];
+        if !has_text && chars >= MIN_SEGMENT_CHARS {
+            emptied.push(heading.chars().take(80).collect());
+        }
+        next += offset + 1;
+    }
+    emptied
+}
+
+/// What the source analysis found: each heading with the characters of text in
+/// its own segment, and the keys of headings inside `aside`, `nav`, `footer`
+/// and `form`. On the markdown side such a heading neither starts nor ends a
+/// section, so a headed sidebar cannot cut a kept section short. Sidebar text
+/// is still counted as text: a kept sidebar can hide a dropped section, which
+/// errs on the side of silence rather than a false alarm.
+struct SourceSections {
+    segments: Vec<(String, usize)>,
+    sidebar_heading_keys: std::collections::HashSet<String>,
+}
+
+/// A heading's segment is the innermost leaf blocks after it, up to the next
+/// heading of any level, inside its nearest `article`, `main`, `section` or
+/// `body`, outside `aside`, `nav`, `footer` and `form`.
+fn source_heading_segments(html: &str) -> SourceSections {
+    use scraper::{ElementRef, Html};
+
+    const LEAVES: &[&str] = &[
+        "p",
+        "li",
+        "dt",
+        "dd",
+        "th",
+        "td",
+        "caption",
+        "figcaption",
+        "blockquote",
+        "pre",
+        "summary",
+    ];
+    const BOUNDARIES: &[&str] = &["article", "main", "section", "body"];
+    const SKIPPED: &[&str] = &["aside", "nav", "footer", "form"];
+
+    let is_heading = |name: &str| matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
+    let is_leaf_candidate = |el: &ElementRef<'_>| {
+        let name = el.value().name();
+        LEAVES.contains(&name)
+            || (name == "div"
+                && el
+                    .children()
+                    .any(|c| c.value().as_text().is_some_and(|t| !t.trim().is_empty())))
+    };
+
+    let in_skipped = |el: &ElementRef<'_>| {
+        el.ancestors().any(|a| {
+            a.value()
+                .as_element()
+                .is_some_and(|e| SKIPPED.contains(&e.name()))
+        })
+    };
+
+    let document = Html::parse_document(html);
+    let mut segments: Vec<(String, usize)> = Vec::new();
+    let mut sidebar_heading_keys = std::collections::HashSet::new();
+    let mut boundary = None;
+    for node in document.root_element().descendants() {
+        let Some(el) = ElementRef::wrap(node) else {
+            continue;
+        };
+        let name = el.value().name();
+        if is_heading(name) {
+            let text = normalize_heading(&el.text().collect::<String>());
+            // A sidebar or footer heading neither starts a segment nor ends one.
+            if in_skipped(&el) {
+                sidebar_heading_keys.insert(heading_key(&text));
+                continue;
+            }
+            segments.push((text, 0));
+            boundary = el
+                .ancestors()
+                .find(|a| {
+                    a.value()
+                        .as_element()
+                        .is_some_and(|e| BOUNDARIES.contains(&e.name()))
+                })
+                .map(|a| a.id());
+            continue;
+        }
+        let Some((_, chars)) = segments.last_mut() else {
+            continue;
+        };
+        if !is_leaf_candidate(&el)
+            || el
+                .descendants()
+                .skip(1)
+                .filter_map(ElementRef::wrap)
+                .any(|d| is_leaf_candidate(&d) || is_heading(d.value().name()))
+        {
+            continue;
+        }
+        let inside = boundary.is_none_or(|id| el.ancestors().any(|a| a.id() == id));
+        if inside && !in_skipped(&el) {
+            // Characters, not bytes, and not the spaces between words.
+            *chars += el
+                .text()
+                .collect::<String>()
+                .split_whitespace()
+                .map(|word| word.chars().count())
+                .sum::<usize>();
+        }
+    }
+    // A text that is also a real heading is not a sidebar-only heading.
+    for (heading, _) in &segments {
+        sidebar_heading_keys.remove(&heading_key(heading));
+    }
+    SourceSections {
+        segments,
+        sidebar_heading_keys,
+    }
+}
+
+/// Each markdown heading's comparison key, and whether any text sits under it
+/// before the next heading. Headings are ATX lines and the converter's setext
+/// form (a line followed by exactly ten `=` or `-`); a `---` line is its
+/// horizontal rule. Lines inside fenced code are text, never headings. A
+/// sidebar heading is neither a section nor a boundary.
+fn markdown_heading_sections(
+    markdown: &str,
+    sidebar_heading_keys: &std::collections::HashSet<String>,
+) -> Vec<(String, bool)> {
+    const H1_UNDERLINE: &str = "==========";
+    const H2_UNDERLINE: &str = "----------";
+
+    let lines: Vec<&str> = markdown.lines().map(str::trim).collect();
+    let is_underline = |line: &str| line == H1_UNDERLINE || line == H2_UNDERLINE;
+    let is_rule =
+        |line: &str| line.len() >= 3 && line.chars().all(|c| matches!(c, '-' | '*' | '_' | ' '));
+    let mut sections: Vec<(String, bool)> = Vec::new();
+    let mut in_fence = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        i += 1;
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_fence = !in_fence;
+            if let Some(last) = sections.last_mut() {
+                last.1 = true;
+            }
+            continue;
+        }
+        if !in_fence {
+            let heading = atx_heading_text(line).map(|text| (text, 0)).or_else(|| {
+                if line.is_empty() || is_underline(line) || is_rule(line) {
+                    return None;
+                }
+                let next = lines[i..].iter().position(|l| !l.is_empty())?;
+                is_underline(lines[i + next]).then_some((line, next + 1))
+            });
+            if let Some((text, consumed)) = heading {
+                i += consumed;
+                let key = heading_key(&normalize_heading(&strip_inline_markdown(text)));
+                if !sidebar_heading_keys.contains(&key) {
+                    sections.push((key, false));
+                }
+                continue;
+            }
+            if line.is_empty() || is_underline(line) || is_rule(line) {
+                continue;
+            }
+        }
+        if let Some(last) = sections.last_mut() {
+            last.1 = true;
+        }
+    }
+    sections
+}
+
+fn atx_heading_text(line: &str) -> Option<&str> {
+    let rest = line.trim_start_matches('#');
+    let hashes = line.len() - rest.len();
+    if !(1..=6).contains(&hashes) || !rest.starts_with(' ') {
+        return None;
+    }
+    Some(rest.trim().trim_end_matches('#').trim_end())
+}
+
+/// Link markup to its label.
+fn strip_inline_markdown(text: &str) -> String {
+    static LINK: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"!?\[([^\]]*)\]\([^)]*\)").expect("static link pattern")
+    });
+    LINK.replace_all(text, "$1").into_owned()
+}
+
+/// The comparison key for a heading, applied to both sides: emphasis and code
+/// markers and markdown escapes removed, so `snake_case` in the page pairs with
+/// `snake\_case` or `*snake_case*` in the markdown.
+fn heading_key(heading: &str) -> String {
+    heading
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '`' | '\\'))
+        .collect()
+}
+
+/// Whitespace collapsed, control characters removed.
+fn normalize_heading(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| word.chars().filter(|c| !c.is_control()).collect::<String>())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -2181,7 +2468,7 @@ mod tests {
         };
 
         // Framework data longer than the whole-page fallback replaces it.
-        let (text, small_pick) = merge_spa_candidate(
+        let (text, small_pick, _) = merge_spa_candidate(
             "short page".to_owned(),
             Some(candidate(SpaSource::Framework)),
             false,
@@ -2192,7 +2479,7 @@ mod tests {
         assert_eq!(small_pick, None);
 
         // A generic candidate fills a thin result and clears it too.
-        let (_, small_pick) = merge_spa_candidate(
+        let (_, small_pick, _) = merge_spa_candidate(
             "thin".to_owned(),
             Some(candidate(SpaSource::GenericAssignment)),
             false,
@@ -2202,7 +2489,7 @@ mod tests {
         assert_eq!(small_pick, None);
 
         // No replacement: the small pick is kept for the thin-content check.
-        let (text, small_pick) =
+        let (text, small_pick, _) =
             merge_spa_candidate("x".repeat(5_000), None, false, Some(187), HtmlPick::Direct);
         assert_eq!(text.len(), 5_000);
         assert_eq!(small_pick, Some(187));
@@ -2218,7 +2505,7 @@ mod tests {
             text: "author bio or font CSS ".repeat(200),
             source: SpaSource::GenericAssignment,
         };
-        let (text, _) = merge_spa_candidate(
+        let (text, _, _) = merge_spa_candidate(
             article.clone(),
             Some(generic),
             false,
@@ -2226,5 +2513,403 @@ mod tests {
             HtmlPick::Readability,
         );
         assert_eq!(text, article);
+    }
+}
+
+// ── MIK-9504: headings kept with their section emptied ────────────────────
+// Design: docs/design/2026-11-16-section-loss-warning.md (tests E1-E8)
+#[cfg(test)]
+mod emptied_section_tests {
+    use super::{emptied_sections, html_to_markdown};
+
+    const LIST: &str = "<ul><li>Read the docs and try the quickstart guide</li>\
+        <li>Pick a renderer for your platform</li><li>Upgrade from the previous version</li>\
+        <li>File issues and discuss ideas</li></ul>";
+    const NEXT: &str =
+        "<h2>Next steps</h2><p>The roadmap covers the rest of the year in detail.</p>";
+
+    fn page(article: &str) -> String {
+        format!("<html><body><article>{article}</article></body></html>")
+    }
+
+    fn get_started(rest: &str) -> String {
+        page(&format!("<h2>Get started</h2>{rest}{NEXT}"))
+    }
+
+    #[test]
+    fn a_kept_heading_whose_list_was_dropped_is_reported() {
+        let source = get_started(LIST);
+        let markdown = html_to_markdown(&get_started(""));
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_heading_kept_with_its_list_is_not_reported() {
+        let source = get_started(LIST);
+        let markdown = html_to_markdown(&source);
+        assert!(
+            emptied_sections(&source, &markdown).is_empty(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_heading_dropped_with_its_section_is_not_reported() {
+        // "Aside" keeps an empty interval (its five characters were dropped),
+        // so the all-sections-have-text shortcut cannot answer for this test.
+        let aside = "<h2>Aside</h2><p>Short</p>";
+        let source = page(&format!("<h2>Get started</h2>{LIST}{aside}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("<h2>Aside</h2>{NEXT}")));
+        assert!(
+            emptied_sections(&source, &markdown).is_empty(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_dropped_segment_must_hold_twenty_characters() {
+        let nineteen = "<p>abcdefghijklmnopqrs</p>";
+        let twenty = "<p>abcdefghijklmnopqrst</p>";
+        let markdown = html_to_markdown(&get_started(""));
+        assert_eq!(
+            emptied_sections(&get_started(nineteen), &markdown),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            emptied_sections(&get_started(twenty), &markdown),
+            ["Get started"]
+        );
+    }
+
+    #[test]
+    fn a_linked_heading_counts_as_kept() {
+        let linked = |rest: &str| {
+            page(&format!(
+                "<h2><a href='/x'>Get started</a></h2>{rest}{NEXT}"
+            ))
+        };
+        let markdown = html_to_markdown(&linked(""));
+        assert_eq!(
+            emptied_sections(&linked(LIST), &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_parent_is_judged_on_its_own_segment() {
+        let child = "<h3>Child</h3><p>Child text that is kept in the output.</p>";
+        let parent = |own: &str| page(&format!("<h2>Parent</h2>{own}{child}{NEXT}"));
+        let markdown = html_to_markdown(&parent(""));
+        assert_eq!(
+            emptied_sections(&parent(LIST), &markdown),
+            ["Parent"],
+            "{markdown}"
+        );
+        assert!(
+            emptied_sections(&parent("<p>Short intro</p>"), &markdown).is_empty(),
+            "a parent with under 20 characters of its own is not reported"
+        );
+    }
+
+    #[test]
+    fn extra_headings_on_either_side_do_not_shift_the_pairing() {
+        // Two source-only headings against one markdown-only title, so pairing
+        // by position cannot line "Get started" up by luck.
+        let source = format!(
+            "<html><body><div><h2>Sign up</h2><p>Newsletter text that is long enough.</p>\
+             <h3>Follow us</h3><p>Social links and other text long enough.</p></div>\
+             <article><h2>Get started</h2>{LIST}{NEXT}</article></body></html>"
+        );
+        let markdown = format!(
+            "Article title\n==========\n{}",
+            html_to_markdown(&page(&format!("<h2>Get started</h2>{NEXT}")))
+        );
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_segment_stops_at_the_end_of_its_article() {
+        // The trailing block is a plain div, not a skipped footer, so only the
+        // article boundary keeps it out of the heading's segment.
+        let source = "<html><body><article><h2>Get started</h2></article>\
+            <div class='related'><p>Related text that is long enough to count as text.</p></div></body></html>";
+        let markdown =
+            html_to_markdown("<html><body><article><h2>Get started</h2></article></body></html>");
+        assert!(emptied_sections(source, &markdown).is_empty(), "{markdown}");
+    }
+
+    #[test]
+    fn a_heading_inside_fenced_code_is_not_a_heading() {
+        let code = "<h2>Example</h2><pre><code>## Get started\nnpm install</code></pre>";
+        let source = page(&format!("{code}<h2>Get started</h2>{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("{code}<h2>Get started</h2>{NEXT}")));
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    // ── Pipeline and surfaces (E9-E11) ─────────────────────────────────────
+
+    use super::{HtmlConversionOptions, convert_html_with_sources, emptied_sections_warning};
+    use crate::content::spa_extract::{SpaCandidate, SpaSource};
+
+    fn convert(
+        html: &str,
+        options: HtmlConversionOptions,
+        spa: Option<&SpaCandidate>,
+        jina: Option<&str>,
+    ) -> (String, Vec<String>) {
+        convert_html_with_sources(
+            html,
+            Some("https://blog.nab.test/post"),
+            options,
+            |_| spa.cloned(),
+            |_| jina.map(str::to_string),
+        )
+    }
+
+    fn paragraphs() -> String {
+        (0..6)
+            .map(|i| {
+                format!(
+                    "<p>Paragraph {i} explains how the renderer keeps the interface native on \
+                     every platform, and why the protocol stays small enough to audit.</p>"
+                )
+            })
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    #[test]
+    fn unchanged_conversions_report_nothing() {
+        let substack = format!(
+            "<html><body><article class='post'><div class='post-header'>\
+             <h1 class='post-title'>Actual Post Title</h1><h3 class='subtitle'>A useful subtitle</h3>\
+             <div class='post-ufi'>451 90 Share</div><div class='byline-wrapper'>Author avatar and profile chrome</div>\
+             </div><div class='available-content'><div class='body markup'>{}</div></div></article></body></html>",
+            paragraphs()
+        );
+        let table = format!(
+            "<html><body><article><h2>Pricing</h2><table><tr><th>Plan</th><th>Price</th></tr>\
+             <tr><td>Starter plan for small teams</td><td>10 euros</td></tr></table>{}</article></body></html>",
+            paragraphs()
+        );
+        for html in [substack, table] {
+            let (markdown, emptied) = convert(&html, HtmlConversionOptions::default(), None, None);
+            assert!(emptied.is_empty(), "{emptied:?}\n{markdown}");
+        }
+    }
+
+    #[test]
+    fn a_pipeline_drop_reaches_the_conversion_result() {
+        // A page too short for readability, so the direct conversion is
+        // picked, and its boilerplate filter deletes the one line under
+        // "Storage" for mentioning a cookie. The readability crate's own drops
+        // depend on page-wide scoring no small fixture reproduces; the saved
+        // A2UI page is checked in the before/after run instead.
+        let html = "<html><body><h2>Storage</h2><ul><li>We keep a cookie for your session.</li></ul>\
+            <h2>Contact</h2><p>Write to the team at any time.</p></body></html>";
+        let (markdown, emptied) = convert(html, HtmlConversionOptions::default(), None, None);
+        assert!(
+            !markdown.contains("cookie"),
+            "the filter must drop the line: {markdown}"
+        );
+        assert_eq!(emptied, ["Storage"], "{markdown}");
+    }
+
+    #[test]
+    fn markdown_that_did_not_come_from_the_html_reports_nothing() {
+        // The page's own conversion keeps "Get started" with text under it;
+        // each replacement keeps the heading with nothing under it, so a
+        // check run on the replacement would report it.
+        let shell = "<html><body><div id='root'><h2>Get started</h2>\
+            <p>Loading the application, please wait a moment.</p></div></body></html>";
+        let replacement = format!(
+            "{}\n\nGet started\n----------\n",
+            "The full article body that the store carried. ".repeat(12)
+        );
+        let store = SpaCandidate {
+            text: replacement.clone(),
+            source: SpaSource::GenericAssignment,
+        };
+        let (markdown, emptied) =
+            convert(shell, HtmlConversionOptions::default(), Some(&store), None);
+        assert_eq!(
+            markdown, replacement,
+            "the store body must replace the shell"
+        );
+        assert!(emptied.is_empty(), "{emptied:?}");
+
+        let padded = format!(
+            "<html><head><script>var pad = '{}';</script></head><body><div id='root'>\
+             <h2>Get started</h2><p>Loading the application, please wait a moment.</p></div></body></html>",
+            "x".repeat(8_000)
+        );
+        let options = HtmlConversionOptions {
+            allow_jina_fallback: true,
+            ..HtmlConversionOptions::default()
+        };
+        let (markdown, emptied) = convert(&padded, options, None, Some(&replacement));
+        assert_eq!(
+            markdown, replacement,
+            "the remote reader must supply the output"
+        );
+        assert!(emptied.is_empty(), "{emptied:?}");
+    }
+
+    #[test]
+    fn the_warning_names_up_to_three_headings() {
+        let names = |n: usize| (1..=n).map(|i| format!("Part {i}")).collect::<Vec<_>>();
+        assert_eq!(emptied_sections_warning(&[]), None);
+        assert_eq!(
+            emptied_sections_warning(&names(1)).as_deref(),
+            Some("Extraction dropped the content under the heading \"Part 1\".")
+        );
+        assert_eq!(
+            emptied_sections_warning(&names(3)).as_deref(),
+            Some(
+                "Extraction dropped the content under 3 headings: \"Part 1\", \"Part 2\", \"Part 3\"."
+            )
+        );
+        assert_eq!(
+            emptied_sections_warning(&names(5)).as_deref(),
+            Some(
+                "Extraction dropped the content under 5 headings: \"Part 1\", \"Part 2\", \"Part 3\" and 2 more."
+            )
+        );
+    }
+
+    #[test]
+    fn a_reported_heading_carries_no_control_characters() {
+        let source = page(&format!("<h2>Get\u{1b} started</h2>{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("<h2>Get\u{1b} started</h2>{NEXT}")));
+        let emptied = emptied_sections(&source, &markdown);
+        assert_eq!(emptied.len(), 1, "{markdown}");
+        assert!(
+            !emptied[0].chars().any(char::is_control),
+            "{:?}",
+            emptied[0]
+        );
+    }
+
+    // ── Final-review fixes ─────────────────────────────────────────────────
+
+    #[test]
+    fn a_sidebar_heading_does_not_take_the_section() {
+        // Extraction drops the sidebar along with the list, as readability does.
+        let aside =
+            "<aside><h3>Sponsored</h3><p>Advertising copy long enough to count.</p></aside>";
+        let source = page(&format!("<h2>Get started</h2>{aside}{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("<h2>Get started</h2>{NEXT}")));
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            ["Get started"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_kept_sidebar_can_hide_a_dropped_list() {
+        // Accepted limit: sidebar text counts as text, so a kept sidebar under
+        // a heading whose list was dropped stays silent rather than risk a
+        // false alarm on pages that repeat sidebar text.
+        let aside =
+            "<aside><h3>Sponsored</h3><p>Advertising copy long enough to count.</p></aside>";
+        let source = page(&format!("<h2>Get started</h2>{aside}{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&page(&format!("<h2>Get started</h2>{aside}{NEXT}")));
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            Vec::<String>::new(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_kept_section_after_a_headed_sidebar_is_not_reported() {
+        // The full-page conversion keeps the sidebar heading; it must not cut
+        // "Get started" short on the markdown side when the source skips it.
+        let aside =
+            "<aside><h3>Sponsored</h3><p>Advertising copy long enough to count.</p></aside>";
+        let source = page(&format!("<h2>Get started</h2>{aside}{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&source);
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            Vec::<String>::new(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_body_line_repeating_footer_text_still_counts() {
+        let line = "<p>Write to the team at any time of the day.</p>";
+        let source = format!(
+            "<html><body><article><h2>Contact</h2>{line}{NEXT}</article>\
+             <footer>{line}</footer></body></html>"
+        );
+        let markdown = html_to_markdown(&source);
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            Vec::<String>::new(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn the_floor_counts_characters_not_bytes() {
+        let markdown = html_to_markdown(&get_started(""));
+        // Seven CJK characters are 21 bytes but 7 characters.
+        assert_eq!(
+            emptied_sections(&get_started("<p>一二三四五六七</p>"), &markdown),
+            Vec::<String>::new()
+        );
+        let twenty = "<p>一二三四五六七八九十一二三四五六七八九十</p>";
+        assert_eq!(
+            emptied_sections(&get_started(twenty), &markdown),
+            ["Get started"]
+        );
+    }
+
+    #[test]
+    fn a_heading_with_underscores_pairs_with_its_markdown() {
+        let snake = |rest: &str| page(&format!("<h2>snake_case setup</h2>{rest}{NEXT}"));
+        let markdown = html_to_markdown(&snake(""));
+        assert_eq!(
+            emptied_sections(&snake(LIST), &markdown),
+            ["snake_case setup"],
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn page_data_that_returns_early_reports_nothing() {
+        let shell = "<html><body><div id='root'><h2>Get started</h2>\
+            <p>Loading the application, please wait a moment.</p></div></body></html>";
+        let body = format!(
+            "{}\n\nGet started\n----------\n",
+            "The article body carried in the page's own props. ".repeat(20)
+        );
+        let page_data = SpaCandidate {
+            text: body.clone(),
+            source: SpaSource::Framework,
+        };
+        let (markdown, emptied) = convert(
+            shell,
+            HtmlConversionOptions::default(),
+            Some(&page_data),
+            None,
+        );
+        assert_eq!(markdown, body, "page data must return early");
+        assert_eq!(emptied, Vec::<String>::new());
     }
 }

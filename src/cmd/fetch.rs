@@ -562,7 +562,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
 
     let body_len = body_bytes.len();
 
-    let (body_text, quality) = if markdown && !cfg.links {
+    let (body_text, quality, emptied_sections) = if markdown && !cfg.links {
         let converted = convert_body_to_markdown(
             &body_bytes,
             &content_type,
@@ -583,20 +583,29 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         let is_nextjs_meta = content_type.contains("html")
             && body_len > 5_000
             && nab::content::spa_extract::is_nextjs_metadata_only(&raw_text);
-        let (final_markdown, final_quality) = if is_nextjs_meta
+        let (final_markdown, final_quality, emptied_sections) = if is_nextjs_meta
             && (converted.markdown.len() < 800 || quality_is_low)
         {
             match recover_nextjs_content_chunks(&client, &raw_text, &cfg.url, cfg.format).await {
-                Some(recovered) => (recovered, converted.quality),
-                None => (converted.markdown, converted.quality),
+                // The recovered body is not the converted HTML.
+                Some(recovered) => (recovered, converted.quality, Vec::new()),
+                None => (
+                    converted.markdown,
+                    converted.quality,
+                    converted.emptied_sections,
+                ),
             }
         } else {
-            (converted.markdown, converted.quality)
+            (
+                converted.markdown,
+                converted.quality,
+                converted.emptied_sections,
+            )
         };
 
-        (final_markdown, final_quality)
+        (final_markdown, final_quality, emptied_sections)
     } else {
-        (raw_text.clone(), None)
+        (raw_text.clone(), None, Vec::new())
     };
 
     // ── Apple Vision OCR enrichment ────────────────────────────────────────
@@ -621,6 +630,9 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         quality.as_ref(),
         cfg.html_options.allow_jina_fallback,
     ) {
+        eprintln!("⚠️  {warning}");
+    }
+    if let Some(warning) = emptied_sections_diagnostic(&emptied_sections) {
         eprintln!("⚠️  {warning}");
     }
 
@@ -1144,6 +1156,7 @@ async fn recover_nextjs_content_chunks(
 struct ConvertedBody {
     markdown: String,
     quality: Option<nab::content::quality::QualityScore>,
+    emptied_sections: Vec<String>,
 }
 
 /// Convert body bytes to markdown via `ContentRouter`.
@@ -1176,6 +1189,7 @@ async fn convert_body_to_markdown(
     Ok(ConvertedBody {
         quality: result.quality,
         markdown: result.markdown,
+        emptied_sections: result.emptied_sections,
     })
 }
 
@@ -1396,6 +1410,13 @@ fn extract_title(html: &str) -> Option<String> {
     doc.select(&sel)
         .next()
         .map(|el| el.text().collect::<String>().trim().to_string())
+}
+
+/// The CLI form of [`nab::content::html::emptied_sections_warning`], naming
+/// the flag that shows the full page (MIK-9504).
+fn emptied_sections_diagnostic(headings: &[String]) -> Option<String> {
+    nab::content::html::emptied_sections_warning(headings)
+        .map(|warning| format!("{warning}\nThe full page is in --raw-html."))
 }
 
 fn build_fetch_diagnostics(
@@ -1719,7 +1740,18 @@ pub(super) use super::non_empty;
 
 #[cfg(test)]
 mod tests {
-    use super::{TOR_PROXY_URL, build_client, build_fetch_diagnostics};
+    use super::{
+        TOR_PROXY_URL, build_client, build_fetch_diagnostics, emptied_sections_diagnostic,
+    };
+
+    #[test]
+    fn emptied_sections_diagnostic_names_the_raw_html_flag() {
+        assert_eq!(emptied_sections_diagnostic(&[]), None);
+        let line =
+            emptied_sections_diagnostic(&["Get started".to_string()]).expect("a diagnostic line");
+        assert!(line.contains("\"Get started\""), "{line}");
+        assert!(line.ends_with("The full page is in --raw-html."), "{line}");
+    }
 
     #[test]
     fn build_fetch_diagnostics_for_bot_challenge_mentions_cookies() {

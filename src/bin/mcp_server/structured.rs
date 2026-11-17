@@ -54,6 +54,7 @@ pub(crate) struct FetchStructuredParams<'a> {
     pub response_confidence: Option<f32>,
     pub response_reason: Option<&'a str>,
     pub thin_content_detected: bool,
+    pub emptied_sections: &'a [String],
 }
 
 /// Build the `structuredContent` map for the `fetch` tool response.
@@ -124,6 +125,12 @@ pub(crate) fn build_fetch_structured_v2(
         map.insert(
             "thin_content_detected".to_string(),
             serde_json::Value::Bool(true),
+        );
+    }
+    if !p.emptied_sections.is_empty() {
+        map.insert(
+            "emptied_sections".to_string(),
+            serde_json::json!(p.emptied_sections),
         );
     }
 
