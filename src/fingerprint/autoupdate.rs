@@ -3,17 +3,19 @@
 // Browser version auto-updater
 // Fetches latest versions from official APIs and caches them locally
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use time::OffsetDateTime;
 
 const UPDATE_THRESHOLD_DAYS: i64 = 14; // Chrome releases every 4 weeks, check every 2 weeks
 const SAFARI_STALE_THRESHOLD_DAYS: i64 = 180; // Safari updates quarterly
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BrowserVersions {
-    pub last_updated: DateTime<Utc>,
-    pub safari_last_checked: DateTime<Utc>,
+    #[serde(with = "crate::util::utc_rfc3339")]
+    pub last_updated: OffsetDateTime,
+    #[serde(with = "crate::util::utc_rfc3339")]
+    pub safari_last_checked: OffsetDateTime,
     pub chrome: Vec<(String, String)>,
     pub firefox: Vec<String>,
     pub safari: Vec<(String, String)>,
@@ -76,15 +78,11 @@ impl BrowserVersions {
     }
 
     fn cache_age_days(&self) -> i64 {
-        Utc::now()
-            .signed_duration_since(self.last_updated)
-            .num_days()
+        (OffsetDateTime::now_utc() - self.last_updated).whole_days()
     }
 
     fn safari_age_days(&self) -> i64 {
-        Utc::now()
-            .signed_duration_since(self.safari_last_checked)
-            .num_days()
+        (OffsetDateTime::now_utc() - self.safari_last_checked).whole_days()
     }
 
     fn is_stale(&self) -> bool {
@@ -145,7 +143,7 @@ impl BrowserVersions {
         let (safari, safari_updated) = match Self::fetch_safari_from_community() {
             Ok(versions) => {
                 eprintln!("✅ Safari: Updated from community list");
-                (versions, Utc::now())
+                (versions, OffsetDateTime::now_utc())
             }
             Err(e) => {
                 if self.is_safari_critically_stale() {
@@ -161,7 +159,7 @@ impl BrowserVersions {
         };
 
         Ok(BrowserVersions {
-            last_updated: Utc::now(),
+            last_updated: OffsetDateTime::now_utc(),
             safari_last_checked: safari_updated,
             chrome,
             firefox,
@@ -325,7 +323,7 @@ impl BrowserVersions {
 
 impl Default for BrowserVersions {
     fn default() -> Self {
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         BrowserVersions {
             last_updated: now,
             safari_last_checked: now,
@@ -360,9 +358,9 @@ impl Default for BrowserVersions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use time::Duration;
 
     /// Floor for the bundled-default Chrome major version.
     ///
@@ -377,6 +375,40 @@ mod tests {
     /// without hand edits.
     const MIN_BUNDLED_CHROME_MAJOR: u32 = 140;
     const MIN_BUNDLED_FIREFOX_MAJOR: u32 = 140;
+
+    #[test]
+    fn cache_age_counts_whole_days_toward_zero() {
+        // chrono's num_days truncated toward zero; whole_days must too.
+        let aged = |offset: Duration| BrowserVersions {
+            last_updated: OffsetDateTime::now_utc() - offset,
+            ..BrowserVersions::default()
+        };
+        assert_eq!(
+            aged(Duration::days(14) + Duration::hours(23)).cache_age_days(),
+            14
+        );
+        assert_eq!(aged(Duration::days(15)).cache_age_days(), 15);
+        assert_eq!(aged(-Duration::hours(36)).cache_age_days(), -1);
+    }
+
+    #[test]
+    fn a_cache_written_by_chrono_stays_readable() {
+        // The version cache as chrono's serde wrote it (RFC 3339, `Z`).
+        for stamp in ["2026-11-17T11:03:18Z", "2026-11-17T11:03:18.123456789Z"] {
+            let saved = format!(
+                r#"{{"last_updated":"{stamp}","safari_last_checked":"{stamp}","chrome":[["140","140.0.0.0"]],"firefox":["140.0"],"safari":[]}}"#
+            );
+            let versions: BrowserVersions = serde_json::from_str(&saved).expect(stamp);
+            let written = serde_json::to_string(&versions).unwrap();
+            let reread: BrowserVersions = serde_json::from_str(&written).unwrap();
+            assert_eq!(reread.last_updated, versions.last_updated, "{stamp}");
+            assert_eq!(reread.safari_last_checked, versions.safari_last_checked);
+            assert!(
+                written.contains("\"last_updated\":\"2026-11-17T11:03:18"),
+                "{written}"
+            );
+        }
+    }
 
     fn highest_major<'a>(versions: impl IntoIterator<Item = &'a str>) -> u32 {
         versions
@@ -435,8 +467,8 @@ mod tests {
     #[test]
     fn test_staleness() {
         let old = BrowserVersions {
-            last_updated: Utc::now() - Duration::days(31),
-            safari_last_checked: Utc::now(),
+            last_updated: OffsetDateTime::now_utc() - Duration::days(31),
+            safari_last_checked: OffsetDateTime::now_utc(),
             ..Default::default()
         };
         assert!(old.is_stale());
@@ -448,8 +480,8 @@ mod tests {
     #[test]
     fn test_safari_staleness() {
         let old_safari = BrowserVersions {
-            last_updated: Utc::now(),
-            safari_last_checked: Utc::now() - Duration::days(185),
+            last_updated: OffsetDateTime::now_utc(),
+            safari_last_checked: OffsetDateTime::now_utc() - Duration::days(185),
             ..Default::default()
         };
         assert!(old_safari.is_safari_critically_stale());

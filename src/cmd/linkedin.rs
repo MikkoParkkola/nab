@@ -252,8 +252,16 @@ fn resolve_output_path(explicit: Option<&std::path::Path>) -> Result<PathBuf> {
     let downloads = dirs::download_dir()
         .or_else(dirs::home_dir)
         .context("could not resolve a Downloads directory and home dir is unset")?;
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let stamp = export_stamp(time::OffsetDateTime::now_utc());
     Ok(downloads.join(format!("linkedin-export-{stamp}.zip")))
+}
+
+/// `YYYYMMDD-HHMMSS`, zero-padded, for export file names.
+fn export_stamp(t: time::OffsetDateTime) -> String {
+    t.format(time::macros::format_description!(
+        "[year][month][day]-[hour][minute][second]"
+    ))
+    .unwrap_or_default()
 }
 
 #[cfg(feature = "impersonate")]
@@ -272,6 +280,12 @@ fn fmt_elapsed(d: Duration) -> String {
 #[cfg(all(test, feature = "impersonate"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_stamp_is_zero_padded() {
+        let t = time::macros::datetime!(2026-01-02 03:04:05 UTC);
+        assert_eq!(export_stamp(t), "20260102-030405");
+    }
 
     #[test]
     fn fmt_elapsed_under_hour() {

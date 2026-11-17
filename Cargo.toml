@@ -100,7 +100,7 @@ rquickjs = { version = "0.14", features = [
 # ═══════════════════════════════════════════════════════════════════════════════
 rand = "0.10"                           # Randomization for fingerprints
 regex = "1"                             # OTP pattern extraction
-chrono = { version = "0.4", features = ["serde"] }  # Date/time for version staleness
+time = { version = "0.3.55", features = ["serde", "formatting", "parsing", "macros"] }  # Date/time (chrono is unmaintained, RUSTSEC-2026-0543)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ASYNC RUNTIME & UTILITIES

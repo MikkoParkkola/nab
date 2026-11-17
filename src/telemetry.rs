@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use rand::RngExt;
+use time::OffsetDateTime;
 
 const DEFAULT_ENDPOINT: &str = "https://telemetry.revaluator.ai/v1/heartbeat";
 const ENDPOINT_ENV: &str = "NAB_TELEMETRY_ENDPOINT";
@@ -119,7 +119,7 @@ pub fn maybe_send() -> Heartbeat {
                 &home,
                 &env,
                 env!("CARGO_PKG_VERSION"),
-                Utc::now(),
+                OffsetDateTime::now_utc(),
                 &mut post,
             );
         })
@@ -236,40 +236,40 @@ fn set_file_private(path: &Path) {
     }
 }
 
-fn format_stamp(now: DateTime<Utc>) -> String {
-    now.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+fn format_stamp(now: OffsetDateTime) -> String {
+    crate::util::format_utc_seconds(now)
 }
 
-fn parse_stamp(text: &str) -> Option<DateTime<Utc>> {
+fn parse_stamp(text: &str) -> Option<OffsetDateTime> {
     let trimmed = text.trim();
-    DateTime::parse_from_rfc3339(trimmed)
+    OffsetDateTime::parse(trimmed, &time::format_description::well_known::Rfc3339)
         .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+        .map(|dt| dt.to_offset(time::UtcOffset::UTC))
 }
 
-fn due(dir: &Path, now: DateTime<Utc>) -> bool {
+fn due(dir: &Path, now: OffsetDateTime) -> bool {
     let Some(text) = read_trim(&dir.join("heartbeat")) else {
         return true;
     };
     let Some(last) = parse_stamp(&text) else {
         return true;
     };
-    let last_at = last.timestamp();
-    let now_at = now.timestamp();
+    let last_at = last.unix_timestamp();
+    let now_at = now.unix_timestamp();
     if last_at > now_at {
         return last_at - now_at >= FUTURE_SKEW;
     }
     now_at.saturating_sub(last_at) >= DAY
 }
 
-fn mark_sent(dir: &Path, now: DateTime<Utc>) -> std::io::Result<()> {
+fn mark_sent(dir: &Path, now: OffsetDateTime) -> std::io::Result<()> {
     write_private(dir, "heartbeat", &format_stamp(now))
 }
 
 /// Exclusive claim for this daily slot. `None` means do not post: another
 /// process holds the slot, the stamp is still fresh, or the stamp could not
 /// be written. The returned file keeps the lock until the post finishes.
-fn claim_day(dir: &Path, now: DateTime<Utc>) -> Option<std::fs::File> {
+fn claim_day(dir: &Path, now: OffsetDateTime) -> Option<std::fs::File> {
     fs::create_dir_all(dir).ok()?;
     set_dir_private(dir);
     let path = dir.join("heartbeat.lock");
@@ -346,24 +346,35 @@ fn valid_day(value: &str) -> bool {
     if parts.next().is_some() || value.len() != 10 {
         return false;
     }
-    chrono::NaiveDate::from_ymd_opt(year, month, day).is_some()
+    let (Ok(month), Ok(day)) = (u8::try_from(month), u8::try_from(day)) else {
+        return false;
+    };
+    time::Month::try_from(month)
+        .is_ok_and(|month| time::Date::from_calendar_date(year, month, day).is_ok())
 }
 
-fn format_day(now: DateTime<Utc>) -> String {
-    now.format("%Y-%m-%d").to_string()
+fn format_day(now: OffsetDateTime) -> String {
+    now.to_offset(time::UtcOffset::UTC)
+        .format(time::macros::format_description!("[year]-[month]-[day]"))
+        .unwrap_or_default()
 }
 
 fn birth_day(path: &Path) -> Option<String> {
     let created = fs::metadata(path).ok()?.created().ok()?;
-    let dt: DateTime<Utc> = created.into();
-    if dt.timestamp() <= 86_400 {
+    // Pre-epoch and out-of-range birth times read as None, never a panic.
+    let secs = created
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    if secs <= 86_400 {
         return None;
     }
+    let dt = OffsetDateTime::from_unix_timestamp(i64::try_from(secs).ok()?).ok()?;
     let day = format_day(dt);
     valid_day(&day).then_some(day)
 }
 
-fn install_date(dir: &Path, now: DateTime<Utc>, fresh: bool) -> String {
+fn install_date(dir: &Path, now: OffsetDateTime, fresh: bool) -> String {
     let path = dir.join("install-date");
     if let Some(existing) = read_trim(&path)
         && valid_day(&existing)
@@ -498,7 +509,7 @@ fn drive(
     home: &Path,
     env: &impl Fn(&str) -> Option<String>,
     version: &str,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     post: &mut impl FnMut(&str, &[u8]),
 ) -> bool {
     if suppressed(version, env) {
@@ -529,6 +540,45 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
 
+    // ── Stamp and day text survive the chrono → time swap ──────────────────
+
+    #[test]
+    fn stamps_and_days_keep_their_text() {
+        let stamp = "2026-11-17T11:03:18Z";
+        let parsed = parse_stamp(stamp).expect("current stamp parses");
+        assert_eq!(format_stamp(parsed), stamp);
+        assert_eq!(format_day(parsed), "2026-11-17");
+        // Fractions and offsets parse; output is normalized to UTC seconds.
+        assert_eq!(
+            parse_stamp("2026-11-17T11:03:18.123456789Z").map(format_stamp),
+            Some(stamp.to_string())
+        );
+        assert_eq!(
+            parse_stamp(" 2026-11-17T13:03:18+02:00\n").map(format_stamp),
+            Some(stamp.to_string())
+        );
+        assert!(parse_stamp("2026-11-17 11:03:18").is_none());
+        assert!(parse_stamp("").is_none());
+    }
+
+    #[test]
+    fn valid_day_follows_the_calendar() {
+        assert!(valid_day("2024-02-29"));
+        assert!(valid_day("2026-12-31"));
+        for bad in [
+            "2023-02-29",
+            "2026-13-01",
+            "2026-11-00",
+            "2026-04-31",
+            "2026-1-01",
+            "2026-11-17x",
+            "1000-257-1",
+            "2026-00-10",
+        ] {
+            assert!(!valid_day(bad), "{bad}");
+        }
+    }
+
     static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
     struct TempHome(PathBuf);
@@ -556,12 +606,12 @@ mod tests {
         move |key: &str| map.get(key).cloned()
     }
 
-    fn at(y: i32, m: u32, d: u32, h: u32) -> DateTime<Utc> {
-        chrono::NaiveDate::from_ymd_opt(y, m, d)
+    fn at(y: i32, m: u8, d: u8, h: u8) -> OffsetDateTime {
+        time::Date::from_calendar_date(y, time::Month::try_from(m).unwrap(), d)
             .unwrap()
-            .and_hms_opt(h, 0, 0)
+            .with_hms(h, 0, 0)
             .unwrap()
-            .and_utc()
+            .assume_utc()
     }
 
     #[test]
@@ -717,7 +767,7 @@ mod tests {
             &home.0,
             &env_from(&[]),
             "0.12.4",
-            now + chrono::Duration::hours(23),
+            now + time::Duration::hours(23),
             &mut |_, _| {
                 posts += 1;
             },
@@ -726,7 +776,7 @@ mod tests {
             &home.0,
             &env_from(&[]),
             "0.12.4",
-            now + chrono::Duration::hours(24),
+            now + time::Duration::hours(24),
             &mut |_, _| {
                 posts += 1;
             },
@@ -765,7 +815,7 @@ mod tests {
         write_private(
             &dir,
             "heartbeat",
-            &format_stamp(now + chrono::Duration::seconds(30)),
+            &format_stamp(now + time::Duration::seconds(30)),
         )
         .unwrap();
         let mut posts = 0;
