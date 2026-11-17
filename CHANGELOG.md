@@ -22,6 +22,9 @@ blocked by the dependency scan, so its changes ship here.
 
 ### Fixed
 
+- `nab fetch --raw-html` prints the page. Without `--body` it printed only
+  the status line, so the new dropped-content message's pointer to
+  `--raw-html` led nowhere.
 - A page with an app-wide state store (`window.__PRELOADED_STATE__`,
   `__INITIAL_STATE__`, `__APOLLO_STATE__`, `__NUXT__` and similar) no longer
   has its server-rendered content replaced by an arbitrary string from that

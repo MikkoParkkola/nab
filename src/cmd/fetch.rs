@@ -1273,7 +1273,6 @@ fn save_file_destination(
 
 /// Print the response according to the requested output format.
 fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
-    let markdown = !cfg.raw_html;
     // Text goes through `output_body` as always; bytes are written once here,
     // before anything is printed; a withheld save prints status lines only.
     let out_path = match resp.file_output {
@@ -1287,8 +1286,9 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
         }
         _ => None,
     };
-    let prints_body = matches!(resp.file_output, FileOutput::Text)
-        && (cfg.show_body || out_path.is_some() || markdown || cfg.links);
+    // Text always prints: markdown by default, the page itself with
+    // --raw-html. Requiring --body for raw HTML printed headers only.
+    let prints_body = matches!(resp.file_output, FileOutput::Text);
 
     match cfg.format {
         OutputFormat::Compact => {

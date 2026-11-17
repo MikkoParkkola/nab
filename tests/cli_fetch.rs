@@ -326,6 +326,48 @@ fn fetch_raw_html_flag() {
         .stdout(predicate::str::contains("Example Domain"));
 }
 
+/// `--raw-html` asks for the page itself, so it must print without `--body`.
+#[test]
+fn raw_html_prints_the_page_without_body_flag() {
+    let html = r#"<html><body><p id="raw-marker">The page nab read, verbatim.</p></body></html>"#;
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
+        html.len()
+    );
+    let marker = r#"<p id="raw-marker">The page nab read, verbatim.</p>"#;
+    for format in ["full", "compact"] {
+        let (proxy_url, proxy_result) = spawn_test_proxy(&response, |_| {});
+        let url = format!("{PROXY_TEST_ORIGIN}/page");
+        let output = nab()
+            .args([
+                "fetch",
+                "--raw-html",
+                "--no-save",
+                "--cookies",
+                "none",
+                "--format",
+                format,
+                "--proxy",
+                &proxy_url,
+                &url,
+            ])
+            .timeout(PROXY_COMMAND_TIMEOUT)
+            .output()
+            .expect("nab should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{format}: nab failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout.contains(marker),
+            "{format}: the page is missing from stdout: {stdout}"
+        );
+        wait_for_test_proxy(&proxy_result);
+    }
+}
+
 #[test]
 fn fetch_links_flag() {
     if !net_tests_enabled() {
