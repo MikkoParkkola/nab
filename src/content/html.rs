@@ -1166,13 +1166,15 @@ struct SourceSections {
 }
 
 /// Headings and text inside `aside`, `nav`, `footer` and `form`. On the
-/// markdown side such a heading neither starts nor ends a section, and such a
-/// line is not counted as kept text, so a headed sidebar cannot make a kept
-/// section look emptied or an emptied section look kept.
+/// markdown side such a heading neither starts nor ends a section, and the
+/// lines right after it that match its subtree's text, each no more often than
+/// the source holds it, are not counted as kept text. So a headed sidebar can
+/// neither make a kept section look emptied nor an emptied one look kept, and a
+/// body line that merely repeats footer text elsewhere still counts.
 #[derive(Default)]
 struct SkippedText {
     heading_keys: std::collections::HashSet<String>,
-    lines: std::collections::HashSet<String>,
+    lines: std::collections::HashMap<String, usize>,
 }
 
 /// A heading's segment is the innermost leaf blocks after it, up to the next
@@ -1256,9 +1258,10 @@ fn source_heading_segments(html: &str) -> SourceSections {
         }
         let inside = boundary.is_none_or(|id| el.ancestors().any(|a| a.id() == id));
         if in_skipped(&el) {
-            skipped
+            *skipped
                 .lines
-                .insert(normalize_heading(&el.text().collect::<String>()));
+                .entry(normalize_heading(&el.text().collect::<String>()))
+                .or_default() += 1;
         } else if inside {
             // Characters, not bytes, and not the spaces between words.
             *chars += el
@@ -1280,8 +1283,8 @@ fn source_heading_segments(html: &str) -> SourceSections {
 /// before the next heading. Headings are ATX lines and the converter's setext
 /// form (a line followed by exactly ten `=` or `-`); a `---` line is its
 /// horizontal rule. Lines inside fenced code are text, never headings. A
-/// sidebar heading is neither a section nor a boundary, and a line matching
-/// sidebar text exactly is not counted as text.
+/// sidebar heading is neither a section nor a boundary, and the lines after it
+/// that match its text, up to the next real heading, are not counted as text.
 fn markdown_heading_sections(markdown: &str, skipped: &SkippedText) -> Vec<(String, bool)> {
     const H1_UNDERLINE: &str = "==========";
     const H2_UNDERLINE: &str = "----------";
@@ -1290,6 +1293,8 @@ fn markdown_heading_sections(markdown: &str, skipped: &SkippedText) -> Vec<(Stri
     let is_underline = |line: &str| line == H1_UNDERLINE || line == H2_UNDERLINE;
     let is_rule =
         |line: &str| line.len() >= 3 && line.chars().all(|c| matches!(c, '-' | '*' | '_' | ' '));
+    let mut remaining = skipped.lines.clone();
+    let mut after_sidebar = false;
     let mut sections: Vec<(String, bool)> = Vec::new();
     let mut in_fence = false;
     let mut i = 0;
@@ -1304,28 +1309,26 @@ fn markdown_heading_sections(markdown: &str, skipped: &SkippedText) -> Vec<(Stri
             continue;
         }
         if !in_fence {
-            if let Some(text) = atx_heading_text(line) {
+            let heading = atx_heading_text(line).map(|text| (text, 0)).or_else(|| {
+                if line.is_empty() || is_underline(line) || is_rule(line) {
+                    return None;
+                }
+                let next = lines[i..].iter().position(|l| !l.is_empty())?;
+                is_underline(lines[i + next]).then_some((line, next + 1))
+            });
+            if let Some((text, consumed)) = heading {
+                i += consumed;
                 let key = heading_key(&normalize_heading(&strip_inline_markdown(text)));
-                if !skipped.heading_keys.contains(&key) {
+                after_sidebar = skipped.heading_keys.contains(&key);
+                if !after_sidebar {
                     sections.push((key, false));
                 }
                 continue;
             }
-            if !line.is_empty() && !is_underline(line) && !is_rule(line) {
-                let next = lines[i..].iter().position(|l| !l.is_empty());
-                if let Some(offset) = next.filter(|&o| is_underline(lines[i + o])) {
-                    let key = heading_key(&normalize_heading(&strip_inline_markdown(line)));
-                    if !skipped.heading_keys.contains(&key) {
-                        sections.push((key, false));
-                    }
-                    i += offset + 1;
-                    continue;
-                }
-            }
             if line.is_empty()
                 || is_underline(line)
                 || is_rule(line)
-                || skipped.lines.contains(&plain_line(line))
+                || (after_sidebar && take_one(&mut remaining, &plain_line(line)))
             {
                 continue;
             }
@@ -1344,6 +1347,17 @@ fn atx_heading_text(line: &str) -> Option<&str> {
         return None;
     }
     Some(rest.trim().trim_end_matches('#').trim_end())
+}
+
+/// Use up one occurrence of `line` from the sidebar text counts.
+fn take_one(remaining: &mut std::collections::HashMap<String, usize>, line: &str) -> bool {
+    match remaining.get_mut(line) {
+        Some(count) if *count > 0 => {
+            *count -= 1;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// A markdown text line as plain text, for comparing with sidebar text: list
@@ -2848,6 +2862,21 @@ mod emptied_section_tests {
         let aside =
             "<aside><h3>Sponsored</h3><p>Advertising copy long enough to count.</p></aside>";
         let source = page(&format!("<h2>Get started</h2>{aside}{LIST}{NEXT}"));
+        let markdown = html_to_markdown(&source);
+        assert_eq!(
+            emptied_sections(&source, &markdown),
+            Vec::<String>::new(),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_body_line_repeating_footer_text_still_counts() {
+        let line = "<p>Write to the team at any time of the day.</p>";
+        let source = format!(
+            "<html><body><article><h2>Contact</h2>{line}{NEXT}</article>\
+             <footer>{line}</footer></body></html>"
+        );
         let markdown = html_to_markdown(&source);
         assert_eq!(
             emptied_sections(&source, &markdown),
