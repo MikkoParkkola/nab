@@ -52,4 +52,4 @@ reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unm
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0543"
 ignoreUntil = 2027-01-15   # review by this date; after it the gate fires again
-reason = "chrono 0.4.45 is unmaintained (advisory class = unmaintained), no patched release. Reaches nab only through pdfium-render in the optional `pdf` feature; default builds do not contain it. Owner decision 2026-11-17: ship 0.13.0, then replace pdfium-render with pdf-extract (MIK-9747), which removes chrono; do not renew this entry."
+reason = "chrono 0.4.45 is unmaintained (advisory class = unmaintained), no patched release. Reaches nab only through pdfium-render in the optional `pdf` feature; default builds do not contain it. Owner decision 2026-11-17: ship 0.13.0, then replace pdfium-render with pdf-extract (MIK-9747), whose acceptance requires chrono gone from the tree; do not renew this entry."
