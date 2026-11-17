@@ -1,6 +1,6 @@
 # Replace chrono with time
 
-Status: implemented after one review round (Grok, Muse). Meant to unblock the release: the release security gate (osv-scanner) fails on RUSTSEC-2026-0543, "chrono is unmaintained", which has no patched version. Rule for unfixable advisories: a time-boxed ignore only when the upstream is maintained; otherwise replace the dependency. chrono is a direct dependency of nab only (`cargo tree -i chrono`), so nab can remove it.
+Status: implemented after one review round (Grok, Muse). The release security gate (osv-scanner) fails on RUSTSEC-2026-0543, "chrono is unmaintained", which has no patched version. Rule for unfixable advisories: a time-boxed ignore only when the upstream is maintained; otherwise replace the dependency. This removes nab's own use of chrono; the optional `pdf` feature still pulls it in through pdfium-render (see the last section), so the gate is not cleared by this change alone.
 
 ## Choice
 
@@ -25,7 +25,7 @@ Direct dependency: `time = { version = "0.3", features = ["serde", "formatting",
 
 ## Saved data stays readable
 
-Timestamps written to disk by chrono's serde (RFC 3339, `Z`, 0, 3, 6 or 9 fraction digits): watch storage (`Watch.created_at`, `last_check_at`, `last_change_at`; `WatchSnapshot.captured_at`), the fingerprint version cache (`BrowserVersions.last_updated`, `safari_last_checked`), and `LookupResult.fetched_at`, which is serialized into tool output rather than stored. These fields take `#[serde(with = "time::serde::rfc3339")]` (`::option` for `Option`). Telemetry's stamp file is plain text written by `format_stamp` and read by `parse_stamp`; both keep the same text.
+Timestamps written to disk by chrono's serde (RFC 3339, `Z`, 0, 3, 6 or 9 fraction digits): watch storage (`Watch.created_at`, `last_check_at`, `last_change_at`; `WatchSnapshot.captured_at`), the fingerprint version cache (`BrowserVersions.last_updated`, `safari_last_checked`), and `LookupResult.fetched_at`, which is serialized into tool output rather than stored. These fields take `#[serde(with = "crate::util::utc_rfc3339")]` (`::option`, with `default`, for `Option`), which reads RFC 3339 and writes it back in UTC. Telemetry's stamp file is plain text written by `format_stamp` and read by `parse_stamp`; both keep the same text.
 
 ## Public API
 
@@ -39,7 +39,7 @@ Characterization tests written before the swap, green on chrono and required gre
 - C3. The telemetry date check accepts 2024-02-29 and rejects 2023-02-29, month 13 and day 0.
 - C4. `timestamp_from_activity_urn` keeps its current output for the existing doc-test URN.
 
-Then the swap; `cargo tree -i chrono` must report nothing, and the release gate's osv-scanner run must pass on the branch.
+Then the swap; `cargo tree -i chrono -e normal` must report nothing (no default build links chrono).
 
 ## What review and the build changed
 

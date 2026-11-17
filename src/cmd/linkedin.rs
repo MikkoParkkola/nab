@@ -257,6 +257,7 @@ fn resolve_output_path(explicit: Option<&std::path::Path>) -> Result<PathBuf> {
 }
 
 /// `YYYYMMDD-HHMMSS`, zero-padded, for export file names.
+#[cfg(feature = "impersonate")]
 fn export_stamp(t: time::OffsetDateTime) -> String {
     t.format(time::macros::format_description!(
         "[year][month][day]-[hour][minute][second]"

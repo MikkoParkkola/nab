@@ -131,7 +131,7 @@ pub mod utc_rfc3339 {
     /// # Errors
     /// When the instant cannot be written as RFC 3339.
     pub fn serialize<S: Serializer>(t: &OffsetDateTime, s: S) -> Result<S::Ok, S::Error> {
-        time::serde::rfc3339::serialize(t, s)
+        time::serde::rfc3339::serialize(&t.to_offset(UtcOffset::UTC), s)
     }
 
     /// # Errors
@@ -152,7 +152,7 @@ pub mod utc_rfc3339 {
             t: &Option<OffsetDateTime>,
             s: S,
         ) -> Result<S::Ok, S::Error> {
-            time::serde::rfc3339::option::serialize(t, s)
+            time::serde::rfc3339::option::serialize(&t.map(|t| t.to_offset(UtcOffset::UTC)), s)
         }
 
         /// # Errors
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn utc_rfc3339_reads_offsets_as_utc() {
-        #[derive(serde::Deserialize)]
+        #[derive(serde::Deserialize, serde::Serialize)]
         struct Saved {
             #[serde(with = "super::utc_rfc3339")]
             at: time::OffsetDateTime,
@@ -194,6 +194,17 @@ mod tests {
         );
         let absent: Saved = serde_json::from_str(r#"{"at":"2026-11-17T11:03:18Z"}"#).unwrap();
         assert!(absent.maybe.is_none());
+        // chrono stored an empty optional timestamp as null.
+        let null: Saved =
+            serde_json::from_str(r#"{"at":"2026-11-17T11:03:18Z","maybe":null}"#).unwrap();
+        assert!(null.maybe.is_none());
+        // Written back in UTC with a Z, whatever offset the value carried.
+        let shifted = Saved {
+            at: saved.at.to_offset(time::macros::offset!(+2)),
+            maybe: None,
+        };
+        let written = serde_json::to_string(&shifted).unwrap();
+        assert_eq!(written, r#"{"at":"2026-11-17T11:03:18Z","maybe":null}"#);
     }
 
     #[test]
