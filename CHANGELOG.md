@@ -7,10 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.7] - 2026-11-16
+## [0.13.0] - 2026-11-17
+
+0.12.7 was tagged but never published. Its release run was cancelled, then
+blocked by the dependency scan, so its changes ship here.
+
+### Added
+
+- `nab fetch` and the MCP fetch tool say when extraction kept a heading but
+  dropped everything under it, such as a link list readability scored as
+  navigation: `Extraction dropped the content under the heading "Get
+  started".` The MCP structured output lists those headings as
+  `emptied_sections` (#414).
 
 ### Fixed
 
+- A page with an app-wide state store (`window.__PRELOADED_STATE__`,
+  `__INITIAL_STATE__`, `__APOLLO_STATE__`, `__NUXT__` and similar) no longer
+  has its server-rendered content replaced by an arbitrary string from that
+  store. A Flipboard collection page now returns its article cards instead of
+  one keyword list; only `__NEXT_DATA__` is still trusted as page data (#413).
 - The fetch-time YARA-X screen no longer removes most of a page because a
   rule's words appear far apart. The prompt-injection and exfiltration rules
   now fire only when their parts sit within one command or paragraph (512 or
@@ -34,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced the unmaintained `chrono` with `time` (RUSTSEC-2026-0543). Saved
+  watch and browser-version files keep loading. chrono remains only behind
+  the optional `pdf` feature, which `pdfium-render` needs (#415).
+- Breaking for library users: the public timestamp fields of `Watch`,
+  `WatchSnapshot`, `BrowserVersions` and `LookupResult` are now
+  `time::OffsetDateTime`, and `ConversionResult` gains `emptied_sections`
+  (#414, #415).
+- Release macOS jobs run on macos-15; GitHub retired the macos-14 runner
+  (#412).
 - Rust toolchain image 1.100; dependency updates including yara-x 1.22.1,
   tokio 1.54.1, scraper 0.29.0, zip 9.3.0 and toml 1.2.0.
 

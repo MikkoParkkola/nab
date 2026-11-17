@@ -48,18 +48,3 @@
 id = "RUSTSEC-2025-0141"
 ignoreUntil = 2026-12-01   # review by this date; after it the gate fires again
 reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unmaintained). Rechecked 2026-09-04: still no patched release (osv-scanner FIXED VERSION --). Transitive; not a code-execution vulnerability. Time-boxed pending upstream maintenance or a migration off bincode. Reviewed 2026-09-04 by Grok."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0367"
-ignoreUntil = 2026-12-01
-reason = "zip keeps SUID/SGID bits on extraction. Fixed in zip 9.0.0. Hit is zip 2.4.2, a build-dependency of sherpa-onnx-sys 1.13.8 whose build script uses zip only for the iOS .xcframework.zip archive (other targets unpack .tar.bz2); nab does not build for iOS and does not link zip 2. ID-wide: a later zip below 9.0.0 would stay silent until this date. Upstream is maintained and fixed on main (sherpa-onnx declares zip = \"9\"; k2-fsa/sherpa-onnx#4059, 2026-10-17), release pending; releases every 1-3 weeks. Remove with the next sherpa-onnx-sys release. Reviewed 2026-10-19."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0368"
-ignoreUntil = 2026-12-01
-reason = "zip ZipArchive::extract applies symlink attributes. Fixed in zip 9.0.0. Hit is zip 2.4.2, build-dependency of sherpa-onnx-sys 1.13.8, used only for the iOS .xcframework.zip archive; nab does not build for iOS and does not link it. ID-wide, as for 0367. Upstream fixed on main (k2-fsa/sherpa-onnx#4059), release pending. Remove with the next sherpa-onnx-sys release. Reviewed 2026-10-19."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0369"
-ignoreUntil = 2026-12-01
-reason = "zip extract applies Unix modes unsafely. Fixed in zip 9.0.0. Hit is zip 2.4.2, build-dependency of sherpa-onnx-sys 1.13.8, used only for the iOS .xcframework.zip archive; nab does not build for iOS and does not link it. ID-wide, as for 0367. Upstream fixed on main (k2-fsa/sherpa-onnx#4059), release pending. Remove with the next sherpa-onnx-sys release. Reviewed 2026-10-19."
