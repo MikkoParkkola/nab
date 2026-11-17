@@ -334,27 +334,36 @@ fn raw_html_prints_the_page_without_body_flag() {
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
         html.len()
     );
-    for format in [None, Some("compact")] {
+    let marker = r#"<p id="raw-marker">The page nab read, verbatim.</p>"#;
+    for format in ["full", "compact"] {
         let (proxy_url, proxy_result) = spawn_test_proxy(&response, |_| {});
-        let mut cmd = nab();
-        cmd.args([
-            "fetch",
-            "--raw-html",
-            "--cookies",
-            "none",
-            "--proxy",
-            &proxy_url,
-        ]);
-        if let Some(format) = format {
-            cmd.args(["--format", format]);
-        }
-        cmd.arg(format!("{PROXY_TEST_ORIGIN}/page"))
+        let url = format!("{PROXY_TEST_ORIGIN}/page");
+        let output = nab()
+            .args([
+                "fetch",
+                "--raw-html",
+                "--no-save",
+                "--cookies",
+                "none",
+                "--format",
+                format,
+                "--proxy",
+                &proxy_url,
+                &url,
+            ])
             .timeout(PROXY_COMMAND_TIMEOUT)
-            .assert()
-            .success()
-            .stdout(predicate::str::contains(
-                r#"<p id="raw-marker">The page nab read, verbatim.</p>"#,
-            ));
+            .output()
+            .expect("nab should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{format}: nab failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout.contains(marker),
+            "{format}: the page is missing from stdout: {stdout}"
+        );
         wait_for_test_proxy(&proxy_result);
     }
 }
