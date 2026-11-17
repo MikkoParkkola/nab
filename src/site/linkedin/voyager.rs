@@ -336,8 +336,9 @@ pub fn timestamp_from_activity_urn(activity_urn: &str) -> Option<String> {
     }
     #[allow(clippy::cast_possible_wrap)]
     let secs = (unix_ms / 1000) as i64;
-    chrono::DateTime::<chrono::Utc>::from_timestamp_secs(secs)
-        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+    time::OffsetDateTime::from_unix_timestamp(secs)
+        .ok()
+        .map(crate::util::format_utc_seconds)
 }
 
 /// Extract `urn:li:activity:NUMBER` from `urn:li:fsd_update:(urn:li:activity:NUMBER,...)`.

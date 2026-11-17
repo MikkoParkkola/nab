@@ -76,7 +76,8 @@ pub struct LookupResult {
     /// LLM-generated summary of the fetched content, focused on the query.
     pub summary: String,
     /// UTC timestamp when the lookup was performed.
-    pub fetched_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "crate::util::utc_rfc3339")]
+    pub fetched_at: time::OffsetDateTime,
 }
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -410,9 +411,7 @@ impl<'a> ActiveReader<'a> {
 
         // Cache hit — check TTL.
         if let Some(cached) = self.cache.get(&cache_key) {
-            let age_days = chrono::Utc::now()
-                .signed_duration_since(cached.fetched_at)
-                .num_days();
+            let age_days = (time::OffsetDateTime::now_utc() - cached.fetched_at).whole_days();
             if age_days < i64::try_from(self.config.cache_ttl_days).unwrap_or(i64::MAX) {
                 debug!(query = %reference.query, "active reading: cache hit");
                 return Ok(cached.clone());
@@ -439,7 +438,7 @@ impl<'a> ActiveReader<'a> {
         let result = LookupResult {
             url,
             summary,
-            fetched_at: chrono::Utc::now(),
+            fetched_at: time::OffsetDateTime::now_utc(),
         };
 
         self.cache.insert(cache_key, result.clone());
@@ -482,6 +481,19 @@ mod tests {
     // ── Mock implementations ──────────────────────────────────────────────────
 
     /// Deterministic mock sampler for testing.
+    #[test]
+    fn a_lookup_written_by_chrono_stays_readable() {
+        let saved = r#"{"url":"https://blog.nab.test/a","summary":"s","fetched_at":"2026-11-17T11:03:18.123456Z"}"#;
+        let lookup: LookupResult = serde_json::from_str(saved).expect("loads");
+        assert_eq!(lookup.fetched_at.unix_timestamp(), 1_794_913_398);
+        assert_eq!(lookup.fetched_at.nanosecond(), 123_456_000);
+        let written = serde_json::to_string(&lookup).unwrap();
+        assert!(
+            written.contains("\"fetched_at\":\"2026-11-17T11:03:18.123456Z\""),
+            "{written}"
+        );
+    }
+
     struct MockSampler {
         /// Fixed list of references returned on every `identify_references` call.
         refs: Vec<Reference>,
