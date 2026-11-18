@@ -754,14 +754,18 @@ fn jsonld_summary(html: &str) -> Option<String> {
         })
         .flat_map(|value| match value {
             serde_json::Value::Array(items) => items,
-            // `{"@context": …, "@graph": [ … ]}` wraps its nodes.
-            serde_json::Value::Object(mut map)
-                if map.get("@graph").is_some_and(|g| g.is_array()) =>
-            {
-                match map.remove("@graph") {
+            // `{"@context": …, "@graph": [ … ]}` wraps its nodes; a single
+            // node may stand alone, and the wrapper may itself be a node.
+            serde_json::Value::Object(mut map) if map.contains_key("@graph") => {
+                let mut items = match map.remove("@graph") {
                     Some(serde_json::Value::Array(items)) => items,
+                    Some(node @ serde_json::Value::Object(_)) => vec![node],
                     _ => Vec::new(),
+                };
+                if map.contains_key("@type") {
+                    items.push(serde_json::Value::Object(map));
                 }
+                items
             }
             other => vec![other],
         })
@@ -1666,6 +1670,15 @@ mod tests {
         let markdown = html_to_markdown_with_url(html, None);
         assert!(markdown.contains("# Graph Headline"), "{markdown}");
         assert!(markdown.contains("Graph summary text."), "{markdown}");
+
+        // A single-node graph, and a wrapper that is itself the article.
+        for html in [
+            r#"<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":{"@type":"Article","headline":"Solo","description":"Solo summary."}}</script></head><body><div id="root"></div></body></html>"#,
+            r#"<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Solo","description":"Solo summary.","@graph":[{"@type":"WebSite","name":"S"}]}</script></head><body><div id="root"></div></body></html>"#,
+        ] {
+            let markdown = html_to_markdown_with_url(html, None);
+            assert!(markdown.contains("Solo summary."), "{markdown}");
+        }
 
         let options = HtmlConversionOptions {
             allow_spa_extraction: false,

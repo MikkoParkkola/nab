@@ -660,6 +660,30 @@ mod tests {
     static DIV_SELECTOR: LazyLock<Selector> =
         LazyLock::new(|| Selector::parse("div").expect("static div selector"));
 
+    /// MIK-9752 review: indentation between elements is not text, so it
+    /// cannot force the plain-text fallback that drops headings and links.
+    #[test]
+    fn indentation_does_not_force_the_plain_text_fallback() {
+        let indent = format!("\n{}", " ".repeat(200));
+        let article = Article {
+            title: "T".into(),
+            content_html: format!(
+                "<article>{indent}<h2>Section Heading</h2>{indent}<p>Read <a href=\"https://example.com/x\">the source</a>.</p>{indent}</article>"
+            ),
+            excerpt: String::new(),
+            text_content: String::new(),
+            source: ArticleSource::Generic,
+        };
+
+        let markdown = article_to_markdown(&article);
+
+        assert!(markdown.contains("Section Heading"), "{markdown}");
+        assert!(
+            markdown.contains("[the source](https://example.com/x)"),
+            "{markdown}"
+        );
+    }
+
     /// MIK-9752: the plain-text fallback compares and uses visible text only,
     /// so a JSON-LD script inside the article never reaches the reader.
     #[test]
