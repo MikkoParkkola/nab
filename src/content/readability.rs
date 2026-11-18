@@ -154,11 +154,36 @@ pub fn article_to_markdown(article: &Article) -> String {
     // html2md sometimes truncates list-heavy content (<ol>/<li>). If the
     // article's plain text is significantly longer than the markdown output,
     // fall back to the plain text which preserves all content from the DOM.
-    if article.text_content.len() > md_result.len() + 100 {
-        plain_text_to_markdown_blocks(&article.text_content)
+    // Visible text only: `text_content` also holds script and style text,
+    // which the converter drops on purpose (MIK-9752).
+    let text = visible_text(&article.content_html);
+    if text.len() > md_result.len() + 100 {
+        plain_text_to_markdown_blocks(&text)
     } else {
         md_result
     }
+}
+
+/// The text a reader sees in `html`: every text node outside `<script>` and
+/// `<style>`, separated by spaces.
+fn visible_text(html: &str) -> String {
+    let fragment = Html::parse_fragment(html);
+    let mut out = String::new();
+    for node in fragment.root_element().descendants() {
+        let Some(text) = node.value().as_text() else {
+            continue;
+        };
+        let hidden = node.ancestors().any(|a| {
+            a.value()
+                .as_element()
+                .is_some_and(|e| matches!(e.name(), "script" | "style"))
+        });
+        if !hidden {
+            out.push_str(text);
+            out.push(' ');
+        }
+    }
+    out
 }
 
 fn plain_text_to_markdown_blocks(text: &str) -> String {
@@ -632,6 +657,30 @@ mod tests {
 
     static DIV_SELECTOR: LazyLock<Selector> =
         LazyLock::new(|| Selector::parse("div").expect("static div selector"));
+
+    /// MIK-9752: the plain-text fallback compares and uses visible text only,
+    /// so a JSON-LD script inside the article never reaches the reader.
+    #[test]
+    fn article_to_markdown_never_falls_back_to_script_text() {
+        let json = format!(
+            r#"{{"@context":"https://schema.org","@type":"NewsArticle","description":"{}"}}"#,
+            "padding ".repeat(60)
+        );
+        let article = Article {
+            title: "T".into(),
+            content_html: format!(
+                r#"<article><p>Short visible body.</p><script type="application/ld+json">{json}</script></article>"#
+            ),
+            excerpt: String::new(),
+            text_content: format!("Short visible body. {json}"),
+            source: ArticleSource::Generic,
+        };
+
+        let markdown = article_to_markdown(&article);
+
+        assert!(markdown.contains("Short visible body."), "{markdown}");
+        assert!(!markdown.contains("@context"), "{markdown}");
+    }
 
     #[test]
     fn extracts_article_with_semantic_html() {

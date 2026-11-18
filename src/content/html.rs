@@ -330,8 +330,9 @@ where
         small_pick_len,
         pick,
     );
-    // Nothing at all from the page body: fall back to its article summary.
-    let markdown = if markdown.trim().is_empty() {
+    // Nothing at all from the page body: fall back to its article summary,
+    // when structured extraction is allowed at all.
+    let markdown = if options.allow_spa_extraction && markdown.trim().is_empty() {
         jsonld_summary(html).unwrap_or(markdown)
     } else {
         markdown
@@ -751,6 +752,15 @@ fn jsonld_summary(html: &str) -> Option<String> {
         })
         .flat_map(|value| match value {
             serde_json::Value::Array(items) => items,
+            // `{"@context": …, "@graph": [ … ]}` wraps its nodes.
+            serde_json::Value::Object(mut map)
+                if map.get("@graph").is_some_and(|g| g.is_array()) =>
+            {
+                match map.remove("@graph") {
+                    Some(serde_json::Value::Array(items)) => items,
+                    _ => Vec::new(),
+                }
+            }
             other => vec![other],
         })
         .filter(|value| is_article(value))
@@ -1638,6 +1648,27 @@ mod tests {
         );
         assert!(!markdown.contains("@context"), "{markdown}");
         assert!(!markdown.contains("<b>"), "{markdown}");
+    }
+
+    /// MIK-9752: the summary fallback reads `@graph` wrappers, and stays off
+    /// when the caller disables structured extraction.
+    #[test]
+    fn the_summary_fallback_reads_graphs_and_respects_the_opt_out() {
+        let html = r#"<html><head><script type="application/ld+json">
+            {"@context":"https://schema.org","@graph":[{"@type":"WebSite","name":"S"},
+             {"@type":"Article","headline":"Graph Headline","description":"Graph summary text."}]}
+            </script></head><body><div id="root"></div></body></html>"#;
+
+        let markdown = html_to_markdown_with_url(html, None);
+        assert!(markdown.contains("# Graph Headline"), "{markdown}");
+        assert!(markdown.contains("Graph summary text."), "{markdown}");
+
+        let options = HtmlConversionOptions {
+            allow_spa_extraction: false,
+            ..HtmlConversionOptions::default()
+        };
+        let markdown = super::html_to_markdown_with_url_and_options(html, None, options);
+        assert!(!markdown.contains("Graph summary text."), "{markdown}");
     }
 
     #[test]

@@ -199,6 +199,17 @@ mod tests {
 
     const BODY: &str = "The full article text, long enough to count as a body. ";
 
+    /// MIK-9752: markup in SPA content goes through the shared converter.
+    #[test]
+    fn render_markup_drops_script_text_and_raw_img_tags() {
+        let md = super::render_markup(
+            r#"<p>Body text.</p><img src="https://x.test/a.png" alt="a" width="9"><script type="application/ld+json">{"@context":"https://schema.org"}</script>"#,
+        );
+        assert!(md.contains("Body text."), "{md}");
+        assert!(md.contains("![a](https://x.test/a.png)"), "{md}");
+        assert!(!md.contains("<img") && !md.contains("@context"), "{md}");
+    }
+
     #[test]
     fn render_spa_content_drops_schema_org_metadata_without_body() {
         for input in [
