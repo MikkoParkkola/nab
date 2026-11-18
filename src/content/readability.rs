@@ -143,7 +143,7 @@ pub fn extract_article(html: &str, url: &str) -> Option<Article> {
 /// Convert an extracted article into compact markdown.
 #[must_use]
 pub fn article_to_markdown(article: &Article) -> String {
-    let md = html2md::parse_html(&article.content_html);
+    let md = crate::content::html::html2md_parse(&article.content_html);
     let lines: Vec<&str> = md
         .lines()
         .map(str::trim)

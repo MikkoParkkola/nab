@@ -142,7 +142,7 @@ pub(super) fn render_spa_content(content: &str) -> String {
 
 fn render_markup(content: &str) -> String {
     if content.contains('<') && content.contains('>') {
-        let md = html2md::parse_html(content);
+        let md = crate::content::html::html2md_parse(content);
         md.lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
