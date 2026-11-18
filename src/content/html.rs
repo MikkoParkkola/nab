@@ -360,6 +360,11 @@ where
         warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
     }
 
+    // Nothing at all from the page body: fall back to its article summary,
+    // when structured extraction is allowed. After the thin check, so a
+    // summary never hides that the body was not captured.
+    let markdown = summary_if_empty(markdown, html, options.allow_spa_extraction);
+
     let emptied = if replaced_by_spa {
         Vec::new()
     } else {
@@ -717,6 +722,79 @@ pub fn strip_embedded_data_sections(html: &str) -> String {
     rebuild_document_excluding(&document, html, &embedded_ids)
 }
 
+/// `markdown`, or the page's JSON-LD article summary when `markdown` is empty
+/// and structured extraction is `allowed`.
+fn summary_if_empty(markdown: String, html: &str, allowed: bool) -> String {
+    if allowed && markdown.trim().is_empty() {
+        jsonld_summary(html).unwrap_or(markdown)
+    } else {
+        markdown
+    }
+}
+
+/// Last resort when conversion yields nothing (MIK-9752): the headline and
+/// `description` of the page's first Schema.org article, as markdown. Script
+/// text never reaches markdown, and the body extractor skips `description` on
+/// purpose (`spa/jsonld.rs`), since the page body is usually the better source.
+fn jsonld_summary(html: &str) -> Option<String> {
+    let document = scraper::Html::parse_document(html);
+    let is_article = |value: &serde_json::Value| {
+        let names: Vec<&str> = match value.get("@type") {
+            Some(serde_json::Value::String(name)) => vec![name.as_str()],
+            Some(serde_json::Value::Array(names)) => {
+                names.iter().filter_map(serde_json::Value::as_str).collect()
+            }
+            _ => Vec::new(),
+        };
+        names.iter().any(|name| {
+            ["Article", "Posting", "Report"]
+                .iter()
+                .any(|m| name.contains(m))
+        })
+    };
+    document
+        .select(&SCRIPT_SELECTOR)
+        .filter(|script| is_jsonld_script(script))
+        .filter_map(|script| {
+            serde_json::from_str::<serde_json::Value>(script.text().collect::<String>().trim()).ok()
+        })
+        .flat_map(|value| match value {
+            serde_json::Value::Array(items) => items,
+            // `{"@context": …, "@graph": [ … ]}` wraps its nodes; a single
+            // node may stand alone, and the wrapper may itself be a node.
+            serde_json::Value::Object(mut map) if map.contains_key("@graph") => {
+                let mut items = match map.remove("@graph") {
+                    Some(serde_json::Value::Array(items)) => items,
+                    Some(node @ serde_json::Value::Object(_)) => vec![node],
+                    _ => Vec::new(),
+                };
+                if map.contains_key("@type") {
+                    items.push(serde_json::Value::Object(map));
+                }
+                items
+            }
+            other => vec![other],
+        })
+        .filter(|value| is_article(value))
+        .filter_map(|value| {
+            let description = html2md_parse(value.get("description")?.as_str()?);
+            let description = description.trim().to_string();
+            if description.is_empty() {
+                return None;
+            }
+            let summary = match value.get("headline").and_then(serde_json::Value::as_str) {
+                Some(headline) if !headline.trim().is_empty() => {
+                    format!("# {}\n\n{description}", headline.trim())
+                }
+                _ => description.clone(),
+            };
+            Some((description.len(), summary))
+        })
+        // The main article's summary, not a teaser listed before it.
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, summary)| summary)
+}
+
 fn is_jsonld_script(script: &scraper::ElementRef<'_>) -> bool {
     script
         .value()
@@ -1067,13 +1145,69 @@ fn clean_markdown_noise(md: &str) -> String {
         .join("\n")
 }
 
+/// `html2md::parse_html` with the two overrides every caller needs (MIK-9752).
+/// html2md copies an `<img>` carrying `width`, `height` or `align` out as raw
+/// HTML, and prints the text inside `<script>` and `<style>`; neither belongs
+/// in markdown for a reader. JSON-LD stays in the HTML for structured
+/// extraction, which reads it before conversion.
+pub(crate) fn html2md_parse(html: &str) -> String {
+    let mut custom: std::collections::HashMap<String, Box<dyn html2md::TagHandlerFactory>> =
+        std::collections::HashMap::new();
+    custom.insert("img".into(), Box::new(|| MarkdownImage));
+    for tag in ["script", "style"] {
+        custom.insert(tag.into(), Box::new(|| Dropped));
+    }
+    html2md::parse_html_custom(html, &custom)
+}
+
+/// An image as markdown, always: `![alt](src "title")`, escaping the URL
+/// the way html2md's own image handler does.
+struct MarkdownImage;
+
+impl html2md::TagHandler for MarkdownImage {
+    fn handle(&mut self, tag: &html2md::Handle, printer: &mut html2md::StructuredPrinter) {
+        let attr = |name: &str| html2md::common::get_tag_attr(tag, name);
+        let mut src = attr("src").unwrap_or_default();
+        if src.contains(' ') {
+            src = src
+                .replace(' ', "%20")
+                .replace('"', "%22")
+                .replace('<', "%3C")
+                .replace('>', "%3E")
+                .replace('`', "%60");
+        }
+        let title = attr("title")
+            .map(|t| format!(" \"{t}\""))
+            .unwrap_or_default();
+        printer.append_str(&format!(
+            "![{}]({src}{title})",
+            attr("alt").unwrap_or_default()
+        ));
+    }
+
+    fn after_handle(&mut self, _printer: &mut html2md::StructuredPrinter) {}
+}
+
+/// An element whose contents never become text.
+struct Dropped;
+
+impl html2md::TagHandler for Dropped {
+    fn handle(&mut self, _tag: &html2md::Handle, _printer: &mut html2md::StructuredPrinter) {}
+
+    fn after_handle(&mut self, _printer: &mut html2md::StructuredPrinter) {}
+
+    fn skip_descendants(&self) -> bool {
+        true
+    }
+}
+
 /// Convert HTML to markdown with boilerplate filtering (fallback).
 ///
 /// Uses `html2md` for the heavy lifting, then post-processes to remove
 /// common web boilerplate (cookie notices, navigation, privacy footers)
 /// and collapse excessive whitespace.
 pub fn html_to_markdown(html: &str) -> String {
-    let md = html2md::parse_html(html);
+    let md = html2md_parse(html);
 
     let lines: Vec<&str> = md
         .lines()
@@ -1364,7 +1498,7 @@ fn normalize_heading(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        HtmlConversionOptions, HtmlPick, HtmlSelection, detect_empty_spa_shell,
+        HtmlConversionOptions, HtmlPick, HtmlSelection, detect_empty_spa_shell, html_to_markdown,
         html_to_markdown_with_url, html_to_markdown_with_url_and_fetcher,
         html_to_markdown_with_url_and_sources, is_thin_content, looks_like_client_spa_shell,
         merge_spa_candidate, pick_html_result, pick_html_result_for_page,
@@ -1464,6 +1598,140 @@ mod tests {
 
         assert!(!markdown.contains("very noisy js bootstrap"));
         assert!(!markdown.contains("const boot="));
+    }
+
+    /// MIK-9752: a Flipboard card, trimmed from the live page. Its avatar
+    /// carries `width`/`height`, which made html2md copy the tag out as raw
+    /// HTML, and its JSON-LD breadcrumb script printed as text.
+    #[test]
+    fn html_to_markdown_never_emits_raw_img_tags_or_script_text() {
+        let html = r#"<html><body>
+            <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[]}</script>
+            <article>
+                <h3 class="post__title css-1gfr4m3 e1co7dw60">Meta denies accusation of anti-Lula political bias in Brazil after electoral court ruling</h3>
+                <img src="https://um-cdn.flipboard.com/l6pneX6Y1mEj5dg0XwMTWg/uploads/avatar/ab398e967f0f36468c53d31a0cc578512f8dafa4.jpeg" class="author-avatar__image css-4se05m el17drn0" alt="Avatar - The Features Desk" width="35" height="35"/>
+                <img src="https://cdn.example.com/a b.png" align="left" alt="spaced" title="T">
+                <p>Meta has been accused of anti-Lula political bias in Brazil and had to apologize.</p>
+            </article>
+        </body></html>"#;
+
+        for markdown in [
+            html_to_markdown(html),
+            html_to_markdown_with_url(html, None),
+        ] {
+            assert!(!markdown.contains("<img"), "raw img tag: {markdown}");
+            assert!(
+                !markdown.contains("\"@context\""),
+                "JSON-LD text: {markdown}"
+            );
+            assert!(
+                markdown.contains("Meta denies accusation of anti-Lula political bias"),
+                "heading lost: {markdown}"
+            );
+            assert!(
+                markdown.contains(
+                    "![Avatar - The Features Desk](https://um-cdn.flipboard.com/l6pneX6Y1mEj5dg0XwMTWg/uploads/avatar/ab398e967f0f36468c53d31a0cc578512f8dafa4.jpeg)"
+                ),
+                "image not in markdown form: {markdown}"
+            );
+        }
+        // Spaces in the URL are percent-encoded and the title kept, as html2md does.
+        assert!(
+            html_to_markdown(html).contains("![spaced](https://cdn.example.com/a%20b.png \"T\")"),
+            "{}",
+            html_to_markdown(html)
+        );
+    }
+
+    /// MIK-9752: with script text gone from markdown, a page whose body is
+    /// empty still yields its article summary, as markdown, not JSON.
+    #[test]
+    fn an_empty_body_falls_back_to_the_article_summary_not_its_json() {
+        let html = r#"<html><head><script type="application/ld+json">
+            [{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[]},
+             {"@context":"https://schema.org","@type":["NewsArticle"],"headline":"Summary Headline",
+              "description":"A short <b>summary</b> of the article for readers."}]
+            </script></head><body><div id="root"></div></body></html>"#;
+
+        let markdown = html_to_markdown_with_url(html, None);
+
+        assert!(markdown.contains("# Summary Headline"), "{markdown}");
+        assert!(
+            markdown.contains("A short **summary** of the article"),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("@context"), "{markdown}");
+        assert!(!markdown.contains("<b>"), "{markdown}");
+    }
+
+    /// MIK-9752: the summary fallback reads `@graph` wrappers, and stays off
+    /// when the caller disables structured extraction.
+    #[test]
+    fn the_summary_fallback_reads_graphs_and_respects_the_opt_out() {
+        let html = r#"<html><head><script type="application/ld+json">
+            {"@context":"https://schema.org","@graph":[{"@type":"WebSite","name":"S"},
+             {"@type":"Article","headline":"Graph Headline","description":"Graph summary text."}]}
+            </script></head><body><div id="root"></div></body></html>"#;
+
+        let markdown = html_to_markdown_with_url(html, None);
+        assert!(markdown.contains("# Graph Headline"), "{markdown}");
+        assert!(markdown.contains("Graph summary text."), "{markdown}");
+
+        // A single-node graph, and a wrapper that is itself the article.
+        for html in [
+            r#"<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":{"@type":"Article","headline":"Solo","description":"Solo summary."}}</script></head><body><div id="root"></div></body></html>"#,
+            r#"<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Solo","description":"Solo summary.","@graph":[{"@type":"WebSite","name":"S"}]}</script></head><body><div id="root"></div></body></html>"#,
+        ] {
+            let markdown = html_to_markdown_with_url(html, None);
+            assert!(markdown.contains("Solo summary."), "{markdown}");
+        }
+
+        let options = HtmlConversionOptions {
+            allow_spa_extraction: false,
+            ..HtmlConversionOptions::default()
+        };
+        let markdown = super::html_to_markdown_with_url_and_options(html, None, options);
+        assert!(!markdown.contains("Graph summary text."), "{markdown}");
+    }
+
+    /// MIK-9752 code review: on a thin page the summary comes after the thin
+    /// check, so the opt-in recovery still runs instead of being skipped.
+    #[test]
+    fn a_summary_never_hides_a_thin_page_from_recovery() {
+        let description = "A long summary sentence about the article. ".repeat(10);
+        let padding = "x".repeat(6000);
+        let html = format!(
+            r#"<html><head><script>var boot = "{padding}";</script><script type="application/ld+json">
+            {{"@context":"https://schema.org","@type":"Article","headline":"H","description":"{description}"}}
+            </script></head><body><div id="root"></div></body></html>"#
+        );
+        let options = HtmlConversionOptions {
+            allow_jina_fallback: true,
+            ..HtmlConversionOptions::default()
+        };
+
+        let markdown = html_to_markdown_with_url_and_fetcher(
+            &html,
+            Some("https://example.com/a"),
+            options,
+            |_| Some("RECOVERED BODY".to_string()),
+        );
+
+        assert_eq!(markdown, "RECOVERED BODY");
+    }
+
+    /// The main article's summary wins over a shorter teaser listed first.
+    #[test]
+    fn the_longest_article_summary_wins() {
+        let html = r#"<html><head><script type="application/ld+json">
+            [{"@type":"Article","headline":"Teaser","description":"Short teaser."},
+             {"@type":"Article","headline":"Main","description":"The main article summary, which is longer than the teaser."}]
+            </script></head><body><div id="root"></div></body></html>"#;
+
+        let markdown = html_to_markdown_with_url(html, None);
+
+        assert!(markdown.contains("# Main"), "{markdown}");
+        assert!(!markdown.contains("Teaser"), "{markdown}");
     }
 
     #[test]
