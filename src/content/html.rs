@@ -363,11 +363,7 @@ where
     // Nothing at all from the page body: fall back to its article summary,
     // when structured extraction is allowed. After the thin check, so a
     // summary never hides that the body was not captured.
-    let markdown = if options.allow_spa_extraction && markdown.trim().is_empty() {
-        jsonld_summary(html).unwrap_or(markdown)
-    } else {
-        markdown
-    };
+    let markdown = summary_if_empty(markdown, html, options.allow_spa_extraction);
 
     let emptied = if replaced_by_spa {
         Vec::new()
@@ -724,6 +720,16 @@ pub fn strip_embedded_data_sections(html: &str) -> String {
     );
 
     rebuild_document_excluding(&document, html, &embedded_ids)
+}
+
+/// `markdown`, or the page's JSON-LD article summary when `markdown` is empty
+/// and structured extraction is `allowed`.
+fn summary_if_empty(markdown: String, html: &str, allowed: bool) -> String {
+    if allowed && markdown.trim().is_empty() {
+        jsonld_summary(html).unwrap_or(markdown)
+    } else {
+        markdown
+    }
 }
 
 /// Last resort when conversion yields nothing (MIK-9752): the headline and
