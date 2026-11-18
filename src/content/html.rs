@@ -330,13 +330,6 @@ where
         small_pick_len,
         pick,
     );
-    // Nothing at all from the page body: fall back to its article summary,
-    // when structured extraction is allowed at all.
-    let markdown = if options.allow_spa_extraction && markdown.trim().is_empty() {
-        jsonld_summary(html).unwrap_or(markdown)
-    } else {
-        markdown
-    };
 
     // Auto-recover when output is suspiciously thin relative to the HTML input.
     // A ratio below 2% usually means JS-rendered content was not captured.
@@ -366,6 +359,15 @@ where
         // Remote fallback either wasn't enabled, had no URL, or failed.
         warn_thin_output(small_pick_len.is_some(), thin_check_len, html.len());
     }
+
+    // Nothing at all from the page body: fall back to its article summary,
+    // when structured extraction is allowed. After the thin check, so a
+    // summary never hides that the body was not captured.
+    let markdown = if options.allow_spa_extraction && markdown.trim().is_empty() {
+        jsonld_summary(html).unwrap_or(markdown)
+    } else {
+        markdown
+    };
 
     let emptied = if replaced_by_spa {
         Vec::new()
@@ -764,21 +766,23 @@ fn jsonld_summary(html: &str) -> Option<String> {
             other => vec![other],
         })
         .filter(|value| is_article(value))
-        .find_map(|value| {
+        .filter_map(|value| {
             let description = html2md_parse(value.get("description")?.as_str()?);
-            let description = description.trim();
+            let description = description.trim().to_string();
             if description.is_empty() {
                 return None;
             }
-            Some(
-                match value.get("headline").and_then(serde_json::Value::as_str) {
-                    Some(headline) if !headline.trim().is_empty() => {
-                        format!("# {}\n\n{description}", headline.trim())
-                    }
-                    _ => description.to_string(),
-                },
-            )
+            let summary = match value.get("headline").and_then(serde_json::Value::as_str) {
+                Some(headline) if !headline.trim().is_empty() => {
+                    format!("# {}\n\n{description}", headline.trim())
+                }
+                _ => description.clone(),
+            };
+            Some((description.len(), summary))
         })
+        // The main article's summary, not a teaser listed before it.
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, summary)| summary)
 }
 
 fn is_jsonld_script(script: &scraper::ElementRef<'_>) -> bool {
@@ -1669,6 +1673,46 @@ mod tests {
         };
         let markdown = super::html_to_markdown_with_url_and_options(html, None, options);
         assert!(!markdown.contains("Graph summary text."), "{markdown}");
+    }
+
+    /// MIK-9752 code review: on a thin page the summary comes after the thin
+    /// check, so the opt-in recovery still runs instead of being skipped.
+    #[test]
+    fn a_summary_never_hides_a_thin_page_from_recovery() {
+        let description = "A long summary sentence about the article. ".repeat(10);
+        let padding = "x".repeat(6000);
+        let html = format!(
+            r#"<html><head><script>var boot = "{padding}";</script><script type="application/ld+json">
+            {{"@context":"https://schema.org","@type":"Article","headline":"H","description":"{description}"}}
+            </script></head><body><div id="root"></div></body></html>"#
+        );
+        let options = HtmlConversionOptions {
+            allow_jina_fallback: true,
+            ..HtmlConversionOptions::default()
+        };
+
+        let markdown = html_to_markdown_with_url_and_fetcher(
+            &html,
+            Some("https://example.com/a"),
+            options,
+            |_| Some("RECOVERED BODY".to_string()),
+        );
+
+        assert_eq!(markdown, "RECOVERED BODY");
+    }
+
+    /// The main article's summary wins over a shorter teaser listed first.
+    #[test]
+    fn the_longest_article_summary_wins() {
+        let html = r#"<html><head><script type="application/ld+json">
+            [{"@type":"Article","headline":"Teaser","description":"Short teaser."},
+             {"@type":"Article","headline":"Main","description":"The main article summary, which is longer than the teaser."}]
+            </script></head><body><div id="root"></div></body></html>"#;
+
+        let markdown = html_to_markdown_with_url(html, None);
+
+        assert!(markdown.contains("# Main"), "{markdown}");
+        assert!(!markdown.contains("Teaser"), "{markdown}");
     }
 
     #[test]

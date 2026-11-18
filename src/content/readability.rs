@@ -183,7 +183,9 @@ fn visible_text(html: &str) -> String {
             out.push(' ');
         }
     }
-    out
+    // Source indentation is not text: collapse it, so it cannot make the
+    // plain text look longer than the markdown.
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn plain_text_to_markdown_blocks(text: &str) -> String {
