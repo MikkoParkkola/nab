@@ -264,12 +264,11 @@ rule exfil_dns_sensitive {
     proximity = "lookup*;secret*"
     window = 512
   strings:
-    // Removed false positive (MIK-8975): the rule used to need only the
-    // substrings "dig " and "token" anywhere on the page, so blog prose that
-    // says "dig " and mentions tokens was redacted. The command word now stands
-    // alone, bare "token" is no longer a part (the secret part is a secret
-    // $VARIABLE, a command substitution or "secret-token"), and both must sit
-    // within the 512-byte window.
+    // MIK-8975: before PR #410 any page holding "dig " or "nslookup " together
+    // with "token" or "secret-token" matched, wherever those words appeared,
+    // which redacted ordinary blog paragraphs. Today a standalone lookup
+    // command needs a secret $VARIABLE, "$(", a backtick cat or "secret-token"
+    // within 512 bytes of it; plain "token" counts for nothing.
     // A bare backtick is not a part: Markdown code spans put one beside every
     // documented `dig`; only a backtick command reading a file counts.
     $lookup_dig = /(^|[^A-Za-z0-9_-])dig[ \t]/ nocase
