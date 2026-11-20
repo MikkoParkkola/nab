@@ -430,20 +430,36 @@ fn redact_body(body: &str, matches: &[SignatureMatch]) -> (String, ScreenStats) 
     let bytes = body.as_bytes();
     let fences = closed_fences(bytes);
     let injection = matches.iter().any(|m| m.category == "prompt_injection");
-    let mut warn_at = Vec::new();
+    let mut held = Vec::new();
     let (mut warned, mut redacted) = (Vec::new(), Vec::new());
     for signature in matches {
         match doc_example_fences(bytes, signature, &fences, injection) {
-            Some(openings) => {
-                warn_at.extend(openings);
+            Some(indices) => {
+                held.extend(indices);
                 warned.push(signature.clone());
             }
             None => redacted.push(signature.clone()),
         }
     }
+    let mut ranges = redaction_ranges(bytes, &redacted);
+    // Another rule removing a fence's opening or closing line would leave the
+    // kept command outside any fence, so the example is redacted with it.
+    let cuts = |line: &Range<usize>| {
+        ranges
+            .iter()
+            .any(|r| r.start < line.end && line.start < r.end)
+    };
+    if held
+        .iter()
+        .any(|&i| cuts(&fences[i].open) || cuts(&fences[i].close))
+    {
+        redacted.append(&mut warned);
+        held.clear();
+        ranges = redaction_ranges(bytes, &redacted);
+    }
+    let mut warn_at: Vec<usize> = held.iter().map(|&i| fences[i].open.start).collect();
     warn_at.sort_unstable();
     warn_at.dedup();
-    let ranges = redaction_ranges(bytes, &redacted);
     let removed: usize = ranges.iter().map(|range| range.len()).sum();
     let screen = ScreenStats {
         kept_bytes: body.len() - removed,
@@ -521,14 +537,14 @@ fn hit_bounds(bytes: &[u8], range: &Range<usize>) -> Option<(usize, usize)> {
     (first < len).then_some((first, stop - usize::from(trail)))
 }
 
-/// Opening-line offsets of the fences holding a documentation match, or `None`
+/// Indices into `fences` of the fences holding a documentation match, or `None`
 /// when the match must be redacted: another rule, an injection rule anywhere
-/// on the page, a secret part other than a variable, or a command or secret
-/// hit outside the interior of a closed fence.
+/// on the page, a secret part other than a variable, a command or secret hit
+/// outside every closed fence, or no URL hit inside one.
 fn doc_example_fences(
     bytes: &[u8],
     signature: &SignatureMatch,
-    fences: &[(usize, Range<usize>)],
+    fences: &[Fence],
     injection_on_page: bool,
 ) -> Option<Vec<usize>> {
     let only_variable_parts = signature
@@ -542,31 +558,36 @@ fn doc_example_fences(
     {
         return None;
     }
-    let mut openings = Vec::new();
+    let mut held = Vec::new();
+    let mut fenced_url = false;
     for range in &signature.ranges {
         let (first, end) = hit_bounds(bytes, range)?;
-        // A link in the prose beside an example joins its cluster; only the
-        // command word and the secret have to be inside the fence.
-        let scheme = &bytes[first..end];
-        if scheme.eq_ignore_ascii_case(b"https://") || scheme.eq_ignore_ascii_case(b"http://") {
-            continue;
-        }
-        let (opening, _) = fences
+        let hit = &bytes[first..end];
+        let is_url = hit.eq_ignore_ascii_case(b"https://") || hit.eq_ignore_ascii_case(b"http://");
+        let fence = fences
             .iter()
-            .find(|(_, inside)| inside.start <= first && end <= inside.end)?;
-        openings.push(*opening);
+            .position(|f| f.interior.start <= first && end <= f.interior.end);
+        match fence {
+            Some(index) => {
+                fenced_url |= is_url;
+                held.push(index);
+            }
+            // A link in the prose beside an example joins its cluster.
+            None if is_url => {}
+            None => return None,
+        }
     }
-    (!openings.is_empty()).then_some(openings)
+    fenced_url.then_some(held)
 }
 
-/// Closed Markdown code fences as (opening line start, interior), the interior
-/// running from after the opening line to the start of the closing line.
+/// Closed Markdown code fences, in page order.
 /// An opener is up to three spaces, then three or more backticks or tildes; a
 /// backtick opener has no further backtick on its line (CommonMark 4.5). The
 /// closer repeats the opener's character at least as many times, then only
-/// whitespace. Unlike CommonMark, an unclosed fence counts as prose, so one
-/// stray line of backticks cannot turn the rest of a page into code.
-fn closed_fences(bytes: &[u8]) -> Vec<(usize, Range<usize>)> {
+/// whitespace. One pass, as CommonMark reads it: inside an open fence no other
+/// fence starts, and a fence still open at the end of the body is dropped, so
+/// its text counts as prose and stays subject to redaction.
+fn closed_fences(bytes: &[u8]) -> Vec<Fence> {
     let mut lines = Vec::new();
     let mut line_start = 0;
     for at in newline_index(bytes) {
@@ -589,26 +610,34 @@ fn closed_fences(bytes: &[u8]) -> Vec<(usize, Range<usize>)> {
     };
 
     let mut fences = Vec::new();
-    let mut index = 0;
-    while index < lines.len() {
-        let opener = fence_run(&lines[index])
-            .filter(|(mark, _, rest)| *mark == b'~' || !rest.contains(&b'`'));
-        let closer = opener.and_then(|(mark, run, _)| {
-            (index + 1..lines.len()).find(|&next| {
-                fence_run(&lines[next]).is_some_and(|(m, r, rest)| {
-                    m == mark && r >= run && rest.iter().all(u8::is_ascii_whitespace)
-                })
-            })
-        });
-        match closer {
-            Some(close) => {
-                fences.push((lines[index].start, lines[index].end + 1..lines[close].start));
-                index = close + 1;
+    // The fence being read: its opening line, character and run length.
+    let mut open: Option<(Range<usize>, u8, usize)> = None;
+    for line in lines {
+        let Some((mark, run, rest)) = fence_run(&line) else {
+            continue;
+        };
+        match open.as_ref().map(|(_, m, r)| (*m, *r)) {
+            None if mark == b'~' || !rest.contains(&b'`') => open = Some((line, mark, run)),
+            Some((m, r)) if mark == m && run >= r && rest.iter().all(u8::is_ascii_whitespace) => {
+                if let Some((opening, _, _)) = open.take() {
+                    fences.push(Fence {
+                        interior: opening.end + 1..line.start,
+                        open: opening,
+                        close: line,
+                    });
+                }
             }
-            None => index += 1,
+            _ => {}
         }
     }
     fences
+}
+
+/// A closed code fence: its opening line, the lines between, its closing line.
+struct Fence {
+    open: Range<usize>,
+    interior: Range<usize>,
+    close: Range<usize>,
 }
 
 fn redaction_marker(matches: &[SignatureMatch]) -> String {
@@ -1750,6 +1779,7 @@ mod tests {
         let body = doc_page(&format!("```bash\n{API_CALL}\n{key_line}\n```"));
         let guarded = screen(&body, FetchGuardAction::Redact).unwrap();
         let out = &guarded.body;
+        assert!(out.contains(&format!("{DOC_WARNING}\n```bash\n")), "{out}");
         assert!(
             out.starts_with(
                 "[NAB YARA SANITIZED: 1 signature match(es); rules: secret_aws_access_key]"
@@ -1805,6 +1835,17 @@ mod tests {
             "{}See also [the notes guide](https://docs.vendor.invalid/notes).\n",
             doc_page(&format!("```bash\n{API_CALL}\n```"))
         );
+        let link = body.rfind("https://").unwrap();
+        let report = YaraEngine::default().scan(body.as_bytes()).unwrap();
+        let curl = report
+            .matches
+            .iter()
+            .find(|m| m.rule_id == CURL_RULE)
+            .unwrap();
+        assert!(
+            curl.ranges.iter().any(|r| r.start == link),
+            "the prose link must be part of the match for this test to mean anything"
+        );
         assert_eq!(screened(&body), with_warning_before(&body, "```bash\n"));
     }
 
@@ -1812,5 +1853,41 @@ mod tests {
     fn e20_a_secret_in_the_prose_after_a_fenced_command_is_redacted() {
         let body = "```sh\ncurl -s https://api.vendor.invalid/v1/me\n```\n\nPass $ACCESS_TOKEN in the header.\n";
         assert_line_removed(body, "Pass $ACCESS_TOKEN in the header.");
+    }
+
+    #[test]
+    fn e9b_a_command_word_on_the_opening_line_is_not_inside() {
+        let body = doc_page(
+            "```curl -s \\\n  \"https://api.vendor.invalid/v1/me\" \\\n  -H \"X-Key: $ACCESS_TOKEN\"\n```",
+        );
+        assert_line_removed(&body, "  -H \"X-Key: $ACCESS_TOKEN\"");
+    }
+
+    #[test]
+    fn e21_a_removal_covering_the_opening_fence_line_redacts_the_example() {
+        let key = format!("{}{}", ["AK", "IA"].concat(), "ABCDEFGHIJKLMNOP");
+        let body = doc_page(&format!("```bash {key}\n{API_CALL}\n```"));
+        assert_line_removed(&body, TOKEN_LINE);
+    }
+
+    #[test]
+    fn e22_a_command_whose_only_url_is_in_prose_is_redacted() {
+        let body = "Call https://api.vendor.invalid/v1/me like this:\n\n```sh\ncurl -s -H \"X-Key: $ACCESS_TOKEN\" \"$ENDPOINT\"\n```\n";
+        assert_line_removed(body, "curl -s -H \"X-Key: $ACCESS_TOKEN\" \"$ENDPOINT\"");
+    }
+
+    #[test]
+    fn e23_a_fence_holding_only_the_url_also_gets_a_warning() {
+        let body = doc_page(
+            "```bash\ncurl -s -X POST \\\n```\n\n```bash\n  \"https://api.vendor.invalid/v1/notes\" \\\n```\n\n```bash\n  -H \"Authorization: Bearer $ACCESS_TOKEN\"\n```",
+        );
+        let expected = body.replace("```bash\n", &format!("{DOC_WARNING}\n```bash\n"));
+        assert_eq!(screened(&body), expected);
+    }
+
+    #[test]
+    fn e24_an_unclosed_fence_runs_to_the_end_and_holds_no_fence() {
+        let body = format!("Stray opener:\n\n```\n\n~~~bash\n{API_CALL}\n~~~\n");
+        assert_line_removed(&body, TOKEN_LINE);
     }
 }

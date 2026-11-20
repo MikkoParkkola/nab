@@ -97,6 +97,16 @@ D1.4 now applies to the command word and the secret: a hit whose text is exactly
 
 Tests: E19, a fenced API call followed within 200 bytes by a prose line holding a link: kept, link line intact, one warning. E20, a fenced `curl https://…` with `$ACCESS_TOKEN` in the next prose sentence: redacted. Sabotage: requiring every hit inside a fence turns E19 red; exempting the secret too turns E20 red.
 
+## Revision 4: code review (Gemini SHIP-WITH-FIXES, Grok SHIP)
+
+- Revision 3 exempted every link hit, so a fenced command whose only URL sat in prose was kept. Now at least one URL hit must sit inside a fence; prose links beyond that may still join the cluster. A fence holding only a URL hit gets its own warning line. Tests E22, E23.
+- When another rule's removal covers a kept fence's opening or closing line, the kept command would lose its fence; the example is now redacted instead. Removals inside the interior (E15) still leave it kept. Test E21.
+- The fence scan is one linear pass, as CommonMark reads it: an unclosed fence runs to the end, holds no inner fence, and is dropped, so its text stays prose. Replaces a scan that looked ahead from every opener (quadratic on many unclosed openers) and found fences inside an unclosed one. Test E24.
+- E15 asserts the warning sits directly above the fence; E19 asserts the prose link is one of the match's hits; E9b puts only the command word on the opening line.
+- Not taken: changing `hit_bounds` to return `None` for an empty hit. It would change how today's redaction treats such a hit, and no pattern of this rule produces one.
+
+Live acceptance for the Google page now expects warnings above each fence holding a command, secret or URL hit, not a fixed count of two.
+
 ## Out of scope
 
 `-d @payload.json` in API docs is a documentation shape too, but it shares a pattern with `-d @~/.netrc`; separating them belongs with MIK-9712's upload-form work. The criterion YARA-CURL.1 asked that the safeagents page not trigger; it should, and the ticket closes with that stated.
