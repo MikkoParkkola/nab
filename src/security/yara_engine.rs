@@ -458,7 +458,7 @@ fn redact_body(body: &str, matches: &[SignatureMatch]) -> (String, ScreenStats) 
     let mut warn_at: Vec<usize> = held.iter().map(|&i| fences[i].open.start).collect();
     warn_at.sort_unstable();
     warn_at.dedup();
-    let removed: usize = ranges.iter().map(|range| range.len()).sum();
+    let removed: usize = ranges.iter().map(ExactSizeIterator::len).sum();
     let screen = ScreenStats {
         kept_bytes: body.len() - removed,
         warned_blocks: warn_at.len(),
@@ -595,9 +595,9 @@ fn doc_example_fences(
 
 /// Closed Markdown code fences, in page order.
 /// An opener is up to three spaces, then three or more backticks or tildes; a
-/// backtick opener has no further backtick on its line (CommonMark 4.5). The
+/// backtick opener has no further backtick on its line (`CommonMark` 4.5). The
 /// closer repeats the opener's character at least as many times, then only
-/// whitespace. One pass, as CommonMark reads it: inside an open fence no other
+/// whitespace. One pass, as `CommonMark` reads it: inside an open fence no other
 /// fence starts, and a fence still open at the end of the body is dropped, so
 /// its text counts as prose and stays subject to redaction.
 fn closed_fences(bytes: &[u8]) -> Vec<Fence> {
