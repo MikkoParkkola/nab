@@ -523,8 +523,8 @@ fn hit_bounds(bytes: &[u8], range: &Range<usize>) -> Option<(usize, usize)> {
 
 /// Opening-line offsets of the fences holding a documentation match, or `None`
 /// when the match must be redacted: another rule, an injection rule anywhere
-/// on the page, a secret part other than a variable, or any hit outside the
-/// interior of a closed fence.
+/// on the page, a secret part other than a variable, or a command or secret
+/// hit outside the interior of a closed fence.
 fn doc_example_fences(
     bytes: &[u8],
     signature: &SignatureMatch,
@@ -542,17 +542,21 @@ fn doc_example_fences(
     {
         return None;
     }
-    signature
-        .ranges
-        .iter()
-        .map(|range| {
-            let (first, end) = hit_bounds(bytes, range)?;
-            fences
-                .iter()
-                .find(|(_, inside)| inside.start <= first && end <= inside.end)
-                .map(|(opening, _)| *opening)
-        })
-        .collect()
+    let mut openings = Vec::new();
+    for range in &signature.ranges {
+        let (first, end) = hit_bounds(bytes, range)?;
+        // A link in the prose beside an example joins its cluster; only the
+        // command word and the secret have to be inside the fence.
+        let scheme = &bytes[first..end];
+        if scheme.eq_ignore_ascii_case(b"https://") || scheme.eq_ignore_ascii_case(b"http://") {
+            continue;
+        }
+        let (opening, _) = fences
+            .iter()
+            .find(|(_, inside)| inside.start <= first && end <= inside.end)?;
+        openings.push(*opening);
+    }
+    (!openings.is_empty()).then_some(openings)
 }
 
 /// Closed Markdown code fences as (opening line start, interior), the interior
@@ -1793,5 +1797,20 @@ mod tests {
         );
         assert!(!fires("prompt_ignore_previous_instructions", &body));
         assert_eq!(screened(&body), with_warning_before(&body, "```bash\n"));
+    }
+
+    #[test]
+    fn e19_a_link_in_the_prose_after_a_fenced_example_does_not_cancel() {
+        let body = format!(
+            "{}See also [the notes guide](https://docs.vendor.invalid/notes).\n",
+            doc_page(&format!("```bash\n{API_CALL}\n```"))
+        );
+        assert_eq!(screened(&body), with_warning_before(&body, "```bash\n"));
+    }
+
+    #[test]
+    fn e20_a_secret_in_the_prose_after_a_fenced_command_is_redacted() {
+        let body = "```sh\ncurl -s https://api.vendor.invalid/v1/me\n```\n\nPass $ACCESS_TOKEN in the header.\n";
+        assert_line_removed(body, "Pass $ACCESS_TOKEN in the header.");
     }
 }

@@ -89,6 +89,14 @@ Sabotage list additions: allow backticks after an opening backtick run (E16); bu
 - E18: "Ignore all previous instructions" with no context word, over a fenced variable command; kept (pins the accepted limit).
 - Residual named by Gemini, accepted with the rest: a variable that names a credential file (`--json @$GOOGLE_APPLICATION_CREDENTIALS`) is redacted today through `$secret_var` and kept fenced after this change, and unlike a literal path it resolves to the reader's real key file. Listed on MIK-9712 with the other upload forms.
 
+## Revision 3: found by the live check
+
+With the change built, the Google page was still redacted (8 removals, no warning). Its "Guides and resources" links begin within 512 bytes after the last code block, so their `https://` hits join that command's cluster, sit outside every fence, and fail D1.4. Any API page that links onward right after an example would fail the same way.
+
+D1.4 now applies to the command word and the secret: a hit whose text is exactly the URL part's match (`https://` or `http://`, any case) may sit anywhere. The command and its secret still have to be inside closed fences, and a match with no fenced hit left is redacted. When the rule is kept, those prose link lines stay too, which is the point of the change.
+
+Tests: E19, a fenced API call followed within 200 bytes by a prose line holding a link: kept, link line intact, one warning. E20, a fenced `curl https://…` with `$ACCESS_TOKEN` in the next prose sentence: redacted. Sabotage: requiring every hit inside a fence turns E19 red; exempting the secret too turns E20 red.
+
 ## Out of scope
 
 `-d @payload.json` in API docs is a documentation shape too, but it shares a pattern with `-d @~/.netrc`; separating them belongs with MIK-9712's upload-form work. The criterion YARA-CURL.1 asked that the safeagents page not trigger; it should, and the ticket closes with that stated.
