@@ -1,6 +1,6 @@
 # YARA: keep fenced API examples of `exfil_curl_secret_to_remote`, with a warning
 
-MIK-9361 acceptance criterion YARA-CURL.3. Status: design, for review before code. Follows `2026-11-16-yara-proximity.md` (PR #410), which left this criterion out of scope.
+MIK-9361 acceptance criterion YARA-CURL.3. Status: implemented in PR #422; the revisions below are the contract where they differ from the first draft. Follows `2026-11-16-yara-proximity.md` (PR #410), which left this criterion out of scope.
 
 ## Problem
 
@@ -106,6 +106,12 @@ Tests: E19, a fenced API call followed within 200 bytes by a prose line holding 
 - Not taken: changing `hit_bounds` to return `None` for an empty hit. It would change how today's redaction treats such a hit, and no pattern of this rule produces one.
 
 Live acceptance for the Google page now expects warnings above each fence holding a command, secret or URL hit, not a fixed count of two.
+
+## Revision 5: code review round 2 (Grok SHIP, Gemini SHIP-WITH-FIXES)
+
+- The fenced-URL check was page-wide, so a second command whose only URL sat in prose passed on another example's fenced URL. The engine merges every cluster of a rule into one range list, so the check is now per hit: each fenced command or secret hit needs a fenced URL hit within the rule's 512-byte window. Test E25 (also pins the constant to the rule's `window`).
+- A removal cutting the delimiter line of any fence, not only a kept one, re-pairs the fence lines after it in the output; any such cut now redacts the example. Test E26.
+- E11 and E23 also check the notice's block count.
 
 ## Out of scope
 
