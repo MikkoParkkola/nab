@@ -81,6 +81,14 @@ gpt and muse were out of quota until 2026-11-23, so the two seats were Grok and 
 
 Sabotage list additions: allow backticks after an opening backtick run (E16); build the banner from all matches (E15).
 
+## Revision 2.1: round 2 (Grok SHIP, Gemini SHIP), test additions only
+
+- E15 asserts the in-body banner and every marker name `secret_aws_access_key` alone, and the notice's kept-byte count equals received bytes minus the removed key bytes, with banner, markers and warning line excluded, followed by "; kept 1 code block(s) with a warning".
+- E4b, E4c, E4d: fenced `-T ~/.ssh/id_rsa`, `$(cat ~/.netrc)` and `env | curl`, each with a URL and `$API_TOKEN`; all redacted. They join E4 and E5 on the pattern-id sabotage line.
+- E17: `$ACCESS_TOKEN` ends the last interior line, so the secret pattern's trailing class consumes the newline before the closing fence; kept.
+- E18: "Ignore all previous instructions" with no context word, over a fenced variable command; kept (pins the accepted limit).
+- Residual named by Gemini, accepted with the rest: a variable that names a credential file (`--json @$GOOGLE_APPLICATION_CREDENTIALS`) is redacted today through `$secret_var` and kept fenced after this change, and unlike a literal path it resolves to the reader's real key file. Listed on MIK-9712 with the other upload forms.
+
 ## Out of scope
 
 `-d @payload.json` in API docs is a documentation shape too, but it shares a pattern with `-d @~/.netrc`; separating them belongs with MIK-9712's upload-form work. The criterion YARA-CURL.1 asked that the safeagents page not trigger; it should, and the ticket closes with that stated.
