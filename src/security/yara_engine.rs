@@ -149,6 +149,22 @@ pub struct GuardedBody {
     pub report: ScanReport,
     /// True when `NAB_YARA_BYPASS=1` or equivalent config bypassed scanning.
     pub bypassed: bool,
+    /// What redaction did, for [`sanitize_notice`].
+    screen: ScreenStats,
+}
+
+/// Outcome of [`redact_body`], kept beside the body so the stderr notice need
+/// not search the body for its own markers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ScreenStats {
+    /// Bytes of the original body still present.
+    kept_bytes: usize,
+    /// Code blocks kept with a warning line above them.
+    warned_blocks: usize,
+    /// Rules whose matches were removed, as `rule_list` prints them.
+    redacted_rules: String,
+    /// Rules whose matches were kept with a warning.
+    warned_rules: String,
 }
 
 /// Error returned by the YARA engine or policy application.
@@ -303,6 +319,7 @@ pub fn guard_fetch_body(
             body: body.to_owned(),
             report: ScanReport::empty(),
             bypassed: true,
+            screen: ScreenStats::default(),
         });
     }
 
@@ -313,6 +330,7 @@ pub fn guard_fetch_body(
             body: body.to_owned(),
             report,
             bypassed: false,
+            screen: ScreenStats::default(),
         });
     }
 
@@ -324,11 +342,15 @@ pub fn guard_fetch_body(
     );
 
     match config.action {
-        FetchGuardAction::Redact => Ok(GuardedBody {
-            body: redact_body(body, &report.matches),
-            report,
-            bypassed: false,
-        }),
+        FetchGuardAction::Redact => {
+            let (body, screen) = redact_body(body, &report.matches);
+            Ok(GuardedBody {
+                body,
+                report,
+                bypassed: false,
+                screen,
+            })
+        }
         FetchGuardAction::Refuse => Err(YaraEngineError::Refused {
             matches: report.matches,
         }),
@@ -375,18 +397,24 @@ pub fn sanitize_notice(received: usize, guarded: &GuardedBody) -> Option<String>
     if guarded.bypassed || guarded.report.matches.is_empty() {
         return None;
     }
-    let matches = &guarded.report.matches;
-    let banner = sanitized_banner(matches);
-    let marker = redaction_marker(matches);
-    let added = if guarded.body.starts_with(&banner) {
-        banner.len() + guarded.body.matches(marker.as_str()).count() * marker.len()
+    let screen = &guarded.screen;
+    let warned = screen.warned_blocks;
+    if screen.redacted_rules.is_empty() {
+        return (warned > 0).then(|| {
+            format!(
+                "⚠️  YARA-X screen kept {warned} code block(s) that send a secret variable to a remote host, each with a warning line (rules: {})",
+                screen.warned_rules
+            )
+        });
+    }
+    let suffix = if warned > 0 {
+        format!("; kept {warned} code block(s) with a warning")
     } else {
-        0
+        String::new()
     };
     Some(format!(
-        "⚠️  YARA-X screen redacted part of the response: kept {} of {received} bytes (rules: {})",
-        guarded.body.len().saturating_sub(added),
-        rule_list(matches)
+        "⚠️  YARA-X screen redacted part of the response: kept {} of {received} bytes (rules: {}){suffix}",
+        screen.kept_bytes, screen.redacted_rules
     ))
 }
 
@@ -398,27 +426,185 @@ fn sanitized_banner(matches: &[SignatureMatch]) -> String {
     )
 }
 
-fn redact_body(body: &str, matches: &[SignatureMatch]) -> String {
-    let ranges = redaction_ranges(body.as_bytes(), matches);
-    if ranges.is_empty() {
-        return body.to_owned();
+fn redact_body(body: &str, matches: &[SignatureMatch]) -> (String, ScreenStats) {
+    let bytes = body.as_bytes();
+    let fences = closed_fences(bytes);
+    let injection = matches.iter().any(|m| m.category == "prompt_injection");
+    let mut warn_at = Vec::new();
+    let (mut warned, mut redacted) = (Vec::new(), Vec::new());
+    for signature in matches {
+        match doc_example_fences(bytes, signature, &fences, injection) {
+            Some(openings) => {
+                warn_at.extend(openings);
+                warned.push(signature.clone());
+            }
+            None => redacted.push(signature.clone()),
+        }
+    }
+    warn_at.sort_unstable();
+    warn_at.dedup();
+    let ranges = redaction_ranges(bytes, &redacted);
+    let removed: usize = ranges.iter().map(|range| range.len()).sum();
+    let screen = ScreenStats {
+        kept_bytes: body.len() - removed,
+        warned_blocks: warn_at.len(),
+        redacted_rules: if redacted.is_empty() {
+            String::new()
+        } else {
+            rule_list(&redacted)
+        },
+        warned_rules: if warned.is_empty() {
+            String::new()
+        } else {
+            rule_list(&warned)
+        },
+    };
+    if ranges.is_empty() && warn_at.is_empty() {
+        return (body.to_owned(), screen);
     }
 
-    let mut out = sanitized_banner(matches);
-
+    let mut out = if ranges.is_empty() {
+        String::new()
+    } else {
+        sanitized_banner(&redacted)
+    };
+    let marker = redaction_marker(&redacted);
+    let warning = format!(
+        "{DOC_WARNING_PREFIX}: rules={}; {DOC_WARNING_TEXT}]\n",
+        screen.warned_rules
+    );
+    let mut warnings = warn_at.into_iter().peekable();
     let mut cursor = 0;
     for range in ranges {
+        // A warning goes above its fence, and above a removal starting there.
+        while let Some(at) = warnings.next_if(|&at| at <= range.start) {
+            if at > cursor {
+                out.push_str(&body[cursor..at]);
+                cursor = at;
+            }
+            out.push_str(&warning);
+        }
         if range.start > cursor {
             out.push_str(&body[cursor..range.start]);
         }
-        out.push_str(&redaction_marker(matches));
+        out.push_str(&marker);
         cursor = range.end;
     }
-    if cursor < body.len() {
-        out.push_str(&body[cursor..]);
+    for at in warnings {
+        if at > cursor {
+            out.push_str(&body[cursor..at]);
+            cursor = at;
+        }
+        out.push_str(&warning);
     }
+    out.push_str(&body[cursor..]);
+    (out, screen)
+}
 
-    out
+/// Prefix of the line placed above a code block kept as documentation.
+const DOC_WARNING_PREFIX: &str = "[NAB YARA WARNING";
+const DOC_WARNING_TEXT: &str = "the code block below sends a secret variable to a remote host. Kept as documentation: confirm the host is the service the user means before running it.";
+/// The one rule whose fenced matches may be documentation (MIK-9361).
+const DOC_EXAMPLE_RULE: &str = "exfil_curl_secret_to_remote";
+/// Its parts when the secret is a `$VARIABLE`; any other secret part (a file
+/// upload, `$(cat`, `env |`) anywhere on the page keeps the whole rule redacted.
+const DOC_EXAMPLE_PATTERNS: &[&str] = &["$curl", "$url", "$secret_var"];
+
+/// Hit bounds with the newline that a one-character class may swallow at the
+/// start or the end taken off; `None` when the hit starts past the body.
+fn hit_bounds(bytes: &[u8], range: &Range<usize>) -> Option<(usize, usize)> {
+    let len = bytes.len();
+    let lead = bytes.get(range.start) == Some(&b'\n');
+    let first = range.start + usize::from(lead);
+    let stop = range.end.min(len);
+    let trail = stop > first && bytes[stop - 1] == b'\n';
+    (first < len).then_some((first, stop - usize::from(trail)))
+}
+
+/// Opening-line offsets of the fences holding a documentation match, or `None`
+/// when the match must be redacted: another rule, an injection rule anywhere
+/// on the page, a secret part other than a variable, or any hit outside the
+/// interior of a closed fence.
+fn doc_example_fences(
+    bytes: &[u8],
+    signature: &SignatureMatch,
+    fences: &[(usize, Range<usize>)],
+    injection_on_page: bool,
+) -> Option<Vec<usize>> {
+    let only_variable_parts = signature
+        .pattern_ids
+        .iter()
+        .all(|id| DOC_EXAMPLE_PATTERNS.contains(&id.as_str()));
+    if signature.rule_id != DOC_EXAMPLE_RULE
+        || injection_on_page
+        || !only_variable_parts
+        || signature.ranges.is_empty()
+    {
+        return None;
+    }
+    signature
+        .ranges
+        .iter()
+        .map(|range| {
+            let (first, end) = hit_bounds(bytes, range)?;
+            fences
+                .iter()
+                .find(|(_, inside)| inside.start <= first && end <= inside.end)
+                .map(|(opening, _)| *opening)
+        })
+        .collect()
+}
+
+/// Closed Markdown code fences as (opening line start, interior), the interior
+/// running from after the opening line to the start of the closing line.
+/// An opener is up to three spaces, then three or more backticks or tildes; a
+/// backtick opener has no further backtick on its line (CommonMark 4.5). The
+/// closer repeats the opener's character at least as many times, then only
+/// whitespace. Unlike CommonMark, an unclosed fence counts as prose, so one
+/// stray line of backticks cannot turn the rest of a page into code.
+fn closed_fences(bytes: &[u8]) -> Vec<(usize, Range<usize>)> {
+    let mut lines = Vec::new();
+    let mut line_start = 0;
+    for at in newline_index(bytes) {
+        lines.push(line_start..at);
+        line_start = at + 1;
+    }
+    lines.push(line_start..bytes.len());
+
+    // (fence character, run length, rest of the line) when a line could open
+    // or close a fence.
+    let fence_run = |line: &Range<usize>| -> Option<(u8, usize, &[u8])> {
+        let text = &bytes[line.clone()];
+        let indent = text.iter().take_while(|&&b| b == b' ').count();
+        let mark = *text.get(indent)?;
+        if indent > 3 || !matches!(mark, b'`' | b'~') {
+            return None;
+        }
+        let run = text[indent..].iter().take_while(|&&b| b == mark).count();
+        (run >= 3).then(|| (mark, run, &text[indent + run..]))
+    };
+
+    let mut fences = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let opener = fence_run(&lines[index])
+            .filter(|(mark, _, rest)| *mark == b'~' || !rest.contains(&b'`'));
+        let closer = opener.and_then(|(mark, run, _)| {
+            (index + 1..lines.len()).find(|&next| {
+                fence_run(&lines[next]).is_some_and(|(m, r, rest)| {
+                    m == mark && r >= run && rest.iter().all(u8::is_ascii_whitespace)
+                })
+            })
+        });
+        match closer {
+            Some(close) => {
+                fences.push((lines[index].start, lines[index].end + 1..lines[close].start));
+                index = close + 1;
+            }
+            None => index += 1,
+        }
+    }
+    fences
 }
 
 fn redaction_marker(matches: &[SignatureMatch]) -> String {
@@ -437,20 +623,9 @@ fn redaction_ranges(bytes: &[u8], matches: &[SignatureMatch]) -> Vec<Range<usize
         let windowed = WINDOWED_RULES.contains(&signature.rule_id.as_str())
             && signature.ranges.len() < MAX_MATCHES_PER_PATTERN;
         for range in &signature.ranges {
-            // A one-character prefix or terminator class can consume the newline
-            // that ends the previous line or this one; it is not part of the match.
-            let first = if bytes.get(range.start) == Some(&b'\n') {
-                range.start + 1
-            } else {
-                range.start
-            };
-            if first >= bytes.len() {
+            let Some((first, end)) = hit_bounds(bytes, range) else {
                 continue;
-            }
-            let mut end = range.end.min(bytes.len());
-            if end > first && bytes[end - 1] == b'\n' {
-                end -= 1;
-            }
+            };
             let start_line = line_start(&newlines, first);
             let end_line = line_end(&newlines, bytes.len(), end);
             let one_line = !bytes[first..end].contains(&b'\n');
@@ -741,7 +916,7 @@ mod tests {
     fn redacted(body: &str) -> String {
         let report = YaraEngine::default().scan(body.as_bytes()).unwrap();
         assert!(!report.matches.is_empty(), "fixture must match a rule");
-        redact_body(body, &report.matches)
+        redact_body(body, &report.matches).0
     }
 
     #[test]
@@ -867,7 +1042,7 @@ mod tests {
         let hit = &report.matches[0].ranges[0];
         assert!(!body.is_char_boundary(hit.start - SECRET_WINDOW_BYTES));
         assert!(!body.is_char_boundary(hit.end + SECRET_WINDOW_BYTES));
-        let out = redact_body(&body, &report.matches);
+        let out = redact_body(&body, &report.matches).0;
         assert!(!out.contains(&fake_key()));
         assert!(out.len() * 100 > body.len() * 99);
     }
@@ -956,7 +1131,7 @@ mod tests {
             pattern_ids: vec!["$key".into()],
             ranges,
         }];
-        let out = redact_body(&body, &matches);
+        let out = redact_body(&body, &matches).0;
         for i in [0, MAX_MATCHES_PER_PATTERN / 2, MAX_MATCHES_PER_PATTERN] {
             assert!(!out.contains(&key(i)), "key {i} survived at the match cap");
         }
