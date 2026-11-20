@@ -267,7 +267,9 @@ rule exfil_dns_sensitive {
     // Removed false positive (MIK-8975): the rule used to need only the
     // substrings "dig " and "token" anywhere on the page, so blog prose that
     // says "dig " and mentions tokens was redacted. The command word now stands
-    // alone, the secret part is shell-shaped, and both sit within one command.
+    // alone, bare "token" is no longer a part (the secret part is a secret
+    // $VARIABLE, a command substitution or "secret-token"), and both must sit
+    // within the 512-byte window.
     // A bare backtick is not a part: Markdown code spans put one beside every
     // documented `dig`; only a backtick command reading a file counts.
     $lookup_dig = /(^|[^A-Za-z0-9_-])dig[ \t]/ nocase
