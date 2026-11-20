@@ -264,6 +264,10 @@ rule exfil_dns_sensitive {
     proximity = "lookup*;secret*"
     window = 512
   strings:
+    // Removed false positive (MIK-8975): the rule used to need only the
+    // substrings "dig " and "token" anywhere on the page, so blog prose that
+    // says "dig " and mentions tokens was redacted. The command word now stands
+    // alone, the secret part is shell-shaped, and both sit within one command.
     // A bare backtick is not a part: Markdown code spans put one beside every
     // documented `dig`; only a backtick command reading a file counts.
     $lookup_dig = /(^|[^A-Za-z0-9_-])dig[ \t]/ nocase
