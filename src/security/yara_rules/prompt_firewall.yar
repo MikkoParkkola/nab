@@ -270,7 +270,7 @@ rule exfil_dns_sensitive {
     // command needs a secret $VARIABLE, "$(", a backtick cat or "secret-token"
     // within 512 bytes of it; plain "token" counts for nothing.
     // A bare backtick is not a part: Markdown code spans put one beside every
-    // documented `dig`; only a backtick command reading a file counts.
+    // documented `dig`; only a backtick followed by cat counts.
     $lookup_dig = /(^|[^A-Za-z0-9_-])dig[ \t]/ nocase
     $lookup_nslookup = /(^|[^A-Za-z0-9_-])nslookup[ \t]/ nocase
     $secret_var = /\$\{?([A-Za-z0-9]+_)*(token|key|secret|pass|passwd|password|cred|credential|credentials)s?[0-9]*(_[A-Za-z0-9]+)*\}?([^A-Za-z0-9_]|$)/ nocase
