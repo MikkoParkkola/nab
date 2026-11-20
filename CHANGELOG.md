@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-11-20
+
+### Fixed
+
+- Markdown output writes images as Markdown (`![alt](src)`) instead of raw
+  `<img>` tags, and no longer carries inline script text such as a JSON-LD
+  object into the page text (#419).
+- The fetch-time YARA-X screen keeps API documentation readable: a fenced code
+  example that passes a `$VARIABLE` secret to curl is kept, with a warning line
+  above its block, instead of being removed. File uploads, `$(cat …)` and
+  `env |` stay redacted even inside code blocks, and any prompt-injection match
+  on the page cancels the exception. The Google notebook API docs page now
+  loses no lines, against 8 before (#422).
+
+### Security
+
+- wasmtime, which runs the YARA-X engine, moves to 48.0.10 to clear
+  RUSTSEC-2026-0566 to RUSTSEC-2026-0573 (#421).
+
 ## [0.13.0] - 2026-11-17
 
 0.12.7 was tagged but never published. Its release run was cancelled, then
