@@ -540,7 +540,7 @@ fn hit_bounds(bytes: &[u8], range: &Range<usize>) -> Option<(usize, usize)> {
 /// Indices into `fences` of the fences holding a documentation match, or `None`
 /// when the match must be redacted: another rule, an injection rule anywhere
 /// on the page, a secret part other than a variable, a command or secret hit
-/// outside every closed fence, or no URL hit inside one.
+/// outside every closed fence, or one with no fenced URL hit within the window.
 fn doc_example_fences(
     bytes: &[u8],
     signature: &SignatureMatch,
@@ -1627,7 +1627,7 @@ mod tests {
 
     // MIK-9361 YARA-CURL.3: a fenced API example passing a secret variable to
     // curl is kept, with a warning line above its fence, instead of redacted.
-    // Design: docs/design/2026-11-20-yara-doc-examples.md (tests E1-E26).
+    // Design: docs/design/2026-11-20-yara-doc-examples.md (tests E1-E27).
 
     const CURL_RULE: &str = "exfil_curl_secret_to_remote";
     const DOC_WARNING: &str = "[NAB YARA WARNING: rules=exfil_curl_secret_to_remote; the code block below sends a secret variable to a remote host. Kept as documentation: confirm the host is the service the user means before running it.]";
@@ -1942,5 +1942,18 @@ mod tests {
             doc_page(&format!("```bash\n{API_CALL}\n```"))
         );
         assert_line_removed(&body, TOKEN_LINE);
+    }
+
+    #[test]
+    fn e27_two_fenced_examples_far_apart_are_both_kept() {
+        let second = API_CALL.replace("notes", "tags");
+        let body = format!(
+            "{}\n{}\n```sh\n{second}\n```\n",
+            doc_page(&format!("```bash\n{API_CALL}\n```")),
+            "Prose between the two examples. ".repeat(60)
+        );
+        let expected = with_warning_before(&with_warning_before(&body, "```bash\n"), "```sh\n");
+        assert_eq!(screened(&body), expected);
+        assert_blocks_counted(&body, 2);
     }
 }
