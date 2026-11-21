@@ -1549,13 +1549,26 @@ async fn enrich_with_ocr(
 /// `tools/call kv_set` request over its stdio.  Silently no-ops when
 /// `hebb-mcp` is not installed.  All errors are logged as `debug`.
 async fn save_to_hebb(url: &str, markdown: &str, html: &str) {
+    // The save runs before output is printed, so a stuck `hebb-mcp` would
+    // stall the fetch (MIK-8234). A normal exchange takes well under 1 s.
+    const HEBB_SAVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     if !hebb_is_available() {
         return;
     }
     let key = url_key(url);
     let title = extract_title(html).unwrap_or_default();
-    if let Err(e) = hebb_kv_set_oneshot("urls", &key, url, &title, markdown).await {
-        tracing::debug!("hebb kv_set skipped: {e}");
+    match tokio::time::timeout(
+        HEBB_SAVE_TIMEOUT,
+        hebb_kv_set_oneshot("urls", &key, url, &title, markdown),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::debug!("hebb kv_set skipped: {e}"),
+        Err(_) => tracing::debug!(
+            "hebb kv_set skipped: no answer within {} s",
+            HEBB_SAVE_TIMEOUT.as_secs()
+        ),
     }
 }
 
@@ -1597,6 +1610,8 @@ async fn hebb_kv_set_oneshot(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // A timed-out save drops this future; do not leave hebb-mcp behind.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| anyhow::anyhow!("spawn hebb-mcp: {e}"))?;
 
@@ -1645,12 +1660,9 @@ async fn hebb_kv_set_oneshot(
     stdin.flush().await?;
     drop(stdin);
 
-    // Read kv_set response (best-effort; don't block indefinitely).
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let mut resp_line = String::new();
-        let _ = reader.read_line(&mut resp_line).await;
-    })
-    .await;
+    // Read kv_set response (best-effort; the caller bounds the whole exchange).
+    let mut resp_line = String::new();
+    let _ = reader.read_line(&mut resp_line).await;
 
     let _ = child.kill().await;
     Ok(())

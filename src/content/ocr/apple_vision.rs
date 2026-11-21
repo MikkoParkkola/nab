@@ -82,10 +82,9 @@ impl OcrEngine for AppleVisionEngine {
 
     async fn ocr_image(&self, image_bytes: &[u8]) -> Result<OcrResult, OcrError> {
         let bytes = image_bytes.to_vec();
-        // Spawn on a blocking thread — Vision OCR is synchronous and CPU-bound.
-        tokio::task::spawn_blocking(move || run_vision_ocr(&bytes))
-            .await
-            .map_err(|e| OcrError::Framework(format!("spawn_blocking join error: {e}")))?
+        // Vision OCR is synchronous; a detached thread keeps an abandoned
+        // call from holding up process exit (see `run_detached`).
+        super::run_detached(move || run_vision_ocr(&bytes)).await
     }
 }
 

@@ -12,9 +12,10 @@
 //!
 //! ## Budget
 //!
-//! At most [`MAX_IMAGES_PER_PAGE`] images are OCR'd per fetch call to bound
-//! added latency.  Images are processed in document order; extras are silently
-//! skipped (their alt text is left as-is).
+//! At most [`MAX_IMAGES_PER_PAGE`] images are OCR'd per fetch call, within
+//! `OCR_STAGE_BUDGET` for the whole stage, to bound added latency.  Images
+//! are processed in document order; extras are skipped (their alt text is
+//! left as-is), with a warning when the time budget cut the stage short.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -38,6 +39,12 @@ const MIN_ALT_TEXT_LEN: usize = 20;
 
 /// Cache TTL: 30 days in seconds.
 const CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// Wall-clock budget for the whole OCR stage of one fetch: image downloads
+/// plus recognition. A cold Apple Vision call blocked for 57 s and over 110 s
+/// while the Neural Engine model compiled (MIK-8234); warm calls finish well
+/// inside this. Past the budget the fetch keeps what it has and moves on.
+const OCR_STAGE_BUDGET: Duration = Duration::from_secs(3);
 
 // ─── FetchOcrEnricher ─────────────────────────────────────────────────────────
 
@@ -121,7 +128,9 @@ impl FetchOcrEnricher {
     /// Extract image URLs with thin/missing alt text from `html`, fetch each
     /// image's bytes, run OCR, and return a map of `image_url → ocr_text`.
     ///
-    /// At most `max_per_page` images are processed in document order.
+    /// At most `max_per_page` images are processed in document order, within
+    /// `OCR_STAGE_BUDGET` for the whole stage; past it the images not yet
+    /// done are skipped with a warning and the results so far are returned.
     /// Errors for individual images are logged as debug warnings and skipped —
     /// the returned map simply omits entries for failed images.
     ///
@@ -134,9 +143,20 @@ impl FetchOcrEnricher {
     ) -> HashMap<String, String> {
         let candidates = extract_image_candidates(html, base_url);
         let mut results = HashMap::new();
+        let deadline = tokio::time::Instant::now() + OCR_STAGE_BUDGET;
 
         for url in candidates.into_iter().take(self.max_per_page) {
-            match self.ocr_url(&url, http_client).await {
+            let Ok(outcome) =
+                tokio::time::timeout_at(deadline, self.ocr_url(&url, http_client)).await
+            else {
+                tracing::warn!(
+                    "OCR stage stopped at its {} s budget; kept text from {} image(s), skipped the rest",
+                    OCR_STAGE_BUDGET.as_secs(),
+                    results.len()
+                );
+                break;
+            };
+            match outcome {
                 Ok(Some(text)) if !text.trim().is_empty() => {
                     results.insert(url, text.trim().to_string());
                 }
@@ -469,6 +489,135 @@ mod tests {
         assert!(
             result.contains("[Image: Line one Line two]"),
             "got: {result}"
+        );
+    }
+
+    // ── stage budget (MIK-8234) ──────────────────────────────────────────────
+
+    /// Answers the first OCR call, then never returns: the shape of a cold
+    /// Apple Vision call blocked while the Neural Engine model compiles.
+    struct StallAfterFirstEngine {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrEngine for StallAfterFirstEngine {
+        fn name(&self) -> &'static str {
+            "stall_after_first"
+        }
+        fn supported_languages(&self) -> &'static [&'static str] {
+            &["*"]
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        async fn ocr_image(
+            &self,
+            _bytes: &[u8],
+        ) -> Result<crate::content::ocr::OcrResult, crate::content::ocr::OcrError> {
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                return Ok(crate::content::ocr::OcrResult {
+                    text: "first image text".to_string(),
+                    language: None,
+                    confidence: 1.0,
+                    regions: vec![],
+                });
+            }
+            std::future::pending().await
+        }
+    }
+
+    /// Serves a distinct non-empty body per path (distinct bytes defeat the
+    /// hash-keyed cache, so every image reaches the engine).
+    async fn spawn_image_server() -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut req = Vec::new();
+                    let mut buf = [0_u8; 1024];
+                    while let Ok(n) = stream.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        req.extend_from_slice(&buf[..n]);
+                        if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let path = String::from_utf8_lossy(&req)
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or("/")
+                        .to_string();
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        path.len()
+                    );
+                    // The client drops connections at the deadline; ignore write errors.
+                    let _ = stream.write_all(head.as_bytes()).await;
+                    let _ = stream.write_all(path.as_bytes()).await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// A stalled OCR engine must not stall the fetch: `enrich_images` returns
+    /// within its stage budget and keeps the results it already has.
+    /// Fails on 0.13.1 by the 10 s test timeout (the stage had no deadline).
+    #[tokio::test]
+    async fn enrich_images_keeps_partial_results_when_engine_stalls_on_fixture() {
+        // GIVEN the daniel.haxx.se page whose images stalled Vision (MIK-8234),
+        // with its image origins pointed at a local server
+        let addr = spawn_image_server().await;
+        let local = format!("http://{addr}");
+        let html = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ocr_stall_daniel_haxx_se.html"
+        ))
+        .expect("fixture")
+        .replace("https://daniel.haxx.se", &local)
+        .replace("https://secure.gravatar.com", &local);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cache = tempfile::tempdir().expect("tempdir");
+        let enricher = FetchOcrEnricher::with_engine_and_cache(
+            Arc::new(StallAfterFirstEngine {
+                calls: Arc::clone(&calls),
+            }),
+            cache.path().to_path_buf(),
+            MAX_IMAGES_PER_PAGE,
+        );
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("client");
+
+        // WHEN the OCR stage runs and the second image never finishes
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            enricher.enrich_images(&html, &format!("{local}/blog/"), &client),
+        )
+        .await;
+
+        // THEN it returns within the budget, with the first image's text kept
+        let map =
+            result.expect("enrich_images did not return within 10 s: OCR stage has no deadline");
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "engine reached fewer than 2 times; the stall was never exercised"
+        );
+        assert_eq!(map.len(), 1, "partial OCR results lost: {map:?}");
+        assert!(map.values().any(|t| t == "first image text"));
+        assert!(
+            started.elapsed() < Duration::from_secs(6),
+            "took {:?}",
+            started.elapsed()
         );
     }
 
