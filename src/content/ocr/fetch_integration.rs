@@ -12,9 +12,10 @@
 //!
 //! ## Budget
 //!
-//! At most [`MAX_IMAGES_PER_PAGE`] images are OCR'd per fetch call to bound
-//! added latency.  Images are processed in document order; extras are silently
-//! skipped (their alt text is left as-is).
+//! At most [`MAX_IMAGES_PER_PAGE`] images are OCR'd per fetch call, within
+//! `OCR_STAGE_BUDGET` for the whole stage, to bound added latency.  Images
+//! are processed in document order; extras are skipped (their alt text is
+//! left as-is), with a warning when the time budget cut the stage short.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -38,6 +39,12 @@ const MIN_ALT_TEXT_LEN: usize = 20;
 
 /// Cache TTL: 30 days in seconds.
 const CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// Wall-clock budget for the whole OCR stage of one fetch: image downloads
+/// plus recognition. A cold Apple Vision call blocked for 57 s and over 110 s
+/// while the Neural Engine model compiled (MIK-8234); warm calls finish well
+/// inside this. Past the budget the fetch keeps what it has and moves on.
+const OCR_STAGE_BUDGET: Duration = Duration::from_secs(3);
 
 // ─── FetchOcrEnricher ─────────────────────────────────────────────────────────
 
@@ -121,7 +128,9 @@ impl FetchOcrEnricher {
     /// Extract image URLs with thin/missing alt text from `html`, fetch each
     /// image's bytes, run OCR, and return a map of `image_url → ocr_text`.
     ///
-    /// At most `max_per_page` images are processed in document order.
+    /// At most `max_per_page` images are processed in document order, within
+    /// `OCR_STAGE_BUDGET` for the whole stage; past it the images not yet
+    /// done are skipped with a warning and the results so far are returned.
     /// Errors for individual images are logged as debug warnings and skipped —
     /// the returned map simply omits entries for failed images.
     ///
@@ -134,9 +143,20 @@ impl FetchOcrEnricher {
     ) -> HashMap<String, String> {
         let candidates = extract_image_candidates(html, base_url);
         let mut results = HashMap::new();
+        let deadline = tokio::time::Instant::now() + OCR_STAGE_BUDGET;
 
         for url in candidates.into_iter().take(self.max_per_page) {
-            match self.ocr_url(&url, http_client).await {
+            let Ok(outcome) =
+                tokio::time::timeout_at(deadline, self.ocr_url(&url, http_client)).await
+            else {
+                tracing::warn!(
+                    "OCR stage stopped at its {} s budget; kept text from {} image(s), skipped the rest",
+                    OCR_STAGE_BUDGET.as_secs(),
+                    results.len()
+                );
+                break;
+            };
+            match outcome {
                 Ok(Some(text)) if !text.trim().is_empty() => {
                     results.insert(url, text.trim().to_string());
                 }

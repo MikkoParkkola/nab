@@ -153,11 +153,80 @@ pub fn default_engine() -> Box<dyn OcrEngine> {
     }
 }
 
+// ─── Blocking engine calls ────────────────────────────────────────────────────
+
+/// Run a blocking OCR call on a detached OS thread and await its result.
+///
+/// Not `spawn_blocking`: runtime shutdown (the end of `#[tokio::main]`) waits
+/// for every running blocking task, so a call abandoned by a timeout would
+/// still hold the process open. A cold Apple Vision call can block for
+/// minutes while the Neural Engine model compiles (MIK-8234); a detached
+/// thread dies with the process instead.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) async fn run_detached<T, F>(f: F) -> Result<T, OcrError>
+where
+    F: FnOnce() -> Result<T, OcrError> + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("nab-ocr".to_string())
+        .spawn(move || {
+            // The receiver is gone when the caller gave up; nothing to report.
+            let _ = tx.send(f());
+        })?;
+    rx.await
+        .map_err(|_| OcrError::Framework("OCR thread ended without a result".to_string()))?
+}
+
 // ─── Unit tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An abandoned `run_detached` call does not hold up runtime shutdown.
+    /// Control: the same call through `spawn_blocking` holds the drop for
+    /// the full 5 s (shown on Spark when this was written, MIK-8234).
+    #[test]
+    fn runtime_shutdown_does_not_wait_for_abandoned_detached_call() {
+        // GIVEN a runtime whose OCR call is abandoned by a timeout while
+        // the blocking work still has 5 s to run
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let timed_out = rt.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                run_detached(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    Ok(())
+                }),
+            )
+            .await
+            .is_err()
+        });
+        assert!(timed_out, "the call should have been abandoned");
+
+        // WHEN the runtime shuts down
+        let started = std::time::Instant::now();
+        drop(rt);
+
+        // THEN shutdown does not wait for the abandoned call
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "runtime drop waited {:?} for an abandoned OCR call",
+            started.elapsed()
+        );
+    }
+
+    /// A panic in the blocking call becomes an error, not a hang.
+    #[tokio::test]
+    async fn run_detached_reports_a_panicking_call_as_an_error() {
+        let result: Result<(), OcrError> = run_detached(|| panic!("vision crashed")).await;
+        assert!(
+            matches!(result, Err(OcrError::Framework(_))),
+            "got {result:?}"
+        );
+    }
 
     /// `default_engine()` returns an engine with a non-empty name.
     #[test]
