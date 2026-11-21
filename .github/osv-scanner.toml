@@ -47,7 +47,7 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0141"
 ignoreUntil = 2027-03-01   # review by this date; after it the gate fires again
-reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unmaintained), no patched release. Reaches nab only through yara-x, which uses it to serialize compiled rules; nab only calls yara_x::compile on rule source (src/security/yara_engine.rs) and never deserializes rules, so no outside bytes reach bincode. Upstream asked to move off bincode: https://github.com/VirusTotal/yara-x/issues/887. Owner decision 2026-11-20 (MIK-9753): renew until 2027-03-01 pending that issue."
+reason = "RUSTSEC-2025-0141 marks bincode 2.0.1 unmaintained and lists no fixed version. It enters the tree only via yara-x (reviewed at 1.22.1), where it encodes compiled rule sets. nab builds its rules from its own source with yara_x::compile (src/security/yara_engine.rs) and never loads a serialized rule blob from outside. Upstream request: https://github.com/VirusTotal/yara-x/issues/887. Remove this entry when `cargo tree -i bincode` is empty. Owner decision 2026-11-20 (MIK-9753): extended to 2027-03-01 while that issue is open."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0543"

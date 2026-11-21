@@ -13,6 +13,8 @@ jobs:
     # Only run when PR carries the auto-merge-ok label
     if: contains(github.event.pull_request.labels.*.name, 'auto-merge-ok')
     runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: "${{ github.event.pull_request.number }}"
     steps:
       - name: Kill switch
         run: |
@@ -25,7 +27,6 @@ jobs:
         if: github.event.action == 'labeled' && github.event.label.name == 'auto-merge-ok'
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-          PR_NUMBER: "${{ github.event.pull_request.number }}"
         run: |
           gh pr comment "$PR_NUMBER" \
             --body "**auto-merge-ok** label detected. expected behavior: will auto-merge via squash when all required status checks pass. Security-surface changes (workflows, CODEOWNERS, dependency manifests) will block. Kill switch: set repo secret \`AUTO_MERGE_BOT_DISABLED=1\`."
@@ -35,7 +36,6 @@ jobs:
       - name: Security-surface diff guard
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-          PR_NUMBER: "${{ github.event.pull_request.number }}"
         run: |
           CHANGED=$(gh pr diff "$PR_NUMBER" --name-only)
           echo "Changed files:"
@@ -49,7 +49,6 @@ jobs:
       - name: Enable auto-merge
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-          PR_NUMBER: "${{ github.event.pull_request.number }}"
         run: |
           gh pr merge "$PR_NUMBER" --auto --squash
           # Note: --auto requires branch protection with required status checks enabled on this repo.
@@ -59,7 +58,6 @@ jobs:
         if: success()
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-          PR_NUMBER: "${{ github.event.pull_request.number }}"
         run: |
           # operator_label_age_sec: field present; 0 = not computable without label event timestamp
           echo "{\"pr\":${PR_NUMBER},\"ts\":\"$(date -u +%FT%TZ)\",\"checks_passed\":true,\"operator_label_age_sec\":0}" >> auto-merge-landed.jsonl
