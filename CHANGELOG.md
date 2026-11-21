@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-11-22
+
+0.13.2 was tagged but never published: its release run failed on a timing test.
+0.13.3 ships the same fixes.
+
+### Fixed
+
+- The YARA scan-overhead test takes the median p95 of three passes after a
+  warm-up scan, so one stalled pass on a shared CI host no longer fails a
+  release; the 10 ms threshold is unchanged (#430).
+
 ## [0.13.2] - 2026-11-21
 
 ### Fixed
