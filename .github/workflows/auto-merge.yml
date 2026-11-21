@@ -56,8 +56,6 @@ jobs:
 
       - name: Telemetry — record merge event
         if: success()
-        env:
-          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         run: |
           # operator_label_age_sec: field present; 0 = not computable without label event timestamp
           echo "{\"pr\":${PR_NUMBER},\"ts\":\"$(date -u +%FT%TZ)\",\"checks_passed\":true,\"operator_label_age_sec\":0}" >> auto-merge-landed.jsonl
