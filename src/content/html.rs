@@ -2145,9 +2145,11 @@ mod tests {
         for needle in [
             "Tracking Anthropic-Discovered Vulnerabilities",
             "First section body.",
-            "November",
+            // Only in the table ("November" is also in the title).
+            "September",
             "Takeaways After Seven Months",
             "Closing section body.",
+            "Third closing paragraph.",
         ] {
             assert!(md.contains(needle), "missing {needle:?} in:\n{md}");
         }
