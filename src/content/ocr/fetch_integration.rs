@@ -472,6 +472,135 @@ mod tests {
         );
     }
 
+    // ── stage budget (MIK-8234) ──────────────────────────────────────────────
+
+    /// Answers the first OCR call, then never returns: the shape of a cold
+    /// Apple Vision call blocked while the Neural Engine model compiles.
+    struct StallAfterFirstEngine {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrEngine for StallAfterFirstEngine {
+        fn name(&self) -> &'static str {
+            "stall_after_first"
+        }
+        fn supported_languages(&self) -> &'static [&'static str] {
+            &["*"]
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        async fn ocr_image(
+            &self,
+            _bytes: &[u8],
+        ) -> Result<crate::content::ocr::OcrResult, crate::content::ocr::OcrError> {
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                return Ok(crate::content::ocr::OcrResult {
+                    text: "first image text".to_string(),
+                    language: None,
+                    confidence: 1.0,
+                    regions: vec![],
+                });
+            }
+            std::future::pending().await
+        }
+    }
+
+    /// Serves a distinct non-empty body per path (distinct bytes defeat the
+    /// hash-keyed cache, so every image reaches the engine).
+    async fn spawn_image_server() -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut req = Vec::new();
+                    let mut buf = [0_u8; 1024];
+                    while let Ok(n) = stream.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        req.extend_from_slice(&buf[..n]);
+                        if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let path = String::from_utf8_lossy(&req)
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or("/")
+                        .to_string();
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        path.len()
+                    );
+                    // The client drops connections at the deadline; ignore write errors.
+                    let _ = stream.write_all(head.as_bytes()).await;
+                    let _ = stream.write_all(path.as_bytes()).await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// A stalled OCR engine must not stall the fetch: `enrich_images` returns
+    /// within its stage budget and keeps the results it already has.
+    /// Fails on 0.13.1 by the 10 s test timeout (the stage had no deadline).
+    #[tokio::test]
+    async fn enrich_images_keeps_partial_results_when_engine_stalls_on_fixture() {
+        // GIVEN the daniel.haxx.se page whose images stalled Vision (MIK-8234),
+        // with its image origins pointed at a local server
+        let addr = spawn_image_server().await;
+        let local = format!("http://{addr}");
+        let html = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ocr_stall_daniel_haxx_se.html"
+        ))
+        .expect("fixture")
+        .replace("https://daniel.haxx.se", &local)
+        .replace("https://secure.gravatar.com", &local);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cache = tempfile::tempdir().expect("tempdir");
+        let enricher = FetchOcrEnricher::with_engine_and_cache(
+            Arc::new(StallAfterFirstEngine {
+                calls: Arc::clone(&calls),
+            }),
+            cache.path().to_path_buf(),
+            MAX_IMAGES_PER_PAGE,
+        );
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("client");
+
+        // WHEN the OCR stage runs and the second image never finishes
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            enricher.enrich_images(&html, &format!("{local}/blog/"), &client),
+        )
+        .await;
+
+        // THEN it returns within the budget, with the first image's text kept
+        let map =
+            result.expect("enrich_images did not return within 10 s: OCR stage has no deadline");
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "engine reached fewer than 2 times; the stall was never exercised"
+        );
+        assert_eq!(map.len(), 1, "partial OCR results lost: {map:?}");
+        assert!(map.values().any(|t| t == "first image text"));
+        assert!(
+            started.elapsed() < Duration::from_secs(6),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
     // ── cache helpers ────────────────────────────────────────────────────────
 
     /// Stale cache files (older than TTL) are not returned.
