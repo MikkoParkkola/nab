@@ -2086,7 +2086,7 @@ mod tests {
     }
 
     /// A heading id that is a slug of its text is not a noise marker, even when
-    /// the text contains one (MIK-9875: "...-vulnerabilities" cut a VulnCheck
+    /// the text contains one (MIK-9875: "...-vulnerabilities" cut a `VulnCheck`
     /// article at its first h2 and dropped everything after it).
     #[test]
     fn strip_noise_sections_keeps_slug_heading_containing_a_marker_and_what_follows() {
@@ -2103,7 +2103,7 @@ mod tests {
         assert!(result.contains("Body after the first heading."), "{result}");
     }
 
-    /// Full pipeline on a Nuxt Content prose page shaped like the VulnCheck
+    /// Full pipeline on a Nuxt Content prose page shaped like the `VulnCheck`
     /// post in MIK-9875: every section after the first anchored h2 survives.
     #[test]
     fn nuxt_prose_article_keeps_sections_after_anchored_vulnerabilities_heading() {
