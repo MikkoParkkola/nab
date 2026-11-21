@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en-US" prefix="og: http://ogp.me/ns# article: http://ogp.me/ns/article#">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Actual curl rewrites in rust | daniel.haxx.se</title>
+	<link rel="profile" href="https://gmpg.org/xfn/11">
+	<link rel="pingback" href="https://daniel.haxx.se/blog/xmlrpc.php">
+	<meta name='robots' content='max-image-preview:large' />
+<link rel="alternate" type="application/rss+xml" title="daniel.haxx.se &raquo; Feed" href="https://daniel.haxx.se/blog/feed/" />
+<link rel="alternate" type="application/rss+xml" title="daniel.haxx.se &raquo; Comments Feed" href="https://daniel.haxx.se/blog/comments/feed/" />
+<link rel="alternate" type="application/rss+xml" title="daniel.haxx.se &raquo; Actual curl rewrites in rust Comments Feed" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/feed/" />
+<link rel="alternate" title="oEmbed (JSON)" type="application/json+oembed" href="https://daniel.haxx.se/blog/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fdaniel.haxx.se%2Fblog%2F2026%2F11%2F17%2Factual-curl-rewrites-in-rust%2F" />
+<link rel="alternate" title="oEmbed (XML)" type="text/xml+oembed" href="https://daniel.haxx.se/blog/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fdaniel.haxx.se%2Fblog%2F2026%2F11%2F17%2Factual-curl-rewrites-in-rust%2F&#038;format=xml" />
+<style id="wp-img-auto-sizes-contain-inline-css">
+img:is([sizes=auto i],[sizes^="auto," i]){contain-intrinsic-size:3000px 1500px}
+/*# sourceURL=wp-img-auto-sizes-contain-inline-css */
+</style>
+<style id="wp-emoji-styles-inline-css">
+
+	img.wp-smiley, img.emoji {
+		display: inline !important;
+		border: none !important;
+		box-shadow: none !important;
+		height: 1em !important;
+		width: 1em !important;
+		margin: 0 0.07em !important;
+		vertical-align: -0.1em !important;
+		background: none !important;
+		padding: 0 !important;
+	}
+/*# sourceURL=wp-emoji-styles-inline-css */
+</style>
+<style id="wp-block-library-inline-css">
+:root{--wp-block-synced-color:#7a00df;--wp-block-synced-color--rgb:122,0,223;--wp-bound-block-color:var(--wp-block-synced-color);--wp-editor-canvas-background:#ddd;--wp-admin-theme-color:#007cba;--wp-admin-theme-color--rgb:0,124,186;--wp-admin-theme-color-darker-10:#006ba1;--wp-admin-theme-color-darker-10--rgb:0,107,160.5;--wp-admin-theme-color-darker-20:#005a87;--wp-admin-theme-color-darker-20--rgb:0,90,135;--wp-admin-border-width-focus:2px}@media (min-resolution:192dpi){:root{--wp-admin-border-width-focus:1.5px}}.wp-element-button{cursor:pointer}:root .has-very-light-gray-background-color{background-color:#eee}:root .has-very-dark-gray-background-color{background-color:#313131}:root .has-very-light-gray-color{color:#eee}:root .has-very-dark-gray-color{color:#313131}:root .has-vivid-green-cyan-to-vivid-cyan-blue-gradient-background{background:linear-gradient(135deg,#00d084,#0693e3)}:root .has-purple-crush-gradient-background{background:linear-gradient(135deg,#34e2e4,#4721fb 50%,#ab1dfe)}:root .has-hazy-dawn-gradient-background{background:linear-gradient(135deg,#faaca8,#dad0ec)}:root .has-subdued-olive-gradient-background{background:linear-gradient(135deg,#fafae1,#67a671)}:root .has-atomic-cream-gradient-background{background:linear-gradient(135deg,#fdd79a,#004a59)}:root .has-nightshade-gradient-background{background:linear-gradient(135deg,#330968,#31cdcf)}:root .has-midnight-gradient-background{background:linear-gradient(135deg,#020381,#2874fc)}:root{--wp--preset--font-size--normal:16px;--wp--preset--font-size--huge:42px}.has-regular-font-size{font-size:1em}.has-larger-font-size{font-size:2.625em}.has-normal-font-size{font-size:var(--wp--preset--font-size--normal)}.has-huge-font-size{font-size:var(--wp--preset--font-size--huge)}:root .has-text-align-center{text-align:center}:root .has-text-align-left{text-align:left}:root .has-text-align-right{text-align:right}.has-fit-text{white-space:nowrap!important}#end-resizable-editor-section{display:none}.aligncenter{clear:both}.items-justified-left{justify-content:flex-start}.items-justified-center{justify-content:center}.items-justified-right{justify-content:flex-end}.items-justified-space-between{justify-content:space-between}.screen-reader-text{word-wrap:normal!important;border:0;clip-path:inset(50%);height:1px;margin:-1px;overflow:hidden;padding:0;position:absolute;width:1px;word-break:normal!important}.screen-reader-text:focus{background-color:#ddd;clip-path:none;color:#444;display:block;font-size:1em;height:auto;left:5px;line-height:normal;padding:15px 23px 14px;text-decoration:none;top:5px;width:auto;z-index:100000}html :where(.has-border-color){border-style:solid}html :where([style^=border-color],[style*=";border-color"],[style*="; border-color"]){border-style:solid}html :where([style^=border-top-color],[style*=";border-top-color"],[style*="; border-top-color"]){border-top-style:solid}html :where([style^=border-right-color],[style*=";border-right-color"],[style*="; border-right-color"]){border-right-style:solid}html :where([style^=border-bottom-color],[style*=";border-bottom-color"],[style*="; border-bottom-color"]){border-bottom-style:solid}html :where([style^=border-left-color],[style*=";border-left-color"],[style*="; border-left-color"]){border-left-style:solid}html :where([style^=border-width],[style*=";border-width"],[style*="; border-width"]){border-style:solid}html :where([style^=border-top-width],[style*=";border-top-width"],[style*="; border-top-width"]){border-top-style:solid}html :where([style^=border-right-width],[style*=";border-right-width"],[style*="; border-right-width"]){border-right-style:solid}html :where([style^=border-bottom-width],[style*=";border-bottom-width"],[style*="; border-bottom-width"]){border-bottom-style:solid}html :where([style^=border-left-width],[style*=";border-left-width"],[style*="; border-left-width"]){border-left-style:solid}html :where(img[class*=wp-image-]){height:auto;max-width:100%}:where(figure){margin:0 0 1em}html :where(.is-position-sticky){--wp-admin--admin-bar--position-offset:var(--wp-admin--admin-bar--height,0px)}@media screen and (max-width:600px){html :where(.is-position-sticky){--wp-admin--admin-bar--position-offset:0px}}
+
+/*# sourceURL=/wp-includes/css/dist/block-library/common.min.css */
+</style>
+<style id="wp-block-calendar-inline-css">
+.wp-block-calendar{text-align:center}.wp-block-calendar td,.wp-block-calendar th{border:1px solid;padding:.25em}.wp-block-calendar th{font-weight:400}.wp-block-calendar caption{background-color:inherit}.wp-block-calendar table{border-collapse:collapse;width:100%}.wp-block-calendar table.has-background th{background-color:inherit}.wp-block-calendar table.has-text-color th{color:inherit}.wp-block-calendar :where(table:not(.has-text-color)){color:#40464d}.wp-block-calendar :where(table:not(.has-text-color)) td,.wp-block-calendar :where(table:not(.has-text-color)) th{border-color:#ddd}:where(.wp-block-calendar table:not(.has-background) th){background:#ddd}
+/*# sourceURL=https://daniel.haxx.se/blog/wp-includes/blocks/calendar/style.min.css */
+</style>
+<style id="wp-block-heading-inline-css">
+h1:where(.wp-block-heading).has-background,h2:where(.wp-block-heading).has-background,h3:where(.wp-block-heading).has-background,h4:where(.wp-block-heading).has-background,h5:where(.wp-block-heading).has-background,h6:where(.wp-block-heading).has-background{padding:1.25em 2.375em}h1.has-text-align-left[style*=writing-mode]:where([style*=vertical-lr]),h1.has-text-align-right[style*=writing-mode]:where([style*=vertical-rl]),h2.has-text-align-left[style*=writing-mode]:where([style*=vertical-lr]),h2.has-text-align-right[style*=writing-mode]:where([style*=vertical-rl]),h3.has-text-align-left[style*=writing-mode]:where([style*=vertical-lr]),h3.has-text-align-right[style*=writing-mode]:where([style*=vertical-rl]),h4.has-text-align-left[style*=writing-mode]:where([style*=vertical-lr]),h4.has-text-align-right[style*=writing-mode]:where([style*=vertical-rl]),h5.has-text-align-left[style*=writing-mode]:where([style*=vertical-lr]),h5.has-text-align-right[style*=writing-mode]:where([style*=vertical-rl]),h6.has-text-align-left[style*=writing-mode]:where([style*=vertical-lr]),h6.has-text-align-right[style*=writing-mode]:where([style*=vertical-rl]){rotate:180deg}
+/*# sourceURL=https://daniel.haxx.se/blog/wp-includes/blocks/heading/style.min.css */
+</style>
+<style id="wp-block-image-inline-css">
+.wp-block-image>a,.wp-block-image>figure>a{display:inline-block}.wp-block-image img{box-sizing:border-box;height:auto;max-width:100%;vertical-align:bottom}@media not (prefers-reduced-motion){.wp-block-image img.hide{visibility:hidden}.wp-block-image img.show{animation:show-content-image .4s}}.wp-block-image[style*=border-radius] img,.wp-block-image[style*=border-radius]>a{border-radius:inherit}.wp-block-image.has-custom-border img{box-sizing:border-box}.wp-block-image.aligncenter{text-align:center}.wp-block-image.alignfull>a,.wp-block-image.alignwide>a{width:100%}.wp-block-image.alignfull img,.wp-block-image.alignwide img{height:auto;width:100%}.wp-block-image .aligncenter,.wp-block-image .alignleft,.wp-block-image .alignright,.wp-block-image.aligncenter,.wp-block-image.alignleft,.wp-block-image.alignright{display:table}.wp-block-image .aligncenter>figcaption,.wp-block-image .alignleft>figcaption,.wp-block-image .alignright>figcaption,.wp-block-image.aligncenter>figcaption,.wp-block-image.alignleft>figcaption,.wp-block-image.alignright>figcaption{caption-side:bottom;display:table-caption}.wp-block-image .alignleft{float:left;margin:.5em 1em .5em 0}.wp-block-image .alignright{float:right;margin:.5em 0 .5em 1em}.wp-block-image .aligncenter{margin-left:auto;margin-right:auto}.wp-block-image :where(figcaption){margin-bottom:1em;margin-top:.5em}.wp-block-image.is-style-circle-mask img{border-radius:9999px}@supports ((-webkit-mask-image:none) or (mask-image:none)) or (-webkit-mask-image:none){.wp-block-image.is-style-circle-mask img{border-radius:0;-webkit-mask-image:url('data:image/svg+xml;utf8,<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="50"/></svg>');mask-image:url('data:image/svg+xml;utf8,<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="50"/></svg>');mask-mode:alpha;-webkit-mask-position:center;mask-position:center;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:contain;mask-size:contain}}:root :where(.wp-block-image.is-style-rounded img,.wp-block-image .is-style-rounded img){border-radius:9999px}.wp-block-image figure{margin:0}.wp-lightbox-container{display:flex;flex-direction:column;position:relative}.wp-lightbox-container img{cursor:zoom-in}.wp-lightbox-container img:hover+button{opacity:1}.wp-lightbox-container button{align-items:center;backdrop-filter:blur(16px) saturate(180%);background-color:rgba(90,90,90,.25);border:none;border-radius:4px;cursor:zoom-in;display:flex;height:20px;justify-content:center;opacity:0;padding:0;position:absolute;right:16px;text-align:center;top:16px;width:20px;z-index:100}@media not (prefers-reduced-motion){.wp-lightbox-container button{transition:opacity .2s ease}}.wp-lightbox-container button:focus-visible{outline:3px auto rgba(90,90,90,.25);outline:3px auto -webkit-focus-ring-color;outline-offset:3px}.wp-lightbox-container button:hover{cursor:pointer;opacity:1}.wp-lightbox-container button:focus{opacity:1}.wp-lightbox-container button:focus,.wp-lightbox-container button:hover,.wp-lightbox-container button:not(:hover):not(:active):not(.has-background){background-color:rgba(90,90,90,.25);border:none}.wp-lightbox-overlay{box-sizing:border-box;cursor:zoom-out;height:100vh;left:0;overflow:hidden;position:fixed;top:0;visibility:hidden;width:100%;z-index:100000}.wp-lightbox-overlay .wp-lightbox-close-button{align-items:center;cursor:pointer;display:flex;font-family:inherit;gap:8px;justify-content:center;line-height:1;min-height:40px;min-width:40px;padding:0 4px;position:absolute;right:calc(env(safe-area-inset-right) + 16px);top:calc(env(safe-area-inset-top) + 16px);z-index:5000000}.wp-lightbox-overlay .wp-lightbox-close-button:focus,.wp-lightbox-overlay .wp-lightbox-close-button:hover,.wp-lightbox-overlay .wp-lightbox-close-button:not(:hover):not(:active):not(.has-background){background:none;border:none}.wp-lightbox-overlay .wp-lightbox-close-button:has(.wp-lightbox-close-text:not([hidden])) .wp-lightbox-close-icon svg{height:1em;width:1em}.wp-lightbox-overlay .wp-lightbox-close-icon svg{display:block}.wp-lightbox-overlay .wp-lightbox-navigation-button-next,.wp-lightbox-overlay .wp-lightbox-navigation-button-prev{align-items:center;bottom:16px;cursor:pointer;display:flex;font-family:inherit;gap:4px;justify-content:center;line-height:1;min-height:40px;min-width:40px;padding:0 8px;position:absolute;z-index:2000002}.wp-lightbox-overlay .wp-lightbox-navigation-button-next[hidden],.wp-lightbox-overlay .wp-lightbox-navigation-button-prev[hidden]{display:none}@media (min-width:960px){.wp-lightbox-overlay .wp-lightbox-navigation-button-next,.wp-lightbox-overlay .wp-lightbox-navigation-button-prev{bottom:50%;transform:translateY(-50%)}}.wp-lightbox-overlay .wp-lightbox-navigation-button-next:focus,.wp-lightbox-overlay .wp-lightbox-navigation-button-next:hover,.wp-lightbox-overlay .wp-lightbox-navigation-button-next:not(:hover):not(:active):not(.has-background),.wp-lightbox-overlay .wp-lightbox-navigation-button-prev:focus,.wp-lightbox-overlay .wp-lightbox-navigation-button-prev:hover,.wp-lightbox-overlay .wp-lightbox-navigation-button-prev:not(:hover):not(:active):not(.has-background){background:none;border:none;padding:0 8px}.wp-lightbox-overlay .wp-lightbox-navigation-button-next:has(.wp-lightbox-navigation-text:not([hidden])) .wp-lightbox-navigation-icon svg,.wp-lightbox-overlay .wp-lightbox-navigation-button-prev:has(.wp-lightbox-navigation-text:not([hidden])) .wp-lightbox-navigation-icon svg{display:block;height:1.5em;width:1.5em}.wp-lightbox-overlay .wp-lightbox-navigation-button-prev{left:calc(env(safe-area-inset-left) + 16px)}.wp-lightbox-overlay .wp-lightbox-navigation-button-next{right:calc(env(safe-area-inset-right) + 16px)}.wp-lightbox-overlay .wp-lightbox-navigation-icon svg{vertical-align:middle}.wp-lightbox-overlay .lightbox-image-container{height:var(--wp--lightbox-container-height);left:50%;overflow:hidden;position:absolute;top:50%;transform:translate(-50%,-50%);transform-origin:top left;width:var(--wp--lightbox-container-width);z-index:2000001}.wp-lightbox-overlay .wp-block-image{align-items:center;box-sizing:border-box;display:flex;height:100%;justify-content:center;margin:0;position:relative;transform-origin:0 0;width:100%;z-index:3000000}.wp-lightbox-overlay .wp-block-image img{height:var(--wp--lightbox-image-height);min-height:var(--wp--lightbox-image-height);min-width:var(--wp--lightbox-image-width);width:var(--wp--lightbox-image-width)}.wp-lightbox-overlay .wp-block-image figcaption{display:none}.wp-lightbox-overlay button{background:none;border:none}.wp-lightbox-overlay .scrim{background-color:#fff;height:100%;opacity:.9;position:absolute;width:100%;z-index:2000000}.wp-lightbox-overlay.active{visibility:visible}@media not (prefers-reduced-motion){.wp-lightbox-overlay.active{animation:turn-on-visibility .25s both}.wp-lightbox-overlay.active img{animation:turn-on-visibility .35s both}.wp-lightbox-overlay.show-closing-animation:not(.active){animation:turn-off-visibility .35s both}.wp-lightbox-overlay.show-closing-animation:not(.active) img{animation:turn-off-visibility .25s both}.wp-lightbox-overlay.zoom.active{animation:none;opacity:1;visibility:visible}.wp-lightbox-overlay.zoom.active .lightbox-image-container{animation:lightbox-zoom-in .4s}.wp-lightbox-overlay.zoom.active .lightbox-image-container img{animation:none}.wp-lightbox-overlay.zoom.active .scrim{animation:turn-on-visibility .4s forwards}.wp-lightbox-overlay.zoom.show-closing-animation:not(.active){animation:none}.wp-lightbox-overlay.zoom.show-closing-animation:not(.active) .lightbox-image-container{animation:lightbox-zoom-out .4s}.wp-lightbox-overlay.zoom.show-closing-animation:not(.active) .lightbox-image-container img{animation:none}.wp-lightbox-overlay.zoom.show-closing-animation:not(.active) .scrim{animation:turn-off-visibility .4s forwards}}@keyframes show-content-image{0%{visibility:hidden}99%{visibility:hidden}to{visibility:visible}}@keyframes turn-on-visibility{0%{opacity:0}to{opacity:1}}@keyframes turn-off-visibility{0%{opacity:1;visibility:visible}99%{opacity:0;visibility:visible}to{opacity:0;visibility:hidden}}@keyframes lightbox-zoom-in{0%{transform:translate(calc((-100vw + var(--wp--lightbox-scrollbar-width))/2 + var(--wp--lightbox-initial-left-position)),calc(-50vh + var(--wp--lightbox-initial-top-position))) scale(var(--wp--lightbox-scale))}to{transform:translate(-50%,-50%) scale(1)}}@keyframes lightbox-zoom-out{0%{transform:translate(-50%,-50%) scale(1);visibility:visible}99%{visibility:visible}to{transform:translate(calc((-100vw + var(--wp--lightbox-scrollbar-width))/2 + var(--wp--lightbox-initial-left-position)),calc(-50vh + var(--wp--lightbox-initial-top-position))) scale(var(--wp--lightbox-scale));visibility:hidden}}
+/*# sourceURL=https://daniel.haxx.se/blog/wp-includes/blocks/image/style.min.css */
+</style>
+<style id="wp-block-paragraph-inline-css">
+.is-small-text{font-size:.875em}.is-regular-text{font-size:1em}.is-large-text{font-size:2.25em}.is-larger-text{font-size:3em}.has-drop-cap:not(:focus):first-letter{float:left;font-size:8.4em;font-style:normal;font-weight:100;line-height:.68;margin:.05em .1em 0 0;text-transform:uppercase}body.rtl .has-drop-cap:not(:focus):first-letter{float:none;margin-left:.1em}p.has-drop-cap.has-background{overflow:hidden}:root :where(p.has-background){padding:1.25em 2.375em}:where(p.has-text-color:not(.has-link-color)) a{color:inherit}p.has-text-align-left[style*="writing-mode:vertical-lr"],p.has-text-align-right[style*="writing-mode:vertical-rl"]{rotate:180deg}
+/*# sourceURL=https://daniel.haxx.se/blog/wp-includes/blocks/paragraph/style.min.css */
+</style>
+
+<style id="classic-theme-styles-inline-css">
+/*! This file is auto-generated */
+.wp-block-button__link{color:#fff;background-color:#32373c;border-radius:9999px;box-shadow:none;text-decoration:none;padding:calc(.667em + 2px) calc(1.333em + 2px);font-size:1.125em}.wp-block-file__button{background:#32373c;color:#fff;text-decoration:none}
+/*# sourceURL=/wp-includes/css/classic-themes.min.css */
+</style>
+
+<style id="global-styles-inline-css">
+:root{--wp--preset--aspect-ratio--square: 1;--wp--preset--aspect-ratio--4-3: 4/3;--wp--preset--aspect-ratio--3-4: 3/4;--wp--preset--aspect-ratio--3-2: 3/2;--wp--preset--aspect-ratio--2-3: 2/3;--wp--preset--aspect-ratio--16-9: 16/9;--wp--preset--aspect-ratio--9-16: 9/16;--wp--preset--color--black: #000;--wp--preset--color--cyan-bluish-gray: #abb8c3;--wp--preset--color--white: #fff;--wp--preset--color--pale-pink: #f78da7;--wp--preset--color--vivid-red: #cf2e2e;--wp--preset--color--luminous-vivid-orange: #ff6900;--wp--preset--color--luminous-vivid-amber: #fcb900;--wp--preset--color--light-green-cyan: #7bdcb5;--wp--preset--color--vivid-green-cyan: #00d084;--wp--preset--color--pale-cyan-blue: #8ed1fc;--wp--preset--color--vivid-cyan-blue: #0693e3;--wp--preset--color--vivid-purple: #9b51e0;--wp--preset--color--green: #24890d;--wp--preset--color--dark-gray: #2b2b2b;--wp--preset--color--medium-gray: #767676;--wp--preset--color--light-gray: #f5f5f5;--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple: linear-gradient(135deg,rgb(6,147,227) 0%,rgb(155,81,224) 100%);--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan: linear-gradient(135deg,rgb(122,220,180) 0%,rgb(0,208,130) 100%);--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange: linear-gradient(135deg,rgb(252,185,0) 0%,rgb(255,105,0) 100%);--wp--preset--gradient--luminous-vivid-orange-to-vivid-red: linear-gradient(135deg,rgb(255,105,0) 0%,rgb(207,46,46) 100%);--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray: linear-gradient(135deg,rgb(238,238,238) 0%,rgb(169,184,195) 100%);--wp--preset--gradient--cool-to-warm-spectrum: linear-gradient(135deg,rgb(74,234,220) 0%,rgb(151,120,209) 20%,rgb(207,42,186) 40%,rgb(238,44,130) 60%,rgb(251,105,98) 80%,rgb(254,248,76) 100%);--wp--preset--gradient--blush-light-purple: linear-gradient(135deg,rgb(255,206,236) 0%,rgb(152,150,240) 100%);--wp--preset--gradient--blush-bordeaux: linear-gradient(135deg,rgb(254,205,165) 0%,rgb(254,45,45) 50%,rgb(107,0,62) 100%);--wp--preset--gradient--luminous-dusk: linear-gradient(135deg,rgb(255,203,112) 0%,rgb(199,81,192) 50%,rgb(65,88,208) 100%);--wp--preset--gradient--pale-ocean: linear-gradient(135deg,rgb(255,245,203) 0%,rgb(182,227,212) 50%,rgb(51,167,181) 100%);--wp--preset--gradient--electric-grass: linear-gradient(135deg,rgb(202,248,128) 0%,rgb(113,206,126) 100%);--wp--preset--gradient--midnight: linear-gradient(135deg,rgb(2,3,129) 0%,rgb(40,116,252) 100%);--wp--preset--font-size--small: 13px;--wp--preset--font-size--medium: 20px;--wp--preset--font-size--large: 36px;--wp--preset--font-size--x-large: 42px;--wp--preset--spacing--20: 0.44rem;--wp--preset--spacing--30: 0.67rem;--wp--preset--spacing--40: 1rem;--wp--preset--spacing--50: 1.5rem;--wp--preset--spacing--60: 2.25rem;--wp--preset--spacing--70: 3.38rem;--wp--preset--spacing--80: 5.06rem;--wp--preset--shadow--natural: 6px 6px 9px rgba(0, 0, 0, 0.2);--wp--preset--shadow--deep: 12px 12px 50px rgba(0, 0, 0, 0.4);--wp--preset--shadow--sharp: 6px 6px 0px rgba(0, 0, 0, 0.2);--wp--preset--shadow--outlined: 6px 6px 0px -3px rgb(255, 255, 255), 6px 6px rgb(0, 0, 0);--wp--preset--shadow--crisp: 6px 6px 0px rgb(0, 0, 0);}.wp-block-button{--wp--preset--dimension--25: 25%;--wp--preset--dimension--50: 50%;--wp--preset--dimension--75: 75%;--wp--preset--dimension--100: 100%;}:where(body) { margin: 0; }:where(.is-layout-flex){gap: 0.5em;}:where(.is-layout-grid){gap: 0.5em;}body .is-layout-flex{display: flex;}.is-layout-flex{flex-wrap: wrap;align-items: center;}.is-layout-flex > :is(*, div){margin: 0;}body .is-layout-grid{display: grid;}.is-layout-grid > :is(*, div){margin: 0;}body{padding-top: 0px;padding-right: 0px;padding-bottom: 0px;padding-left: 0px;}:root :where(.wp-element-button, .wp-block-button__link){background-color: #32373c;border-width: 0;color: #fff;font-family: inherit;font-size: inherit;font-style: inherit;font-weight: inherit;letter-spacing: inherit;line-height: inherit;padding-top: calc(0.667em + 2px);padding-right: calc(1.333em + 2px);padding-bottom: calc(0.667em + 2px);padding-left: calc(1.333em + 2px);text-decoration: none;text-transform: inherit;}.has-black-color{color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-color{color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-color{color: var(--wp--preset--color--white) !important;}.has-pale-pink-color{color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-color{color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-color{color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-color{color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-color{color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-color{color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-color{color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-color{color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-color{color: var(--wp--preset--color--vivid-purple) !important;}.has-green-color{color: var(--wp--preset--color--green) !important;}.has-dark-gray-color{color: var(--wp--preset--color--dark-gray) !important;}.has-medium-gray-color{color: var(--wp--preset--color--medium-gray) !important;}.has-light-gray-color{color: var(--wp--preset--color--light-gray) !important;}.has-black-background-color{background-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-background-color{background-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-background-color{background-color: var(--wp--preset--color--white) !important;}.has-pale-pink-background-color{background-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-background-color{background-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-background-color{background-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-background-color{background-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-background-color{background-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-background-color{background-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-background-color{background-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-background-color{background-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-background-color{background-color: var(--wp--preset--color--vivid-purple) !important;}.has-green-background-color{background-color: var(--wp--preset--color--green) !important;}.has-dark-gray-background-color{background-color: var(--wp--preset--color--dark-gray) !important;}.has-medium-gray-background-color{background-color: var(--wp--preset--color--medium-gray) !important;}.has-light-gray-background-color{background-color: var(--wp--preset--color--light-gray) !important;}.has-black-border-color{border-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-border-color{border-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-border-color{border-color: var(--wp--preset--color--white) !important;}.has-pale-pink-border-color{border-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-border-color{border-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-border-color{border-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-border-color{border-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-border-color{border-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-border-color{border-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-border-color{border-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-border-color{border-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-border-color{border-color: var(--wp--preset--color--vivid-purple) !important;}.has-green-border-color{border-color: var(--wp--preset--color--green) !important;}.has-dark-gray-border-color{border-color: var(--wp--preset--color--dark-gray) !important;}.has-medium-gray-border-color{border-color: var(--wp--preset--color--medium-gray) !important;}.has-light-gray-border-color{border-color: var(--wp--preset--color--light-gray) !important;}.has-vivid-cyan-blue-to-vivid-purple-gradient-background{background: var(--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple) !important;}.has-light-green-cyan-to-vivid-green-cyan-gradient-background{background: var(--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan) !important;}.has-luminous-vivid-amber-to-luminous-vivid-orange-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange) !important;}.has-luminous-vivid-orange-to-vivid-red-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-orange-to-vivid-red) !important;}.has-very-light-gray-to-cyan-bluish-gray-gradient-background{background: var(--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray) !important;}.has-cool-to-warm-spectrum-gradient-background{background: var(--wp--preset--gradient--cool-to-warm-spectrum) !important;}.has-blush-light-purple-gradient-background{background: var(--wp--preset--gradient--blush-light-purple) !important;}.has-blush-bordeaux-gradient-background{background: var(--wp--preset--gradient--blush-bordeaux) !important;}.has-luminous-dusk-gradient-background{background: var(--wp--preset--gradient--luminous-dusk) !important;}.has-pale-ocean-gradient-background{background: var(--wp--preset--gradient--pale-ocean) !important;}.has-electric-grass-gradient-background{background: var(--wp--preset--gradient--electric-grass) !important;}.has-midnight-gradient-background{background: var(--wp--preset--gradient--midnight) !important;}.has-small-font-size{font-size: var(--wp--preset--font-size--small) !important;}.has-medium-font-size{font-size: var(--wp--preset--font-size--medium) !important;}.has-large-font-size{font-size: var(--wp--preset--font-size--large) !important;}.has-x-large-font-size{font-size: var(--wp--preset--font-size--x-large) !important;}
+/*# sourceURL=global-styles-inline-css */
+</style>
+
+<link rel='stylesheet' id='cptch_stylesheet-css' href='https://daniel.haxx.se/blog/wp-content/plugins/captcha/css/front_end_style.css?ver=4.4.5' media='all' />
+<link rel='stylesheet' id='dashicons-css' href='https://daniel.haxx.se/blog/wp-includes/css/dashicons.min.css?ver=7.1.5' media='all' />
+<link rel='stylesheet' id='cptch_desktop_style-css' href='https://daniel.haxx.se/blog/wp-content/plugins/captcha/css/desktop_style.css?ver=4.4.5' media='all' />
+<link rel='stylesheet' id='twentyfourteen-lato-css' href='https://daniel.haxx.se/blog/wp-content/themes/twentyfourteen/fonts/font-lato.css?ver=20230328' media='all' />
+<link rel='stylesheet' id='genericons-css' href='https://daniel.haxx.se/blog/wp-content/themes/twentyfourteen/genericons/genericons.css?ver=20251101' media='all' />
+<link rel='stylesheet' id='twentyfourteen-style-css' href='https://daniel.haxx.se/blog/wp-content/themes/twentyfourteen/style.css?ver=20260819' media='all' />
+<link rel='stylesheet' id='twentyfourteen-block-style-css' href='https://daniel.haxx.se/blog/wp-content/themes/twentyfourteen/css/blocks.css?ver=20250715' media='all' />
+<script id="jquery-core-js" src="https://daniel.haxx.se/blog/wp-includes/js/jquery/jquery.min.js?ver=3.7.1"></script>
+<script id="jquery-migrate-js" src="https://daniel.haxx.se/blog/wp-includes/js/jquery/jquery-migrate.min.js?ver=3.4.1"></script>
+<script data-wp-strategy="defer" defer id="twentyfourteen-script-js" src="https://daniel.haxx.se/blog/wp-content/themes/twentyfourteen/js/functions.js?ver=20250729"></script>
+<link rel="https://api.w.org/" href="https://daniel.haxx.se/blog/wp-json/" /><link rel="alternate" title="JSON" type="application/json" href="https://daniel.haxx.se/blog/wp-json/wp/v2/posts/30931" /><link rel="EditURI" type="application/rsd+xml" title="RSD" href="https://daniel.haxx.se/blog/xmlrpc.php?rsd" />
+<meta name="generator" content="WordPress 7.1.5" />
+<link rel="canonical" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/" />
+<link rel='shortlink' href='https://daniel.haxx.se/blog/?p=30931' />
+<meta property="og:title" name="og:title" content="Actual curl rewrites in rust" />
+<meta property="og:type" name="og:type" content="article" />
+<meta property="og:image" name="og:image" content="https://daniel.haxx.se/blog/wp-content/uploads/2023/09/old-machine.jpg" />
+<meta property="og:image" name="og:image" content="https://daniel.haxx.se/blog/wp-content/uploads/2026/11/orly-rewriting-curl-in-rust.png" />
+<meta property="og:image" name="og:image" content="https://daniel.haxx.se/blog/wp-content/uploads/2021/04/I-could-write-curl-in-a-3-day-weekend.png" />
+<meta property="og:url" name="og:url" content="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/" />
+<meta property="og:description" name="og:description" content="For a long time we have received repeated requests for, or questions about, a curl rewrite in rust. Often as a joke, but also seriously. A joke from years ago In this modern world of AIs, we have only been waiting for someone to prove it possible and now it seems we don&#039;t have to &hellip; Continue reading Actual curl rewrites in rust &rarr;" />
+<meta property="og:locale" name="og:locale" content="en_US" />
+<meta property="og:site_name" name="og:site_name" content="daniel.haxx.se" />
+<meta property="twitter:card" name="twitter:card" content="summary_large_image" />
+<meta property="article:tag" name="article:tag" content="cURL and libcurl" />
+<meta property="article:section" name="article:section" content="cURL and libcurl" />
+<meta property="article:published_time" name="article:published_time" content="2026-11-17T00:54:58+01:00" />
+<meta property="article:modified_time" name="article:modified_time" content="2026-11-17T01:02:05+01:00" />
+<meta property="article:author" name="article:author" content="https://daniel.haxx.se/blog/author/daniel/" />
+<style>.recentcomments a{display:inline !important;padding:0 !important;margin:0 !important;}</style>		<style id="twentyfourteen-header-css">
+				.site-title,
+		.site-description {
+			clip-path: inset(50%);
+			position: absolute;
+		}
+				</style>
+		<link rel="icon" href="https://daniel.haxx.se/blog/wp-content/uploads/2024/07/daniel-greenbg-blackandwhite-413x413-1.jpg" sizes="32x32" />
+<link rel="icon" href="https://daniel.haxx.se/blog/wp-content/uploads/2024/07/daniel-greenbg-blackandwhite-413x413-1.jpg" sizes="192x192" />
+<link rel="apple-touch-icon" href="https://daniel.haxx.se/blog/wp-content/uploads/2024/07/daniel-greenbg-blackandwhite-413x413-1.jpg" />
+<meta name="msapplication-TileImage" content="https://daniel.haxx.se/blog/wp-content/uploads/2024/07/daniel-greenbg-blackandwhite-413x413-1.jpg" />
+</head>
+
+<body class="wp-singular post-template-default single single-post postid-30931 single-format-standard wp-embed-responsive wp-theme-twentyfourteen header-image singular">
+<a class="screen-reader-text skip-link" href="#content">
+	Skip to content</a>
+<div id="page" class="hfeed site">
+			<div id="site-header">
+		<a href="https://daniel.haxx.se/blog/" rel="home" >
+			<img src="https://daniel.haxx.se/blog/wp-content/uploads/2024/11/Daniel-blog-header-colonslash-thin.jpg" width="1260" height="100" alt="daniel.haxx.se" decoding="async" fetchpriority="high" />		</a>
+	</div>
+	
+	<header id="masthead" class="site-header">
+		<div class="header-main">
+							<h1 class="site-title"><a href="https://daniel.haxx.se/blog/" rel="home" >daniel.haxx.se</a></h1>
+			
+			<div class="search-toggle">
+				<a href="#search-container" class="screen-reader-text" aria-expanded="false" aria-controls="search-container">
+					Search				</a>
+			</div>
+
+			<nav id="primary-navigation" class="site-navigation primary-navigation">
+				<button class="menu-toggle">Primary Menu</button>
+				<div id="primary-menu" class="nav-menu"><ul>
+<li class="page_item page-item-2"><a href="https://daniel.haxx.se/blog/about/">About</a></li>
+<li class="page_item page-item-22945"><a href="https://daniel.haxx.se/blog/privacy-policy/">Privacy</a></li>
+</ul></div>
+			</nav>
+		</div>
+
+		<div id="search-container" class="search-box-wrapper hide">
+			<div class="search-box">
+				<form role="search" method="get" class="search-form" action="https://daniel.haxx.se/blog/">
+				<label>
+					<span class="screen-reader-text">Search for:</span>
+					<input type="search" class="search-field" placeholder="Search &hellip;" value="" name="s" />
+				</label>
+				<input type="submit" class="search-submit" value="Search" />
+			</form>			</div>
+		</div>
+	</header><!-- #masthead -->
+
+	<div id="main" class="site-main">
+
+	<div id="primary" class="content-area">
+		<div id="content" class="site-content" role="main">
+			
+<article id="post-30931" class="post-30931 post type-post status-publish format-standard has-post-thumbnail hentry category-curl tag-curl-and-libcurl">
+	
+		<div class="post-thumbnail">
+			<img width="672" height="336" src="https://daniel.haxx.se/blog/wp-content/uploads/2023/09/old-machine.jpg" class="attachment-post-thumbnail size-post-thumbnail wp-post-image" alt="" decoding="async" />		</div>
+
+		
+	<header class="entry-header">
+				<div class="entry-meta">
+			<span class="cat-links"><a href="https://daniel.haxx.se/blog/category/floss/curl/" rel="category tag">cURL and libcurl</a></span>
+		</div>
+			<h1 class="entry-title">Actual curl rewrites in rust</h1>
+		<div class="entry-meta">
+			<span class="entry-date"><a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/" rel="bookmark"><time class="entry-date" datetime="2026-11-17T00:54:58+01:00">November 17, 2026</time></a></span> <span class="byline"><span class="author vcard"><a class="url fn n" href="https://daniel.haxx.se/blog/author/daniel/" rel="author">Daniel Stenberg</a></span></span>			<span class="comments-link"><a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comments">18 Comments</a></span>
+						</div><!-- .entry-meta -->
+	</header><!-- .entry-header -->
+
+		<div class="entry-content">
+		
+<p class="wp-block-paragraph">For a long time we have received repeated requests for, or questions about, a curl rewrite in rust. Often as a joke, but also seriously.</p>
+
+
+<div class="wp-block-image">
+<figure data-wp-context="{&quot;imageId&quot;:&quot;6b015cd2a5c08&quot;}" data-wp-interactive="core/image" data-wp-key="6b015cd2a5c08" class="alignright size-full is-resized wp-lightbox-container"><img decoding="async" width="1979" height="2800" data-wp-class--hide="state.isContentHidden" data-wp-class--show="state.isContentVisible" data-wp-init="callbacks.setButtonStyles" data-wp-on--click="actions.showLightbox" data-wp-on--load="callbacks.setButtonStyles" data-wp-on--pointerdown="actions.preloadImage" data-wp-on--pointerenter="actions.preloadImageWithDelay" data-wp-on--pointerleave="actions.cancelPreload" data-wp-on-window--resize="callbacks.setButtonStyles" src="https://daniel.haxx.se/blog/wp-content/uploads/2026/11/orly-rewriting-curl-in-rust.png" alt="" class="wp-image-30968" style="aspect-ratio:0.7067897829328151;width:234px;height:auto"/><button
+			class="lightbox-trigger"
+			type="button"
+			aria-haspopup="dialog"
+			data-wp-bind--aria-label="state.thisImage.triggerButtonAriaLabel"
+			data-wp-init="callbacks.initTriggerButton"
+			data-wp-on--click="actions.showLightbox"
+			data-wp-style--right="state.thisImage.buttonRight"
+			data-wp-style--top="state.thisImage.buttonTop"
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 12 12">
+				<path fill="#fff" d="M2 0a2 2 0 0 0-2 2v2h1.5V2a.5.5 0 0 1 .5-.5h2V0H2Zm2 10.5H2a.5.5 0 0 1-.5-.5V8H0v2a2 2 0 0 0 2 2h2v-1.5ZM8 12v-1.5h2a.5.5 0 0 0 .5-.5V8H12v2a2 2 0 0 1-2 2H8Zm2-12a2 2 0 0 1 2 2v2h-1.5V2a.5.5 0 0 0-.5-.5H8V0h2Z" />
+			</svg>
+		</button><figcaption class="wp-element-caption">A joke from years ago</figcaption></figure>
+</div>
+
+
+<p class="wp-block-paragraph">In this modern world of AIs, we have only been waiting for someone to prove it possible and now it seems we don&#8217;t have to wait anymore.</p>
+
+
+
+<p class="wp-block-paragraph">This fall seems to be the time of the curl-in-rust takes as we first saw <a href="https://github.com/jonwiggins/urlx">urlx</a> appear a few months ago, claimed to be <em>a memory-safe, from-scratch reimplementation of curl and libcurl</em> and now in November <a href="https://github.com/kov/curl">curl, rewritten in Rust</a> &#8211; <em>a rewrite of curl and libcurl in Rust</em>. This second one confusingly enough not even using a different name.</p>
+
+
+
+<p class="wp-block-paragraph">This latter one <a href="https://claude.ai/artifact/K4BoWt35HQz1xWZBR3bMRD">claims to have spent 8,600 USD</a> to make it happen.</p>
+
+
+
+<h2 class="wp-block-heading">Writing code once was never the issue</h2>
+
+
+
+<p class="wp-block-paragraph">Writing code <em>once</em> was never the big deal with software and it still isn&#8217;t. Sure, it&#8217;s fascinating that you can make a set of agents accomplish this in only a few weeks but let&#8217;s face it: it could do this because all the AIs of the world have trained on curl code for years. curl is extremely well documented, there are hundreds of existing open source application using its API and there are thousands of test cases to verify the implementation.</p>
+
+
+
+<p class="wp-block-paragraph">The C code sits there and all the AI needs to do is convert it to rust, then polish until the tests work.</p>
+
+
+<div class="wp-block-image">
+<figure data-wp-context="{&quot;imageId&quot;:&quot;6b015cd2a5f24&quot;}" data-wp-interactive="core/image" data-wp-key="6b015cd2a5f24" class="aligncenter size-full wp-lightbox-container"><img loading="lazy" decoding="async" width="970" height="138" data-wp-class--hide="state.isContentHidden" data-wp-class--show="state.isContentVisible" data-wp-init="callbacks.setButtonStyles" data-wp-on--click="actions.showLightbox" data-wp-on--load="callbacks.setButtonStyles" data-wp-on--pointerdown="actions.preloadImage" data-wp-on--pointerenter="actions.preloadImageWithDelay" data-wp-on--pointerleave="actions.cancelPreload" data-wp-on-window--resize="callbacks.setButtonStyles" src="https://daniel.haxx.se/blog/wp-content/uploads/2021/04/I-could-write-curl-in-a-3-day-weekend.png" alt="" class="wp-image-16345"/><button
+			class="lightbox-trigger"
+			type="button"
+			aria-haspopup="dialog"
+			data-wp-bind--aria-label="state.thisImage.triggerButtonAriaLabel"
+			data-wp-init="callbacks.initTriggerButton"
+			data-wp-on--click="actions.showLightbox"
+			data-wp-style--right="state.thisImage.buttonRight"
+			data-wp-style--top="state.thisImage.buttonTop"
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 12 12">
+				<path fill="#fff" d="M2 0a2 2 0 0 0-2 2v2h1.5V2a.5.5 0 0 1 .5-.5h2V0H2Zm2 10.5H2a.5.5 0 0 1-.5-.5V8H0v2a2 2 0 0 0 2 2h2v-1.5ZM8 12v-1.5h2a.5.5 0 0 0 .5-.5V8H12v2a2 2 0 0 1-2 2H8Zm2-12a2 2 0 0 1 2 2v2h-1.5V2a.5.5 0 0 0-.5-.5H8V0h2Z" />
+			</svg>
+		</button><figcaption class="wp-element-caption">A know-it-all person&#8217;s comment from years ago</figcaption></figure>
+</div>
+
+
+<h2 class="wp-block-heading">curl is the result of time</h2>
+
+
+
+<p class="wp-block-paragraph">curl has come to be what it is thanks to many decisions, lots of time, many users, oceans of feedback and many iterations. Sure, recreating what curl is at any specific single moment in time is certainly doable. Doable, because we have made a perfect specification for that project.</p>
+
+
+
+<h2 class="wp-block-heading">Behind already</h2>
+
+
+
+<p class="wp-block-paragraph">During the time these agents converted 185,000 lines of C code into 340,000 lines of Rust code (I counted), we merged over 300 commits in the actual curl project. We actually improved curl during these a little more than three weeks. A little over 200 bugfixes actually. 200 bugfixes that none of those rust rewrites have. We also fixed a few vulnerabilities. In another month we have done another 200 and maybe fixed a few more vulnerabilities. Will these clones keep up?</p>
+
+
+
+<p class="wp-block-paragraph">The constant tweaking, fixing, improving and extending is what makes a software project live, what makes it attractive to users and what makes it able to compete with alternatives.</p>
+
+
+
+<p class="wp-block-paragraph">That fixing, and occasional new feature, is a direct result of a working community of users, contributors and maintainers. That goes way beyond the source code or which language that is used.</p>
+
+
+
+<p class="wp-block-paragraph">A primary reason it is hard to make a competing curl alternative is because of the development speed, the development team and the community around curl.  It is not because of the chosen language it is implemented in. Only curl can boast decades of ABI and API stability and prove that we know this and can do it well &#8211; over time. An alternative that pops up today might be able to do it as well, and <em>in a few decades we will know if they could</em>.</p>
+
+
+
+<h2 class="wp-block-heading">C</h2>
+
+
+
+<p class="wp-block-paragraph">I know I&#8217;m repeating myself but: out of the 81 vulnerabilities we have confirmed in curl so far during 2026, 14 were the result of mistakes that most likely would have been avoided had we used a memory-safe language such as rust. That&#8217;s 17.3%.</p>
+
+
+
+<p class="wp-block-paragraph">A Rust implementation of curl would thus still have had 67 of those vulnerabilities.</p>
+
+
+
+<h2 class="wp-block-heading">No rewrites</h2>
+
+
+
+<p class="wp-block-paragraph">I don&#8217;t believe in rewrites into any language. I believe in constant and never-ending polishing, iterating and refactoring.</p>
+
+
+
+<h2 class="wp-block-heading">Those rewrites</h2>
+
+
+
+<p class="wp-block-paragraph">I should add that I have not been in contact with any of the people behind these rewrites, and if there are two I bet there are more that I just haven&#8217;t seen yet. I only know of them because people have pasted me links to their repositories.</p>
+
+
+
+<p class="wp-block-paragraph">I don&#8217;t know what they will do with those projects going forward. Are they anything more than proof of concepts? I presume we will find out.</p>
+
+
+
+<p class="wp-block-paragraph">They can of course follow along our commits and convert them to rust on the fly if they want &#8211; we only do about 11 commits per day on average. Or maybe they ignore the bugreports or maybe they take their projects in other directions?</p>
+
+
+
+<p class="wp-block-paragraph">I wish them good luck whatever they decide!</p>
+
+
+
+<h2 class="wp-block-heading">How do I feel about them?</h2>
+
+
+
+<p class="wp-block-paragraph">Several people asked me this.</p>
+
+
+
+<p class="has-text-align-center wp-block-paragraph"><em>Imitation is the sincerest form of flattery that mediocrity can pay to greatness</em>.  / Someone</p>
+
+
+
+<p class="wp-block-paragraph">I&#8217;m amused. A little puzzled. Fascinated. They spent their money and effort on <em>that?</em></p>
+
+
+
+<p class="wp-block-paragraph"></p>
+	</div><!-- .entry-content -->
+	
+	<footer class="entry-meta"><span class="tag-links"><a href="https://daniel.haxx.se/blog/tag/curl-and-libcurl/" rel="tag">cURL and libcurl</a></span></footer></article><!-- #post-30931 -->
+		<nav class="navigation post-navigation">
+		<h1 class="screen-reader-text">
+			Post navigation		</h1>
+		<div class="nav-links">
+			<a href="https://daniel.haxx.se/blog/2026/11/11/30-years-of-internet-transfers-with-curl/" rel="prev"><span class="meta-nav">Previous Post</span>30 years of Internet transfers with curl</a><a href="https://daniel.haxx.se/blog/2026/11/18/the-curl-30-years-gource/" rel="next"><span class="meta-nav">Next Post</span>The curl 30 years gource</a>			</div><!-- .nav-links -->
+		</nav><!-- .navigation -->
+		
+<div id="comments" class="comments-area">
+
+	
+	<h2 class="comments-title">
+		18 thoughts on &ldquo;Actual curl rewrites in rust&rdquo;	</h2>
+
+		
+	<ol class="comment-list">
+				<li id="comment-27581" class="comment even thread-even depth-1">
+			<article id="div-comment-27581" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/67dfb6f601466f7a3c644417d92bc76ccfedb6dc920710316cbe16684f074d82?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/67dfb6f601466f7a3c644417d92bc76ccfedb6dc920710316cbe16684f074d82?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn">Owen</b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27581"><time datetime="2026-11-17T07:44:11+01:00">November 17, 2026 at 07:44</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>I find it quite interesting. I couldn&#8217;t possibly be part of the &#8220;just rewrite it in Rust&#8221; crowd, but I also do see the benefits in many cases. </p>
+<p>It feels like, while ideally it&#8217;d be good to have that effort put into curl itself and see things improved and fixed, the fact that it&#8217;s a problem space people are paying attention to at all is a Good Thing™?. I hope something useful comes of them, just so we&#8217;ve got something interesting and novel to look at, at least. Maybe it leads to better understanding of the big wonderful world of internet transfers.</p>
+<p>I appreciate the hubris &#8211; you&#8217;ve gotta start with blind, cocky optimism sometimes. 😛</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27581#respond" data-commentid="27581" data-postid="30931" data-belowelement="div-comment-27581" data-respondelement="respond" data-replyto="Reply to Owen" aria-label="Reply to Owen">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27582" class="comment odd alt thread-odd thread-alt depth-1 parent">
+			<article id="div-comment-27582" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/0b0a66c8d5cad66042f4fa2ef05130152b8e65682e61c48b4484a043b1d98c55?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/0b0a66c8d5cad66042f4fa2ef05130152b8e65682e61c48b4484a043b1d98c55?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://linktr.ee/jesse.schalken" class="url" rel="ugc external nofollow">Jesse</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27582"><time datetime="2026-11-17T14:50:22+01:00">November 17, 2026 at 14:50</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>&#8220;81 vulnerabilities we have confirmed in curl so far during 2026, 14 were the result of mistakes that most likely would have been avoided had we used a memory-safe language such as rust. That’s 17.3%.&#8221;</p>
+<p>Nice, that sounds like very good motivation for a Rust rewrite.</p>
+<p>Something that is always missing from these post-hoc analyses is the changes and features that were never implemented because the language&#8217;s unsafety made it too expensive and risky (&#8220;that which is seen and that which is not seen&#8221;). A strong type system allows you to be much more scrappy and fearless.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27582#respond" data-commentid="27582" data-postid="30931" data-belowelement="div-comment-27582" data-respondelement="respond" data-replyto="Reply to Jesse" aria-label="Reply to Jesse">Reply</a></div>			</article><!-- .comment-body -->
+		<ol class="children">
+		<li id="comment-27583" class="comment byuser comment-author-daniel bypostauthor even depth-2 parent">
+			<article id="div-comment-27583" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://daniel.haxx.se/" class="url" rel="ugc">Daniel Stenberg</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27583"><time datetime="2026-11-17T15:01:14+01:00">November 17, 2026 at 15:01</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>@Jesse: I disagree. What makes you &#8220;fearless&#8221; in development is A) a good architecture and B) a good test suite combined with C) good test and development tools. We have all that. We&#8217;re not holding back features because of the language. Never did.</p>
+<p>If there&#8217;s anything, we have too many features and we do too much. But hey, that&#8217;s what curl is.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27583#respond" data-commentid="27583" data-postid="30931" data-belowelement="div-comment-27583" data-respondelement="respond" data-replyto="Reply to Daniel Stenberg" aria-label="Reply to Daniel Stenberg">Reply</a></div>			</article><!-- .comment-body -->
+		<ol class="children">
+		<li id="comment-27596" class="comment odd alt depth-3 parent">
+			<article id="div-comment-27596" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/0b0a66c8d5cad66042f4fa2ef05130152b8e65682e61c48b4484a043b1d98c55?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/0b0a66c8d5cad66042f4fa2ef05130152b8e65682e61c48b4484a043b1d98c55?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://linktr.ee/jesse.schalken" class="url" rel="ugc external nofollow">Jesse</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27596"><time datetime="2026-11-18T10:55:13+01:00">November 18, 2026 at 10:55</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>Isn&#8217;t a programming language just another development tool? We can talk about language capabilities just like any other.</p>
+<p>Types and tests go together as a pair of tools. Types can be validated incrementally in less than a second (eg in rust-analyzer), tests take seconds, minutes, sometimes hours for feedback. Tests can show the presence but not the absence of bugs, types prove the absence of whole classes of bugs but not their presence. Tests tell you about a specific execution, types reason about all possible executions. Test can validate any behaviour while types can only exclude bugs provable in its logic.</p>
+<p>The progress in programming languages has generally been towards stronger types, including lifetimes in Rust&#8217;s case. I don&#8217;t think its fair to say they have no advantages over tests.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27596#respond" data-commentid="27596" data-postid="30931" data-belowelement="div-comment-27596" data-respondelement="respond" data-replyto="Reply to Jesse" aria-label="Reply to Jesse">Reply</a></div>			</article><!-- .comment-body -->
+		<ol class="children">
+		<li id="comment-27597" class="comment byuser comment-author-daniel bypostauthor even depth-4">
+			<article id="div-comment-27597" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://daniel.haxx.se/" class="url" rel="ugc">Daniel Stenberg</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27597"><time datetime="2026-11-18T11:30:11+01:00">November 18, 2026 at 11:30</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>@Jesse: different languages have different advantages and quirks, sure. I just meant that I don&#8217;t think the choice of language holds us back.</p>
+				</div><!-- .comment-content -->
+
+							</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+</ol><!-- .children -->
+</li><!-- #comment-## -->
+</ol><!-- .children -->
+</li><!-- #comment-## -->
+		<li id="comment-27589" class="comment odd alt depth-2">
+			<article id="div-comment-27589" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/7af2556d70ebdec658363896fcc23a2b17aeb51da7c5e5cb440e59af5c96788a?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/7af2556d70ebdec658363896fcc23a2b17aeb51da7c5e5cb440e59af5c96788a?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://gr.ht" class="url" rel="ugc external nofollow">grayhatter</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27589"><time datetime="2026-11-17T19:38:44+01:00">November 17, 2026 at 19:38</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>&gt; Nice, that sounds like very good motivation for a Rust rewrite.</p>
+<p>I agree; it is a good reason! </p>
+<p>But I feel like you&#8217;ve missed the forest for the single tree. This whole post is describing the value in curl being the maintainers that are willing to put in the time. A single observation doesn&#8217;t outweigh the reality that code is (and always has been) cheap. But maintainer time and effort is the important part.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27589#respond" data-commentid="27589" data-postid="30931" data-belowelement="div-comment-27589" data-respondelement="respond" data-replyto="Reply to grayhatter" aria-label="Reply to grayhatter">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+</ol><!-- .children -->
+</li><!-- #comment-## -->
+		<li id="comment-27584" class="comment even thread-even depth-1">
+			<article id="div-comment-27584" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/dba025f411eb5dea75b2ac9d89b8299ba8ded7551da0ec0af415857312de2f7f?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/dba025f411eb5dea75b2ac9d89b8299ba8ded7551da0ec0af415857312de2f7f?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn">Jack</b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27584"><time datetime="2026-11-17T16:23:36+01:00">November 17, 2026 at 16:23</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>cURL is one of the greatest examples of a project, C or otherwise, done right. It&#8217;s a stalwart of computing. It&#8217;s literally everywhere. It&#8217;s probably even in my toaster too, which is kind of scary now that I think about it.</p>
+<p>Jokes aside, you should really just ignore the people clamoring to rewrite it in Rust or Zig or whatever. I&#8217;m a huge Rust fan. I mainly program in Rust and a bit of C. This has nothing to do with rust per se and more to do with the internet being annoying.</p>
+<p>An AI powered rewrite or even a rewrite by hand misses what actually makes cURL so good. It&#8217;s that there is a talented team of maintainers who understand the code, understand the domain, and are dedicated to writing and maintaining curl. Rewrites lose all of this for temporary benefits, or worse it doesn&#8217;t have any benefits at all. There are AI and hand rolled postgres rewrites in Rust that are &#8220;faster&#8221; but it turns out they&#8217;re buggy messes that aren&#8217;t even durable. They&#8217;re faster because they&#8217;re broken. 🙂</p>
+<p>So, I say this as a huge Rust fan who contributes to a plethora or open source Rust projects. Please ignore the &#8220;riir&#8221; in Rust crowd. It doesn&#8217;t represent most of us.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27584#respond" data-commentid="27584" data-postid="30931" data-belowelement="div-comment-27584" data-respondelement="respond" data-replyto="Reply to Jack" aria-label="Reply to Jack">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27585" class="comment odd alt thread-odd thread-alt depth-1">
+			<article id="div-comment-27585" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/89c0c2a3cd1d8d2e7ae262a8b2967c5a214b80cb8f14d913519dcec0ac6ced68?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/89c0c2a3cd1d8d2e7ae262a8b2967c5a214b80cb8f14d913519dcec0ac6ced68?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn">Joonas Kuorilehto</b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27585"><time datetime="2026-11-17T16:32:53+01:00">November 17, 2026 at 16:32</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>” This latter one claims to have spent 8,600 USD to make it happen”.  This is a wrong reading.</p>
+<p>They claim that amount in estimated API cost equivalent, but based on them running out of quota they use a subscription, which is a lot less cost. Not that it changes anything you said though.</p>
+<p>Thanks for keeping cURL going all these years. I doubt any of the clones are committed to similar maintainance quality and long term.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27585#respond" data-commentid="27585" data-postid="30931" data-belowelement="div-comment-27585" data-respondelement="respond" data-replyto="Reply to Joonas Kuorilehto" aria-label="Reply to Joonas Kuorilehto">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27587" class="comment even thread-even depth-1">
+			<article id="div-comment-27587" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/c4cb559cac461ae04977a38bc7c7e1779430589c4cae02e432f275fd7964fee6?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/c4cb559cac461ae04977a38bc7c7e1779430589c4cae02e432f275fd7964fee6?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://vishalpawar.dev/utm?src=daniel_haxx" class="url" rel="ugc external nofollow">Vishal Pawar</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27587"><time datetime="2026-11-17T18:00:03+01:00">November 17, 2026 at 18:00</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>I really like what this post is talking about everyone can make a copy but who can maintain and keep on adding features in long term that is what makes it competing and survival of the copied software.</p>
+<p>Everyone knows how Cloudflare made a copy of Next.js and everyone started posting about it for few weeks and it is dead or it is copying features from Next.js to keep up with the Next.js as it&#8217;s replacement</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27587#respond" data-commentid="27587" data-postid="30931" data-belowelement="div-comment-27587" data-respondelement="respond" data-replyto="Reply to Vishal Pawar" aria-label="Reply to Vishal Pawar">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27588" class="comment odd alt thread-odd thread-alt depth-1">
+			<article id="div-comment-27588" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/56be1d4b72a7e714a306e1894594615c37419ba7fab85792c32ff6b603f70b6f?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/56be1d4b72a7e714a306e1894594615c37419ba7fab85792c32ff6b603f70b6f?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn">Dàmian Lusq</b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27588"><time datetime="2026-11-17T19:05:12+01:00">November 17, 2026 at 19:05</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>@Joonas The artifact mentions weekly limit only on 28/10, one week after the start of the rewrite, and not until the end of the experience, so it surely started with some heavy subscription, it may switched to token billing after to keep up with the work.</p>
+<p>&#8220;If the work ran on a subscription plan, this is what it would have cost on the API, not what was billed.&#8221;<br />
+So yes, for sure, it at least been partially subsidized, and once Anthropic will switch to token billed usage (like OpenAI will do next month, because money), it would certainly cost $8.6k for any clone, except if some &#8220;super agents&#8221; becomes the new hype and would burn way more tokens&#8230;</p>
+<p>Again, &#8220;humans made computers for humans&#8221; is still a thing nowadays, and AI will not replacing communities tomorrow. It would have been interesting to see a clean C ? Rust ? C rewrite just to compare how the C could have been rewritten, just out of curiosity.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27588#respond" data-commentid="27588" data-postid="30931" data-belowelement="div-comment-27588" data-respondelement="respond" data-replyto="Reply to Dàmian Lusq" aria-label="Reply to Dàmian Lusq">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27590" class="comment even thread-even depth-1">
+			<article id="div-comment-27590" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/f39bb6563561842dff954d4f341291379777f29225784c0c2471ffd449f01c73?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/f39bb6563561842dff954d4f341291379777f29225784c0c2471ffd449f01c73?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://tactica.xyz" class="url" rel="ugc external nofollow">Anton</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27590"><time datetime="2026-11-17T19:47:31+01:00">November 17, 2026 at 19:47</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>It is november 2026. You can use formal verification with Verus to get rid of other 67 logic bugs and then use it continuously to avoid bugs at all!</p>
+<p><a href="https://microsoftedge.github.io/edgevr/posts/From-Bug-Hunting-to-Bug-Prevention-with-Rust-and-Verus/" rel="nofollow ugc">https://microsoftedge.github.io/edgevr/posts/From-Bug-Hunting-to-Bug-Prevention-with-Rust-and-Verus/</a></p>
+<p>No other language yet provide such an ecosystem for error prevention.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27590#respond" data-commentid="27590" data-postid="30931" data-belowelement="div-comment-27590" data-respondelement="respond" data-replyto="Reply to Anton" aria-label="Reply to Anton">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27591" class="comment odd alt thread-odd thread-alt depth-1">
+			<article id="div-comment-27591" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/490f7fcfee38ddde609f8110024f5c8ba08f6e755beedb3c50b4235521e154f5?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/490f7fcfee38ddde609f8110024f5c8ba08f6e755beedb3c50b4235521e154f5?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://www.techmedya.com/" class="url" rel="ugc external nofollow">Eser</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27591"><time datetime="2026-11-17T20:49:12+01:00">November 17, 2026 at 20:49</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>This is such a wonderfully grounded perspective! It’s a great reminder that a software&#8217;s true strength lies in its community, history, and endless iterations—not just the language it’s written in. Thank you for everything you do for curl!</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27591#respond" data-commentid="27591" data-postid="30931" data-belowelement="div-comment-27591" data-respondelement="respond" data-replyto="Reply to Eser" aria-label="Reply to Eser">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27592" class="comment even thread-even depth-1">
+			<article id="div-comment-27592" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/f39bb6563561842dff954d4f341291379777f29225784c0c2471ffd449f01c73?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/f39bb6563561842dff954d4f341291379777f29225784c0c2471ffd449f01c73?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https:tactica.xyz" class="url" rel="ugc external nofollow">Anton</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27592"><time datetime="2026-11-17T21:23:56+01:00">November 17, 2026 at 21:23</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>AI + Verus tool allows you to automatically write formal proofs on your code and get rid of rest 67 issues. Rust has single best ecosystem to get rid of bugs! Happy to help is you ever decide to try and collect metrics on quality improvement!</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27592#respond" data-commentid="27592" data-postid="30931" data-belowelement="div-comment-27592" data-respondelement="respond" data-replyto="Reply to Anton" aria-label="Reply to Anton">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27593" class="comment odd alt thread-odd thread-alt depth-1">
+			<article id="div-comment-27593" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/59b98429498dc9d91e7c181d67441c6070887f50fc663b51c6cff64e6f0efdb0?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/59b98429498dc9d91e7c181d67441c6070887f50fc663b51c6cff64e6f0efdb0?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn">Enne</b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27593"><time datetime="2026-11-17T22:19:33+01:00">November 17, 2026 at 22:19</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>Similarly-shaped things used to happen at a much smaller scale on web 1.0. How many times I or my peers would share tarballs of our funny little webapps, only to be shown a few weeks later some proto-reactionary teenager trying so hard to impress his two or three followers with the website he &#8220;built&#8221; all on his lonesome in a day, and soon after that it&#8217;d be gone again in a fit of pique. Maybe these are the same people all aged up. Similarly-shaped things and all.</p>
+<p>But even those kids would have the sense to not brag that they gambled away thousands of dollars to put a Pyongyang Hotel in the metaverse. That&#8217;s just sad.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27593#respond" data-commentid="27593" data-postid="30931" data-belowelement="div-comment-27593" data-respondelement="respond" data-replyto="Reply to Enne" aria-label="Reply to Enne">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+		<li id="comment-27594" class="comment even thread-even depth-1 parent">
+			<article id="div-comment-27594" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/d26584a90e6abfffb1d8da05fbf6a44015692f85da05cf3bfd6581514220289b?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/d26584a90e6abfffb1d8da05fbf6a44015692f85da05cf3bfd6581514220289b?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn">Félix</b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27594"><time datetime="2026-11-18T08:28:37+01:00">November 18, 2026 at 08:28</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>I you don&#8217;t know Rust well, what makes you confident about the exact number of issues that Rust would have prevented? C is a barebone language, Rust brings much more to the table than memory safety only:<br />
+&#8211; Sane type system, especially with sum types<br />
+&#8211; Better error handling (mostly consequence of the previous point)<br />
+&#8211; Trait-based polymorphism (no such abstraction in C)<br />
+&#8211; RAII<br />
+&#8211; Async (especially useful for curl)</p>
+<p>Even users&#8217; misusage can be prevented with a good set of types: make invalid states unrepresentable. BTW, we talk about Rust, but any functional language would do.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27594#respond" data-commentid="27594" data-postid="30931" data-belowelement="div-comment-27594" data-respondelement="respond" data-replyto="Reply to Félix" aria-label="Reply to Félix">Reply</a></div>			</article><!-- .comment-body -->
+		<ol class="children">
+		<li id="comment-27595" class="comment byuser comment-author-daniel bypostauthor odd alt depth-2">
+			<article id="div-comment-27595" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://daniel.haxx.se/" class="url" rel="ugc">Daniel Stenberg</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27595"><time datetime="2026-11-18T08:34:54+01:00">November 18, 2026 at 08:34</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>@Felix No one can know any exact number of problems curl would have had if written in another language. Not you, not I. What I do know though, and this is verifiable because all the details and data is public, is how many of the past curl vulnerabilities that were &#8220;C mistakes&#8221;. I think everything else in terms what other languages could do or not is mostly a distraction and &#8220;language religious talk&#8221;.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27595#respond" data-commentid="27595" data-postid="30931" data-belowelement="div-comment-27595" data-respondelement="respond" data-replyto="Reply to Daniel Stenberg" aria-label="Reply to Daniel Stenberg">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+</ol><!-- .children -->
+</li><!-- #comment-## -->
+		<li id="comment-27601" class="comment even thread-odd thread-alt depth-1 parent">
+			<article id="div-comment-27601" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/169e688ce4f4457968b144aa7c6dbee2fdc2a4cabfabcfefadaf40de425722ec?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/169e688ce4f4457968b144aa7c6dbee2fdc2a4cabfabcfefadaf40de425722ec?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn">Gustavo Noronha</b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27601"><time datetime="2026-11-20T11:32:48+01:00">November 20, 2026 at 11:32</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>The catch up on the new commits for the rewite is on the way, done locally but finishing some things first. And I will stay closer going forward. But more important than the bugs that will be fixed with the catch up are the ones that did not affect the rewrite because of language and design &#8211; will publish an analysis soon. I am tightening things further so that it becomes the majority as time goes by.</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27601#respond" data-commentid="27601" data-postid="30931" data-belowelement="div-comment-27601" data-respondelement="respond" data-replyto="Reply to Gustavo Noronha" aria-label="Reply to Gustavo Noronha">Reply</a></div>			</article><!-- .comment-body -->
+		<ol class="children">
+		<li id="comment-27602" class="comment byuser comment-author-daniel bypostauthor odd alt depth-2">
+			<article id="div-comment-27602" class="comment-body">
+				<footer class="comment-meta">
+					<div class="comment-author vcard">
+						<img alt='' src='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=34&#038;d=monsterid&#038;r=g' srcset='https://secure.gravatar.com/avatar/69fdca87edd17cee21ca2e79fc2ff671d644603c3dc27167430f3cd3dbab7ba8?s=68&#038;d=monsterid&#038;r=g 2x' class='avatar avatar-34 photo' height='34' width='34' loading='lazy' decoding='async'/>						<b class="fn"><a href="https://daniel.haxx.se/" class="url" rel="ugc">Daniel Stenberg</a></b> <span class="says">says:</span>					</div><!-- .comment-author -->
+
+					<div class="comment-metadata">
+						<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/#comment-27602"><time datetime="2026-11-20T12:41:07+01:00">November 20, 2026 at 12:41</time></a>					</div><!-- .comment-metadata -->
+
+									</footer><!-- .comment-meta -->
+
+				<div class="comment-content">
+					<p>> The catch up on the new commits for the rewite is on the way</p>
+<p>Why? What&#8217;s the point?</p>
+				</div><!-- .comment-content -->
+
+				<div class="reply"><a rel="nofollow" class="comment-reply-link" href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/?replytocom=27602#respond" data-commentid="27602" data-postid="30931" data-belowelement="div-comment-27602" data-respondelement="respond" data-replyto="Reply to Daniel Stenberg" aria-label="Reply to Daniel Stenberg">Reply</a></div>			</article><!-- .comment-body -->
+		</li><!-- #comment-## -->
+</ol><!-- .children -->
+</li><!-- #comment-## -->
+	</ol><!-- .comment-list -->
+
+		
+		
+	
+		<div id="respond" class="comment-respond">
+		<h3 id="reply-title" class="comment-reply-title">Leave a Reply <small><a rel="nofollow" id="cancel-comment-reply-link" href="/blog/2026/11/17/actual-curl-rewrites-in-rust/#respond" style="display:none;">Cancel reply</a></small></h3><form action="https://daniel.haxx.se/blog/wp-comments-post.php" method="post" id="commentform" class="comment-form"><p class="comment-notes"><span id="email-notes">Your email address will not be published.</span> <span class="required-field-message">Required fields are marked <span class="required">*</span></span></p><p class="comment-form-comment"><label for="comment">Comment <span class="required">*</span></label> <textarea id="comment" name="comment" cols="45" rows="8" maxlength="65525" required></textarea></p><p class="comment-form-author"><label for="author">Name <span class="required">*</span></label> <input id="author" name="author" type="text" value="" size="30" maxlength="245" autocomplete="name" required /></p>
+<p class="comment-form-email"><label for="email">Email <span class="required">*</span></label> <input id="email" name="email" type="email" value="" size="30" maxlength="100" aria-describedby="email-notes" autocomplete="email" required /></p>
+<p class="comment-form-url"><label for="url">Website</label> <input id="url" name="url" type="url" value="" size="30" maxlength="200" autocomplete="url" /></p>
+<p class="cptch_block"><script class="cptch_to_remove">
+				(function( timeout ) {
+					setTimeout(
+						function() {
+							var notice = document.getElementById("cptch_time_limit_notice_31");
+							if ( notice )
+								notice.style.display = "block";
+						},
+						timeout
+					);
+				})(300000);
+			</script>
+			<span id="cptch_time_limit_notice_31" class="cptch_time_limit_notice cptch_to_remove">Time limit is exhausted. Please reload CAPTCHA.</span><span class="cptch_wrap cptch_recognition">
+				<label class="cptch_label" for="cptch_input_31"><span class="cptch_images_wrap"><span class="cptch_span">&#102;ive</span><span class="cptch_span">5</span><span class="cptch_span">9</span><span class="cptch_span">8</span><span class="cptch_span">&#116;&#104;re&#101;</span></span>
+				<input id="cptch_input_31" class="cptch_input cptch_wp_comments" type="text" autocomplete="off" name="cptch_number" value="" maxlength="5" size="5" aria-required="true" required="required" style="margin-bottom:0;font-size: 12px;max-width:100%;" />
+				<input type="hidden" name="cptch_result" value="+LcghEJh" /><input type="hidden" name="cptch_time" value="1795251410" />
+					<input type="hidden" name="cptch_form" value="wp_comments" />
+				</label><span class="cptch_reload_button_wrap hide-if-no-js">
+					<noscript>
+						<style type="text/css">
+							.hide-if-no-js {
+								display: none !important;
+							}
+						</style>
+					</noscript>
+					<span class="cptch_reload_button dashicons dashicons-update"></span>
+				</span></span></p><p class="form-submit"><input name="submit" type="submit" id="submit" class="submit" value="Post Comment" /> <input type='hidden' name='comment_post_ID' value='30931' id='comment_post_ID' />
+<input type='hidden' name='comment_parent' id='comment_parent' value='0' />
+</p><p style="display: none;"><input type="hidden" id="akismet_comment_nonce" name="akismet_comment_nonce" value="130239981f" /></p><p style="display: none !important;" class="akismet-fields-container" data-prefix="ak_"><label>&#916;<textarea name="ak_hp_textarea" cols="45" rows="8" maxlength="100"></textarea></label><input type="hidden" id="ak_js_1" name="ak_js" value="181"/><script>
+document.getElementById( "ak_js_1" ).setAttribute( "value", ( new Date() ).getTime() );
+</script>
+</p></form>	</div><!-- #respond -->
+	<p class="akismet_comment_form_privacy_notice">This site uses Akismet to reduce spam. <a href="https://akismet.com/privacy/" target="_blank" rel="nofollow noopener">Learn how your comment data is processed.</a></p>
+</div><!-- #comments -->
+		</div><!-- #content -->
+	</div><!-- #primary -->
+
+<div id="content-sidebar" class="content-sidebar widget-area" role="complementary">
+	
+		<aside id="recent-posts-3" class="widget widget_recent_entries">
+		<h1 class="widget-title">Recent Posts</h1><nav aria-label="Recent Posts">
+		<ul>
+											<li>
+					<a href="https://daniel.haxx.se/blog/2026/11/18/curl-on-oss-scanner/">curl on OSS-Scanner</a>
+											<span class="post-date">November 18, 2026</span>
+									</li>
+											<li>
+					<a href="https://daniel.haxx.se/blog/2026/11/18/the-curl-30-years-gource/">The curl 30 years gource</a>
+											<span class="post-date">November 18, 2026</span>
+									</li>
+											<li>
+					<a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/" aria-current="page">Actual curl rewrites in rust</a>
+											<span class="post-date">November 17, 2026</span>
+									</li>
+											<li>
+					<a href="https://daniel.haxx.se/blog/2026/11/11/30-years-of-internet-transfers-with-curl/">30 years of Internet transfers with curl</a>
+											<span class="post-date">November 11, 2026</span>
+									</li>
+											<li>
+					<a href="https://daniel.haxx.se/blog/2026/11/03/scrutinize-our-assessments/">Scrutinize our assessments</a>
+											<span class="post-date">November 3, 2026</span>
+									</li>
+											<li>
+					<a href="https://daniel.haxx.se/blog/2026/10/22/ignore-the-slop/">&#8220;ignore the slop&#8221;</a>
+											<span class="post-date">October 22, 2026</span>
+									</li>
+					</ul>
+
+		</nav></aside><aside id="recent-comments-3" class="widget widget_recent_comments"><h1 class="widget-title">Recent Comments</h1><nav aria-label="Recent Comments"><ul id="recentcomments"><li class="recentcomments"><span class="comment-author-link"><a href="https://daniel.haxx.se/" class="url" rel="ugc">Daniel Stenberg</a></span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27602">Actual curl rewrites in rust</a></li><li class="recentcomments"><span class="comment-author-link">Gustavo Noronha</span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27601">Actual curl rewrites in rust</a></li><li class="recentcomments"><span class="comment-author-link"><a href="https://blog.axiaoxin.com" class="url" rel="ugc external nofollow">axiaoxin</a></span> on <a href="https://daniel.haxx.se/blog/2026/11/11/30-years-of-internet-transfers-with-curl/comment-page-1/#comment-27599">30 years of Internet transfers with curl</a></li><li class="recentcomments"><span class="comment-author-link">Willy</span> on <a href="https://daniel.haxx.se/blog/2026/11/18/curl-on-oss-scanner/comment-page-1/#comment-27598">curl on OSS-Scanner</a></li><li class="recentcomments"><span class="comment-author-link"><a href="https://daniel.haxx.se/" class="url" rel="ugc">Daniel Stenberg</a></span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27597">Actual curl rewrites in rust</a></li><li class="recentcomments"><span class="comment-author-link"><a href="https://linktr.ee/jesse.schalken" class="url" rel="ugc external nofollow">Jesse</a></span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27596">Actual curl rewrites in rust</a></li><li class="recentcomments"><span class="comment-author-link"><a href="https://daniel.haxx.se/" class="url" rel="ugc">Daniel Stenberg</a></span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27595">Actual curl rewrites in rust</a></li><li class="recentcomments"><span class="comment-author-link">Félix</span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27594">Actual curl rewrites in rust</a></li><li class="recentcomments"><span class="comment-author-link">Enne</span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27593">Actual curl rewrites in rust</a></li><li class="recentcomments"><span class="comment-author-link"><a href="https:tactica.xyz" class="url" rel="ugc external nofollow">Anton</a></span> on <a href="https://daniel.haxx.se/blog/2026/11/17/actual-curl-rewrites-in-rust/comment-page-1/#comment-27592">Actual curl rewrites in rust</a></li></ul></nav></aside></div><!-- #content-sidebar -->
+<div id="secondary">
+		<h2 class="site-description">curl, open source and networking</h2>
+	
+	
+		<div id="primary-sidebar" class="primary-sidebar widget-area" role="complementary">
+		<aside id="block-10" class="widget widget_block">
+<h2 class="wp-block-heading"></h2>
+</aside><aside id="block-11" class="widget widget_block widget_media_image">
+<figure class="wp-block-image size-full is-resized"><img loading="lazy" decoding="async" src="https://daniel.haxx.se/blog/wp-content/uploads/2022/03/final-12-1000x1000-1.jpg" alt="" class="wp-image-18547" style="width:151px;height:151px" width="151" height="151"/></figure>
+</aside><aside id="block-12" class="widget widget_block widget_text">
+<p class="wp-block-paragraph"></p>
+</aside><aside id="block-3" class="widget widget_block widget_text">
+<p class="wp-block-paragraph">Sponsor me:<a href="https://github.com/users/bagder/sponsorship"> on GitHub</a><br>Follow me: <a href="https://mastodon.social/@bagder">@bagder</a><br>Keep up: <a href="https://daniel.haxx.se/blog/feed/">RSS-feed</a><br>Email: <a href="https://lists.haxx.se/listinfo/daniel">weekly reports</a></p>
+</aside><aside id="block-7" class="widget widget_block widget_calendar"><div class="wp-block-calendar"><table id="wp-calendar" class="wp-calendar-table">
+	<caption>November 2026</caption>
+	<thead>
+	<tr>
+		<th scope="col" aria-label="Monday">M</th>
+		<th scope="col" aria-label="Tuesday">T</th>
+		<th scope="col" aria-label="Wednesday">W</th>
+		<th scope="col" aria-label="Thursday">T</th>
+		<th scope="col" aria-label="Friday">F</th>
+		<th scope="col" aria-label="Saturday">S</th>
+		<th scope="col" aria-label="Sunday">S</th>
+	</tr>
+	</thead>
+	<tbody>
+	<tr>
+		<td colspan="6" class="pad">&nbsp;</td><td>1</td>
+	</tr>
+	<tr>
+		<td>2</td><td><a href="https://daniel.haxx.se/blog/2026/11/03/" aria-label="Posts published on November 3, 2026">3</a></td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td>
+	</tr>
+	<tr>
+		<td>9</td><td>10</td><td><a href="https://daniel.haxx.se/blog/2026/11/11/" aria-label="Posts published on November 11, 2026">11</a></td><td>12</td><td>13</td><td>14</td><td>15</td>
+	</tr>
+	<tr>
+		<td>16</td><td><a href="https://daniel.haxx.se/blog/2026/11/17/" aria-label="Posts published on November 17, 2026">17</a></td><td><a href="https://daniel.haxx.se/blog/2026/11/18/" aria-label="Posts published on November 18, 2026">18</a></td><td>19</td><td>20</td><td id="today">21</td><td>22</td>
+	</tr>
+	<tr>
+		<td>23</td><td>24</td><td>25</td><td>26</td><td>27</td><td>28</td><td>29</td>
+	</tr>
+	<tr>
+		<td>30</td>
+		<td class="pad" colspan="6">&nbsp;</td>
+	</tr>
+	</tbody>
+	</table><nav aria-label="Previous and next months" class="wp-calendar-nav">
+		<span class="wp-calendar-nav-prev"><a href="https://daniel.haxx.se/blog/2026/10/">&laquo; Oct</a></span>
+		<span class="pad">&nbsp;</span>
+		<span class="wp-calendar-nav-next">&nbsp;</span>
+	</nav></div></aside>	</div><!-- #primary-sidebar -->
+	</div><!-- #secondary -->
+
+		</div><!-- #main -->
+
+		<footer id="colophon" class="site-footer">
+
+			
+			<div class="site-info">
+								<a class="privacy-policy-link" href="https://daniel.haxx.se/blog/privacy-policy/" rel="privacy-policy">Privacy</a><span role="separator" aria-hidden="true"></span>				<a href="https://wordpress.org/" class="imprint">
+					Proudly powered by WordPress				</a>
+			</div><!-- .site-info -->
+		</footer><!-- #colophon -->
+	</div><!-- #page -->
+
+	<script type="speculationrules">
+{"prefetch":[{"source":"document","where":{"and":[{"href_matches":"/blog/*"},{"not":{"href_matches":["/blog/wp-*.php","/blog/wp-admin/*","/blog/wp-content/uploads/*","/blog/wp-content/*","/blog/wp-content/plugins/*","/blog/wp-content/themes/twentyfourteen/*","/blog/*\\?(.+)"]}},{"not":{"selector_matches":"a[rel~=\"nofollow\"]"}},{"not":{"selector_matches":".no-prefetch, .no-prefetch a"}}]},"eagerness":"conservative"}]}
+</script>
+<script id="wp-importmap" type="importmap">
+{"imports":{"@wordpress/interactivity":"https://daniel.haxx.se/blog/wp-includes/js/dist/script-modules/interactivity/index.min.js?ver=6a43cba92ed701f32cd9"}}
+</script>
+<script data-wp-router-options="{&quot;loadOnClientNavigation&quot;:true}" fetchpriority="low" id="@wordpress/block-library/image/view-js-module" src="https://daniel.haxx.se/blog/wp-includes/js/dist/script-modules/block-library/image/view.min.js?ver=25f29e3c6cc00370914b" type="module"></script>
+<link rel="modulepreload" href="https://daniel.haxx.se/blog/wp-includes/js/dist/script-modules/interactivity/index.min.js?ver=6a43cba92ed701f32cd9" id="@wordpress/interactivity-js-modulepreload" fetchpriority="low">
+<script id="wp-script-module-data-@wordpress/interactivity" type="application/json">
+{"config":{"core/image":{"defaultAriaLabel":"Enlarged image","closeButtonText":"Close","prevButtonText":"Previous","nextButtonText":"Next"}},"state":{"core/image":{"metadata":{"6b015cd2a5c08":{"uploadedSrc":"https://daniel.haxx.se/blog/wp-content/uploads/2026/11/orly-rewriting-curl-in-rust.png","lightboxSrcset":false,"figureClassNames":"alignright size-full is-resized","figureStyles":null,"imgClassNames":"wp-image-30968","imgStyles":"aspect-ratio:0.7067897829328151;width:234px;height:auto","targetWidth":1979,"targetHeight":2800,"scaleAttr":false,"alt":"","galleryId":null,"customAriaLabel":null,"navigationButtonType":"icon","triggerButtonAriaLabel":"Enlarge"},"6b015cd2a5f24":{"uploadedSrc":"https://daniel.haxx.se/blog/wp-content/uploads/2021/04/I-could-write-curl-in-a-3-day-weekend.png","lightboxSrcset":false,"figureClassNames":"aligncenter size-full","figureStyles":null,"imgClassNames":"wp-image-16345","imgStyles":null,"targetWidth":970,"targetHeight":138,"scaleAttr":false,"alt":"","galleryId":null,"customAriaLabel":null,"navigationButtonType":"icon","triggerButtonAriaLabel":"Enlarge"}}}}}
+</script>
+		<div
+			class="wp-lightbox-overlay zoom"
+			aria-label="Enlarged images"
+			data-wp-interactive="core/image"
+			data-wp-router-region='{ "id": "core/image-overlay", "attachTo": "body" }'
+			data-wp-key="wp-lightbox-overlay"
+			data-wp-context='{}'
+			data-wp-bind--role="state.roleAttribute"
+			data-wp-bind--aria-label="state.ariaLabel"
+			data-wp-bind--aria-modal="state.ariaModal"
+			data-wp-class--active="state.overlayEnabled"
+			data-wp-class--show-closing-animation="state.overlayOpened"
+			data-wp-watch---focus="callbacks.setOverlayFocus"
+			data-wp-watch---inert="callbacks.setInertElements"
+			data-wp-on--keydown="actions.handleKeydown"
+			data-wp-on--touchstart="actions.handleTouchStart"
+			data-wp-on--touchmove="actions.handleTouchMove"
+			data-wp-on--touchend="actions.handleTouchEnd"
+			data-wp-on--click="actions.hideLightbox"
+			data-wp-on-window--resize="callbacks.setOverlayStyles"
+			data-wp-on-window--scroll="actions.handleScroll"
+			data-wp-bind--style="state.overlayStyles"
+			tabindex="-1"
+			>
+				<button type="button" style="fill:#000" class="wp-lightbox-close-button" data-wp-bind--aria-label="state.closeButtonAriaLabel">
+					<span class="wp-lightbox-close-icon" data-wp-bind--hidden="!state.hasNavigationIcon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="m13.06 12 6.47-6.47-1.06-1.06L12 10.94 5.53 4.47 4.47 5.53 10.94 12l-6.47 6.47 1.06 1.06L12 13.06l6.47 6.47 1.06-1.06L13.06 12Z"></path></svg></span>
+					<span class="wp-lightbox-close-text" data-wp-bind--hidden="!state.hasNavigationText">Close</span>
+				</button>
+				<button type="button" style="fill:#000" class="wp-lightbox-navigation-button wp-lightbox-navigation-button-prev" data-wp-bind--hidden="!state.hasNavigation" data-wp-on--click="actions.showPreviousImage" data-wp-bind--aria-label="state.prevButtonAriaLabel">
+					<span class="wp-lightbox-navigation-icon" data-wp-bind--hidden="!state.hasNavigationIcon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M14.6 7l-1.2-1L8 12l5.4 6 1.2-1-4.6-5z"></path></svg></span>
+					<span class="wp-lightbox-navigation-text" data-wp-bind--hidden="!state.hasNavigationText">Previous</span>
+				</button>
+				<div class="lightbox-image-container">
+					<figure data-wp-bind--class="state.selectedImage.figureClassNames" data-wp-bind--style="state.figureStyles">
+						<img data-wp-bind--alt="state.selectedImage.alt" data-wp-bind--class="state.selectedImage.imgClassNames" data-wp-bind--style="state.imgStyles" data-wp-bind--src="state.selectedImage.currentSrc">
+					</figure>
+				</div>
+				<div class="lightbox-image-container">
+					<figure data-wp-bind--class="state.selectedImage.figureClassNames" data-wp-bind--style="state.figureStyles">
+						<img
+							data-wp-bind--alt="state.selectedImage.alt"
+							data-wp-bind--class="state.selectedImage.imgClassNames"
+							data-wp-bind--style="state.imgStyles"
+							data-wp-bind--src="state.enlargedSrc"
+							data-wp-bind--srcset="state.enlargedSrcset"
+							sizes="100vw"
+						>
+					</figure>
+				</div>
+				<button type="button" style="fill:#000" class="wp-lightbox-navigation-button wp-lightbox-navigation-button-next" data-wp-bind--hidden="!state.hasNavigation" data-wp-on--click="actions.showNextImage" data-wp-bind--aria-label="state.nextButtonAriaLabel">
+					<span class="wp-lightbox-navigation-text" data-wp-bind--hidden="!state.hasNavigationText">Next</span>
+					<span class="wp-lightbox-navigation-icon" data-wp-bind--hidden="!state.hasNavigationIcon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M10.6 6L9.4 7l4.6 5-4.6 5 1.2 1 5.4-6z"></path></svg></span>
+				</button>
+				<div data-wp-text="state.ariaLabel" aria-live="polite" aria-atomic="true" class="screen-reader-text"></div>
+				<div class="scrim" style="background-color: #fff" aria-hidden="true"></div>
+		</div><script async data-wp-strategy="async" fetchpriority="low" id="comment-reply-js" src="https://daniel.haxx.se/blog/wp-includes/js/comment-reply.min.js?ver=7.1.5"></script>
+<script defer id="akismet-frontend-js" src="https://daniel.haxx.se/blog/wp-content/plugins/akismet/_inc/akismet-frontend.js?ver=1787147657"></script>
+<script id="cptch_front_end_script-js-extra">
+var cptch_vars = {"nonce":"b909c9ca6f","ajaxurl":"https://daniel.haxx.se/blog/wp-admin/admin-ajax.php","enlarge":""};
+//# sourceURL=cptch_front_end_script-js-extra
+</script>
+<script id="cptch_front_end_script-js" src="https://daniel.haxx.se/blog/wp-content/plugins/captcha/js/front_end_script.js?ver=7.1.5"></script>
+<script id="wp-emoji-settings" type="application/json">
+{"baseUrl":"https://s.w.org/images/core/emoji/17.0.2/72x72/","ext":".png","svgUrl":"https://s.w.org/images/core/emoji/17.0.2/svg/","svgExt":".svg","source":{"concatemoji":"https://daniel.haxx.se/blog/wp-includes/js/wp-emoji-release.min.js?ver=7.1.5"}}
+</script>
+<script type="module">
+/*! This file is auto-generated */
+var e="script#wp-emoji-settings",t=document.querySelector(e);if(!(t instanceof HTMLScriptElement))throw new Error("Element missing: "+e);const r=JSON.parse(t.text),s=(window._wpemojiSettings=r,"wpEmojiSettingsSupports"),o=["flag","emoji"];function i(e){try{var t={supportTests:e,timestamp:(new Date).valueOf()};sessionStorage.setItem(s,JSON.stringify(t))}catch(e){}}function c(e,t,n){e.clearRect(0,0,e.canvas.width,e.canvas.height),e.fillText(t,0,0);t=new Uint32Array(e.getImageData(0,0,e.canvas.width,e.canvas.height).data);e.clearRect(0,0,e.canvas.width,e.canvas.height),e.fillText(n,0,0);const r=new Uint32Array(e.getImageData(0,0,e.canvas.width,e.canvas.height).data);return t.every((e,t)=>e===r[t])}function p(e,t){e.clearRect(0,0,e.canvas.width,e.canvas.height),e.fillText(t,0,0);var n=e.getImageData(16,16,1,1);for(let e=0;e<n.data.length;e++)if(0!==n.data[e])return!1;return!0}function u(e,t,n,r){switch(t){case"flag":return n(e,"\ud83c\udff3\ufe0f\u200d\u26a7\ufe0f","\ud83c\udff3\ufe0f\u200b\u26a7\ufe0f")?!1:!n(e,"\ud83c\udde8\ud83c\uddf6","\ud83c\udde8\u200b\ud83c\uddf6")&&!n(e,"\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f","\ud83c\udff4\u200b\udb40\udc67\u200b\udb40\udc62\u200b\udb40\udc65\u200b\udb40\udc6e\u200b\udb40\udc67\u200b\udb40\udc7f");case"emoji":return!r(e,"\ud83e\u1fac8")}return!1}function f(e,t,n,r){let a;const s=(a="undefined"!=typeof WorkerGlobalScope&&self instanceof WorkerGlobalScope?new OffscreenCanvas(300,150):document.createElement("canvas")).getContext("2d",{willReadFrequently:!0}),o=(s.textBaseline="top",s.font="600 32px Arial",{});return e.forEach(e=>{o[e]=t(s,e,n,r)}),o}function a(e){var t=document.createElement("script");t.src=e,t.defer=!0,document.head.appendChild(t)}r.supports={everything:!0,everythingExceptFlag:!0},new Promise(t=>{let n=function(){try{var e=JSON.parse(sessionStorage.getItem(s));if("object"==typeof e&&"number"==typeof e.timestamp&&(new Date).valueOf()<e.timestamp+604800&&"object"==typeof e.supportTests)return e.supportTests}catch(e){}return null}();if(!n){if("undefined"!=typeof Worker&&"undefined"!=typeof OffscreenCanvas&&"undefined"!=typeof URL&&URL.createObjectURL&&"undefined"!=typeof Blob)try{var e="postMessage("+f.toString()+"("+[JSON.stringify(o),u.toString(),c.toString(),p.toString()].join(",")+"));",r=new Blob([e],{type:"text/javascript"});const a=new Worker(URL.createObjectURL(r),{name:"wpTestEmojiSupports"});return void(a.onmessage=e=>{i(n=e.data),a.terminate(),t(n)})}catch(e){}i(n=f(o,u,c,p))}t(n)}).then(e=>{for(const n in e)r.supports[n]=e[n],r.supports.everything=r.supports.everything&&r.supports[n],"flag"!==n&&(r.supports.everythingExceptFlag=r.supports.everythingExceptFlag&&r.supports[n]);var t;r.supports.everythingExceptFlag=r.supports.everythingExceptFlag&&!r.supports.flag,r.supports.everything||((t=r.source||{}).concatemoji?a(t.concatemoji):t.wpemoji&&t.twemoji&&(a(t.twemoji),a(t.wpemoji)))});
+//# sourceURL=https://daniel.haxx.se/blog/wp-includes/js/wp-emoji-loader.min.js
+</script>
+</body>
+</html>
