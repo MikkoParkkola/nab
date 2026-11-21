@@ -163,6 +163,10 @@ blocked by the dependency scan, so its changes ship here.
 
 ### Fixed
 
+- Light PDF extraction counts page objects stored in compressed object
+  streams, and keeps a word space where a text-array positioning gap is wide
+  enough to be one. A count that cannot be read is omitted instead of being
+  reported as a single page (MIK-7088).
 - `nab fetch` now fails closed when HTML extraction recovers near-zero content
   from a non-empty body (`NabError::ThinContent`): large thin pages and
   Angular/Vue empty app shells warn on stderr and exit non-zero instead of
