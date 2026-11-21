@@ -2080,6 +2080,74 @@ mod tests {
         assert!(result.contains("Clean page"));
     }
 
+    /// A heading id that is a slug of its text is not a noise marker, even when
+    /// the text contains one (MIK-9875: "...-vulnerabilities" cut a VulnCheck
+    /// article at its first h2 and dropped everything after it).
+    #[test]
+    fn strip_noise_sections_keeps_slug_heading_containing_a_marker_and_what_follows() {
+        let html = r##"<html><body><article>
+            <p>Intro paragraph.</p>
+            <h2 id="tracking-anthropic-discovered-vulnerabilities"><a href="#tracking-anthropic-discovered-vulnerabilities">Tracking Anthropic-Discovered Vulnerabilities</a></h2>
+            <p>Body after the first heading.</p>
+        </article></body></html>"##;
+        let result = strip_noise_sections(html);
+        assert!(
+            result.contains("Tracking Anthropic-Discovered Vulnerabilities"),
+            "{result}"
+        );
+        assert!(result.contains("Body after the first heading."), "{result}");
+    }
+
+    /// Full pipeline on a Nuxt Content prose page shaped like the VulnCheck
+    /// post in MIK-9875: every section after the first anchored h2 survives.
+    #[test]
+    fn nuxt_prose_article_keeps_sections_after_anchored_vulnerabilities_heading() {
+        use super::html_to_markdown_with_url;
+        let para = |s: &str| {
+            format!(
+                "<p>{s} The count of findings rose again this month, and the share \
+                 confirmed by vendors kept climbing as patches shipped across the \
+                 ecosystem over the reporting window.</p>"
+            )
+        };
+        let h2 = |id: &str, text: &str| {
+            format!(
+                r##"<h2 id="{id}"><a href="#{id}" class="text-highlighted no-underline hover:underline font-bold">{text}</a></h2>"##
+            )
+        };
+        let html = format!(
+            "<html><head><title>Glasswing November update</title></head><body>\
+             <nav><a href='/'>Home</a></nav><main><article class='prose'>\
+             <h1>Anthropic Glasswing: November update</h1>{}{}{}{}{}{}{}{}\
+             </article></main><footer>(c) VulnCheck</footer></body></html>",
+            para("Intro. So let's look at the results."),
+            h2(
+                "tracking-anthropic-discovered-vulnerabilities",
+                "Tracking Anthropic-Discovered Vulnerabilities"
+            ),
+            para("First section body."),
+            "<table><tr><th>Month</th><th>CVEs</th></tr><tr><td>September</td><td>41</td></tr>\
+             <tr><td>November</td><td>97</td></tr></table>",
+            h2(
+                "takeaways-after-seven-months",
+                "Takeaways After Seven Months"
+            ),
+            para("Closing section body."),
+            para("Second closing paragraph."),
+            para("Third closing paragraph."),
+        );
+        let md = html_to_markdown_with_url(&html, Some("https://www.vulncheck.com/blog/x"));
+        for needle in [
+            "Tracking Anthropic-Discovered Vulnerabilities",
+            "First section body.",
+            "November",
+            "Takeaways After Seven Months",
+            "Closing section body.",
+        ] {
+            assert!(md.contains(needle), "missing {needle:?} in:\n{md}");
+        }
+    }
+
     #[test]
     fn ghost_blog_ordered_list_not_truncated() {
         // Ghost CMS article with <ol><li> content.
