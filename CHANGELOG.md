@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-11-21
+
+### Fixed
+
+- `nab fetch` no longer hangs after a successful response. The image OCR stage
+  has a 3-second budget for the whole page and keeps whatever text it has when
+  the budget runs out, with a warning naming the stage; the save to hebb memory
+  is capped at 5 seconds (#427).
+- Articles are no longer cut off at a heading whose anchor id contains a word
+  such as "vulnerabilities". Noise-section stripping matched those words inside
+  heading slugs and removed the heading and everything after it (#428).
+
 ## [0.13.1] - 2026-11-20
 
 ### Fixed
