@@ -291,14 +291,14 @@ fn p95_scan_overhead_stays_under_ten_ms_on_normal_corpus() {
     let engine = YaraEngine::default();
     let samples = normal_fetch_like_samples();
 
-    // One untimed scan pays the engine's lazy first-scan setup, which is
-    // start-up cost, not per-fetch overhead.
+    // One untimed scan keeps the engine's lazy first-scan setup out of the
+    // timing; it is start-up cost, not per-fetch overhead.
     engine.scan(samples[0].1.as_bytes()).expect("scan succeeds");
 
-    // The best of three passes: scheduler stalls on a shared CI host only
-    // ever add time, so the minimum p95 is the closest estimate of the
-    // scanner's own cost. A real regression slows every pass and still fails.
-    let p95 = (0..3)
+    // Median p95 of three passes: one pass stalled by a busy shared CI host
+    // cannot fail the gate alone, while a slowdown that hits two of three
+    // passes still does. The minimum would hide intermittent regressions.
+    let mut pass_p95s: Vec<u128> = (0..3)
         .map(|_| {
             let mut durations_us = Vec::with_capacity(samples.len());
             for (_, sample) in &samples {
@@ -310,9 +310,13 @@ fn p95_scan_overhead_stays_under_ten_ms_on_normal_corpus() {
             durations_us.sort_unstable();
             durations_us[(durations_us.len() * 95) / 100]
         })
-        .min()
-        .expect("three passes ran");
-    assert!(p95 < 10_000, "p95 scan overhead must be <10ms, got {p95}us");
+        .collect();
+    pass_p95s.sort_unstable();
+    let p95 = pass_p95s[1];
+    assert!(
+        p95 < 10_000,
+        "median p95 scan overhead must be <10ms, got {p95}us (passes: {pass_p95s:?})"
+    );
 }
 
 fn materialize_sample(rule_id: &str, sample: &str) -> String {
