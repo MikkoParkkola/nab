@@ -925,15 +925,21 @@ fn is_void_element(name: &str) -> bool {
 /// - `#vulnerabilities`, `.advisories`, `.security-advisories` — security advisory sections
 /// - `.cookie-banner`, `.consent-banner`, `.gdpr-banner` — cookie/consent UI
 /// - `.newsletter-signup`, `.subscribe-form` — signup noise
-/// - Headings (`<h1>`–`<h6>`) with noise IDs and all sibling elements that follow
+/// - Headings (`<h1>`–`<h6>`) whose id is exactly a noise marker, and all
+///   sibling elements that follow (other headings are always kept)
 #[must_use]
 pub fn strip_noise_sections(html: &str) -> String {
     let document = scraper::Html::parse_document(html);
 
-    // Collect node IDs of noise elements
+    // Collect node IDs of noise elements. Headings are left to the exact-id
+    // rule below: their ids are slugs of their own text, so a substring match
+    // drops any article heading that mentions e.g. "vulnerabilities" (MIK-9875).
     let mut noise_ids: std::collections::HashSet<ego_tree::NodeId> = document
         .select(&ATTR_SELECTOR)
         .filter(|el| {
+            if matches!(el.value().name(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+                return false;
+            }
             let class = el.value().attr("class").unwrap_or("");
             let id = el.value().attr("id").unwrap_or("");
             let combined = format!("{class} {id}").to_lowercase();
@@ -942,12 +948,12 @@ pub fn strip_noise_sections(html: &str) -> String {
         .map(|el| el.id())
         .collect();
 
-    // Special case: headings with noise IDs (e.g., <h3 id="vulnerabilities">)
+    // Special case: headings whose id IS a noise marker (e.g. <h3 id="vulnerabilities">).
     // Strip all subsequent siblings of such headings, since the advisory content
     // follows the heading as sibling <div> elements (deps.rs pattern).
     for heading in document.select(&HEADING_WITH_ID_SELECTOR) {
-        let id = heading.value().attr("id").unwrap_or("");
-        if is_noise_section(&id.to_lowercase()) {
+        let id = heading.value().attr("id").unwrap_or("").to_lowercase();
+        if NOISE_MARKERS.contains(&id.as_str()) {
             // Mark the heading itself
             noise_ids.insert(heading.id());
             // Mark all subsequent siblings
@@ -1036,41 +1042,40 @@ fn is_comment_container(element: &scraper::ElementRef<'_>) -> bool {
     is_noise_section(&combined)
 }
 
-/// Returns `true` if a class/id string indicates a noise section that should
-/// be stripped before readability processing.
-///
-/// Covers: comment sections, vulnerability advisories, cookie banners,
-/// newsletter signup forms, and similar non-article content that tends to
-/// dominate readability scoring due to high text density.
-fn is_noise_section(combined: &str) -> bool {
-    const NOISE_MARKERS: &[&str] = &[
-        // Comment sections
-        "comment-section",
-        "comments-section",
-        "comments-container",
-        "comment-list",
-        "comment-thread",
-        "disqus",
-        "discussion-section",
-        "replies-section",
-        // Security advisories / vulnerability sections (deps.rs, GitHub, etc.)
-        "vulnerabilities",
-        "advisories",
-        "security-advisories",
-        "advisory-list",
-        // Cookie/consent banners
-        "cookie-banner",
-        "cookie-consent",
-        "consent-banner",
-        "gdpr-banner",
-        // Newsletter/signup noise
-        "newsletter-signup",
-        "subscribe-form",
-        // Footer noise
-        "site-footer",
-        "global-footer",
-    ];
+/// Class/id markers of non-article sections: comment sections, vulnerability
+/// advisories, cookie banners, newsletter signup forms, and similar content
+/// that tends to dominate readability scoring due to high text density.
+const NOISE_MARKERS: &[&str] = &[
+    // Comment sections
+    "comment-section",
+    "comments-section",
+    "comments-container",
+    "comment-list",
+    "comment-thread",
+    "disqus",
+    "discussion-section",
+    "replies-section",
+    // Security advisories / vulnerability sections (deps.rs, GitHub, etc.)
+    "vulnerabilities",
+    "advisories",
+    "security-advisories",
+    "advisory-list",
+    // Cookie/consent banners
+    "cookie-banner",
+    "cookie-consent",
+    "consent-banner",
+    "gdpr-banner",
+    // Newsletter/signup noise
+    "newsletter-signup",
+    "subscribe-form",
+    // Footer noise
+    "site-footer",
+    "global-footer",
+];
 
+/// Returns `true` if a class/id string contains a [`NOISE_MARKERS`] entry,
+/// i.e. indicates a noise section to strip before readability processing.
+fn is_noise_section(combined: &str) -> bool {
     NOISE_MARKERS.iter().any(|marker| combined.contains(marker))
 }
 
@@ -2078,6 +2083,76 @@ mod tests {
         let html = r"<html><body><p>Clean page</p></body></html>";
         let result = strip_noise_sections(html);
         assert!(result.contains("Clean page"));
+    }
+
+    /// A heading id that is a slug of its text is not a noise marker, even when
+    /// the text contains one (MIK-9875: "...-vulnerabilities" cut a `VulnCheck`
+    /// article at its first h2 and dropped everything after it).
+    #[test]
+    fn strip_noise_sections_keeps_slug_heading_containing_a_marker_and_what_follows() {
+        let html = r##"<html><body><article>
+            <p>Intro paragraph.</p>
+            <h2 id="tracking-anthropic-discovered-vulnerabilities"><a href="#tracking-anthropic-discovered-vulnerabilities">Tracking Anthropic-Discovered Vulnerabilities</a></h2>
+            <p>Body after the first heading.</p>
+        </article></body></html>"##;
+        let result = strip_noise_sections(html);
+        assert!(
+            result.contains("Tracking Anthropic-Discovered Vulnerabilities"),
+            "{result}"
+        );
+        assert!(result.contains("Body after the first heading."), "{result}");
+    }
+
+    /// Full pipeline on a Nuxt Content prose page shaped like the `VulnCheck`
+    /// post in MIK-9875: every section after the first anchored h2 survives.
+    #[test]
+    fn nuxt_prose_article_keeps_sections_after_anchored_vulnerabilities_heading() {
+        use super::html_to_markdown_with_url;
+        let para = |s: &str| {
+            format!(
+                "<p>{s} The count of findings rose again this month, and the share \
+                 confirmed by vendors kept climbing as patches shipped across the \
+                 ecosystem over the reporting window.</p>"
+            )
+        };
+        let h2 = |id: &str, text: &str| {
+            format!(
+                r##"<h2 id="{id}"><a href="#{id}" class="text-highlighted no-underline hover:underline font-bold">{text}</a></h2>"##
+            )
+        };
+        let html = format!(
+            "<html><head><title>Glasswing November update</title></head><body>\
+             <nav><a href='/'>Home</a></nav><main><article class='prose'>\
+             <h1>Anthropic Glasswing: November update</h1>{}{}{}{}{}{}{}{}\
+             </article></main><footer>(c) VulnCheck</footer></body></html>",
+            para("Intro. So let's look at the results."),
+            h2(
+                "tracking-anthropic-discovered-vulnerabilities",
+                "Tracking Anthropic-Discovered Vulnerabilities"
+            ),
+            para("First section body."),
+            "<table><tr><th>Month</th><th>CVEs</th></tr><tr><td>September</td><td>41</td></tr>\
+             <tr><td>November</td><td>97</td></tr></table>",
+            h2(
+                "takeaways-after-seven-months",
+                "Takeaways After Seven Months"
+            ),
+            para("Closing section body."),
+            para("Second closing paragraph."),
+            para("Third closing paragraph."),
+        );
+        let md = html_to_markdown_with_url(&html, Some("https://www.vulncheck.com/blog/x"));
+        for needle in [
+            "Tracking Anthropic-Discovered Vulnerabilities",
+            "First section body.",
+            // Only in the table ("November" is also in the title).
+            "September",
+            "Takeaways After Seven Months",
+            "Closing section body.",
+            "Third closing paragraph.",
+        ] {
+            assert!(md.contains(needle), "missing {needle:?} in:\n{md}");
+        }
     }
 
     #[test]
