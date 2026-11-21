@@ -925,15 +925,21 @@ fn is_void_element(name: &str) -> bool {
 /// - `#vulnerabilities`, `.advisories`, `.security-advisories` — security advisory sections
 /// - `.cookie-banner`, `.consent-banner`, `.gdpr-banner` — cookie/consent UI
 /// - `.newsletter-signup`, `.subscribe-form` — signup noise
-/// - Headings (`<h1>`–`<h6>`) with noise IDs and all sibling elements that follow
+/// - Headings (`<h1>`–`<h6>`) whose id is exactly a noise marker, and all
+///   sibling elements that follow (other headings are always kept)
 #[must_use]
 pub fn strip_noise_sections(html: &str) -> String {
     let document = scraper::Html::parse_document(html);
 
-    // Collect node IDs of noise elements
+    // Collect node IDs of noise elements. Headings are left to the exact-id
+    // rule below: their ids are slugs of their own text, so a substring match
+    // drops any article heading that mentions e.g. "vulnerabilities" (MIK-9875).
     let mut noise_ids: std::collections::HashSet<ego_tree::NodeId> = document
         .select(&ATTR_SELECTOR)
         .filter(|el| {
+            if matches!(el.value().name(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+                return false;
+            }
             let class = el.value().attr("class").unwrap_or("");
             let id = el.value().attr("id").unwrap_or("");
             let combined = format!("{class} {id}").to_lowercase();
@@ -942,12 +948,12 @@ pub fn strip_noise_sections(html: &str) -> String {
         .map(|el| el.id())
         .collect();
 
-    // Special case: headings with noise IDs (e.g., <h3 id="vulnerabilities">)
+    // Special case: headings whose id IS a noise marker (e.g. <h3 id="vulnerabilities">).
     // Strip all subsequent siblings of such headings, since the advisory content
     // follows the heading as sibling <div> elements (deps.rs pattern).
     for heading in document.select(&HEADING_WITH_ID_SELECTOR) {
-        let id = heading.value().attr("id").unwrap_or("");
-        if is_noise_section(&id.to_lowercase()) {
+        let id = heading.value().attr("id").unwrap_or("").to_lowercase();
+        if NOISE_MARKERS.contains(&id.as_str()) {
             // Mark the heading itself
             noise_ids.insert(heading.id());
             // Mark all subsequent siblings
@@ -1036,41 +1042,40 @@ fn is_comment_container(element: &scraper::ElementRef<'_>) -> bool {
     is_noise_section(&combined)
 }
 
-/// Returns `true` if a class/id string indicates a noise section that should
-/// be stripped before readability processing.
-///
-/// Covers: comment sections, vulnerability advisories, cookie banners,
-/// newsletter signup forms, and similar non-article content that tends to
-/// dominate readability scoring due to high text density.
-fn is_noise_section(combined: &str) -> bool {
-    const NOISE_MARKERS: &[&str] = &[
-        // Comment sections
-        "comment-section",
-        "comments-section",
-        "comments-container",
-        "comment-list",
-        "comment-thread",
-        "disqus",
-        "discussion-section",
-        "replies-section",
-        // Security advisories / vulnerability sections (deps.rs, GitHub, etc.)
-        "vulnerabilities",
-        "advisories",
-        "security-advisories",
-        "advisory-list",
-        // Cookie/consent banners
-        "cookie-banner",
-        "cookie-consent",
-        "consent-banner",
-        "gdpr-banner",
-        // Newsletter/signup noise
-        "newsletter-signup",
-        "subscribe-form",
-        // Footer noise
-        "site-footer",
-        "global-footer",
-    ];
+/// Class/id markers of non-article sections: comment sections, vulnerability
+/// advisories, cookie banners, newsletter signup forms, and similar content
+/// that tends to dominate readability scoring due to high text density.
+const NOISE_MARKERS: &[&str] = &[
+    // Comment sections
+    "comment-section",
+    "comments-section",
+    "comments-container",
+    "comment-list",
+    "comment-thread",
+    "disqus",
+    "discussion-section",
+    "replies-section",
+    // Security advisories / vulnerability sections (deps.rs, GitHub, etc.)
+    "vulnerabilities",
+    "advisories",
+    "security-advisories",
+    "advisory-list",
+    // Cookie/consent banners
+    "cookie-banner",
+    "cookie-consent",
+    "consent-banner",
+    "gdpr-banner",
+    // Newsletter/signup noise
+    "newsletter-signup",
+    "subscribe-form",
+    // Footer noise
+    "site-footer",
+    "global-footer",
+];
 
+/// Returns `true` if a class/id string contains a [`NOISE_MARKERS`] entry,
+/// i.e. indicates a noise section to strip before readability processing.
+fn is_noise_section(combined: &str) -> bool {
     NOISE_MARKERS.iter().any(|marker| combined.contains(marker))
 }
 
