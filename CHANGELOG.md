@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `cargo audit` no longer ignores the three `zip` extraction advisories
+  (RUSTSEC-2026-0367, -0368, -0369): `zip` 9.3.0, the only version in the lock
+  file, already carries the fix, so the ignores muted nothing and would have
+  hidden a regression (#425, #432; thanks @zyl71).
+
 ## [0.13.3] - 2026-11-22
 
 0.13.2 was tagged but never published: its release run failed on a timing test.
