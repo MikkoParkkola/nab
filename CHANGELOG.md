@@ -16,8 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata addresses. Requests to denied addresses are failed inside Chrome;
   a denied page navigation fails the call with the same SSRF error. The
   `NAB_SSRF_ALLOW_PRIVATE` and `NAB_SSRF_ALLOWLIST` opt-outs apply here too.
-  Known limits: DNS is resolved separately from Chrome, so DNS rebinding is
-  not covered, and WebSocket and worker traffic is not intercepted.
+  Every DNS answer for a host must pass, since Chrome picks its own address.
+  Render pages cannot open popups. Known limits: DNS rebinding between the
+  check and Chrome's own lookup, cross-site iframes that Chrome runs as
+  separate targets, popups opened during the interactive login, and WebSocket
+  or worker traffic are not covered.
 - `cargo audit` no longer ignores the three `zip` extraction advisories
   (RUSTSEC-2026-0367, -0368, -0369): `zip` 9.3.0, the only version in the lock
   file, already carries the fix, so the ignores muted nothing and would have

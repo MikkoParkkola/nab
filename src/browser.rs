@@ -120,6 +120,9 @@ impl BrowserLogin {
 
         // Extract cookies after successful login
         let cookies = self.extract_cookies(&page).await?;
+        // A navigation refused during form submission or the CAPTCHA wait
+        // fails the login rather than returning its cookies.
+        guard.ensure_clean()?;
 
         info!(
             "Browser login complete, extracted {} cookies",
@@ -268,6 +271,10 @@ impl BrowserLogin {
     /// bundling Chromium — it orchestrates the user's EXTERNAL Chrome over CDP.
     pub async fn render_markdown(&self, url: &str) -> Result<String> {
         let (page, guard) = self.open_guarded().await?;
+        if let Err(err) = block_window_open(&page).await {
+            let _ = page.close().await;
+            return Err(err);
+        }
         let rendered = async {
             goto_guarded(&page, &guard, url).await?;
             page.wait_for_navigation()
@@ -322,6 +329,10 @@ impl BrowserLogin {
         // Open a blank page first so cookies are present in the context BEFORE
         // the first navigation to the target URL.
         let (page, guard) = self.open_guarded().await?;
+        if let Err(err) = block_window_open(&page).await {
+            let _ = page.close().await;
+            return Err(err);
+        }
         if let Err(err) = guard.check(url) {
             let _ = page.close().await;
             return Err(err);
@@ -424,7 +435,22 @@ fn browser_request_check(
     let parsed = url::Url::parse(url).map_err(|err| NabError::InvalidUrl(err.to_string()))?;
     match parsed.scheme() {
         "about" | "data" | "blob" | "chrome" | "chrome-extension" | "devtools" => Ok(()),
-        _ => crate::ssrf::validate_redirect_target_with_policy(&parsed, policy),
+        _ => {
+            crate::ssrf::validate_redirect_target_with_policy(&parsed, policy)?;
+            // The HTTP client pins the one address it validated; Chrome resolves
+            // the name itself and may pick any answer, so every answer must pass.
+            if let Some(url::Host::Domain(host)) = parsed.host() {
+                use std::net::ToSocketAddrs;
+                let port = parsed.port_or_known_default().unwrap_or(443);
+                let addrs = (host, port).to_socket_addrs().map_err(|err| {
+                    NabError::SsrfBlocked(format!("DNS resolution failed for {host}: {err}"))
+                })?;
+                for addr in addrs {
+                    crate::ssrf::validate_ip_with_policy(addr.ip(), policy)?;
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -571,6 +597,19 @@ fn paused_target(
         base.join(&location.value)
             .map_or_else(|_| location.value.clone(), String::from),
     )
+}
+
+/// Stop a rendered page from opening windows: a popup is a separate browser
+/// target the Fetch guard on this page does not see. Render paths have no
+/// user, so no popup is wanted; the login flow keeps them for OAuth windows.
+#[cfg(feature = "browser")]
+async fn block_window_open(page: &chromiumoxide::Page) -> Result<()> {
+    use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+    let script = AddScriptToEvaluateOnNewDocumentParams::new("window.open = () => null;");
+    page.execute(script)
+        .await
+        .context("failed to disable window.open on the render page")?;
+    Ok(())
 }
 
 /// Navigate `page` to `url`, refusing a denied target or redirect hop.
