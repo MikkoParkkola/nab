@@ -141,7 +141,12 @@ fn count_pages_with_budget(bytes: &[u8], mut budget: usize) -> usize {
     let mut cursor = 0;
     while let Some(span) = next_stream(bytes, cursor) {
         total += count_page_tokens(&bytes[cursor..span.keyword]);
-        total += page_tokens_in_object_stream(bytes, &span, &mut budget);
+        // An object stream that cannot be read in full makes the total a
+        // guess; report it as unknown rather than as a partial count.
+        let Some(in_stream) = page_tokens_in_object_stream(bytes, &span, &mut budget) else {
+            return 0;
+        };
+        total += in_stream;
         cursor = span.after;
     }
     total + count_page_tokens(&bytes[cursor..])
@@ -289,13 +294,17 @@ fn stream_span(
     })
 }
 
-fn page_tokens_in_object_stream(bytes: &[u8], span: &StreamSpan, budget: &mut usize) -> usize {
-    if *budget == 0 {
-        return 0;
-    }
+/// Page objects inside an object stream; `None` when the stream is an object
+/// stream that could not be read in full (byte budget spent, or a filter this
+/// reader does not decode).
+fn page_tokens_in_object_stream(
+    bytes: &[u8],
+    span: &StreamSpan,
+    budget: &mut usize,
+) -> Option<usize> {
     let dict = &bytes[span.dict_start..span.dict_end];
     if !window_contains(dict, b"ObjStm") || dict_is_image(dict) {
-        return 0;
+        return Some(0);
     }
     let data = &bytes[span.data_start..span.data_end];
     let limit = *budget;
@@ -304,11 +313,14 @@ fn page_tokens_in_object_stream(bytes: &[u8], span: &StreamSpan, budget: &mut us
     } else if !window_contains(dict, b"Decode") {
         data[..data.len().min(limit)].to_vec()
     } else {
-        Vec::new()
+        return None;
     };
-    let n = count_page_tokens(&payload);
-    *budget = budget.saturating_sub(payload.len());
-    n
+    // Reaching the cap means the stream may hold more than was read.
+    if payload.len() >= limit {
+        return None;
+    }
+    *budget -= payload.len();
+    Some(count_page_tokens(&payload))
 }
 
 /// Count `/Type` names whose value is the name `/Page`.
@@ -1504,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn count_pages_stops_inflating_when_the_byte_budget_is_spent() {
+    fn count_pages_is_unknown_when_the_byte_budget_is_spent() {
         let payload = b"<< /Type /Page >>\n<< /Type /Page >>\n";
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(payload).unwrap();
@@ -1518,7 +1530,9 @@ mod tests {
         pdf.extend_from_slice(&compressed);
         pdf.extend_from_slice(b"\nendstream\n");
 
-        assert_eq!(count_pages_with_budget(&pdf, 0), 1);
+        // A stream the budget cannot cover makes the count unknown, not 1.
+        assert_eq!(count_pages_with_budget(&pdf, 0), 0);
+        assert_eq!(count_pages_with_budget(&pdf, 8), 0);
         assert_eq!(count_pages(&pdf), 3);
     }
 }
