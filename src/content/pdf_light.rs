@@ -310,8 +310,22 @@ fn page_tokens_in_object_stream(
     let limit = *budget;
     let occurrences = |pat: &[u8]| dict.windows(pat.len()).filter(|w| *w == pat).count();
     let filters = occurrences(b"Decode") - occurrences(b"DecodeParms");
+    // A PNG/TIFF predictor would need reversing before the names are readable.
+    let predictor = dict
+        .windows(b"/Predictor".len())
+        .position(|w| w == b"/Predictor")
+        .map(|at| {
+            let rest = &dict[at + b"/Predictor".len()..];
+            let rest = &rest[skip_pdf_ws(rest, 0)..];
+            let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+            rest[..digits].to_vec()
+        });
+    if predictor.is_some_and(|value| value != b"1") {
+        return None;
+    }
     let payload = match filters {
-        0 => data[..data.len().min(limit)].to_vec(),
+        // No filter at all; a named filter without "Decode" (such as /Crypt) is not plain.
+        0 if !window_contains(dict, b"/Filter") => data[..data.len().min(limit)].to_vec(),
         // A single Flate filter; a chain or any other filter is not decoded here.
         1 if window_contains(dict, b"/FlateDecode") => inflate_strict(data, limit)?,
         _ => return None,
@@ -1554,6 +1568,12 @@ mod tests {
         assert_eq!(count_pages(&build(b"/FlateDecode", truncated)), 0);
         let chained = build(b"[/ASCII85Decode /FlateDecode]", &compressed);
         assert_eq!(count_pages(&chained), 0);
+        let predicted = build(
+            b"/FlateDecode /DecodeParms << /Predictor 12 /Columns 5 >>",
+            &compressed,
+        );
+        assert_eq!(count_pages(&predicted), 0);
+        assert_eq!(count_pages(&build(b"/Crypt", &compressed)), 0);
     }
 
     #[test]
