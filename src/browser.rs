@@ -1198,6 +1198,8 @@ mod tests {
             .arg(format!("--remote-debugging-port={port}"))
             .arg(format!("--user-data-dir={}", profile.path().display()))
             .args(["--no-first-run", "--disable-extensions", "--disable-gpu"])
+            // Popups must be stopped by nab, not by Chrome's own blocker.
+            .arg("--disable-popup-blocking")
             .arg("about:blank")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1285,6 +1287,13 @@ mod tests {
                 ),
             ),
             (
+                "target=_blank form",
+                format!(
+                    "<form id=f action=\"{sink_url}form\" target=_blank></form>\
+                     <script>document.getElementById('f').submit()</script>"
+                ),
+            ),
+            (
                 "cross-site iframe",
                 format!("<iframe src=\"http://{lan_ip}.nip.io:{inner}/inner\"></iframe>"),
             ),
@@ -1294,8 +1303,13 @@ mod tests {
             let before = hits.load(std::sync::atomic::Ordering::SeqCst);
             let port = serve_html(lan_ip, format!("<p>page</p>{html}")).await;
             let url = format!("http://{lan_ip}:{port}/");
-            let _ =
+            let rendered =
                 tokio::time::timeout(Duration::from_secs(30), browser.render_markdown(&url)).await;
+            // The attack page must render, or the case proves nothing.
+            if !matches!(&rendered, Ok(Ok(md)) if md.contains("page")) {
+                reached.push(name);
+                continue;
+            }
             // Give a popup or frame time to issue its request.
             tokio::time::sleep(Duration::from_secs(2)).await;
             if hits.load(std::sync::atomic::Ordering::SeqCst) > before {
