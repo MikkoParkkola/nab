@@ -307,13 +307,11 @@ fn page_tokens_in_object_stream(
     budget: &mut usize,
 ) -> Option<usize> {
     let dict = &bytes[span.dict_start..span.dict_end];
-    if !window_contains(dict, b"ObjStm") || dict_is_image(dict) {
+    if !window_contains(dict, b"/ObjStm") {
         return Some(0);
     }
     let data = &bytes[span.data_start..span.data_end];
     let limit = *budget;
-    let occurrences = |pat: &[u8]| dict.windows(pat.len()).filter(|w| *w == pat).count();
-    let filters = occurrences(b"Decode") - occurrences(b"DecodeParms");
     // A PNG/TIFF predictor would need reversing before the names are readable.
     let predictor = dict
         .windows(b"/Predictor".len())
@@ -327,12 +325,10 @@ fn page_tokens_in_object_stream(
     if predictor.is_some_and(|value| value != b"1") {
         return None;
     }
-    let payload = match filters {
-        // No filter at all; a named filter without "Decode" (such as /Crypt) is not plain.
-        0 if !window_contains(dict, b"/Filter") => data[..data.len().min(limit)].to_vec(),
-        // A single Flate filter; a chain or any other filter is not decoded here.
-        1 if window_contains(dict, b"/FlateDecode") => inflate_strict(data, limit)?,
-        _ => return None,
+    let payload = match object_stream_filter(dict) {
+        StreamFilter::None => data[..data.len().min(limit)].to_vec(),
+        StreamFilter::Flate => inflate_strict(data, limit)?,
+        StreamFilter::Other => return None,
     };
     // Reaching the cap means the stream may hold more than was read.
     if payload.len() >= limit {
@@ -340,6 +336,37 @@ fn page_tokens_in_object_stream(
     }
     *budget -= payload.len();
     Some(count_page_tokens(&payload))
+}
+
+/// The `/Filter` of a stream dictionary, as far as the light reader can decode it.
+enum StreamFilter {
+    None,
+    Flate,
+    Other,
+}
+
+/// Read the `/Filter` value: absent, a single `/FlateDecode` (bare or as a
+/// one-element array), or anything else.
+fn object_stream_filter(dict: &[u8]) -> StreamFilter {
+    let Some(at) = dict.windows(b"/Filter".len()).position(|w| w == b"/Filter") else {
+        return StreamFilter::None;
+    };
+    let rest = &dict[at + b"/Filter".len()..];
+    let mut i = skip_pdf_ws(rest, 0);
+    let in_array = rest.get(i) == Some(&b'[');
+    if in_array {
+        i = skip_pdf_ws(rest, i + 1);
+    }
+    let Some((name, n)) = pdf_name_at(&rest[i..]) else {
+        return StreamFilter::Other;
+    };
+    i = skip_pdf_ws(rest, i + n);
+    let closed = !in_array || rest.get(i) == Some(&b']');
+    if name == b"/FlateDecode" && closed {
+        StreamFilter::Flate
+    } else {
+        StreamFilter::Other
+    }
 }
 
 /// Count `/Type` names whose value is the name `/Page`.
@@ -903,23 +930,30 @@ fn inflate_capped(data: &[u8], limit: usize) -> Vec<u8> {
     buf
 }
 
-/// Inflate at most `limit` bytes of a zlib or raw deflate stream; `None` when
-/// the data is corrupt, so a caller never mistakes a partial body for a whole.
+/// Inflate a zlib or raw deflate stream that must reach its end marker.
+///
+/// Returns `None` for corrupt or truncated data, so a caller never mistakes a
+/// partial body for a whole. Output stops once it reaches `limit` bytes; the
+/// caller treats a body at the limit as incomplete.
 fn inflate_strict(data: &[u8], limit: usize) -> Option<Vec<u8>> {
-    let mut buf = Vec::new();
-    if ZlibDecoder::new(data)
-        .take(limit as u64)
-        .read_to_end(&mut buf)
-        .is_ok()
-    {
-        return Some(buf);
+    use flate2::{Decompress, FlushDecompress, Status};
+    'format: for zlib in [true, false] {
+        let mut d = Decompress::new(zlib);
+        let mut out = Vec::new();
+        while out.len() < limit {
+            out.reserve((limit - out.len()).min(64 * 1024));
+            let (in_before, out_before) = (d.total_in(), d.total_out());
+            let input = data.get(usize::try_from(in_before).ok()?..)?;
+            match d.decompress_vec(input, &mut out, FlushDecompress::None) {
+                Ok(Status::StreamEnd) => return Some(out),
+                Ok(_) if (d.total_in(), d.total_out()) != (in_before, out_before) => {}
+                // No progress and no end marker: the stream was cut short.
+                _ => continue 'format,
+            }
+        }
+        return Some(out);
     }
-    buf.clear();
-    DeflateDecoder::new(data)
-        .take(limit as u64)
-        .read_to_end(&mut buf)
-        .ok()?;
-    Some(buf)
+    None
 }
 
 /// Classify why a PDF has (or lacks) a text layer, for honest messaging (#195).
@@ -1578,6 +1612,9 @@ mod tests {
         );
         assert_eq!(count_pages(&predicted), 0);
         assert_eq!(count_pages(&build(b"/Crypt", &compressed)), 0);
+        let flate_crypt = build(b"[/FlateDecode /Crypt]", &compressed);
+        assert_eq!(count_pages(&flate_crypt), 0);
+        assert_eq!(count_pages(&build(b"[/FlateDecode]", &compressed)), 3);
         // Raw deflate (no zlib header) cut short is unknown as well.
         let mut raw =
             flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
