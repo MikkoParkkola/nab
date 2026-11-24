@@ -169,17 +169,24 @@ fn count_pages_with_budget(bytes: &[u8], mut budget: usize) -> usize {
 
 /// Bounds (`<<` start, `>>` end) of the innermost dictionary around `at`.
 fn enclosing_dict(region: &[u8], at: usize) -> Option<(usize, usize)> {
+    // Walk back two bytes per delimiter so `>>>>` counts as two closers.
     let mut depth = 0usize;
     let mut i = at;
     let open = loop {
-        i = i.checked_sub(1)?;
-        if region[i..].starts_with(b">>") && i + 2 <= at {
-            depth += 1;
-        } else if region[i..].starts_with(b"<<") {
-            if depth == 0 {
-                break i;
+        if i < 2 {
+            return None;
+        }
+        match &region[i - 2..i] {
+            b">>" => {
+                depth += 1;
+                i -= 2;
             }
-            depth -= 1;
+            b"<<" if depth == 0 => break i - 2,
+            b"<<" => {
+                depth -= 1;
+                i -= 2;
+            }
+            _ => i -= 1,
         }
     };
     let mut depth = 0usize;
@@ -1791,6 +1798,8 @@ mod tests {
         // A root with nested inherited resources still yields its /Count.
         let nested_res = b"%PDF-1.4\n<< /Type /Pages /Resources << /Font << /F1 9 0 R >> >> /Kids [] /Count 5 >>\n";
         assert_eq!(count_pages(nested_res), 5);
+        let compact = b"%PDF-1.4\n<</Resources<</Font<</F1 9 0 R>>>>/Type/Pages/Count 6>>\n";
+        assert_eq!(count_pages(compact), 6);
         // A spot-colour image name with # escapes does not discard the count.
         let spot = b"%PDF-1.4\n<< /Type /Pages /Count 2 >>\n<< /ColorSpace [/Separation /PANTONE#20300#20C /DeviceCMYK 7 0 R] /Length 1 >>\nstream\nx\nendstream\n";
         assert_eq!(count_pages(spot), 2);
