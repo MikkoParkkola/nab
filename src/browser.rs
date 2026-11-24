@@ -1115,6 +1115,130 @@ mod tests {
         assert!(failures.is_empty(), "redirects not refused: {failures:#?}");
     }
 
+    /// Launch a throwaway headless Chrome and connect to it.
+    #[cfg(feature = "browser")]
+    async fn launch_test_chrome() -> (std::process::Child, tempfile::TempDir, BrowserLogin) {
+        let chrome = std::env::var("NAB_TEST_CHROME")
+            .expect("set NAB_TEST_CHROME to a Chrome or Chromium binary");
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("free port")
+            .port();
+        let profile = tempfile::tempdir().expect("chrome profile dir");
+        let child = std::process::Command::new(chrome)
+            .arg("--headless=new")
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(format!("--user-data-dir={}", profile.path().display()))
+            .args(["--no-first-run", "--disable-extensions", "--disable-gpu"])
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("launch chrome");
+        for _ in 0..50 {
+            if let Ok(browser) = BrowserLogin::connect(Some(port)).await {
+                return (child, profile, browser);
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        panic!("could not connect to the throwaway chrome");
+    }
+
+    /// Serve `body` as HTML on `ip` for every request; returns the port.
+    #[cfg(feature = "browser")]
+    async fn serve_html(ip: std::net::IpAddr, body: String) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((ip, 0))
+            .await
+            .expect("html server");
+        let port = listener.local_addr().expect("server addr").port();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    /// Pages that reach loopback through a popup (`window.open`, a scripted
+    /// `target=_blank` click) or a cross-site iframe must not reach it.
+    ///
+    /// The cross-site frame is served from `<lan-ip>.nip.io`, a public DNS name
+    /// for the LAN address, so Chrome isolates it in its own process. Ignored:
+    /// needs `NAB_TEST_CHROME`, a network interface and public DNS.
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    #[ignore = "requires a local Chrome binary, a network interface and DNS"]
+    async fn browser_guards_popups_and_cross_site_frames() {
+        let (mut child, _profile, browser) = launch_test_chrome().await;
+        let sink = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("sink");
+        let sink_url = format!(
+            "http://127.0.0.1:{}/",
+            sink.local_addr().expect("addr").port()
+        );
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&hits);
+        let accept = tokio::spawn(async move {
+            while let Ok((_stream, _)) = sink.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        let lan_ip = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|sock| sock.connect("192.0.2.1:9").map(|()| sock))
+            .and_then(|sock| sock.local_addr())
+            .expect("a non-loopback interface")
+            .ip();
+        // SAFETY: this ignored test runs on its own; no other thread reads the
+        // environment while it is set.
+        unsafe { std::env::set_var(crate::ssrf::ALLOWLIST_ENV, lan_ip.to_string()) };
+
+        let inner = serve_html(lan_ip, format!("<img src=\"{sink_url}img.png\">")).await;
+        let cases = [
+            (
+                "window.open",
+                format!("<script>window.open('{sink_url}open')</script>"),
+            ),
+            (
+                "target=_blank click",
+                format!(
+                    "<a id=a href=\"{sink_url}blank\" target=_blank>x</a>\
+                     <script>document.getElementById('a').click()</script>"
+                ),
+            ),
+            (
+                "cross-site iframe",
+                format!("<iframe src=\"http://{lan_ip}.nip.io:{inner}/inner\"></iframe>"),
+            ),
+        ];
+        let mut reached = Vec::new();
+        for (name, html) in cases {
+            let before = hits.load(std::sync::atomic::Ordering::SeqCst);
+            let port = serve_html(lan_ip, format!("<p>page</p>{html}")).await;
+            let url = format!("http://{lan_ip}:{port}/");
+            let _ =
+                tokio::time::timeout(Duration::from_secs(30), browser.render_markdown(&url)).await;
+            // Give a popup or frame time to issue its request.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if hits.load(std::sync::atomic::Ordering::SeqCst) > before {
+                reached.push(name);
+            }
+        }
+        accept.abort();
+        drop(browser);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(reached.is_empty(), "loopback reached through: {reached:?}");
+    }
+
     /// Live end-to-end render of an X Article with injected cookies.
     ///
     /// Ignored by default (nab's convention for tests that need an external
