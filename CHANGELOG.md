@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The headless-browser path (`BrowserLogin::login`, `render_markdown`,
+  `render_with_cookies`) now applies the HTTP client's SSRF redirect check to
+  the initial URL, every redirect hop and any later page navigation, so a
+  public page can no longer steer Chrome to loopback, private or cloud
+  metadata addresses. Requests to denied addresses are failed inside Chrome;
+  a denied page navigation fails the call with the same SSRF error. The
+  `NAB_SSRF_ALLOW_PRIVATE` and `NAB_SSRF_ALLOWLIST` opt-outs apply here too.
+  Known limits: DNS is resolved separately from Chrome, so DNS rebinding is
+  not covered, and WebSocket and worker traffic is not intercepted.
 - `cargo audit` no longer ignores the three `zip` extraction advisories
   (RUSTSEC-2026-0367, -0368, -0369): `zip` 9.3.0, the only version in the lock
   file, already carries the fix, so the ignores muted nothing and would have
