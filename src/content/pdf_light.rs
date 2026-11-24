@@ -149,6 +149,10 @@ fn count_pages_with_budget(bytes: &[u8], mut budget: usize) -> usize {
         total += in_stream;
         cursor = span.after;
     }
+    // An object stream whose end could not be found was never read.
+    if window_contains(&bytes[cursor..], b"/ObjStm") {
+        return 0;
+    }
     total + count_page_tokens(&bytes[cursor..])
 }
 
@@ -1574,6 +1578,21 @@ mod tests {
         );
         assert_eq!(count_pages(&predicted), 0);
         assert_eq!(count_pages(&build(b"/Crypt", &compressed)), 0);
+        // Raw deflate (no zlib header) cut short is unknown as well.
+        let mut raw =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        raw.write_all(b"<< /Type /Page >>\n<< /Type /Page >>\n")
+            .unwrap();
+        let raw = raw.finish().unwrap();
+        assert_eq!(count_pages(&build(b"/FlateDecode", &raw)), 3);
+        assert_eq!(
+            count_pages(&build(b"/FlateDecode", &raw[..raw.len() - 3])),
+            0
+        );
+        // An object stream with no endstream was never read.
+        let mut open = build(b"/FlateDecode", &compressed);
+        open.truncate(open.len() - b"\nendstream\n".len());
+        assert_eq!(count_pages(&open), 0);
     }
 
     #[test]
