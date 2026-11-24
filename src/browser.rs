@@ -89,12 +89,11 @@ impl BrowserLogin {
     pub async fn login(&self, url: &str, credential: Option<&Credential>) -> Result<Vec<Cookie>> {
         info!("Starting browser login for {}", url);
 
-        // Create new page
-        let page = self
-            .browser
-            .new_page(url)
-            .await
-            .context("Failed to create new browser page")?;
+        let (page, guard) = self.open_guarded(PageUse::Login).await?;
+        if let Err(err) = goto_guarded(&page, &guard, url).await {
+            let _ = page.close().await;
+            return Err(err);
+        }
 
         // Wait for page load
         page.wait_for_navigation()
@@ -121,6 +120,9 @@ impl BrowserLogin {
 
         // Extract cookies after successful login
         let cookies = self.extract_cookies(&page).await?;
+        // A navigation refused during form submission or the CAPTCHA wait
+        // fails the login rather than returning its cookies.
+        guard.ensure_clean()?;
 
         info!(
             "Browser login complete, extracted {} cookies",
@@ -268,23 +270,30 @@ impl BrowserLogin {
     /// wraps so the brain-driven loop can escalate to a browser without nab ever
     /// bundling Chromium — it orchestrates the user's EXTERNAL Chrome over CDP.
     pub async fn render_markdown(&self, url: &str) -> Result<String> {
-        let page = self
-            .browser
-            .new_page(url)
-            .await
-            .context("failed to open browser page for rung-3 render")?;
-        page.wait_for_navigation()
-            .await
-            .context("failed to navigate the browser page")?;
-        // SPAs hydrate after load; give the DOM a brief settle window.
-        tokio::time::sleep(Duration::from_millis(800)).await;
-        let html = page
-            .content()
-            .await
-            .context("failed to read rendered DOM from the browser")?;
+        let (page, guard) = self.open_guarded(PageUse::Render).await?;
+        if let Err(err) = block_window_open(&page).await {
+            let _ = page.close().await;
+            return Err(err);
+        }
+        let rendered = async {
+            goto_guarded(&page, &guard, url).await?;
+            page.wait_for_navigation()
+                .await
+                .context("failed to navigate the browser page")?;
+            // SPAs hydrate after load; give the DOM a brief settle window.
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            let html = page
+                .content()
+                .await
+                .context("failed to read rendered DOM from the browser")?;
+            // A meta/JS navigation during the settle window is refused too.
+            guard.ensure_clean()?;
+            Ok::<_, anyhow::Error>(html)
+        }
+        .await;
         // Best-effort close so the orchestrated browser does not accumulate tabs.
         let _ = page.close().await;
-        Self::dom_to_markdown(&html, url)
+        Self::dom_to_markdown(&rendered?, url)
     }
 
     /// Render `url` with the supplied session `cookies` injected into the page
@@ -319,11 +328,15 @@ impl BrowserLogin {
 
         // Open a blank page first so cookies are present in the context BEFORE
         // the first navigation to the target URL.
-        let page = self
-            .browser
-            .new_page("about:blank")
-            .await
-            .context("failed to open blank browser page for authed render")?;
+        let (page, guard) = self.open_guarded(PageUse::Render).await?;
+        if let Err(err) = block_window_open(&page).await {
+            let _ = page.close().await;
+            return Err(err);
+        }
+        if let Err(err) = guard.check(url) {
+            let _ = page.close().await;
+            return Err(err);
+        }
 
         if !cookies.is_empty() {
             // Each CookieParam carries an explicit `url` so the CDP backend can
@@ -353,22 +366,46 @@ impl BrowserLogin {
                 .context("failed to inject session cookies into the browser context")?;
         }
 
-        page.goto(url)
-            .await
-            .context("failed to navigate to the authed render target")?;
-        page.wait_for_navigation()
-            .await
-            .context("failed waiting for navigation on the authed render target")?;
-        // The authed XHR paints into the DOM AFTER hydration; give it a generous
-        // settle window beyond the load event (network-idle proxy).
-        tokio::time::sleep(COOKIE_RENDER_SETTLE).await;
-
-        let html = page
-            .content()
-            .await
-            .context("failed to read rendered DOM from the authed page")?;
+        let rendered = async {
+            goto_guarded(&page, &guard, url)
+                .await
+                .context("failed to navigate to the authed render target")?;
+            page.wait_for_navigation()
+                .await
+                .context("failed waiting for navigation on the authed render target")?;
+            // The authed XHR paints into the DOM AFTER hydration; give it a generous
+            // settle window beyond the load event (network-idle proxy).
+            tokio::time::sleep(COOKIE_RENDER_SETTLE).await;
+            let html = page
+                .content()
+                .await
+                .context("failed to read rendered DOM from the authed page")?;
+            guard.ensure_clean()?;
+            Ok::<_, anyhow::Error>(html)
+        }
+        .await;
         let _ = page.close().await;
-        Self::dom_to_markdown(&html, url)
+        Self::dom_to_markdown(&rendered?, url)
+    }
+
+    /// Open `about:blank` with the SSRF Fetch guard armed, so no later
+    /// navigation or redirect hop on the page reaches a denied address.
+    async fn open_guarded(
+        &self,
+        page_use: PageUse,
+    ) -> Result<(chromiumoxide::Page, SsrfFetchGuard)> {
+        let page = self
+            .browser
+            .new_page("about:blank")
+            .await
+            .context("failed to open browser page")?;
+        match SsrfFetchGuard::arm(&page, page_use).await {
+            Ok(guard) => Ok((page, guard)),
+            Err(err) => {
+                let _ = page.close().await;
+                Err(err)
+            }
+        }
     }
 
     /// Convert rendered DOM `html` to screened markdown.
@@ -383,6 +420,371 @@ impl BrowserLogin {
             .context("YARA screen rejected the rendered page")?;
         Ok(screened)
     }
+}
+
+/// Whether a browser request to `url` may proceed under `policy`.
+///
+/// HTTP(S) targets go through [`crate::ssrf::validate_redirect_target_with_policy`],
+/// the check the HTTP client runs before each redirect hop, so the browser
+/// honours the same `NAB_SSRF_ALLOW_PRIVATE` / `NAB_SSRF_ALLOWLIST` opt-outs.
+/// Local page schemes (`about`, `data`, `blob`, Chrome internals) are not
+/// network targets and pass; every other scheme is refused.
+#[cfg(any(feature = "browser", test))]
+fn browser_request_check(
+    url: &str,
+    policy: &crate::ssrf::SsrfPolicy,
+) -> std::result::Result<(), crate::error::NabError> {
+    use crate::error::NabError;
+    let parsed = url::Url::parse(url).map_err(|err| NabError::InvalidUrl(err.to_string()))?;
+    match parsed.scheme() {
+        "about" | "data" | "blob" | "chrome" | "chrome-extension" | "devtools" => Ok(()),
+        _ => {
+            crate::ssrf::validate_redirect_target_with_policy(&parsed, policy)?;
+            // The HTTP client pins the one address it validated; Chrome resolves
+            // the name itself and may pick any answer, so every answer must pass.
+            if let Some(url::Host::Domain(host)) = parsed.host() {
+                use std::net::ToSocketAddrs;
+                let port = parsed.port_or_known_default().unwrap_or(443);
+                let addrs = (host, port).to_socket_addrs().map_err(|err| {
+                    NabError::SsrfBlocked(format!("DNS resolution failed for {host}: {err}"))
+                })?;
+                for addr in addrs {
+                    crate::ssrf::validate_ip_with_policy(addr.ip(), policy)?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// What a guarded page is for; decides which frames it may load.
+#[cfg(feature = "browser")]
+#[derive(Clone, Copy)]
+enum PageUse {
+    /// Unattended render: only the top document is read, so subframes and
+    /// popups are refused outright.
+    Render,
+    /// Interactive login: the user may need sign-in frames and popups.
+    Login,
+}
+
+/// Refuses the first document navigation the Fetch guard failed.
+///
+/// Subresource requests to denied targets are failed inside Chrome but do not
+/// fail the render; a denied document (initial load, redirect hop, meta/JS
+/// navigation, frame) does.
+#[cfg(feature = "browser")]
+#[derive(Clone)]
+struct SsrfFetchGuard {
+    blocked: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    policy: crate::ssrf::SsrfPolicy,
+}
+
+#[cfg(feature = "browser")]
+impl SsrfFetchGuard {
+    /// Arm Chrome's Fetch domain on `page` so every request is paused and a
+    /// request to a denied target is failed with `BlockedByClient` before it
+    /// leaves the browser. `Page::goto` follows redirects inside Chrome, so
+    /// this is the only place a redirect hop can be checked: responses are
+    /// paused too, and a 3xx whose `Location` is denied is failed before
+    /// Chrome follows it.
+    ///
+    /// Limit: chromiumoxide 0.9 auto-attaches child targets (cross-site
+    /// iframes, popups, workers) with `waitForDebuggerOnStart` and resumes them
+    /// itself with `Runtime.runIfWaitingForDebugger` inside its handler,
+    /// before an embedder sees `Target.attachedToTarget`, and it offers no
+    /// call to send commands on a child session. Fetch therefore cannot be
+    /// armed on a child target before it loads. A render page instead refuses
+    /// every subframe document (seen here, on the parent, before the frame
+    /// starts) and every popup, so no child target with network access is
+    /// created. The login page keeps frames and popups for sign-in flows,
+    /// and worker traffic is not intercepted.
+    async fn arm(page: &chromiumoxide::Page, page_use: PageUse) -> Result<Self> {
+        use chromiumoxide::cdp::browser_protocol::fetch::{
+            ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
+            RequestPattern, RequestStage,
+        };
+        use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
+
+        let guard = Self {
+            blocked: std::sync::Arc::default(),
+            policy: crate::ssrf::SsrfPolicy::from_env(),
+        };
+        let mut events = page
+            .event_listener::<EventRequestPaused>()
+            .await
+            .context("failed to listen for paused browser requests")?;
+        let stage = |stage| {
+            RequestPattern::builder()
+                .url_pattern("*")
+                .request_stage(stage)
+                .build()
+        };
+        page.execute(
+            EnableParams::builder()
+                .handle_auth_requests(false)
+                .pattern(stage(RequestStage::Request))
+                .pattern(stage(RequestStage::Response))
+                .build(),
+        )
+        .await
+        .context("failed to enable the browser Fetch domain")?;
+
+        let main_frame = render_main_frame(page, page_use).await?;
+        let page = page.clone();
+        let task_guard = guard.clone();
+        tokio::spawn(async move {
+            while let Some(event) = events.next().await {
+                // A render page loads no subframe document: a frame from
+                // another site would run as a child target this guard cannot
+                // see, and the render reads only the top document.
+                let subframe = event.response_status_code.is_none()
+                    && event.resource_type == ResourceType::Document
+                    && main_frame
+                        .as_ref()
+                        .is_some_and(|main| *main != event.frame_id);
+                if subframe {
+                    debug!(
+                        "refusing a subframe on a render page: {}",
+                        event.request.url
+                    );
+                    if let Err(err) = page
+                        .execute(FailRequestParams::new(
+                            event.request_id.clone(),
+                            ErrorReason::BlockedByClient,
+                        ))
+                        .await
+                    {
+                        debug!("ssrf fetch guard could not fail a subframe: {err}");
+                    }
+                    continue;
+                }
+                // Request stage: the request's own URL. Response stage: the
+                // redirect target of a 3xx, or nothing to check.
+                let Some(url) = paused_target(&event) else {
+                    continue_response(&page, &event, main_frame.as_ref()).await;
+                    continue;
+                };
+                let policy = task_guard.policy.clone();
+                let check_url = url.clone();
+                // The check may resolve DNS; keep it off the async workers.
+                let allowed = tokio::task::spawn_blocking(move || {
+                    browser_request_check(&check_url, &policy).is_ok()
+                })
+                .await
+                .unwrap_or(false);
+                let request_id = event.request_id.clone();
+                let settled = if allowed {
+                    page.execute(ContinueRequestParams::new(request_id))
+                        .await
+                        .err()
+                } else {
+                    debug!("refusing browser request: {url}");
+                    if event.resource_type == ResourceType::Document
+                        && let Ok(mut slot) = task_guard.blocked.lock()
+                    {
+                        slot.get_or_insert(url);
+                    }
+                    page.execute(FailRequestParams::new(
+                        request_id,
+                        ErrorReason::BlockedByClient,
+                    ))
+                    .await
+                    .err()
+                };
+                if let Some(err) = settled {
+                    debug!("ssrf fetch guard could not settle a paused request: {err}");
+                }
+            }
+        });
+        Ok(guard)
+    }
+
+    /// Check a caller-supplied target before navigating to it. Only HTTP(S)
+    /// pages are rendered: a `data:` or `blob:` document would skip the
+    /// response-stage sandbox that keeps render pages from opening popups.
+    fn check(&self, url: &str) -> Result<()> {
+        let scheme = url::Url::parse(url).map(|u| u.scheme().to_string());
+        if !matches!(scheme.as_deref(), Ok("http" | "https")) {
+            return Err(crate::error::NabError::SsrfBlocked(format!(
+                "browser target must be http or https: {url}"
+            ))
+            .into());
+        }
+        browser_request_check(url, &self.policy)?;
+        Ok(())
+    }
+
+    /// Fail if a document navigation was refused, with the HTTP path's SSRF error.
+    fn ensure_clean(&self) -> Result<()> {
+        let blocked = self.blocked.lock().ok().and_then(|slot| slot.clone());
+        if let Some(url) = blocked {
+            self.check(&url)?;
+            anyhow::bail!("browser navigation refused for {url}");
+        }
+        Ok(())
+    }
+}
+
+/// The main frame of a render page, whose subframes the guard refuses;
+/// `None` for a login page, which keeps its frames.
+#[cfg(feature = "browser")]
+async fn render_main_frame(
+    page: &chromiumoxide::Page,
+    page_use: PageUse,
+) -> Result<Option<chromiumoxide::cdp::browser_protocol::page::FrameId>> {
+    match page_use {
+        PageUse::Render => Ok(Some(
+            page.mainframe()
+                .await
+                .context("failed to read the browser page's main frame")?
+                .context("the browser page has no main frame")?,
+        )),
+        PageUse::Login => Ok(None),
+    }
+}
+
+/// Continue a paused response that needs no SSRF check. The top document of
+/// a render page gets a CSP `sandbox` without `allow-popups`, so its links,
+/// forms and scripts cannot open a window (a separate target the guard cannot
+/// see), even when the connected Chrome allows popups. Everything else is
+/// continued unchanged.
+#[cfg(feature = "browser")]
+async fn continue_response(
+    page: &chromiumoxide::Page,
+    event: &chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused,
+    main_frame: Option<&chromiumoxide::cdp::browser_protocol::page::FrameId>,
+) {
+    use chromiumoxide::cdp::browser_protocol::fetch::{ContinueRequestParams, FailRequestParams};
+    use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
+    let top_document = event.resource_type == ResourceType::Document
+        && main_frame.is_some_and(|main| *main == event.frame_id);
+    let settled = if top_document {
+        match fulfill_sandboxed(page, event).await {
+            Ok(()) => None,
+            // Fail closed: an unsandboxed top document could open popups.
+            Err(err) => {
+                debug!("could not sandbox the render page, refusing it: {err:#}");
+                page.execute(FailRequestParams::new(
+                    event.request_id.clone(),
+                    ErrorReason::BlockedByClient,
+                ))
+                .await
+                .err()
+            }
+        }
+    } else {
+        page.execute(ContinueRequestParams::new(event.request_id.clone()))
+            .await
+            .err()
+    };
+    if let Some(err) = settled {
+        debug!("ssrf fetch guard could not continue a response: {err}");
+    }
+}
+
+/// Fulfil a paused top-document response with its own body and headers plus
+/// a CSP `sandbox` that omits `allow-popups`.
+#[cfg(feature = "browser")]
+async fn fulfill_sandboxed(
+    page: &chromiumoxide::Page,
+    event: &chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused,
+) -> Result<()> {
+    use base64::Engine;
+    use chromiumoxide::cdp::browser_protocol::fetch::{
+        FulfillRequestParams, GetResponseBodyParams, HeaderEntry,
+    };
+    let body = page
+        .execute(GetResponseBodyParams::new(event.request_id.clone()))
+        .await
+        .context("failed to read the paused response body")?
+        .result;
+    let body = if body.base64_encoded {
+        body.body
+    } else {
+        base64::engine::general_purpose::STANDARD.encode(body.body.as_bytes())
+    };
+    // The body comes back decoded, so length and encoding headers no longer apply.
+    let mut headers: Vec<HeaderEntry> = event
+        .response_headers
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|h| {
+            !h.name.eq_ignore_ascii_case("content-length")
+                && !h.name.eq_ignore_ascii_case("content-encoding")
+        })
+        .collect();
+    headers.push(HeaderEntry {
+        name: "Content-Security-Policy".to_string(),
+        // No allow-popups; frames of any scheme and workers are refused too,
+        // since either can run as a child target the guard cannot see.
+        value: "sandbox allow-scripts allow-same-origin allow-forms; \
+                frame-src 'none'; worker-src 'none'"
+            .to_string(),
+    });
+    let mut params = FulfillRequestParams::new(
+        event.request_id.clone(),
+        event.response_status_code.unwrap_or(200),
+    );
+    params.response_headers = Some(headers);
+    params.body = Some(body.into());
+    page.execute(params)
+        .await
+        .context("failed to fulfil the sandboxed response")?;
+    Ok(())
+}
+
+/// The URL a paused Fetch event asks to reach: the request URL at the request
+/// stage, the resolved `Location` of a 3xx at the response stage, `None` for
+/// any other response.
+#[cfg(feature = "browser")]
+fn paused_target(
+    event: &chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused,
+) -> Option<String> {
+    let Some(status) = event.response_status_code else {
+        return Some(event.request.url.clone());
+    };
+    // Only these statuses make Chrome follow `Location`; a 300 or 304 body
+    // is rendered and must go through the sandbox like any document.
+    if !matches!(status, 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let location = event
+        .response_headers
+        .as_deref()?
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("location"))?;
+    let base = url::Url::parse(&event.request.url).ok()?;
+    // An unparseable Location is handed to the request check as-is, which
+    // refuses it.
+    Some(
+        base.join(&location.value)
+            .map_or_else(|_| location.value.clone(), String::from),
+    )
+}
+
+/// Stop a rendered page from opening windows: a popup is a separate browser
+/// target the Fetch guard on this page does not see. Render paths have no
+/// user, so no popup is wanted; the login flow keeps them for OAuth windows.
+#[cfg(feature = "browser")]
+async fn block_window_open(page: &chromiumoxide::Page) -> Result<()> {
+    use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+    let script = AddScriptToEvaluateOnNewDocumentParams::new("window.open = () => null;");
+    page.execute(script)
+        .await
+        .context("failed to disable window.open on the render page")?;
+    Ok(())
+}
+
+/// Navigate `page` to `url`, refusing a denied target or redirect hop.
+#[cfg(feature = "browser")]
+async fn goto_guarded(page: &chromiumoxide::Page, guard: &SsrfFetchGuard, url: &str) -> Result<()> {
+    guard.check(url)?;
+    let navigated = page.goto(url).await;
+    guard.ensure_clean()?;
+    navigated.context("failed to navigate the browser page")?;
+    Ok(())
 }
 
 /// Settle window after the load event for authed DOM renders.
@@ -716,6 +1118,317 @@ mod tests {
             }
         }
         assert!(changed, "probe must detect change within timeout");
+    }
+
+    #[test]
+    fn browser_request_check_matches_the_http_redirect_policy() {
+        let policy = crate::ssrf::SsrfPolicy::deny_all();
+        for url in [
+            "http://127.0.0.1/",
+            "http://10.255.255.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/",
+            "file:///etc/passwd",
+        ] {
+            let err = browser_request_check(url, &policy).expect_err(url);
+            assert!(
+                matches!(err, crate::error::NabError::SsrfBlocked(_)),
+                "{url} must get the SSRF refusal, got {err}"
+            );
+        }
+        for url in ["about:blank", "data:text/html,hi", "blob:https://a.test/x"] {
+            assert!(browser_request_check(url, &policy).is_ok(), "{url}");
+        }
+        // The private-range opt-out relaxes 10/8 but never metadata or loopback.
+        let relaxed = crate::ssrf::SsrfPolicy::deny_all().with_allow_private(true);
+        assert!(browser_request_check("http://10.255.255.1/", &relaxed).is_ok());
+        assert!(browser_request_check("http://169.254.169.254/", &relaxed).is_err());
+        assert!(browser_request_check("http://127.0.0.1/", &relaxed).is_err());
+    }
+
+    /// A page that 302-redirects the headless browser to loopback, a private
+    /// address or the cloud metadata address must be refused with the same SSRF
+    /// error the HTTP client returns, and the loopback listener must never see a
+    /// connection.
+    ///
+    /// The redirecting page is served from this machine's own LAN address,
+    /// which the test admits through `NAB_SSRF_ALLOWLIST`; loopback and
+    /// link-local can never be allowlisted, and `10.255.255.1` is not listed.
+    ///
+    /// Ignored by default: it launches a throwaway headless Chrome (path from
+    /// `NAB_TEST_CHROME`, else a standard install location) and needs a
+    /// non-loopback network interface. Run with:
+    /// `cargo test --features browser -- --ignored browser_refuses_redirect`.
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    #[ignore = "requires a local Chrome binary and a network interface"]
+    #[allow(clippy::too_many_lines)] // One end-to-end scenario: launch, serve, render, assert.
+    async fn browser_refuses_redirect_to_private_targets() {
+        let chrome = std::env::var("NAB_TEST_CHROME")
+            .ok()
+            .or_else(|| {
+                [
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/chromium",
+                ]
+                .into_iter()
+                .find(|path| std::path::Path::new(path).is_file())
+                .map(str::to_string)
+            })
+            .expect("set NAB_TEST_CHROME to a Chrome or Chromium binary");
+
+        let free_port = || {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .and_then(|l| l.local_addr())
+                .expect("free port")
+                .port()
+        };
+        let port = free_port();
+        let profile = tempfile::tempdir().expect("chrome profile dir");
+        let mut child = std::process::Command::new(chrome)
+            .arg("--headless=new")
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(format!("--user-data-dir={}", profile.path().display()))
+            .args(["--no-first-run", "--disable-extensions", "--disable-gpu"])
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("launch chrome");
+
+        let mut browser = None;
+        for _ in 0..50 {
+            if let Ok(b) = BrowserLogin::connect(Some(port)).await {
+                browser = Some(b);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let browser = browser.expect("connect to the throwaway chrome");
+
+        // Loopback listener: any accepted connection means the hop went through.
+        let sink = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback sink");
+        let sink_port = sink.local_addr().expect("sink addr").port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&hits);
+        let accept = tokio::spawn(async move {
+            while let Ok((_stream, _)) = sink.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+
+        // The interface address used to reach the internet; no packet is sent.
+        let lan_ip = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|sock| sock.connect("192.0.2.1:9").map(|()| sock))
+            .and_then(|sock| sock.local_addr())
+            .expect("a non-loopback interface")
+            .ip();
+        assert!(!lan_ip.is_loopback(), "needs a non-loopback interface");
+        // SAFETY: this ignored test runs on its own; no other thread reads the
+        // environment while it is set.
+        unsafe { std::env::set_var(crate::ssrf::ALLOWLIST_ENV, lan_ip.to_string()) };
+
+        // One redirector per target: answers every request with a 302.
+        let redirector = |target: String| async move {
+            let listener = tokio::net::TcpListener::bind((lan_ip, 0))
+                .await
+                .expect("redirector");
+            let port = listener.local_addr().expect("redirector addr").port();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let mut buf = [0u8; 2048];
+                    let _ = stream.read(&mut buf).await;
+                    let reply = format!(
+                        "HTTP/1.1 302 Found\r\nLocation: {target}\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(reply.as_bytes()).await;
+                }
+            });
+            format!("http://{lan_ip}:{port}/start")
+        };
+
+        let targets = [
+            format!("http://127.0.0.1:{sink_port}/"),
+            "http://10.255.255.1/".to_string(),
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+        ];
+        let mut failures = Vec::new();
+        for target in &targets {
+            let start = redirector(target.clone()).await;
+            let result =
+                tokio::time::timeout(Duration::from_secs(30), browser.render_markdown(&start))
+                    .await;
+            match result {
+                Ok(Err(err)) if format!("{err:#}").contains("SSRF") => {}
+                Ok(Err(err)) => failures.push(format!("{target}: non-SSRF error: {err:#}")),
+                Ok(Ok(_)) => failures.push(format!("{target}: rendered, not refused")),
+                Err(_) => failures.push(format!("{target}: timed out, not refused")),
+            }
+        }
+        let loopback_hits = hits.load(std::sync::atomic::Ordering::SeqCst);
+        accept.abort();
+        drop(browser);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(loopback_hits, 0, "the loopback hop reached the listener");
+        assert!(failures.is_empty(), "redirects not refused: {failures:#?}");
+    }
+
+    /// Launch a throwaway headless Chrome and connect to it.
+    #[cfg(feature = "browser")]
+    async fn launch_test_chrome() -> (std::process::Child, tempfile::TempDir, BrowserLogin) {
+        let chrome = std::env::var("NAB_TEST_CHROME")
+            .expect("set NAB_TEST_CHROME to a Chrome or Chromium binary");
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("free port")
+            .port();
+        let profile = tempfile::tempdir().expect("chrome profile dir");
+        let mut child = std::process::Command::new(chrome)
+            .arg("--headless=new")
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(format!("--user-data-dir={}", profile.path().display()))
+            .args(["--no-first-run", "--disable-extensions", "--disable-gpu"])
+            // Popups must be stopped by nab, not by Chrome's own blocker.
+            .arg("--disable-popup-blocking")
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("launch chrome");
+        for _ in 0..50 {
+            if let Ok(browser) = BrowserLogin::connect(Some(port)).await {
+                return (child, profile, browser);
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("could not connect to the throwaway chrome");
+    }
+
+    /// Serve `body` as HTML on `ip` for every request; returns the port.
+    #[cfg(feature = "browser")]
+    async fn serve_html(ip: std::net::IpAddr, body: String) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((ip, 0))
+            .await
+            .expect("html server");
+        let port = listener.local_addr().expect("server addr").port();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    /// Pages that reach loopback through a popup (`window.open`, a scripted
+    /// `target=_blank` click) or a cross-site iframe must not reach it.
+    ///
+    /// The cross-site frame is served from `<lan-ip>.nip.io`, a public DNS name
+    /// for the LAN address, so Chrome isolates it in its own process. Ignored:
+    /// needs `NAB_TEST_CHROME`, a network interface and public DNS.
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    #[ignore = "requires a local Chrome binary, a network interface and DNS"]
+    async fn browser_guards_popups_and_cross_site_frames() {
+        let (mut child, _profile, browser) = launch_test_chrome().await;
+        let sink = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("sink");
+        let sink_url = format!(
+            "http://127.0.0.1:{}/",
+            sink.local_addr().expect("addr").port()
+        );
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&hits);
+        let accept = tokio::spawn(async move {
+            while let Ok((_stream, _)) = sink.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        let lan_ip = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|sock| sock.connect("192.0.2.1:9").map(|()| sock))
+            .and_then(|sock| sock.local_addr())
+            .expect("a non-loopback interface")
+            .ip();
+        // SAFETY: this ignored test runs on its own; no other thread reads the
+        // environment while it is set.
+        unsafe { std::env::set_var(crate::ssrf::ALLOWLIST_ENV, lan_ip.to_string()) };
+
+        let inner = serve_html(lan_ip, format!("<img src=\"{sink_url}img.png\">")).await;
+        let cases = [
+            (
+                "window.open",
+                format!("<script>window.open('{sink_url}open')</script>"),
+            ),
+            (
+                "target=_blank click",
+                format!(
+                    "<a id=a href=\"{sink_url}blank\" target=_blank>x</a>\
+                     <script>document.getElementById('a').click()</script>"
+                ),
+            ),
+            (
+                "target=_blank form",
+                format!(
+                    "<form id=f action=\"{sink_url}form\" target=_blank></form>\
+                     <script>document.getElementById('f').submit()</script>"
+                ),
+            ),
+            (
+                "data: iframe",
+                format!("<iframe src=\"data:text/html,<img src='{sink_url}data.png'>\"></iframe>"),
+            ),
+            (
+                "worker",
+                format!(
+                    "<script>new Worker(URL.createObjectURL(new Blob(\
+                     [\"fetch('{sink_url}worker')\"])))</script>"
+                ),
+            ),
+            (
+                "cross-site iframe",
+                format!("<iframe src=\"http://{lan_ip}.nip.io:{inner}/inner\"></iframe>"),
+            ),
+        ];
+        let mut reached = Vec::new();
+        for (name, html) in cases {
+            let before = hits.load(std::sync::atomic::Ordering::SeqCst);
+            let port = serve_html(lan_ip, format!("<p>page</p>{html}")).await;
+            let url = format!("http://{lan_ip}:{port}/");
+            let rendered =
+                tokio::time::timeout(Duration::from_secs(30), browser.render_markdown(&url)).await;
+            // The attack page must render, or the case proves nothing.
+            if !matches!(&rendered, Ok(Ok(md)) if md.contains("page")) {
+                reached.push(name);
+                continue;
+            }
+            // Give a popup or frame time to issue its request.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if hits.load(std::sync::atomic::Ordering::SeqCst) > before {
+                reached.push(name);
+            }
+        }
+        accept.abort();
+        drop(browser);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(reached.is_empty(), "loopback reached through: {reached:?}");
     }
 
     /// Live end-to-end render of an X Article with injected cookies.
