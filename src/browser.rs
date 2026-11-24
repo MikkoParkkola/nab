@@ -718,6 +718,106 @@ mod tests {
         assert!(changed, "probe must detect change within timeout");
     }
 
+    /// A public page that redirects the headless browser to loopback, a private
+    /// address or the cloud metadata address must be refused with the same SSRF
+    /// error the HTTP client returns, and the loopback listener must never see a
+    /// connection.
+    ///
+    /// Ignored by default: it launches a throwaway headless Chrome (path from
+    /// `NAB_TEST_CHROME`, else a standard install location) and needs network
+    /// access to httpbin.org. Run with:
+    /// `cargo test --features browser -- --ignored browser_refuses_redirect`.
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    #[ignore = "requires a local Chrome binary and network access"]
+    async fn browser_refuses_redirect_to_private_targets() {
+        let chrome = std::env::var("NAB_TEST_CHROME")
+            .ok()
+            .or_else(|| {
+                [
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/chromium",
+                ]
+                .into_iter()
+                .find(|path| std::path::Path::new(path).is_file())
+                .map(str::to_string)
+            })
+            .expect("set NAB_TEST_CHROME to a Chrome or Chromium binary");
+
+        let free_port = || {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .and_then(|l| l.local_addr())
+                .expect("free port")
+                .port()
+        };
+        let port = free_port();
+        let profile = tempfile::tempdir().expect("chrome profile dir");
+        let mut child = std::process::Command::new(chrome)
+            .arg("--headless=new")
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(format!("--user-data-dir={}", profile.path().display()))
+            .args(["--no-first-run", "--disable-extensions", "--disable-gpu"])
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("launch chrome");
+
+        let mut browser = None;
+        for _ in 0..50 {
+            if let Ok(b) = BrowserLogin::connect(Some(port)).await {
+                browser = Some(b);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let browser = browser.expect("connect to the throwaway chrome");
+
+        // Loopback listener: any accepted connection means the hop went through.
+        let sink = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback sink");
+        let sink_port = sink.local_addr().expect("sink addr").port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&hits);
+        let accept = tokio::spawn(async move {
+            while let Ok((_stream, _)) = sink.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+
+        let targets = [
+            format!("http://127.0.0.1:{sink_port}/"),
+            "http://10.255.255.1/".to_string(),
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+        ];
+        let mut failures = Vec::new();
+        for target in &targets {
+            let start = format!(
+                "https://httpbin.org/redirect-to?status_code=302&url={}",
+                url::form_urlencoded::byte_serialize(target.as_bytes()).collect::<String>()
+            );
+            let result =
+                tokio::time::timeout(Duration::from_secs(30), browser.render_markdown(&start))
+                    .await;
+            match result {
+                Ok(Err(err)) if format!("{err:#}").contains("SSRF") => {}
+                Ok(Err(err)) => failures.push(format!("{target}: non-SSRF error: {err:#}")),
+                Ok(Ok(_)) => failures.push(format!("{target}: rendered, not refused")),
+                Err(_) => failures.push(format!("{target}: timed out, not refused")),
+            }
+        }
+        let loopback_hits = hits.load(std::sync::atomic::Ordering::SeqCst);
+        accept.abort();
+        drop(browser);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(loopback_hits, 0, "the loopback hop reached the listener");
+        assert!(failures.is_empty(), "redirects not refused: {failures:#?}");
+    }
+
     /// Live end-to-end render of an X Article with injected cookies.
     ///
     /// Ignored by default (nab's convention for tests that need an external
