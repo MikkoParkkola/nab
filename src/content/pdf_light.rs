@@ -167,6 +167,40 @@ fn count_pages_with_budget(bytes: &[u8], mut budget: usize) -> usize {
     last_root_count(rest).or(root).unwrap_or(total)
 }
 
+/// Bounds (`<<` start, `>>` end) of the innermost dictionary around `at`.
+fn enclosing_dict(region: &[u8], at: usize) -> Option<(usize, usize)> {
+    let mut depth = 0usize;
+    let mut i = at;
+    let open = loop {
+        i = i.checked_sub(1)?;
+        if region[i..].starts_with(b">>") && i + 2 <= at {
+            depth += 1;
+        } else if region[i..].starts_with(b"<<") {
+            if depth == 0 {
+                break i;
+            }
+            depth -= 1;
+        }
+    };
+    let mut depth = 0usize;
+    let mut j = at;
+    while j + 1 < region.len() {
+        if region[j..].starts_with(b"<<") {
+            depth += 1;
+            j += 2;
+        } else if region[j..].starts_with(b">>") {
+            if depth == 0 {
+                return Some((open, j + 2));
+            }
+            depth -= 1;
+            j += 2;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
 /// `/Count` of the last page-tree root (`/Type /Pages` without `/Parent`) in
 /// `region`, in file order.
 fn last_root_count(region: &[u8]) -> Option<usize> {
@@ -183,19 +217,20 @@ fn last_root_count(region: &[u8]) -> Option<usize> {
             continue;
         }
         let before = &region[..at];
-        let Some(open) = before.windows(2).rposition(|w| w == b"<<") else {
-            continue;
-        };
         let end = before
             .iter()
             .rposition(|b| !is_pdf_whitespace(*b))
             .map_or(0, |i| i + 1);
-        let typed = before[open..end.max(open)].ends_with(b"/Type");
-        let Some(close) = find_subsequence(&region[from..], b">>") else {
+        if !before[..end].ends_with(b"/Type") {
+            continue;
+        }
+        // The dictionary that holds this `/Type`, across nested dictionaries
+        // such as an inherited `/Resources`.
+        let Some((open, close)) = enclosing_dict(region, at) else {
             continue;
         };
-        let dict = &region[open..from + close];
-        if !typed || window_contains(dict, b"/Parent") {
+        let dict = &region[open..close];
+        if window_contains(dict, b"/Parent") {
             continue;
         }
         let Some(c) = find_subsequence(dict, b"/Count") else {
@@ -401,13 +436,12 @@ fn page_tokens_in_object_stream(
     budget: &mut usize,
 ) -> Option<(usize, Option<usize>)> {
     let dict = &bytes[span.dict_start..span.dict_end];
-    // An escaped name (`/Obj#53tm` is `/ObjStm`) could hide the type, filter
-    // or predictor; a stream dictionary with one is not interpreted.
-    if dict.contains(&b'#') {
-        return None;
-    }
     if !window_contains(dict, b"/ObjStm") {
         return Some((0, None));
+    }
+    // An escaped name could hide the object stream's filter or predictor.
+    if dict.contains(&b'#') {
+        return None;
     }
     // Strings, decode parameters (a predictor, or an indirect reference to
     // one) are beyond this reader; such an object stream is not read.
@@ -1754,6 +1788,12 @@ mod tests {
             1 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj\n\
             %%EOF\n";
         assert_eq!(count_pages(pdf), 2);
+        // A root with nested inherited resources still yields its /Count.
+        let nested_res = b"%PDF-1.4\n<< /Type /Pages /Resources << /Font << /F1 9 0 R >> >> /Kids [] /Count 5 >>\n";
+        assert_eq!(count_pages(nested_res), 5);
+        // A spot-colour image name with # escapes does not discard the count.
+        let spot = b"%PDF-1.4\n<< /Type /Pages /Count 2 >>\n<< /ColorSpace [/Separation /PANTONE#20300#20C /DeviceCMYK 7 0 R] /Length 1 >>\nstream\nx\nendstream\n";
+        assert_eq!(count_pages(spot), 2);
         // A nested /Pages node (with /Parent) is not the root.
         let nested =
             b"%PDF-1.4\n<< /Type /Pages /Count 4 >>\n<< /Type /Pages /Parent 1 0 R /Count 1 >>\n";
