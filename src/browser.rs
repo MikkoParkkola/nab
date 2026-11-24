@@ -942,18 +942,22 @@ mod tests {
         assert!(browser_request_check("http://127.0.0.1/", &relaxed).is_err());
     }
 
-    /// A public page that redirects the headless browser to loopback, a private
+    /// A page that 302-redirects the headless browser to loopback, a private
     /// address or the cloud metadata address must be refused with the same SSRF
     /// error the HTTP client returns, and the loopback listener must never see a
     /// connection.
     ///
+    /// The redirecting page is served from this machine's own LAN address,
+    /// which the test admits through `NAB_SSRF_ALLOWLIST`; loopback and
+    /// link-local can never be allowlisted, and `10.255.255.1` is not listed.
+    ///
     /// Ignored by default: it launches a throwaway headless Chrome (path from
-    /// `NAB_TEST_CHROME`, else a standard install location) and needs network
-    /// access to httpbin.org. Run with:
+    /// `NAB_TEST_CHROME`, else a standard install location) and needs a
+    /// non-loopback network interface. Run with:
     /// `cargo test --features browser -- --ignored browser_refuses_redirect`.
     #[cfg(feature = "browser")]
     #[tokio::test]
-    #[ignore = "requires a local Chrome binary and network access"]
+    #[ignore = "requires a local Chrome binary and a network interface"]
     async fn browser_refuses_redirect_to_private_targets() {
         let chrome = std::env::var("NAB_TEST_CHROME")
             .ok()
@@ -1011,6 +1015,38 @@ mod tests {
             }
         });
 
+        // The interface address used to reach the internet; no packet is sent.
+        let lan_ip = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|sock| sock.connect("192.0.2.1:9").map(|()| sock))
+            .and_then(|sock| sock.local_addr())
+            .expect("a non-loopback interface")
+            .ip();
+        assert!(!lan_ip.is_loopback(), "needs a non-loopback interface");
+        // SAFETY: this ignored test runs on its own; no other thread reads the
+        // environment while it is set.
+        unsafe { std::env::set_var(crate::ssrf::ALLOWLIST_ENV, lan_ip.to_string()) };
+
+        // One redirector per target: answers every request with a 302.
+        let redirector = |target: String| async move {
+            let listener = tokio::net::TcpListener::bind((lan_ip, 0))
+                .await
+                .expect("redirector");
+            let port = listener.local_addr().expect("redirector addr").port();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let mut buf = [0u8; 2048];
+                    let _ = stream.read(&mut buf).await;
+                    let reply = format!(
+                        "HTTP/1.1 302 Found\r\nLocation: {target}\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(reply.as_bytes()).await;
+                }
+            });
+            format!("http://{lan_ip}:{port}/start")
+        };
+
         let targets = [
             format!("http://127.0.0.1:{sink_port}/"),
             "http://10.255.255.1/".to_string(),
@@ -1018,10 +1054,7 @@ mod tests {
         ];
         let mut failures = Vec::new();
         for target in &targets {
-            let start = format!(
-                "https://httpbin.org/redirect-to?status_code=302&url={}",
-                url::form_urlencoded::byte_serialize(target.as_bytes()).collect::<String>()
-            );
+            let start = redirector(target.clone()).await;
             let result =
                 tokio::time::timeout(Duration::from_secs(30), browser.render_markdown(&start))
                     .await;
