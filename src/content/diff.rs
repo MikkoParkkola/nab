@@ -526,7 +526,7 @@ mod tests {
         let new = snap("https://x.com", "A.\n\nD.\n\nE.");
         let diff = compute_diff(&old, &new);
         let s = diff.summary();
-        assert!(!s.is_empty());
+        assert_ne!(s, "");
         assert_ne!(s, "No changes");
     }
 

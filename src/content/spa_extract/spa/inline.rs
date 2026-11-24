@@ -3,6 +3,7 @@
 
 use super::helpers::{collect_text_from_json, render_spa_content, strip_html_comment_wrapper};
 use super::nextjs::extract_nextjs_content;
+use crate::content::spa_extract::SpaSource;
 
 /// Extract content from inline `<script>` variable assignments.
 ///
@@ -15,15 +16,28 @@ use super::nextjs::extract_nextjs_content;
 /// This function scans all inline scripts for known variable assignment patterns
 /// and attempts to extract the JSON payload.
 pub fn extract_inline_script_json(html: &str) -> Option<String> {
-    const PATTERNS: &[&str] = &[
+    extract_inline_script_json_with_source(html).map(|(text, _)| text)
+}
+
+/// Like [`extract_inline_script_json`], but also reports whether page data
+/// ([`SpaSource::Framework`]) or an app-wide store or the catch-all scraper
+/// ([`SpaSource::GenericAssignment`]) produced the text.
+pub(crate) fn extract_inline_script_json_with_source(html: &str) -> Option<(String, SpaSource)> {
+    // The current page's own props: trusted to beat server-rendered HTML.
+    const PAGE_DATA_PATTERNS: &[&str] = &[
         "window.__NEXT_DATA__",
         "self.__NEXT_DATA__",
         "__NEXT_DATA__",
+    ];
+    // App-wide stores hold every entity the app loaded, so their longest
+    // string is arbitrary (a profile's keyword list on Flipboard, MIK-8684).
+    // They only fill a thin result. `__NUXT__` carries the Vuex state beside
+    // the page data; `___GATSBY` is the loader bootstrap, not the page envelope.
+    const STORE_PATTERNS: &[&str] = &[
         "window.__NUXT__",
         "window.__INITIAL_STATE__",
         "window.__PRELOADED_STATE__",
         "window.__APOLLO_STATE__",
-        // Generic SSR state patterns used by various frameworks
         "window.__APP_STATE__",
         "window.__STORE_STATE__",
         "window.__DATA__",
@@ -34,50 +48,63 @@ pub fn extract_inline_script_json(html: &str) -> Option<String> {
     let document = scraper::Html::parse_document(html);
     let script_sel = scraper::Selector::parse("script").ok()?;
 
-    for script in document.select(&script_sel) {
-        if script.value().attr("src").is_some() {
-            continue;
-        }
+    let scripts: Vec<String> = document
+        .select(&script_sel)
+        .filter(|script| script.value().attr("src").is_none())
+        .map(|script| script.text().collect::<String>())
+        .filter(|text| !text.trim().is_empty())
+        .collect();
 
-        let script_text = script.text().collect::<String>();
-        if script_text.trim().is_empty() {
-            continue;
-        }
-
-        for pattern in PATTERNS {
-            if let Some(content) =
-                extract_content_from_named_inline_assignment(&script_text, pattern, MIN_CONTENT_LEN)
-            {
-                return Some(content);
-            }
-        }
-
-        if let Some(content) =
-            extract_content_from_generic_inline_assignments(&script_text, MIN_CONTENT_LEN)
-        {
-            return Some(content);
-        }
+    // Each tier searches every script before the next tier starts, so script
+    // order cannot let a store outrank page data.
+    let first_named = |patterns: &[&str]| {
+        scripts.iter().find_map(|script_text| {
+            patterns.iter().find_map(|pattern| {
+                extract_content_from_named_inline_assignment(script_text, pattern, MIN_CONTENT_LEN)
+            })
+        })
+    };
+    if let Some(content) = first_named(PAGE_DATA_PATTERNS) {
+        return Some((content, SpaSource::Framework));
+    }
+    // A store still outranks the catch-all scraper, and skipping the scraper
+    // here keeps it from rescanning a multi-megabyte store at every `=`.
+    if let Some(content) = first_named(STORE_PATTERNS) {
+        return Some((content, SpaSource::GenericAssignment));
     }
 
-    None
+    // Only fills thin pages now, so take the longest hit on the page rather
+    // than the first script's (often a short config object).
+    scripts
+        .iter()
+        .filter_map(|script_text| {
+            extract_content_from_generic_inline_assignments(script_text, MIN_CONTENT_LEN)
+        })
+        .max_by_key(String::len)
+        .map(|content| (content, SpaSource::GenericAssignment))
 }
 
+/// The first assignment `pattern = {...}` in the script that yields content.
+/// A mention that is not an assignment (a comment, a read, `==`) is skipped,
+/// so it cannot borrow the next unrelated `= {...}` in the script.
 fn extract_content_from_named_inline_assignment(
     script_text: &str,
     pattern: &str,
     min_content_len: usize,
 ) -> Option<String> {
-    let start_idx = script_text.find(pattern)?;
-    let after_pattern = start_idx + pattern.len();
-    let remaining = &script_text[after_pattern..];
-    let eq_offset = remaining.find('=')?;
-    let after_eq = &remaining[eq_offset + 1..];
-    let json_offset = after_eq
-        .char_indices()
-        .find(|(_, c)| *c == '{' || *c == '[')
-        .map(|(idx, _)| idx)?;
-    let json_start = &after_eq[json_offset..];
-    extract_content_from_json_slice(json_start, min_content_len)
+    script_text
+        .match_indices(pattern)
+        .find_map(|(start_idx, _)| {
+            let rest = script_text[start_idx + pattern.len()..].trim_start();
+            let after_eq = rest
+                .strip_prefix('=')
+                .filter(|after| !after.starts_with('='))?;
+            let json_offset = after_eq
+                .char_indices()
+                .find(|(_, c)| *c == '{' || *c == '[')
+                .map(|(idx, _)| idx)?;
+            extract_content_from_json_slice(&after_eq[json_offset..], min_content_len)
+        })
 }
 
 fn extract_content_from_generic_inline_assignments(
@@ -298,7 +325,7 @@ mod tests {
         });
         let mut texts = Vec::new();
         unwrap_api_response_bodies(&envelope, &mut texts);
-        assert!(texts.is_empty());
+        assert_eq!(texts, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -331,7 +358,7 @@ mod tests {
         });
         let mut texts = Vec::new();
         unwrap_api_response_bodies(&envelope, &mut texts);
-        assert!(texts.is_empty());
+        assert_eq!(texts, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -486,5 +513,190 @@ mod tests {
                 .unwrap()
                 .contains("Generic window.__DATA__ SSR pattern")
         );
+    }
+
+    #[test]
+    fn named_assignment_in_a_later_script_beats_an_earlier_generic_one() {
+        // GIVEN: script 1 holds a generic settings object with a long bio,
+        //        script 2 holds the article in window.__NEXT_DATA__
+        let bio = "A long author biography that is not the article at all. ".repeat(8);
+        let article = "The scheduler assigns each job to the least loaded worker. ".repeat(8);
+        let html = format!(
+            r#"<html><body>
+            <script>var settings = {{"author":{{"bio":"{bio}"}}}};</script>
+            <script>window.__NEXT_DATA__ = {{"props":{{"pageProps":{{"post":{{"content":"{article}"}}}}}}}};</script>
+            </body></html>"#
+        );
+
+        // WHEN: extracted with its source
+        let (text, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        // THEN: the named framework assignment wins
+        assert_eq!(source, SpaSource::Framework);
+        assert!(text.contains("least loaded worker"), "{text}");
+    }
+
+    #[test]
+    fn generic_assignment_is_reported_as_generic() {
+        let bio = "A long author biography that is not the article at all. ".repeat(8);
+        let html = format!(
+            r#"<html><body><script>var settings = {{"author":{{"bio":"{bio}"}}}};</script></body></html>"#
+        );
+
+        let (_, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        assert_eq!(source, SpaSource::GenericAssignment);
+    }
+
+    #[test]
+    fn longest_generic_assignment_wins_regardless_of_script_order() {
+        let short = "A short config description that is just long enough to count. ".repeat(4);
+        let long = "The full article body that a client-rendered page keeps in state. ".repeat(12);
+        for (first, second) in [(&short, &long), (&long, &short)] {
+            let html = format!(
+                r#"<html><body>
+                <script>var config = {{"about":"{first}"}};</script>
+                <script>var state = {{"post":"{second}"}};</script>
+                </body></html>"#
+            );
+
+            let (text, source) =
+                extract_inline_script_json_with_source(&html).expect("a candidate");
+
+            assert_eq!(source, SpaSource::GenericAssignment);
+            assert!(text.contains("full article body"), "{text}");
+        }
+    }
+
+    // ── MIK-8684: app-wide stores rank below page data ────────────────────
+    // Design: docs/design/2026-11-16-store-state-trust.md
+
+    const PAGE_DATA_PATTERNS: [&str; 3] = [
+        "window.__NEXT_DATA__",
+        "self.__NEXT_DATA__",
+        "__NEXT_DATA__",
+    ];
+
+    const STORE_PATTERNS: [&str; 8] = [
+        "window.__NUXT__",
+        "window.__INITIAL_STATE__",
+        "window.__PRELOADED_STATE__",
+        "window.__APOLLO_STATE__",
+        "window.__APP_STATE__",
+        "window.__STORE_STATE__",
+        "window.__DATA__",
+        "window.___GATSBY",
+    ];
+
+    fn long_text(seed: &str) -> String {
+        format!("{seed} is the sentence this fixture repeats to pass the length floor. ").repeat(6)
+    }
+
+    #[test]
+    fn only_next_data_is_labelled_page_data() {
+        let body = long_text("Labelled body");
+        for pattern in PAGE_DATA_PATTERNS {
+            let html = format!(
+                r#"<html><body><script>{pattern} = {{"props":{{"pageProps":{{"post":{{"content":"{body}"}}}}}}}};</script></body></html>"#
+            );
+            let (_, source) = extract_inline_script_json_with_source(&html).expect(pattern);
+            assert_eq!(source, SpaSource::Framework, "{pattern}");
+        }
+        for pattern in STORE_PATTERNS {
+            let html = format!(
+                r#"<html><body><script>{pattern} = {{"entities":{{"e1":{{"body":"{body}"}}}}}};</script></body></html>"#
+            );
+            let (_, source) = extract_inline_script_json_with_source(&html).expect(pattern);
+            assert_eq!(source, SpaSource::GenericAssignment, "{pattern}");
+        }
+    }
+
+    #[test]
+    fn next_data_in_a_later_script_beats_an_earlier_store() {
+        let store = long_text("Store profile text");
+        let page = long_text("Next page body");
+        let html = format!(
+            r#"<html><body>
+            <script>window.__PRELOADED_STATE__ = {{"profiles":{{"p1":{{"bio":"{store}"}}}}}};</script>
+            <script>window.__NEXT_DATA__ = {{"props":{{"pageProps":{{"post":{{"content":"{page}"}}}}}}}};</script>
+            </body></html>"#
+        );
+
+        let (text, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        assert_eq!(source, SpaSource::Framework);
+        assert!(text.contains("Next page body"), "{text}");
+    }
+
+    #[test]
+    fn a_store_outranks_a_longer_generic_assignment() {
+        let store = long_text("Store article body");
+        let generic = long_text("Generic config string").repeat(3);
+        for pattern in STORE_PATTERNS {
+            let store_script = format!(r#"{pattern} = {{"post":{{"body":"{store}"}}}};"#);
+            let generic_script = format!(r#"var cfg = {{"about":"{generic}"}};"#);
+            for (first, second) in [
+                (&store_script, &generic_script),
+                (&generic_script, &store_script),
+            ] {
+                let html = format!(
+                    "<html><body><script>{first}</script><script>{second}</script></body></html>"
+                );
+
+                let (text, source) = extract_inline_script_json_with_source(&html).expect(pattern);
+
+                assert_eq!(source, SpaSource::GenericAssignment, "{pattern}");
+                assert!(text.contains("Store article body"), "{pattern}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_store_that_yields_nothing_leaves_the_generic_scan_running() {
+        let body = long_text("Generic shell body");
+        let html = format!(
+            r#"<html><body><div id="root"></div><script>window.__PRELOADED_STATE__ = {{"user":"short"}}; var cfg = {{"post":"{body}"}};</script></body></html>"#
+        );
+
+        let (text, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        assert_eq!(source, SpaSource::GenericAssignment);
+        assert!(text.contains("Generic shell body"), "{text}");
+    }
+
+    #[test]
+    fn two_stores_keep_todays_order() {
+        let apollo = long_text("Apollo store body");
+        let preloaded = long_text("Preloaded store body");
+        let apollo_script = format!(r#"window.__APOLLO_STATE__ = {{"a":"{apollo}"}};"#);
+        let preloaded_script = format!(r#"window.__PRELOADED_STATE__ = {{"p":"{preloaded}"}};"#);
+
+        // Separate scripts: the first script's store wins.
+        let html = format!(
+            "<html><body><script>{apollo_script}</script><script>{preloaded_script}</script></body></html>"
+        );
+        let (text, _) = extract_inline_script_json_with_source(&html).expect("a candidate");
+        assert!(text.contains("Apollo store body"), "{text}");
+
+        // One script, written against the pattern list's order: the list decides.
+        let html = format!(
+            "<html><body><script>{apollo_script} {preloaded_script}</script></body></html>"
+        );
+        let (text, _) = extract_inline_script_json_with_source(&html).expect("a candidate");
+        assert!(text.contains("Preloaded store body"), "{text}");
+    }
+
+    #[test]
+    fn a_next_data_comparison_is_not_an_assignment() {
+        // GIVEN: a `==` test of __NEXT_DATA__, then an unrelated parseable object
+        let other = long_text("Unrelated config string");
+        let html = format!(
+            r#"<html><body><script>var ready = window.__NEXT_DATA__ == null; var cfg = {{"about":"{other}"}};</script></body></html>"#
+        );
+
+        let (_, source) = extract_inline_script_json_with_source(&html).expect("a candidate");
+
+        // THEN: the object is a generic hit, not page data
+        assert_eq!(source, SpaSource::GenericAssignment);
     }
 }

@@ -255,6 +255,39 @@ impl FrameExtractor {
     }
 }
 
+/// A temporary wav removed when this value drops.
+///
+/// Both analyze callers used to delete the file only after a successful
+/// transcription. The MCP refusal, a missing backend, and a failed extract
+/// all return before that delete. Drop runs on every return, so the file
+/// cannot outlive the call. The handle is closed: ffmpeg can replace the
+/// empty file, including on Windows.
+pub struct TempWav {
+    path: tempfile::TempPath,
+}
+
+impl TempWav {
+    /// Create an empty `.wav` in the system temp directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the temp directory cannot be used.
+    pub fn create() -> std::io::Result<Self> {
+        let file = tempfile::Builder::new()
+            .prefix("nab-analyze-")
+            .suffix(".wav")
+            .tempfile()?;
+        Ok(Self {
+            path: file.into_temp_path(),
+        })
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        self.path.as_ref()
+    }
+}
+
 /// Audio extractor
 pub struct AudioExtractor;
 
@@ -389,5 +422,15 @@ mod tests {
         let extractor = FrameExtractor::new(0.4, 50);
         assert!((extractor.scene_threshold - 0.4).abs() < f32::EPSILON);
         assert_eq!(extractor.max_frames, 50);
+    }
+
+    #[test]
+    fn temp_wav_removes_the_file_on_drop() {
+        let wav = TempWav::create().expect("temp wav");
+        let path = wav.path().to_path_buf();
+        assert!(path.is_file(), "create leaves a wav to replace");
+        std::fs::write(&path, b"wav").expect("write");
+        drop(wav);
+        assert!(!path.exists(), "drop removes the wav");
     }
 }

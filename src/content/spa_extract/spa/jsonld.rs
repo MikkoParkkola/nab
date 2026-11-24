@@ -1,6 +1,6 @@
 //! JSON-LD structured data extraction (`<script type="application/ld+json">`).
 
-use super::helpers::render_spa_content;
+use super::helpers::{is_article_type, render_spa_content};
 
 /// Extract article content from `<script type="application/ld+json">` tags.
 ///
@@ -43,14 +43,7 @@ pub fn extract_jsonld_content(document: &scraper::Html) -> Option<String> {
         for value in &values {
             // Only consider Article-like types (skip Organization, WebSite, BreadcrumbList)
             if let Some(schema_type) = value.get("@type").and_then(|t| t.as_str()) {
-                let is_article = schema_type.contains("Article")
-                    || schema_type.contains("Posting")
-                    || schema_type.contains("Report")
-                    || schema_type.contains("ScholarlyArticle")
-                    || schema_type.contains("TechArticle")
-                    || schema_type.contains("NewsArticle")
-                    || schema_type.contains("BlogPosting");
-                if !is_article {
+                if !is_article_type(schema_type) {
                     continue;
                 }
             } else {

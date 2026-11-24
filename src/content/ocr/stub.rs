@@ -65,6 +65,6 @@ mod tests {
     /// `StubEngine::supported_languages()` is empty.
     #[test]
     fn stub_supports_no_languages() {
-        assert!(StubEngine.supported_languages().is_empty());
+        assert_eq!(StubEngine.supported_languages(), [] as [&str; 0]);
     }
 }

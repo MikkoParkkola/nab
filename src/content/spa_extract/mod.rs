@@ -35,6 +35,30 @@ pub use spa::nextjs::{
     is_nextjs_metadata_only, resolve_content_chunk_urls, resolve_content_chunk_urls_for_slug,
 };
 
+/// Which kind of extractor produced an SPA candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpaSource {
+    /// Page data from a framework-specific block: Next.js, Nuxt, `SvelteKit`,
+    /// Gatsby, Angular Universal, JSON-LD `articleBody`, an inline
+    /// `window.__NEXT_DATA__ = {...}` assignment, or hidden `<code>` JSON.
+    /// Trusted to beat server-rendered HTML.
+    Framework,
+    /// An app-wide store assignment (`window.__PRELOADED_STATE__`,
+    /// `__APOLLO_STATE__`, `__NUXT__` and the like) or the catch-all scraper's
+    /// longest string from any `= {...}` assignment. Either can be a bio, a
+    /// keyword list, query variables or CSS, so it only fills a thin result.
+    GenericAssignment,
+}
+
+/// Text recovered from embedded SPA data, with the extractor that found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaCandidate {
+    /// Rendered markdown text.
+    pub text: String,
+    /// Which extractor produced it.
+    pub source: SpaSource,
+}
+
 /// Try to extract article content from SPA JSON bundles embedded in HTML.
 ///
 /// Modern single-page applications (Next.js, Nuxt, `SvelteKit`, Gatsby, Angular
@@ -45,48 +69,57 @@ pub use spa::nextjs::{
 /// Returns `Some(markdown)` if a substantial content field is found (>200 chars),
 /// `None` otherwise.
 pub fn extract_spa_data(html: &str) -> Option<String> {
+    extract_spa_candidate(html).map(|candidate| candidate.text)
+}
+
+/// Like [`extract_spa_data`], but also reports which extractor produced the text.
+pub fn extract_spa_candidate(html: &str) -> Option<SpaCandidate> {
+    let framework = |text: String| SpaCandidate {
+        text,
+        source: SpaSource::Framework,
+    };
     let document = scraper::Html::parse_document(html);
 
     // Try __NEXT_DATA__ (Next.js) — highest priority, most structured
     if let Some(content) = spa::nextjs::try_extract_script_json(&document, "script#__NEXT_DATA__") {
-        return Some(content);
+        return Some(framework(content));
     }
 
     // Try __NUXT_DATA__ / __NUXT_STATE__ (Nuxt.js)
     for selector in &["script#__NUXT_DATA__", "script#__nuxt-data"] {
         if let Some(content) = spa::nextjs::try_extract_script_json(&document, selector) {
-            return Some(content);
+            return Some(framework(content));
         }
     }
 
     // Try SvelteKit fetched data blocks
     if let Some(content) = spa::sveltekit::extract_sveltekit_data(&document) {
-        return Some(content);
+        return Some(framework(content));
     }
 
     // Try Gatsby SSR data blocks
     if let Some(content) = spa::gatsby::extract_gatsby_data(&document, html) {
-        return Some(content);
+        return Some(framework(content));
     }
 
     // Try Angular Universal transfer state
     if let Some(content) = spa::angular::extract_angular_universal_state(&document) {
-        return Some(content);
+        return Some(framework(content));
     }
 
     // Try JSON-LD structured data (Schema.org — widely used by modern blogs)
     if let Some(content) = spa::jsonld::extract_jsonld_content(&document) {
-        return Some(content);
+        return Some(framework(content));
     }
 
     // Try inline script variable assignments (window.__NEXT_DATA__ = {...}, etc.)
-    if let Some(content) = spa::inline::extract_inline_script_json(html) {
-        return Some(content);
+    if let Some((text, source)) = spa::inline::extract_inline_script_json_with_source(html) {
+        return Some(SpaCandidate { text, source });
     }
 
     // Try hidden <code> elements with JSON (LinkedIn-style SPA hydration).
     if let Some(content) = spa::inline::extract_hidden_code_json(&document) {
-        return Some(content);
+        return Some(framework(content));
     }
 
     None

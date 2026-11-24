@@ -1,7 +1,7 @@
 //! Core types for the URL watch subsystem.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 // ─── Type aliases ─────────────────────────────────────────────────────────────
 
@@ -22,11 +22,14 @@ pub struct Watch {
     /// Polling interval in seconds.
     pub interval_secs: u64,
     /// When this watch was created.
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "crate::util::utc_rfc3339")]
+    pub created_at: OffsetDateTime,
     /// When the URL was last polled (regardless of change).
-    pub last_check_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "crate::util::utc_rfc3339::option")]
+    pub last_check_at: Option<OffsetDateTime>,
     /// When content last differed from the previous snapshot.
-    pub last_change_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "crate::util::utc_rfc3339::option")]
+    pub last_change_at: Option<OffsetDateTime>,
     /// `ETag` from the last `200`/`304` response (for conditional `GET`).
     pub last_etag: Option<String>,
     /// Last-Modified from the last 200/304 response (for conditional GET).
@@ -51,7 +54,7 @@ impl Watch {
             None => true,
             Some(last) => {
                 let elapsed =
-                    u64::try_from(Utc::now().signed_duration_since(last).num_seconds().max(0))
+                    u64::try_from((OffsetDateTime::now_utc() - last).whole_seconds().max(0))
                         .unwrap_or(0);
                 elapsed >= self.interval_secs
             }
@@ -67,7 +70,8 @@ pub struct WatchSnapshot {
     /// SHA-256 hex digest of the captured body (content-addressed storage key).
     pub sha256: String,
     /// When this snapshot was captured.
-    pub captured_at: DateTime<Utc>,
+    #[serde(with = "crate::util::utc_rfc3339")]
+    pub captured_at: OffsetDateTime,
     /// Body size in bytes.
     pub size: usize,
 }
@@ -183,16 +187,17 @@ impl AddOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use time::OffsetDateTime;
 
     fn make_watch(interval_secs: u64, last_check_secs_ago: Option<i64>) -> Watch {
-        let last_check_at = last_check_secs_ago.map(|s| Utc::now() - chrono::Duration::seconds(s));
+        let last_check_at =
+            last_check_secs_ago.map(|s| OffsetDateTime::now_utc() - time::Duration::seconds(s));
         Watch {
             id: "test0001".into(),
             url: "https://example.com".into(),
             selector: None,
             interval_secs,
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
             last_check_at,
             last_change_at: None,
             last_etag: None,
@@ -200,6 +205,52 @@ mod tests {
             snapshots: vec![],
             consecutive_errors: 0,
             options: WatchOptions::default(),
+        }
+    }
+
+    // ── Saved timestamps stay readable across the chrono → time swap ───────
+    // Timestamps as chrono's serde wrote them: RFC 3339, `Z`, 0/3/6/9 digits.
+    const SAVED_STAMPS: [&str; 4] = [
+        "2026-11-17T11:03:18Z",
+        "2026-11-17T11:03:18.123Z",
+        "2026-11-17T11:03:18.123456Z",
+        "2026-11-17T11:03:18.123456789Z",
+    ];
+
+    #[test]
+    fn saved_watch_timestamps_stay_readable() {
+        let mut value = serde_json::to_value(make_watch(60, Some(5))).unwrap();
+        for (stamp, nanos) in
+            SAVED_STAMPS
+                .into_iter()
+                .zip([0, 123_000_000, 123_456_000, 123_456_789])
+        {
+            value["created_at"] = stamp.into();
+            value["last_check_at"] = stamp.into();
+            value["last_change_at"] = stamp.into();
+            value["snapshots"] =
+                serde_json::json!([{ "sha256": "ab", "captured_at": stamp, "size": 1 }]);
+            let watch: Watch = serde_json::from_value(value.clone()).expect(stamp);
+            assert_eq!(watch.created_at.nanosecond(), nanos, "{stamp}");
+            assert_eq!(watch.created_at.unix_timestamp(), 1_794_913_398, "{stamp}");
+            assert_eq!(
+                watch.snapshots[0].captured_at.nanosecond(),
+                nanos,
+                "{stamp}"
+            );
+            let written = serde_json::to_value(&watch).unwrap();
+            let reread: Watch = serde_json::from_value(written.clone()).unwrap();
+            assert_eq!(reread.created_at, watch.created_at, "{stamp}");
+            assert_eq!(reread.last_check_at, watch.last_check_at, "{stamp}");
+            assert_eq!(
+                reread.snapshots[0].captured_at, watch.snapshots[0].captured_at,
+                "{stamp}"
+            );
+            for field in ["created_at", "last_check_at", "last_change_at"] {
+                let text = written[field].as_str().unwrap();
+                assert!(text.starts_with("2026-11-17T11:03:18"), "{field}: {text}");
+                assert!(text.ends_with('Z'), "{field}: {text}");
+            }
         }
     }
 

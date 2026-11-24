@@ -210,7 +210,10 @@ impl TaskTool {
     ///
     /// `runtime` is used to report whether the connected client supports
     /// `sampling/createMessage` (the self-contained loop's prerequisite).
-    pub async fn run(&self, runtime: &Arc<dyn McpServer>) -> Result<CallToolResult, CallToolError> {
+    pub async fn run(
+        &self,
+        runtime: Option<&Arc<dyn McpServer>>,
+    ) -> Result<CallToolResult, CallToolError> {
         let start = Instant::now();
         let client: &AcceleratedClient = get_client().await;
         let profile = client.profile().await;
@@ -244,7 +247,12 @@ impl TaskTool {
         // Self-contained mode (§9.1): when the caller opts in and the client
         // supports sampling, nab drives the whole bounded loop itself — the host
         // LLM is the brain (McpSampler), nab supplies execution (McpFetcher).
-        if self.autonomous && sampling::is_supported(runtime) {
+        if self.autonomous && crate::ask::sampling_would(runtime) {
+            if crate::ask::is_refuse() {
+                return Err(CallToolError::new(crate::ask::WaitRefusal));
+            }
+            let runtime =
+                runtime.ok_or_else(|| CallToolError::from_message("MCP runtime required"))?;
             let sampler = McpSampler { runtime };
             let fetcher = McpFetcher;
             // With the `browser` feature, try to connect to the user's running
@@ -270,7 +278,7 @@ impl TaskTool {
         let json = serde_json::to_string_pretty(&outcome)
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
-        let mode = if sampling::is_supported(runtime) {
+        let mode = if crate::ask::sampling_would(runtime) {
             "[task] client supports sampling — self-contained agentic loop is being wired; \
              for now read discovered_apis and call the `fetch` tool with a chosen endpoint."
         } else {

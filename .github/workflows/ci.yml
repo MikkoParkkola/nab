@@ -51,6 +51,11 @@ jobs:
               - 'rust-toolchain*'
               - '.cargo/**'
               - '.github/workflows/**'
+              - 'README.md'
+              - 'llms.txt'
+              - 'docs/**'
+              - 'third_party/**'
+              - 'scripts/**'
 
   fmt:
     name: Format
@@ -74,11 +79,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-      # Rust 1.99 denies clippy::assert_is_empty in existing tests. The allow
-      # unblocks CI Gate until those asserts are rewritten. Remove the flag
-      # in the same change as the rewrite. Tracked in #339.
-      - run: cargo clippy --locked --all-targets -- -D warnings -A clippy::assert_is_empty
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/install-vendor-lint-cap.sh
+      - run: cargo clippy --locked --all-targets -- -D warnings
 
   test:
     name: Test (${{ matrix.name }})
@@ -95,7 +98,7 @@ jobs:
             net_tests: "0"
             rustflags: -Dwarnings
           - name: macos-lib
-            os: macos-14
+            os: macos-15
             command: cargo test --locked --lib
             net_tests: "0"
             rustflags: -Dwarnings
@@ -117,10 +120,17 @@ jobs:
             command: cargo test --locked --features task --lib --bin nab task
             net_tests: "0"
             rustflags: -Dwarnings
+          - name: mcp-2026
+            os: ubuntu-latest
+            command: cargo test --locked --features task --test mcp_2026
+            net_tests: "1"
+            rustflags: -Dwarnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/install-vendor-lint-cap.sh
+        if: runner.os != 'Windows'
       - run: ${{ matrix.command }}
         env:
           NAB_NET_TESTS: ${{ matrix.net_tests }}
@@ -153,10 +163,13 @@ jobs:
           # wasmtime major bump is merged on checks that never built it.
           - name: wasm-providers
             command: cargo build --locked --bin nab --features wasm-providers
+          - name: analyze-sherpa
+            command: cargo build --locked --bin nab --features analyze-sherpa
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/install-vendor-lint-cap.sh
       - run: ${{ matrix.command }}
 
   wasm-provider-example:
@@ -182,7 +195,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: bash scripts/install-vendor-lint-cap.sh
       - run: cargo publish --locked --dry-run
 
   # Secret scanning always runs — a documentation change can still leak a key.
@@ -193,7 +207,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: trufflesecurity/trufflehog@74d1c44c2b4e6612c5d248b0e50fc40c0ecfa165 # main
+      - uses: trufflesecurity/trufflehog@048de9ff07098d943136cd5231a0e93fbb3ea443 # main
         with:
           # On a PR, scan only the base..head diff (fast). On a push to main,
           # base/head resolve empty and TruffleHog falls back to a full-repo
@@ -213,7 +227,7 @@ jobs:
       # Prebuilt cargo-audit binary instead of `cargo install` (which compiled
       # it from source, ~3-5 min per run). Same tool, same version, ~10s.
       # cargo-audit only parses Cargo.lock, so no Rust toolchain build is needed.
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-audit@0.22.0
       - name: Run cargo audit

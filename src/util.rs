@@ -108,12 +108,104 @@ pub async fn recover_nextjs_chunks(
     None
 }
 
+/// `2026-11-17T11:03:18Z`: whole seconds in UTC, the form nab prints and
+/// stores stamps in.
+pub const UTC_SECONDS: &[time::format_description::BorrowedFormatItem<'static>] =
+    time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
+
+/// `t` as [`UTC_SECONDS`], converted to UTC first so the `Z` is true.
+#[must_use]
+pub fn format_utc_seconds(t: time::OffsetDateTime) -> String {
+    t.to_offset(time::UtcOffset::UTC)
+        .format(UTC_SECONDS)
+        .unwrap_or_default()
+}
+
+/// Serde for timestamps stored as RFC 3339 and always read back in UTC, as
+/// chrono's `DateTime<Utc>` did, so files written by an older nab still load
+/// and a hand-edited offset cannot be printed under a `Z`.
+pub mod utc_rfc3339 {
+    use serde::{Deserializer, Serializer};
+    use time::{OffsetDateTime, UtcOffset};
+
+    /// # Errors
+    /// When the instant cannot be written as RFC 3339.
+    pub fn serialize<S: Serializer>(t: &OffsetDateTime, s: S) -> Result<S::Ok, S::Error> {
+        time::serde::rfc3339::serialize(&t.to_offset(UtcOffset::UTC), s)
+    }
+
+    /// # Errors
+    /// When the value is not an RFC 3339 timestamp.
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<OffsetDateTime, D::Error> {
+        time::serde::rfc3339::deserialize(d).map(|t| t.to_offset(UtcOffset::UTC))
+    }
+
+    /// The same for `Option<OffsetDateTime>`.
+    pub mod option {
+        use serde::{Deserializer, Serializer};
+        use time::{OffsetDateTime, UtcOffset};
+
+        /// # Errors
+        /// When the instant cannot be written as RFC 3339.
+        #[allow(clippy::ref_option)]
+        pub fn serialize<S: Serializer>(
+            t: &Option<OffsetDateTime>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            time::serde::rfc3339::option::serialize(&t.map(|t| t.to_offset(UtcOffset::UTC)), s)
+        }
+
+        /// # Errors
+        /// When the value is neither null nor an RFC 3339 timestamp.
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<OffsetDateTime>, D::Error> {
+            time::serde::rfc3339::option::deserialize(d)
+                .map(|t| t.map(|t| t.to_offset(UtcOffset::UTC)))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_referer, extract_domain, resolve_cookie_header_for_domain,
+        build_referer, extract_domain, format_utc_seconds, resolve_cookie_header_for_domain,
         resolve_cookie_header_for_url,
     };
+
+    #[test]
+    fn utc_rfc3339_reads_offsets_as_utc() {
+        #[derive(serde::Deserialize, serde::Serialize)]
+        struct Saved {
+            #[serde(with = "super::utc_rfc3339")]
+            at: time::OffsetDateTime,
+            #[serde(default, with = "super::utc_rfc3339::option")]
+            maybe: Option<time::OffsetDateTime>,
+        }
+        let saved: Saved = serde_json::from_str(
+            r#"{"at":"2026-11-17T13:03:18+02:00","maybe":"2026-11-17T08:03:18-03:00"}"#,
+        )
+        .unwrap();
+        assert_eq!(saved.at.offset(), time::UtcOffset::UTC);
+        assert_eq!(format_utc_seconds(saved.at), "2026-11-17T11:03:18Z");
+        assert_eq!(
+            saved.maybe.map(format_utc_seconds).as_deref(),
+            Some("2026-11-17T11:03:18Z")
+        );
+        let absent: Saved = serde_json::from_str(r#"{"at":"2026-11-17T11:03:18Z"}"#).unwrap();
+        assert!(absent.maybe.is_none());
+        // chrono stored an empty optional timestamp as null.
+        let null: Saved =
+            serde_json::from_str(r#"{"at":"2026-11-17T11:03:18Z","maybe":null}"#).unwrap();
+        assert!(null.maybe.is_none());
+        // Written back in UTC with a Z, whatever offset the value carried.
+        let shifted = Saved {
+            at: saved.at.to_offset(time::macros::offset!(+2)),
+            maybe: None,
+        };
+        let written = serde_json::to_string(&shifted).unwrap();
+        assert_eq!(written, r#"{"at":"2026-11-17T11:03:18Z","maybe":null}"#);
+    }
 
     #[test]
     fn extract_domain_returns_host_or_empty_string() {

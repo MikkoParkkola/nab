@@ -46,25 +46,10 @@
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0141"
-ignoreUntil = 2026-12-01   # review by this date; after it the gate fires again
-reason = "bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141, advisory class = unmaintained). Rechecked 2026-09-04: still no patched release (osv-scanner FIXED VERSION --). Transitive; not a code-execution vulnerability. Time-boxed pending upstream maintenance or a migration off bincode. Reviewed 2026-09-04 by Grok."
+ignoreUntil = 2027-03-01   # review by this date; after it the gate fires again
+reason = "RUSTSEC-2025-0141 marks bincode 2.0.1 unmaintained and lists no fixed version. It enters the tree only via yara-x (reviewed at 1.22.1), where it encodes compiled rule sets. nab builds its rules from its own source with yara_x::compile (src/security/yara_engine.rs) and never loads a serialized rule blob from outside. Upstream request: https://github.com/VirusTotal/yara-x/issues/887. Remove this entry when `cargo tree -i bincode` is empty. Owner decision 2026-11-20 (MIK-9753): extended to 2027-03-01 while that issue is open."
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0222"
-ignoreUntil = 2026-12-01
-reason = "wasmtime 45.0.3 remains transitive through yara-x 1.20.0. Rechecked 2026-10-02: yara-x 1.21.0 still declares wasmtime 45.0.3 with cranelift and runtime only, and 45.0.3 is the last 45 release, so no patched 45 line exists. Direct optional wasmtime is 48.0.5, inside the patched >=47.0.3 line. CVSS 3.8, multiple engines, local high-privilege access and user interaction. Nab compiles its own built-in YARA rules. Tracked in #267. Reviewed 2026-10-02."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0269"
-ignoreUntil = 2026-12-01
-reason = "wasmtime-wasi filesystem sandbox escape. Direct wasmtime 48.0.5 is inside the patched >=47.0.4 line. Remaining lockfile hit is wasmtime 45.0.3 via yara-x 1.20.0. yara-x 1.21.0 still declares 45.0.3 and no patched 45 release exists. Cargo.lock has no wasmtime-wasi package. yara-x enables only cranelift and runtime. nab wasm-providers do not link a WASI filesystem. Fetched content is YARA scan input. Tracked in #267. Reviewed 2026-10-02."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0316"
-ignoreUntil = 2026-12-01
-reason = "Dynamic record lifting past the hostcall fuel limit. Patched lines start at 36.0.16, 48.0.3 and 49.0.1. No patched 45 release. Direct wasmtime is 48.0.5. Remaining hit is 45.0.3 via yara-x 1.20.0. yara-x 1.21.0 still declares wasmtime 45.0.3 with cranelift and runtime only, not component-model, which is where record lifting lives. The ignore is by advisory ID, so a later downgrade of the direct runtime below 48.0.3 would stay silent until this date. This excepts the yara copy. It does not patch it. Tracked in #267. Reviewed 2026-10-02."
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0327"
-ignoreUntil = 2026-12-01
-reason = "Component async-lifted callback result count is unvalidated. Patched at >=48.0.4,<49 and >=49.0.2. Unaffected below 39.0.0. No patched 45 release. Direct wasmtime 48.0.5 is patched. Remaining hit is 45.0.3 via yara-x. yara-x 1.21.0 still declares 45.0.3 with cranelift and runtime only, not component-model. This excepts the yara copy. It does not patch it. An ID-wide ignore would also hide a direct-runtime downgrade below 48.0.4 until this date. Tracked in #267. Reviewed 2026-10-02."
+id = "RUSTSEC-2026-0543"
+ignoreUntil = 2027-01-15   # review by this date; after it the gate fires again
+reason = "chrono 0.4.45 is unmaintained (advisory class = unmaintained), no patched release. Reaches nab only through pdfium-render in the optional `pdf` feature; default builds do not contain it. Owner decision 2026-11-17: ship 0.13.0, then replace pdfium-render with pdf-extract (MIK-9747), whose acceptance requires chrono gone from the tree; do not renew this entry."

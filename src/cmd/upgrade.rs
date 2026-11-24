@@ -595,7 +595,7 @@ mod tests {
             .collect();
 
         // THEN nothing matches (from is not strictly less)
-        assert!(items.is_empty());
+        assert_eq!(items, [] as [&str; 0]);
     }
 
     /// What's-new returns nothing when from is ahead of all entries.
@@ -613,7 +613,7 @@ mod tests {
             .collect();
 
         // THEN empty — all entries are below from
-        assert!(items.is_empty());
+        assert_eq!(items, [] as [&str; 0]);
     }
 
     // ── Testable stamp path helpers ───────────────────────────────────────────

@@ -1,0 +1,17 @@
+[alias]
+
+coverage = ["tarpaulin"]
+run_clippy = [
+    "clippy",
+    "--features",
+    "latest schema_utils",
+    "--fix",
+    "--allow-dirty",
+    "--",
+    "-A",
+    "deprecated",
+    "-D",
+    "warnings",
+]
+
+run_test = ["nextest", "run"]

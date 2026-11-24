@@ -8,9 +8,10 @@
 //! 1. Check whether the connected client advertises sampling support.
 //! 2. Build and send a `CreateMessageRequest` with sensible defaults.
 //!
-//! The actual integration with nab tools (e.g., `analyze`, active reading)
-//! is deferred to Phase 1.5b.  For now the module is wired in but not called
-//! from any tool path.
+//! `analyze` calls this path for active reading. `task` calls it when
+//! `autonomous` is set. On revision `2026-07-28` those sends are refused
+//! when that request advertises sampling. The 2025 path still uses
+//! `is_supported`, which reads the capability stored at initialize.
 //!
 //! # Usage (future)
 //!

@@ -97,7 +97,7 @@ fn multiselect_returns_empty_on_missing_field() {
     // WHEN extracted
     let result = extract_multiselect_field(&content, "sources");
     // THEN empty vec is returned
-    assert!(result.is_empty());
+    assert_eq!(result, [] as [std::string::String; 0]);
 }
 
 // ── build_structured ─────────────────────────────────────────────────────────
@@ -157,6 +157,7 @@ fn fetch_structured_has_all_required_fields() {
         response_confidence: None,
         response_reason: None,
         thin_content_detected: false,
+        emptied_sections: &[],
     });
     // WHEN inspected
     // THEN all outputSchema fields are present
@@ -195,6 +196,64 @@ fn fetch_output_schema_advertises_optional_metadata_fields() {
     }
 }
 
+/// `nullable_prop` is the one spelling for a value that is a named type or
+/// JSON null. Both call sites must accept null and the named type, and reject
+/// a different JSON type.
+#[test]
+fn nullable_output_properties_accept_null_and_the_named_type() {
+    let batch = serde_json::to_value(crate::fetch_batch_output_schema()).expect("batch schema");
+    let auth = serde_json::to_value(crate::auth_lookup_output_schema()).expect("auth schema");
+    let batch_validator = jsonschema::draft202012::new(&batch).expect("batch schema compiles");
+    let auth_validator = jsonschema::draft202012::new(&auth).expect("auth schema compiles");
+
+    let null_status = serde_json::json!({
+        "results": [{
+            "url": "https://invalid.test/item",
+            "status": null,
+            "content": "error",
+            "timing_ms": 1
+        }]
+    });
+    let named_status = serde_json::json!({
+        "results": [{
+            "url": "https://invalid.test/item",
+            "status": 200,
+            "content": "ok",
+            "timing_ms": 1
+        }]
+    });
+    let wrong_status = serde_json::json!({
+        "results": [{
+            "url": "https://invalid.test/item",
+            "status": "200",
+            "content": "ok",
+            "timing_ms": 1
+        }]
+    });
+    assert!(batch_validator.validate(&null_status).is_ok());
+    assert!(batch_validator.validate(&named_status).is_ok());
+    assert!(batch_validator.validate(&wrong_status).is_err());
+
+    let null_user = serde_json::json!({
+        "domain": "invalid.test",
+        "username": null,
+        "has_totp": false
+    });
+    let named_user = serde_json::json!({
+        "domain": "invalid.test",
+        "username": "ada",
+        "has_totp": false
+    });
+    let wrong_user = serde_json::json!({
+        "domain": "invalid.test",
+        "username": 1,
+        "has_totp": false
+    });
+    assert!(auth_validator.validate(&null_user).is_ok());
+    assert!(auth_validator.validate(&named_user).is_ok());
+    assert!(auth_validator.validate(&wrong_user).is_err());
+}
+
 #[test]
 fn fetch_structured_preserves_content_verbatim() {
     // GIVEN content passed to the structured builder
@@ -215,6 +274,7 @@ fn fetch_structured_preserves_content_verbatim() {
         response_confidence: None,
         response_reason: None,
         thin_content_detected: false,
+        emptied_sections: &[],
     });
     // WHEN inspected
     // THEN content is stored verbatim (no internal truncation)
@@ -240,6 +300,7 @@ fn fetch_structured_includes_truncation_metadata_when_flagged() {
         response_confidence: None,
         response_reason: None,
         thin_content_detected: false,
+        emptied_sections: &[],
     });
     // THEN truncation metadata fields are present
     assert_eq!(map["truncated"], serde_json::Value::Bool(true));
@@ -263,6 +324,7 @@ fn fetch_structured_includes_response_diagnostics_when_present() {
         response_confidence: Some(0.97),
         response_reason: Some("browser-challenge or CAPTCHA markers detected"),
         thin_content_detected: true,
+        emptied_sections: &[],
     });
     assert_eq!(
         map["response_class"],
@@ -610,4 +672,30 @@ fn apply_diff_changed_content_returns_diff_with_has_diff_true() {
         "got: {output}"
     );
     assert!(has_diff);
+}
+
+#[test]
+fn fetch_structured_lists_emptied_sections_only_when_present() {
+    let headings = vec!["Get started".to_string()];
+    let params = |emptied_sections| FetchStructuredParams {
+        url: "https://blog.nab.test/post",
+        status: 200,
+        content_type: "text/html",
+        markdown: "Get started\n----------\n",
+        timing_ms: 10.0,
+        has_diff: false,
+        omitted_sections: 0,
+        total_sections: 0,
+        truncated: false,
+        full_tokens: 0,
+        response_class: None,
+        response_confidence: None,
+        response_reason: None,
+        thin_content_detected: false,
+        emptied_sections,
+    };
+    let map = build_fetch_structured_v2(&params(&headings));
+    assert_eq!(map["emptied_sections"], serde_json::json!(["Get started"]));
+    let map = build_fetch_structured_v2(&params(&[]));
+    assert!(!map.contains_key("emptied_sections"));
 }

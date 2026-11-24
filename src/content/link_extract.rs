@@ -526,7 +526,7 @@ mod tests {
     fn extract_links_excludes_fragment_only() {
         let md = "Jump to [section](#intro).";
         let links = extract_links(md, "https://example.com/page", None);
-        assert!(links.is_empty());
+        assert_eq!(links, [] as [crate::content::link_extract::ScoredLink; 0]);
     }
 
     #[test]
@@ -570,13 +570,19 @@ mod tests {
 
     #[test]
     fn extract_links_empty_markdown_returns_empty() {
-        assert!(extract_links("", "https://example.com/", None).is_empty());
+        assert_eq!(
+            extract_links("", "https://example.com/", None),
+            [] as [crate::content::link_extract::ScoredLink; 0]
+        );
     }
 
     #[test]
     fn extract_links_bad_base_url_returns_empty() {
         let md = "[link](https://example.com/)";
-        assert!(extract_links(md, "not-a-url", None).is_empty());
+        assert_eq!(
+            extract_links(md, "not-a-url", None),
+            [] as [crate::content::link_extract::ScoredLink; 0]
+        );
     }
 
     #[test]
@@ -597,7 +603,7 @@ mod tests {
     fn extract_links_excludes_mailto() {
         let md = "[Email us](mailto:support@example.com)";
         let links = extract_links(md, "https://example.com/", None);
-        assert!(links.is_empty());
+        assert_eq!(links, [] as [crate::content::link_extract::ScoredLink; 0]);
     }
 
     #[test]

@@ -144,14 +144,12 @@ impl WatchListTool {
                 } else {
                     ""
                 },
-                last_check = w.last_check_at.map_or_else(
-                    || "never".into(),
-                    |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-                ),
-                last_change = w.last_change_at.map_or_else(
-                    || "never".into(),
-                    |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-                ),
+                last_check = w
+                    .last_check_at
+                    .map_or_else(|| "never".into(), nab::util::format_utc_seconds),
+                last_change = w
+                    .last_change_at
+                    .map_or_else(|| "never".into(), nab::util::format_utc_seconds),
                 snaps = w.snapshots.len(),
             ));
         }

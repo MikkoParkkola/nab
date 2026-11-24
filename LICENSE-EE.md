@@ -32,27 +32,40 @@ are licensed under the **PolyForm Noncommercial** license (version 1.0.0). All o
 
 ## Summary of PolyForm Noncommercial terms
 
-- **Free** for noncommercial use, modification, redistribution
-- **Commercial use requires a separate commercial license** — contact the maintainer
+- **Free** for noncommercial use, modification, redistribution, and the public-benefit uses permitted by the license
+- **Commercial use outside those permissions requires a separate commercial license** — see [COMMERCIAL.md](COMMERCIAL.md)
 - All other rights reserved
 
-Full license text reference: see polyformproject.org for the canonical license document.
+Full license text: [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0).
 
 ## Commercial licensing
 
-For commercial use of EE-designated files, companies can buy a standard commercial-use license through GitHub Sponsors:
+For commercial use of EE-designated files that requires additional permission,
+the standard license covers **one organization and one named Mikko Parkkola
+product** (`nab`), not each customer application or repository:
 
-- EUR 500/month per named project.
-- Covers one company or organization using `nab` Enterprise Edition code while sponsorship remains active.
-- Covers routine internal business use, private forks, wrappers, private integrations, and shared internal services for that organization.
-- Requires the sponsoring company to identify the licensed project, such as `nab`, in the sponsor note or by email.
-- Does not include support, SLA, custom development, indemnity, trademark rights, sublicensing, resale, or the right to offer `nab` as a hosted or managed service to third parties unless separately agreed in writing.
+| License | GitHub Sponsors | Separate direct-invoice offer |
+| --- | --- | --- |
+| Small business: up to five people in the whole organization | USD 100/month | EUR 100/month |
+| Organization: no headcount limit | USD 500/month | EUR 500/month |
 
-The standard license is not a blanket license for all Mikko Parkkola projects. Custom terms are available for multi-project, portfolio-wide, external-facing, resale, managed-service, high-scale, support, SLA, indemnity, or procurement-specific needs.
+Count working owners, employees, and regular contractors for the small-business
+limit. Both tiers include internal use of the same published features without
+per-tool, server, agent, or call charges. Support, SLA, unpublished repository
+access, resale, and third-party hosted/managed service rights are not included.
+MIT permissions for core files and historical releases remain unchanged.
 
-Sponsor link: https://github.com/sponsors/MikkoParkkola
+Read [COMMERCIAL.md](COMMERCIAL.md) for the complete scope, exclusions, paid
+period, registration, growth, and custom-payment rules, existing commitments,
+and the additional free nonprofit permission. Sponsors charges in USD; EUR
+invoice prices are separate offers, not currency conversions. Arrange direct
+invoicing or custom terms by email: **mikko.parkkola@iki.fi**.
 
-Annual invoicing, procurement terms, custom terms, or resale rights can be agreed by email: mikko.parkkola@iki.fi
+The Coffee (USD 5 one-time), Supporter (USD 5/month), and Sustainer
+(USD 25/month) tiers are voluntary support, not commercial licenses. Nonprofit
+and other permitted free use does not require sponsorship.
+
+Sponsor link: https://github.com/sponsors/MikkoParkkola?metadata_project=nab
 
 ## Existing MIT-licensed releases
 

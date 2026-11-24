@@ -18,7 +18,10 @@ use nab::content::response_classifier::{
 use nab::content::snapshot_store::SnapshotStore;
 use nab::{AcceleratedClient, OnePasswordAuth, SafeFetchConfig, SafeRequestOptions};
 
-use super::output::{output_body, write_stdout, write_stdout_line};
+use super::output::{
+    BodyClass, Destination, body_class, destination_for, output_body, write_file_bytes,
+    write_stdout, write_stdout_line,
+};
 use crate::OutputFormat;
 
 /// All parameters for a `nab fetch` invocation.
@@ -196,6 +199,23 @@ impl std::str::FromStr for WafMode {
 
 #[allow(clippy::too_many_lines)] // Orchestration function; splitting would hurt readability
 pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
+    // `-o logo.png` asks for the file itself, not its text: skip every path
+    // that produces markdown (browser rendering, transcription, site
+    // providers) so the real response can be saved byte for byte.
+    let file_destination = cfg
+        .output_file
+        .as_deref()
+        .filter(|path| destination_for(path) == Destination::File);
+    if let Some(path) = file_destination
+        && (cfg.render_dom || cfg.render || cfg.interactive)
+    {
+        return Err(anyhow::anyhow!(
+            "--render, --interactive and --render-dom produce text, so {} was not written; \
+             use a .md name for -o",
+            path.display()
+        ));
+    }
+
     // ── Authed DOM-render short-circuit ───────────────────────────────────
     // Fires for `--render-dom` (any URL) and, automatically, for X long-form
     // Article URLs whose body is painted by an authenticated post-hydration XHR
@@ -211,7 +231,8 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // chromiumoxide), the explicit `--render-dom` flag errors clearly, but the
     // automatic X-Article match falls through to the normal fetch ladder so
     // existing `nab fetch` behaviour is never broken (requirement 3).
-    let want_render_dom = cfg.render_dom || nab::url_class::is_x_article_url(&cfg.url);
+    let want_render_dom = cfg.render_dom
+        || (file_destination.is_none() && nab::url_class::is_x_article_url(&cfg.url));
     #[cfg(feature = "browser")]
     let render_dom_active = want_render_dom;
     #[cfg(not(feature = "browser"))]
@@ -263,17 +284,24 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     }
 
     // ── Media URL auto-transcription ──────────────────────────────────────
-    if !cfg.no_transcribe && !cfg.raw_html && nab::content::media::is_media_url(&cfg.url) {
+    if file_destination.is_none()
+        && !cfg.no_transcribe
+        && !cfg.raw_html
+        && nab::content::media::is_media_url(&cfg.url)
+    {
         tracing::info!(url = %cfg.url, "detected media URL — transcribing");
         match nab::content::media::fetch_media_as_markdown(&cfg.url, cfg.language.as_deref(), false)
             .await
         {
             Ok(result) => {
-                let markdown = nab::security::guard_fetch_output(
+                let (markdown, screen_notice) = nab::security::guard_fetch_output_with_notice(
                     &result.markdown,
                     "cli_fetch_media",
                     &cfg.url,
                 )?;
+                if let Some(notice) = screen_notice {
+                    eprintln!("{notice}");
+                }
                 let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
                 if !cfg.no_save {
                     save_to_hebb(&cfg.url, &markdown, "").await;
@@ -305,15 +333,18 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     // rules are routing directives, so they also skip API providers and fall
     // through to the lower-level fetch path. Cookies + impersonation still
     // apply via fetch_safe/manual request below.
-    if !cfg.raw_html && !force_browser_engine {
+    if !cfg.raw_html && !force_browser_engine && file_destination.is_none() {
         let site_router = nab::site::SiteRouter::new();
         let cookie_opt = non_empty(&cookie_header);
         if let Some(site_content) = site_router.try_extract(&cfg.url, &client, cookie_opt).await {
-            let markdown = nab::security::guard_fetch_output(
+            let (markdown, screen_notice) = nab::security::guard_fetch_output_with_notice(
                 &site_content.markdown,
                 "cli_fetch_site_provider",
                 &cfg.url,
             )?;
+            if let Some(notice) = screen_notice {
+                eprintln!("{notice}");
+            }
             let markdown = apply_output_token_budget(&markdown, cfg.max_output_tokens);
             output_body(
                 &markdown,
@@ -511,9 +542,27 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         }
     }
 
+    if let Some(path) = file_destination {
+        let response = FetchResponse {
+            profile: &profile,
+            cookie_header: &cookie_header,
+            status,
+            version: &version,
+            elapsed,
+            response_headers: &response_headers,
+            body_len: body_bytes.len(),
+            body_text: "",
+            raw_text: &raw_text,
+            content_type: &content_type,
+            quality: None,
+            file_output: FileOutput::Withheld,
+        };
+        return save_file_destination(cfg, path, &response, &body_bytes);
+    }
+
     let body_len = body_bytes.len();
 
-    let (body_text, quality) = if markdown && !cfg.links {
+    let (body_text, quality, emptied_sections) = if markdown && !cfg.links {
         let converted = convert_body_to_markdown(
             &body_bytes,
             &content_type,
@@ -534,20 +583,29 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         let is_nextjs_meta = content_type.contains("html")
             && body_len > 5_000
             && nab::content::spa_extract::is_nextjs_metadata_only(&raw_text);
-        let (final_markdown, final_quality) = if is_nextjs_meta
+        let (final_markdown, final_quality, emptied_sections) = if is_nextjs_meta
             && (converted.markdown.len() < 800 || quality_is_low)
         {
             match recover_nextjs_content_chunks(&client, &raw_text, &cfg.url, cfg.format).await {
-                Some(recovered) => (recovered, converted.quality),
-                None => (converted.markdown, converted.quality),
+                // The recovered body is not the converted HTML.
+                Some(recovered) => (recovered, converted.quality, Vec::new()),
+                None => (
+                    converted.markdown,
+                    converted.quality,
+                    converted.emptied_sections,
+                ),
             }
         } else {
-            (converted.markdown, converted.quality)
+            (
+                converted.markdown,
+                converted.quality,
+                converted.emptied_sections,
+            )
         };
 
-        (final_markdown, final_quality)
+        (final_markdown, final_quality, emptied_sections)
     } else {
-        (raw_text.clone(), None)
+        (raw_text.clone(), None, Vec::new())
     };
 
     // ── Apple Vision OCR enrichment ────────────────────────────────────────
@@ -556,7 +614,12 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
     } else {
         body_text
     };
-    let body_text = nab::security::guard_fetch_output(&body_text, "cli_fetch", &cfg.url)?;
+    let (body_text, screen_notice) =
+        nab::security::guard_fetch_output_with_notice(&body_text, "cli_fetch", &cfg.url)?;
+    // Default verbosity: say when the screen removed part of the page (MIK-8684 RAW.1).
+    if let Some(notice) = screen_notice {
+        eprintln!("{notice}");
+    }
 
     for warning in build_fetch_diagnostics(
         status.as_u16(),
@@ -567,6 +630,9 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
         quality.as_ref(),
         cfg.html_options.allow_jina_fallback,
     ) {
+        eprintln!("⚠️  {warning}");
+    }
+    if let Some(warning) = emptied_sections_diagnostic(&emptied_sections) {
         eprintln!("⚠️  {warning}");
     }
 
@@ -595,6 +661,7 @@ pub async fn cmd_fetch(cfg: &FetchConfig) -> Result<()> {
             raw_text: &raw_text,
             content_type: &content_type,
             quality: quality.as_ref(),
+            file_output: FileOutput::Text,
         },
     )?;
 
@@ -1089,6 +1156,7 @@ async fn recover_nextjs_content_chunks(
 struct ConvertedBody {
     markdown: String,
     quality: Option<nab::content::quality::QualityScore>,
+    emptied_sections: Vec<String>,
 }
 
 /// Convert body bytes to markdown via `ContentRouter`.
@@ -1121,10 +1189,12 @@ async fn convert_body_to_markdown(
     Ok(ConvertedBody {
         quality: result.quality,
         markdown: result.markdown,
+        emptied_sections: result.emptied_sections,
     })
 }
 
 /// Response data collected after the HTTP request completes.
+#[derive(Clone, Copy)]
 struct FetchResponse<'a> {
     profile: &'a nab::fingerprint::BrowserProfile,
     cookie_header: &'a str,
@@ -1138,12 +1208,87 @@ struct FetchResponse<'a> {
     content_type: &'a str,
     /// Extraction quality score — present for HTML, absent for raw/binary content.
     quality: Option<&'a nab::content::quality::QualityScore>,
+    /// What `-o` receives.
+    file_output: FileOutput<'a>,
+}
+
+/// What an `-o FILE` receives.
+#[derive(Clone, Copy)]
+enum FileOutput<'a> {
+    /// The converted (or raw) text, as always.
+    Text,
+    /// The response body, unchanged.
+    Bytes(&'a [u8]),
+    /// Nothing: the save was refused; status lines still print.
+    Withheld,
+}
+
+/// Save a response to a file destination (`-o logo.png`): the body byte for
+/// byte, or no file at all and an error saying why.
+fn save_file_destination(
+    cfg: &FetchConfig,
+    path: &std::path::Path,
+    response: &FetchResponse<'_>,
+    body: &[u8],
+) -> Result<()> {
+    let refusal = if !response.status.is_success() {
+        Some(format!(
+            "HTTP {} from {}, so {} was not written",
+            response.status,
+            cfg.url,
+            path.display()
+        ))
+    } else if body_class(response.content_type, body) == BodyClass::Text {
+        Some(format!(
+            "the response is {}, not a file, so {} was not written; use a .md name to save its text",
+            response.content_type,
+            path.display()
+        ))
+    } else if body.len() >= nab::DEFAULT_MAX_BODY_SIZE {
+        Some(format!(
+            "the response reached the {} MiB download cap and may be truncated, so {} was not written",
+            nab::DEFAULT_MAX_BODY_SIZE / (1024 * 1024),
+            path.display()
+        ))
+    } else {
+        None
+    };
+    let screened = match refusal {
+        Some(reason) => Err(anyhow::anyhow!(reason)),
+        None => nab::security::guard_fetch_bytes(body, "cli_fetch_file", &cfg.url),
+    };
+    if let Err(error) = screened {
+        print_output(cfg, response)?;
+        return Err(error);
+    }
+
+    print_output(
+        cfg,
+        &FetchResponse {
+            file_output: FileOutput::Bytes(body),
+            ..*response
+        },
+    )
 }
 
 /// Print the response according to the requested output format.
 fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
-    let markdown = !cfg.raw_html;
-    let out_path = cfg.output_file.as_deref();
+    // Text goes through `output_body` as always; bytes are written once here,
+    // before anything is printed; a withheld save prints status lines only.
+    let out_path = match resp.file_output {
+        FileOutput::Text => cfg.output_file.as_deref(),
+        FileOutput::Bytes(_) | FileOutput::Withheld => None,
+    };
+    let saved = match (resp.file_output, cfg.output_file.as_deref()) {
+        (FileOutput::Bytes(bytes), Some(path)) => {
+            write_file_bytes(path, bytes)?;
+            Some((path, bytes.len()))
+        }
+        _ => None,
+    };
+    // Text always prints: markdown by default, the page itself with
+    // --raw-html. Requiring --body for raw HTML printed headers only.
+    let prints_body = matches!(resp.file_output, FileOutput::Text);
 
     match cfg.format {
         OutputFormat::Compact => {
@@ -1153,13 +1298,16 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 resp.body_len,
                 resp.elapsed.as_secs_f64() * 1000.0
             ))?;
-            if cfg.show_body || out_path.is_some() || markdown || cfg.links {
+            if let Some((path, bytes)) = saved {
+                write_stdout_line(&format!("💾 Saved {bytes} bytes to {}", path.display()))?;
+            } else if prints_body {
                 output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
             }
         }
         OutputFormat::Json => {
+            let is_text = matches!(resp.file_output, FileOutput::Text);
             let metadata = serde_json::json!({
-                "title": extract_title(resp.raw_text),
+                "title": if is_text { extract_title(resp.raw_text) } else { None },
                 "content_length": resp.body_len,
                 "content_type": resp.content_type,
             });
@@ -1167,10 +1315,14 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 "url": cfg.url,
                 "status": resp.status.as_u16(),
                 "content_type": resp.content_type,
-                "markdown": resp.body_text,
+                "markdown": if is_text { Some(resp.body_text) } else { None },
                 "metadata": metadata,
                 "elapsed_ms": (resp.elapsed.as_secs_f64() * 1000.0 * 10.0).round() / 10.0,
             });
+            if let Some((path, bytes)) = saved {
+                output["saved_to"] = serde_json::json!(path.display().to_string());
+                output["saved_bytes"] = serde_json::json!(bytes);
+            }
             if let Some(q) = resp.quality {
                 output["confidence"] = serde_json::json!(q.confidence);
                 output["quality"] = serde_json::to_value(q)?;
@@ -1209,7 +1361,13 @@ fn print_output(cfg: &FetchConfig, resp: &FetchResponse<'_>) -> Result<()> {
                 }
             }
             write_stdout_line(&format!("\n📄 Body: {} bytes", resp.body_len))?;
-            if cfg.show_body || out_path.is_some() || markdown || cfg.links {
+            if let Some((path, bytes)) = saved {
+                write_stdout_line(&format!(
+                    "💾 Saved {bytes} bytes (unchanged, {}) to {}",
+                    resp.content_type,
+                    path.display()
+                ))?;
+            } else if prints_body {
                 output_body(resp.body_text, out_path, cfg.links, cfg.max_body)?;
             }
         }
@@ -1252,6 +1410,13 @@ fn extract_title(html: &str) -> Option<String> {
     doc.select(&sel)
         .next()
         .map(|el| el.text().collect::<String>().trim().to_string())
+}
+
+/// The CLI form of [`nab::content::html::emptied_sections_warning`], naming
+/// the flag that shows the full page (MIK-9504).
+fn emptied_sections_diagnostic(headings: &[String]) -> Option<String> {
+    nab::content::html::emptied_sections_warning(headings)
+        .map(|warning| format!("{warning}\nThe full page is in --raw-html."))
 }
 
 fn build_fetch_diagnostics(
@@ -1384,13 +1549,26 @@ async fn enrich_with_ocr(
 /// `tools/call kv_set` request over its stdio.  Silently no-ops when
 /// `hebb-mcp` is not installed.  All errors are logged as `debug`.
 async fn save_to_hebb(url: &str, markdown: &str, html: &str) {
+    // The save runs before output is printed, so a stuck `hebb-mcp` would
+    // stall the fetch (MIK-8234). A normal exchange takes well under 1 s.
+    const HEBB_SAVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     if !hebb_is_available() {
         return;
     }
     let key = url_key(url);
     let title = extract_title(html).unwrap_or_default();
-    if let Err(e) = hebb_kv_set_oneshot("urls", &key, url, &title, markdown).await {
-        tracing::debug!("hebb kv_set skipped: {e}");
+    match tokio::time::timeout(
+        HEBB_SAVE_TIMEOUT,
+        hebb_kv_set_oneshot("urls", &key, url, &title, markdown),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::debug!("hebb kv_set skipped: {e}"),
+        Err(_) => tracing::debug!(
+            "hebb kv_set skipped: no answer within {} s",
+            HEBB_SAVE_TIMEOUT.as_secs()
+        ),
     }
 }
 
@@ -1432,6 +1610,8 @@ async fn hebb_kv_set_oneshot(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // A timed-out save drops this future; do not leave hebb-mcp behind.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| anyhow::anyhow!("spawn hebb-mcp: {e}"))?;
 
@@ -1480,12 +1660,9 @@ async fn hebb_kv_set_oneshot(
     stdin.flush().await?;
     drop(stdin);
 
-    // Read kv_set response (best-effort; don't block indefinitely).
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let mut resp_line = String::new();
-        let _ = reader.read_line(&mut resp_line).await;
-    })
-    .await;
+    // Read kv_set response (best-effort; the caller bounds the whole exchange).
+    let mut resp_line = String::new();
+    let _ = reader.read_line(&mut resp_line).await;
 
     let _ = child.kill().await;
     Ok(())
@@ -1575,7 +1752,18 @@ pub(super) use super::non_empty;
 
 #[cfg(test)]
 mod tests {
-    use super::{TOR_PROXY_URL, build_client, build_fetch_diagnostics};
+    use super::{
+        TOR_PROXY_URL, build_client, build_fetch_diagnostics, emptied_sections_diagnostic,
+    };
+
+    #[test]
+    fn emptied_sections_diagnostic_names_the_raw_html_flag() {
+        assert_eq!(emptied_sections_diagnostic(&[]), None);
+        let line =
+            emptied_sections_diagnostic(&["Get started".to_string()]).expect("a diagnostic line");
+        assert!(line.contains("\"Get started\""), "{line}");
+        assert!(line.ends_with("The full page is in --raw-html."), "{line}");
+    }
 
     #[test]
     fn build_fetch_diagnostics_for_bot_challenge_mentions_cookies() {

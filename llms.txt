@@ -1,6 +1,6 @@
 # nab
 
-> Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 compliant. Rust.
+> Token-optimized web fetcher + multilingual ASR + URL watcher. MCP 2025-11-25 and 2026-07-28 (partial: a call that does not wait). Rust.
 
 nab is a single Rust binary that fetches any URL as clean markdown (with real browser cookies and anti-bot evasion), transcribes audio/video with on-device multilingual ASR, and watches URLs for changes. Everything runs locally. No API keys required. Output is shaped for LLM context windows.
 

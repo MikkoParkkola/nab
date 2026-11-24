@@ -28,7 +28,10 @@ pub mod fetch_yara;
 pub mod ingestion_guard;
 pub mod yara_engine;
 
-pub use fetch_yara::{guard_fetch_output, guard_fetch_output_with_config};
+pub use fetch_yara::{
+    guard_fetch_bytes, guard_fetch_output, guard_fetch_output_with_config,
+    guard_fetch_output_with_notice,
+};
 pub use ingestion_guard::{
     DetectionReport, DirectiveKind, IngestionGuardError, IngestionPolicy, Sample, Severity, detect,
     enforce_policy, sanitize, sanitize_with_env_policy, sanitize_with_policy,

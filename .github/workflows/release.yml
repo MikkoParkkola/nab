@@ -56,12 +56,35 @@ jobs:
             exit 1
           fi
           echo "server.json OK: matches Cargo.toml $ver"
+          # The MCP registry rejects a description over 100 characters (422 on
+          # body.description), and that publish runs last, after crates.io.
+          # Checking here fails the tag before anything irreversible happens.
+          desc_len="$(jq -r '.description | length' server.json)"
+          if [ "$desc_len" -gt 100 ]; then
+            echo "::error::server.json description is $desc_len characters; the MCP registry allows at most 100."
+            exit 1
+          fi
+          # The registry proves crate ownership by finding this marker in the
+          # README as crates.io renders it, which drops HTML comments and cannot
+          # change after publish, so the marker must be visible text. An unclosed
+          # comment runs to the end of the file, and like the registry's matcher
+          # the name must not continue with a server-name character.
+          mcp_name="$(jq -r '.name' server.json)"
+          if ! MCP_NAME="$mcp_name" perl -0777 -e '$_ = <> // ""; s/<!--.*?(?:-->|\z)//gs; exit(/mcp-name: \Q$ENV{MCP_NAME}\E(?![A-Za-z0-9._\/-])/ ? 0 : 1)' README.md; then
+            echo "::error::README.md lacks a visible 'mcp-name: $mcp_name' line (not inside an HTML comment); the MCP registry refuses the crate without it."
+            exit 1
+          fi
       - name: Scan Cargo dependencies against OSV
-        uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+        uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
         with:
+          # third_party/ holds vendored crates wired in through
+          # [patch.crates-io]; cargo resolves them from the root Cargo.lock and
+          # never reads their own lockfiles, so scanning those reports
+          # packages nab does not build (#358).
           scan-args: |-
             --config=.github/osv-scanner.toml
             --recursive
+            --experimental-exclude=third_party
             ./
 
   test:
@@ -70,12 +93,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-latest]
+        os: [macos-15, ubuntu-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: test-${{ matrix.os }}
       - name: Run tests
@@ -91,11 +114,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             suffix: ''
             packages: ''
-          - os: macos-14
+          - os: macos-15
             target: x86_64-apple-darwin
             suffix: ''
             packages: ''
@@ -133,7 +156,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-${{ matrix.target }}
 
@@ -180,7 +203,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download all artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
 
@@ -198,7 +221,7 @@ jobs:
           cat checksums-sha256.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           generate_release_notes: true
           files: |
@@ -216,7 +239,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: publish
 

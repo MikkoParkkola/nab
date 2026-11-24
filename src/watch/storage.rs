@@ -120,8 +120,8 @@ fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::watch::types::WatchOptions;
-    use chrono::Utc;
     use tempfile::TempDir;
+    use time::OffsetDateTime;
 
     fn tmp() -> TempDir {
         tempfile::tempdir().expect("tmp dir")
@@ -133,7 +133,7 @@ mod tests {
             url: url.into(),
             selector: None,
             interval_secs: 3600,
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
             last_check_at: None,
             last_change_at: None,
             last_etag: None,
@@ -206,7 +206,7 @@ mod tests {
         let mut snaps: Vec<WatchSnapshot> = (0..5u64)
             .map(|i| WatchSnapshot {
                 sha256: format!("hash{i}"),
-                captured_at: chrono::DateTime::from_timestamp(i as i64, 0).unwrap(),
+                captured_at: OffsetDateTime::from_unix_timestamp(i as i64).unwrap(),
                 size: 100,
             })
             .collect();

@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.MikkoParkkola/nab",
   "title": "nab",
-  "description": "Token-optimized HTTP client for LLMs — fetches any URL as clean markdown. MCP server with fetch, login, watch, and fingerprint tools.",
-  "version": "0.12.4",
+  "description": "Token-optimized HTTP client for LLMs: fetches any URL as clean markdown. CLI and MCP server.",
+  "version": "0.13.3",
   "repository": {
     "url": "https://github.com/MikkoParkkola/nab",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "cargo",
       "registryBaseUrl": "https://crates.io",
       "identifier": "nab",
-      "version": "0.12.4",
+      "version": "0.13.3",
       "transport": {
         "type": "stdio"
       },

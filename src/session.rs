@@ -763,7 +763,7 @@ mod tests {
     async fn get_or_create_creates_new_session() {
         let store = SessionStore::new();
         let entry = store.get_or_create("test", None, None).await.unwrap();
-        assert!(!entry.profile.user_agent.is_empty());
+        assert_ne!(entry.profile.user_agent, "");
     }
 
     #[tokio::test]
@@ -1012,14 +1012,14 @@ mod tests {
     #[test]
     fn build_session_entry_without_seed_cookies_succeeds() {
         let entry = build_session_entry(None, None).unwrap();
-        assert!(!entry.profile.user_agent.is_empty());
+        assert_ne!(entry.profile.user_agent, "");
     }
 
     #[test]
     fn build_session_entry_with_seed_cookies_succeeds() {
         let entry =
             build_session_entry(Some("sid=abc; token=xyz"), Some("https://example.com/")).unwrap();
-        assert!(!entry.profile.user_agent.is_empty());
+        assert_ne!(entry.profile.user_agent, "");
         // Jar should have content for the seeded domain.
         let url: url::Url = "https://example.com/".parse().unwrap();
         assert!(entry.jar.cookies(&url).is_some());
@@ -1082,7 +1082,7 @@ mod tests {
             decrypted.profile.accept_language,
             payload.profile.accept_language
         );
-        assert!(decrypted.cookies.is_empty());
+        assert_eq!(decrypted.cookies, [] as [cookie_store::Cookie<'_>; 0]);
         assert_eq!(envelope.cipher, SESSION_CIPHER);
     }
 

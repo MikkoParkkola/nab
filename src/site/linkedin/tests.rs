@@ -400,7 +400,7 @@ fn parse_voyager_activity_empty_feed() {
     let md = parse_voyager_activity(&activity);
 
     // THEN: empty string, no separator
-    assert!(md.trim().is_empty());
+    assert_eq!(md.trim(), "");
 }
 
 // ── HTML Parser (impersonate feature) ───────────────────────────────────────

@@ -240,7 +240,7 @@ mod tests {
         // THEN
         assert_eq!(manifest.name, "Shop");
         assert_eq!(manifest.description, "Buy things");
-        assert!(manifest.tools.is_empty());
+        assert_eq!(manifest.tools, [] as [crate::webmcp::McpTool; 0]);
         assert!(manifest.server_url.is_none());
     }
 
@@ -306,7 +306,7 @@ mod tests {
         // THEN: all defaults apply
         assert_eq!(manifest.name, "");
         assert_eq!(manifest.description, "");
-        assert!(manifest.tools.is_empty());
+        assert_eq!(manifest.tools, [] as [crate::webmcp::McpTool; 0]);
         assert!(manifest.server_url.is_none());
     }
 

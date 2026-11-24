@@ -587,7 +587,7 @@ mod tests {
     fn cookies_for_host_empty_map_yields_no_cookies() {
         let flat = std::collections::HashMap::new();
         let cookies = cookies_for_host("https://x.com/i/article/1", &flat);
-        assert!(cookies.is_empty());
+        assert_eq!(cookies, [] as [crate::browser::Cookie; 0]);
     }
 
     #[cfg(feature = "browser")]

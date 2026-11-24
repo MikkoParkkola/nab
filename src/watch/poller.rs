@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use chrono::Utc;
 use reqwest::StatusCode;
+use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
@@ -171,7 +171,7 @@ fn handle_fetch_error(
     storage_dir: &std::path::Path,
 ) -> PollResult {
     watch.consecutive_errors += 1;
-    watch.last_check_at = Some(Utc::now());
+    watch.last_check_at = Some(OffsetDateTime::now_utc());
 
     if watch.consecutive_errors >= MUTE_AFTER_ERRORS {
         warn!(
@@ -200,7 +200,7 @@ fn handle_fetch_error(
 fn handle_not_modified(mut watch: Watch, storage_dir: &std::path::Path) -> PollResult {
     info!(id = %watch.id, url = %watch.url, "304 Not Modified");
     watch.consecutive_errors = 0;
-    watch.last_check_at = Some(Utc::now());
+    watch.last_check_at = Some(OffsetDateTime::now_utc());
     let _ = save_watch(storage_dir, &watch);
 
     let event = WatchEvent::Checked {
@@ -218,7 +218,7 @@ fn handle_backoff(mut watch: Watch, status: u16, storage_dir: &std::path::Path) 
     let old_interval = watch.interval_secs;
     let new_interval = (old_interval * 2).clamp(MIN_INTERVAL_SECS, MAX_BACKOFF_SECS);
     watch.interval_secs = new_interval;
-    watch.last_check_at = Some(Utc::now());
+    watch.last_check_at = Some(OffsetDateTime::now_utc());
 
     warn!(
         id = %watch.id,
@@ -249,7 +249,7 @@ fn handle_body(
     storage_dir: &std::path::Path,
     snapshot_dir: &std::path::Path,
 ) -> PollResult {
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     watch.consecutive_errors = 0;
     watch.last_check_at = Some(now);
     watch.last_etag = etag;
@@ -335,8 +335,8 @@ fn build_watch_client() -> reqwest::Client {
 mod tests {
     use super::*;
     use crate::watch::types::WatchOptions;
-    use chrono::Utc;
     use tempfile::TempDir;
+    use time::OffsetDateTime;
 
     fn tmp_watch(id: &str, url: &str) -> (Watch, TempDir, TempDir) {
         let storage = tempfile::tempdir().unwrap();
@@ -346,7 +346,7 @@ mod tests {
             url: url.into(),
             selector: None,
             interval_secs: 3600,
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
             last_check_at: None,
             last_change_at: None,
             last_etag: None,

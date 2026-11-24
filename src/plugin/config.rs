@@ -304,7 +304,7 @@ selector = "article.post-content"
         let p = &file.plugins[0];
         assert_eq!(p.plugin_type, PluginType::Css);
         assert_eq!(p.content.selector, "article.post-content");
-        assert!(p.content.remove.is_empty());
+        assert_eq!(p.content.remove, [] as [std::string::String; 0]);
         assert!(p.metadata.title.is_none());
     }
 

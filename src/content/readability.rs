@@ -72,6 +72,23 @@ pub struct Article {
     pub excerpt: String,
     /// Text-only version of the content.
     pub text_content: String,
+    /// Which extractor produced this article.
+    pub source: ArticleSource,
+}
+
+/// Which extractor produced an [`Article`].
+///
+/// Site-specific extractors are trusted as-is; a generic pick can be a wrong
+/// block (a teaser, a bio, image credits), so the HTML selection step checks
+/// it against the size of the whole page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArticleSource {
+    /// `extract_substack_article`.
+    Substack,
+    /// `extract_wordpress_article`.
+    WordPress,
+    /// The readability crate, semantic `<article>`/`<main>` or text-density extraction.
+    Generic,
 }
 
 /// Extract article content using readability algorithm.
@@ -126,7 +143,7 @@ pub fn extract_article(html: &str, url: &str) -> Option<Article> {
 /// Convert an extracted article into compact markdown.
 #[must_use]
 pub fn article_to_markdown(article: &Article) -> String {
-    let md = html2md::parse_html(&article.content_html);
+    let md = crate::content::html::html2md_parse(&article.content_html);
     let lines: Vec<&str> = md
         .lines()
         .map(str::trim)
@@ -137,11 +154,38 @@ pub fn article_to_markdown(article: &Article) -> String {
     // html2md sometimes truncates list-heavy content (<ol>/<li>). If the
     // article's plain text is significantly longer than the markdown output,
     // fall back to the plain text which preserves all content from the DOM.
-    if article.text_content.len() > md_result.len() + 100 {
-        plain_text_to_markdown_blocks(&article.text_content)
+    // Visible text only: `text_content` also holds script and style text,
+    // which the converter drops on purpose (MIK-9752).
+    let text = visible_text(&article.content_html);
+    if text.len() > md_result.len() + 100 {
+        plain_text_to_markdown_blocks(&text)
     } else {
         md_result
     }
+}
+
+/// The text a reader sees in `html`: every text node outside `<script>` and
+/// `<style>`, separated by spaces.
+fn visible_text(html: &str) -> String {
+    let fragment = Html::parse_fragment(html);
+    let mut out = String::new();
+    for node in fragment.root_element().descendants() {
+        let Some(text) = node.value().as_text() else {
+            continue;
+        };
+        let hidden = node.ancestors().any(|a| {
+            a.value()
+                .as_element()
+                .is_some_and(|e| matches!(e.name(), "script" | "style"))
+        });
+        if !hidden {
+            out.push_str(text);
+            out.push(' ');
+        }
+    }
+    // Source indentation is not text: collapse it, so it cannot make the
+    // plain text look longer than the markdown.
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn plain_text_to_markdown_blocks(text: &str) -> String {
@@ -211,6 +255,7 @@ fn extract_substack_article(html: &str) -> Option<Article> {
         content_html,
         excerpt,
         text_content,
+        source: ArticleSource::Substack,
     })
 }
 
@@ -286,6 +331,7 @@ fn extract_wordpress_article(html: &str) -> Option<Article> {
         content_html,
         excerpt,
         text_content,
+        source: ArticleSource::WordPress,
     })
 }
 
@@ -402,6 +448,7 @@ fn extract_with_readability_crate(html: &str, url: &str) -> Option<Article> {
         content_html: product.content,
         excerpt,
         text_content,
+        source: ArticleSource::Generic,
     })
 }
 
@@ -483,6 +530,7 @@ fn extract_from_element(
         content_html,
         excerpt,
         text_content,
+        source: ArticleSource::Generic,
     })
 }
 
@@ -531,6 +579,7 @@ fn find_main_content_by_density(document: &Html) -> Option<Article> {
             content_html: element.html(),
             excerpt,
             text_content,
+            source: ArticleSource::Generic,
         });
     }
 
@@ -611,6 +660,54 @@ mod tests {
     static DIV_SELECTOR: LazyLock<Selector> =
         LazyLock::new(|| Selector::parse("div").expect("static div selector"));
 
+    /// MIK-9752 review: indentation between elements is not text, so it
+    /// cannot force the plain-text fallback that drops headings and links.
+    #[test]
+    fn indentation_does_not_force_the_plain_text_fallback() {
+        let indent = format!("\n{}", " ".repeat(200));
+        let article = Article {
+            title: "T".into(),
+            content_html: format!(
+                "<article>{indent}<h2>Section Heading</h2>{indent}<p>Read <a href=\"https://example.com/x\">the source</a>.</p>{indent}</article>"
+            ),
+            excerpt: String::new(),
+            text_content: String::new(),
+            source: ArticleSource::Generic,
+        };
+
+        let markdown = article_to_markdown(&article);
+
+        assert!(markdown.contains("Section Heading"), "{markdown}");
+        assert!(
+            markdown.contains("[the source](https://example.com/x)"),
+            "{markdown}"
+        );
+    }
+
+    /// MIK-9752: the plain-text fallback compares and uses visible text only,
+    /// so a JSON-LD script inside the article never reaches the reader.
+    #[test]
+    fn article_to_markdown_never_falls_back_to_script_text() {
+        let json = format!(
+            r#"{{"@context":"https://schema.org","@type":"NewsArticle","description":"{}"}}"#,
+            "padding ".repeat(60)
+        );
+        let article = Article {
+            title: "T".into(),
+            content_html: format!(
+                r#"<article><p>Short visible body.</p><script type="application/ld+json">{json}</script></article>"#
+            ),
+            excerpt: String::new(),
+            text_content: format!("Short visible body. {json}"),
+            source: ArticleSource::Generic,
+        };
+
+        let markdown = article_to_markdown(&article);
+
+        assert!(markdown.contains("Short visible body."), "{markdown}");
+        assert!(!markdown.contains("@context"), "{markdown}");
+    }
+
     #[test]
     fn extracts_article_with_semantic_html() {
         let html = r"
@@ -642,6 +739,7 @@ mod tests {
         assert!(article.text_content.contains("main article content"));
         assert!(!article.text_content.contains("Site Navigation"));
         assert!(!article.text_content.contains("Copyright"));
+        assert_eq!(article.source, ArticleSource::Generic);
     }
 
     #[test]
@@ -663,7 +761,7 @@ mod tests {
 
         let article = extract_article(html, "https://example.com/page").unwrap();
         // Title may come from various sources - just verify content extraction works
-        assert!(!article.title.is_empty());
+        assert_ne!(article.title, "");
         assert!(article.text_content.contains("main content area"));
         assert!(!article.text_content.contains("Sidebar"));
     }
@@ -763,7 +861,7 @@ mod tests {
         ";
 
         let article = extract_article(html, "https://example.com/article").unwrap();
-        assert!(!article.excerpt.is_empty());
+        assert_ne!(article.excerpt, "");
         assert!(article.excerpt.len() <= 200);
         assert!(article.excerpt.starts_with("This is a long article"));
     }
@@ -915,6 +1013,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(article.title, "Actual Substack Post Title");
+        assert_eq!(article.source, ArticleSource::Substack);
         assert!(article.text_content.contains(body_1));
         assert!(article.text_content.contains(body_2));
         assert!(article.text_content.contains(footnote));
@@ -978,6 +1077,7 @@ mod tests {
 
         let article =
             extract_article(&html, "https://developer.nvidia.com/blog/modelexpress/").unwrap();
+        assert_eq!(article.source, ArticleSource::WordPress);
         assert!(
             article.text_content.contains(NEEDLE),
             "missing authored sentence; text: {}",

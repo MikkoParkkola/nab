@@ -416,7 +416,7 @@ mod tests {
         let a = &rows[0];
         assert_eq!(a.name, "sess");
         assert_eq!(a.value, "plain");
-        assert!(a.encrypted_bytes.is_empty());
+        assert_eq!(a.encrypted_bytes, [] as [u8; 0]);
         assert_eq!(a.host_key, ".github.com");
         assert_eq!(a.path, "/");
         assert_eq!(a.expires_utc, 13_437_022_686_718_487);
@@ -426,7 +426,7 @@ mod tests {
 
         let b = &rows[1];
         assert_eq!(b.name, "tok");
-        assert!(b.value.is_empty());
+        assert_eq!(b.value, "");
         assert_eq!(b.encrypted_bytes, hex::decode("763130").unwrap());
         assert_eq!(b.host_key, "api.github.com");
         assert_eq!(b.path, "/v3");
@@ -494,6 +494,9 @@ mod tests {
             is_secure: true,
             samesite: 1,
         }];
-        assert!(decrypt_rich_rows(rows, None, false).is_empty());
+        assert_eq!(
+            decrypt_rich_rows(rows, None, false),
+            [] as [crate::auth::cookies::storage_state::PlaywrightCookie; 0]
+        );
     }
 }

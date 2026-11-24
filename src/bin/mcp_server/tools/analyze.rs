@@ -120,7 +120,10 @@ impl AnalyzeTool {
     ///
     /// `runtime` is passed through to the active-reading sampler when
     /// `self.active_reading` is `true`. It is unused otherwise.
-    pub async fn run(&self, runtime: &Arc<dyn McpServer>) -> Result<CallToolResult, CallToolError> {
+    pub async fn run(
+        &self,
+        runtime: Option<&Arc<dyn McpServer>>,
+    ) -> Result<CallToolResult, CallToolError> {
         let input_path = PathBuf::from(&self.input);
 
         tracing::info!(
@@ -139,8 +142,9 @@ impl AnalyzeTool {
             )));
         }
 
-        // ── Extract audio from video if needed ─────────────────────────────────
-        let audio_path = extract_audio_if_needed(&input_path).await?;
+        // The temp wav, when there is one, drops before this function returns.
+        // That includes the active-reading refusal.
+        let prepared = prepare_audio(&input_path).await?;
 
         // ── Build transcription options ────────────────────────────────────────
         let opts = TranscribeOptions {
@@ -169,7 +173,7 @@ impl AnalyzeTool {
         }
 
         let mut result = backend
-            .transcribe(&audio_path, opts)
+            .transcribe(&prepared.path, opts)
             .await
             .map_err(|e| CallToolError::from_message(format!("transcription failed: {e}")))?;
 
@@ -199,12 +203,7 @@ impl AnalyzeTool {
 
         // ── Active reading pass ────────────────────────────────────────────────
         if self.active_reading {
-            apply_active_reading(&mut result, runtime).await;
-        }
-
-        // ── Clean up temp audio file ───────────────────────────────────────────
-        if audio_path != input_path {
-            let _ = tokio::fs::remove_file(&audio_path).await;
+            apply_active_reading(&mut result, runtime).await?;
         }
 
         // ── Serialize and return ───────────────────────────────────────────────
@@ -225,29 +224,42 @@ impl AnalyzeTool {
 
 /// Run the active-reading pass on `result`.
 ///
-/// Failures are logged as warnings; the transcript is returned unmodified on any
-/// error so the caller always has a usable (passive) result.
+/// Failures of the send itself are logged as warnings; the transcript is returned
+/// unmodified so the caller still has the passive result. A refusal leaves this
+/// helper before any `sampling/createMessage`.
 async fn apply_active_reading(
     result: &mut nab::analyze::TranscriptionResult,
-    runtime: &Arc<dyn McpServer>,
-) {
+    runtime: Option<&Arc<dyn McpServer>>,
+) -> Result<(), CallToolError> {
     use crate::active_reading_mcp::{McpLlmSampler, NabUrlFetcher};
     use nab::analyze::{ActiveReader, ActiveReadingConfig};
 
-    if !crate::sampling::is_supported(runtime) {
+    if !crate::ask::sampling_would(runtime) {
         tracing::warn!(
             "active reading requested but the MCP client does not support sampling; \
              falling back to passive transcription"
         );
-        return;
+        return Ok(());
     }
+    // Empty segments never reach the sampler. Refusing them fails a call that
+    // can finish. A non-empty transcript still refuses before `process`: a
+    // sampling error inside `process` is swallowed into a successful transcript.
+    if result.segments.is_empty() {
+        if crate::ask::is_refuse() {
+            return Ok(());
+        }
+    } else if crate::ask::is_refuse() {
+        return Err(CallToolError::new(crate::ask::WaitRefusal));
+    }
+    let runtime = runtime
+        .ok_or_else(|| CallToolError::from_message("MCP runtime required for active reading"))?;
 
     let sampler = McpLlmSampler::new(runtime.clone());
     let client = match nab::AcceleratedClient::new() {
         Ok(c) => Arc::new(c),
         Err(e) => {
             tracing::warn!("active reading: could not create HTTP client: {e}");
-            return;
+            return Ok(());
         }
     };
     let fetcher = NabUrlFetcher::new(client);
@@ -268,6 +280,7 @@ async fn apply_active_reading(
             tracing::warn!("active reading failed: {e}; returning passive transcript");
         }
     }
+    Ok(())
 }
 
 // ─── hebb voice-match helper ─────────────────────────────────────────────────
@@ -350,30 +363,40 @@ fn is_audio_file(path: &std::path::Path) -> bool {
         })
 }
 
-/// Extract audio to a temporary WAV file if the input is a video.
-///
-/// Returns the original path unchanged for pure audio files, or a new
-/// temporary path `{tmpdir}/nab_analyze_{pid}.wav` for video inputs.
-/// Callers are responsible for removing the temp file after use.
-async fn extract_audio_if_needed(input: &std::path::Path) -> Result<PathBuf, CallToolError> {
+struct PreparedAudio {
+    path: PathBuf,
+    /// Present only when `path` is an extracted wav. Drop removes that file.
+    _temp: Option<nab::analyze::TempWav>,
+}
+
+/// Extract audio when the input is a video. An audio file is returned as itself.
+async fn prepare_audio(input: &std::path::Path) -> Result<PreparedAudio, CallToolError> {
     if is_audio_file(input) {
-        return Ok(input.to_path_buf());
+        return Ok(PreparedAudio {
+            path: input.to_path_buf(),
+            _temp: None,
+        });
     }
 
-    let tmp_path = std::env::temp_dir().join(format!("nab_analyze_{}.wav", std::process::id()));
+    let temp = nab::analyze::TempWav::create()
+        .map_err(|error| CallToolError::from_message(format!("temp audio: {error}")))?;
 
     tracing::info!(
         video = %input.display(),
-        output = %tmp_path.display(),
+        output = %temp.path().display(),
         "extracting audio from video"
     );
 
     AudioExtractor::new()
-        .extract(input, &tmp_path)
+        .extract(input, temp.path())
         .await
         .map_err(|e| CallToolError::from_message(format!("audio extraction failed: {e}")))?;
 
-    Ok(tmp_path)
+    let path = temp.path().to_path_buf();
+    Ok(PreparedAudio {
+        path,
+        _temp: Some(temp),
+    })
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
@@ -403,6 +426,50 @@ mod tests {
             end: 1.0,
             embedding,
         }
+    }
+
+    fn bare_transcript(segments: Vec<AsrTranscriptSegment>) -> nab::analyze::TranscriptionResult {
+        nab::analyze::TranscriptionResult {
+            segments,
+            language: "en".to_string(),
+            duration_seconds: 0.0,
+            model: "none".to_string(),
+            backend: "none".to_string(),
+            rtfx: 0.0,
+            processing_time_seconds: 0.0,
+            speakers: None,
+            footnotes: None,
+            active_reading: None,
+        }
+    }
+
+    /// An empty transcript never reaches the sampler. Refusing it would turn a
+    /// call that can finish into a JSON-RPC error.
+    #[tokio::test]
+    async fn refuse_keeps_an_empty_transcript() {
+        let mut result = bare_transcript(vec![]);
+        let outcome = crate::ask::scope(
+            crate::ask::Ask::Refuse { sampling: true },
+            apply_active_reading(&mut result, None),
+        )
+        .await;
+        assert!(outcome.is_ok(), "empty segments are served: {outcome:?}");
+    }
+
+    /// A transcript with segments would sample. Refuse returns before that send.
+    #[tokio::test]
+    async fn refuse_stops_before_sampling_when_segments_exist() {
+        let mut result = bare_transcript(vec![make_segment(None)]);
+        let outcome = crate::ask::scope(
+            crate::ask::Ask::Refuse { sampling: true },
+            apply_active_reading(&mut result, None),
+        )
+        .await;
+        let error = outcome.expect_err("segments would sample");
+        assert!(
+            error.to_string().contains("would wait"),
+            "refusal, not a later error: {error}"
+        );
     }
 
     // ── apply_speaker_names ──────────────────────────────────────────────────

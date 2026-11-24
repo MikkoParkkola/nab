@@ -30,9 +30,11 @@ use crate::tools::get_client;
 
 /// Ask the user to provide a username and password when no stored credential exists.
 pub(crate) async fn elicit_credentials(
-    runtime: &Arc<dyn McpServer>,
+    runtime: Option<&Arc<dyn McpServer>>,
     url: &str,
 ) -> Result<(String, String), CallToolError> {
+    crate::ask::refuse_wait()?;
+    let runtime = runtime.ok_or_else(|| CallToolError::from_message("MCP runtime required"))?;
     let mut properties = BTreeMap::new();
     properties.insert(
         "username".into(),
@@ -87,10 +89,12 @@ pub(crate) async fn elicit_credentials(
 
 /// Ask the user to choose one credential when multiple match the domain.
 pub(crate) async fn elicit_credential_choice(
-    runtime: &Arc<dyn McpServer>,
+    runtime: Option<&Arc<dyn McpServer>>,
     url: &str,
     credentials: &[nab::auth::Credential],
 ) -> Result<String, CallToolError> {
+    crate::ask::refuse_wait()?;
+    let runtime = runtime.ok_or_else(|| CallToolError::from_message("MCP runtime required"))?;
     let titles: Vec<String> = credentials.iter().map(|c| c.title.clone()).collect();
     let title_labels: Vec<String> = titles
         .iter()
@@ -294,10 +298,12 @@ pub(crate) fn oauth_service_name(url: &str) -> String {
 /// Returns the elicitation result action so the caller can branch on
 /// accept/cancel.
 pub(crate) async fn elicit_oauth_url(
-    runtime: &Arc<dyn McpServer>,
+    runtime: Option<&Arc<dyn McpServer>>,
     oauth_url: &str,
     service_name: &str,
 ) -> Result<ElicitResultAction, CallToolError> {
+    crate::ask::refuse_wait()?;
+    let runtime = runtime.ok_or_else(|| CallToolError::from_message("MCP runtime required"))?;
     // elicitation_id must be unique per request; use a short random suffix.
     let elicitation_id = format!(
         "oauth-{}-{}",
@@ -340,7 +346,7 @@ pub(crate) async fn elicit_oauth_url(
 pub(crate) async fn resolve_login_cookies(
     url: &str,
     explicit_cookies: Option<&str>,
-    runtime: &Arc<dyn McpServer>,
+    runtime: Option<&Arc<dyn McpServer>>,
 ) -> Result<Option<String>, CallToolError> {
     if let Some(cookie) = explicit_cookies {
         return Ok(Some(cookie.to_string()));
@@ -380,9 +386,11 @@ pub(crate) async fn resolve_login_cookies(
 /// Uses `TitledMultiSelectEnumSchema` from the 2025-11-25 protocol spec.
 /// Returns the selected browser names (e.g. `["brave", "chrome"]`).
 pub(crate) async fn elicit_cookie_sources(
-    runtime: &Arc<dyn McpServer>,
+    runtime: Option<&Arc<dyn McpServer>>,
     url: &str,
 ) -> Result<Vec<String>, CallToolError> {
+    crate::ask::refuse_wait()?;
+    let runtime = runtime.ok_or_else(|| CallToolError::from_message("MCP runtime required"))?;
     let options: &[(&str, &str)] = &[
         ("brave", "Brave Browser"),
         ("chrome", "Google Chrome"),

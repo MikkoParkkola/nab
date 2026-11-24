@@ -37,6 +37,67 @@ pub fn guard_fetch_output_with_config(
     Ok(guarded.body)
 }
 
+/// Like [`guard_fetch_output`], also returning a one-line notice for stderr
+/// when the screen redacted part of the body (bytes received and kept, rules).
+///
+/// # Errors
+///
+/// Returns an error when scanning fails or the configured policy refuses
+/// a matched body.
+pub fn guard_fetch_output_with_notice(
+    body: &str,
+    surface: &str,
+    url: &str,
+) -> Result<(String, Option<String>)> {
+    let guarded =
+        crate::security::yara_engine::guard_fetch_body(body, &FetchGuardConfig::from_env())?;
+    audit_guard_result(&guarded, surface, url);
+    let notice = crate::security::yara_engine::sanitize_notice(body.len(), &guarded);
+    Ok((guarded.body, notice))
+}
+
+/// Scan bytes that are about to be written to a file unchanged.
+///
+/// Bytes cannot be redacted the way text is, so any signature match refuses
+/// the save under both the redact and the refuse policy. `NAB_YARA_BYPASS=1`
+/// bypasses the scan with the same audit warning as text.
+///
+/// # Errors
+///
+/// Returns an error naming the matched rules, or when scanning fails.
+pub fn guard_fetch_bytes(bytes: &[u8], surface: &str, url: &str) -> Result<()> {
+    let config = FetchGuardConfig::from_env();
+    if config.bypass {
+        tracing::warn!(
+            surface,
+            url,
+            "NAB_YARA_BYPASS=1 active; fetch-time YARA-X guard bypassed"
+        );
+        return Ok(());
+    }
+
+    let report = crate::security::yara_engine::YaraEngine::default().scan(bytes)?;
+    if report.matches.is_empty() {
+        tracing::debug!(surface, url, "fetch-time YARA-X byte scan clean");
+        return Ok(());
+    }
+
+    let mut rules: Vec<&str> = report.matches.iter().map(|m| m.rule_id.as_str()).collect();
+    rules.sort_unstable();
+    rules.dedup();
+    let rules = rules.join(",");
+    tracing::warn!(
+        surface,
+        url,
+        rules,
+        match_count = report.matches.len(),
+        "fetch-time YARA-X guard refused a file save"
+    );
+    anyhow::bail!(
+        "not saved: the response matched YARA-X signatures ({rules}), and a file cannot be redacted"
+    )
+}
+
 fn audit_guard_result(guarded: &GuardedBody, surface: &str, url: &str) {
     if guarded.bypassed {
         tracing::warn!(

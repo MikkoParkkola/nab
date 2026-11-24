@@ -1,0 +1,63 @@
+use crate::{
+    mcp_client::client_runtime_core::ClientCoreInternalHandler, schema::*, McpClientHandler,
+    ToMcpClientHandlerCore,
+};
+use async_trait::async_trait;
+
+use crate::mcp_traits::McpClient;
+
+/// Defines the `ClientHandlerCore` trait for handling Model Context Protocol (MCP) client operations.
+/// Unlike `ClientHandler`, this trait offers no default implementations, providing full control over MCP message handling
+/// while ensures type-safe processing of the messages through three distinct handlers for requests, notifications, and errors.
+#[async_trait]
+pub trait ClientHandlerCore: Send + Sync + 'static {
+    /// Asynchronously handles an incoming request from the server.
+    ///
+    /// # Parameters
+    /// - `request` – The request data received from the MCP server.
+    ///
+    /// # Returns
+    /// A `ResultFromClient`, which represents the client's response to the server's request.
+    async fn handle_request(
+        &self,
+        request: ServerJsonrpcRequest,
+        runtime: &dyn McpClient,
+    ) -> std::result::Result<ResultFromClient, RpcError>;
+
+    /// Asynchronously handles an incoming notification from the server.
+    ///
+    /// # Parameters
+    /// - `notification` – The notification data received from the MCP server.
+    async fn handle_notification(
+        &self,
+        notification: NotificationFromServer,
+        runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError>;
+
+    /// Asynchronously handles an error received from the server.
+    ///
+    /// # Parameters
+    /// - `error` – The error data received from the MCP server.
+    async fn handle_error(
+        &self,
+        error: &RpcError,
+        runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError>;
+
+    async fn handle_process_error(
+        &self,
+        error_message: String,
+        runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if !runtime.is_shut_down().await {
+            tracing::error!("Process error: {error_message}");
+        }
+        Ok(())
+    }
+}
+
+impl<T: ClientHandlerCore + 'static> ToMcpClientHandlerCore for T {
+    fn to_mcp_client_handler(self) -> Box<dyn McpClientHandler + 'static> {
+        Box::new(ClientCoreInternalHandler::new(Box::new(self)))
+    }
+}

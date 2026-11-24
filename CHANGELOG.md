@@ -7,6 +7,177 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `cargo audit` no longer ignores the three `zip` extraction advisories
+  (RUSTSEC-2026-0367, -0368, -0369): `zip` 9.3.0, the only version in the lock
+  file, already carries the fix, so the ignores muted nothing and would have
+  hidden a regression (#425, #432; thanks @zyl71).
+
+## [0.13.3] - 2026-11-22
+
+0.13.2 was tagged but never published: its release run failed on a timing test.
+0.13.3 ships the same fixes.
+
+### Fixed
+
+- The YARA scan-overhead test takes the median p95 of three passes after a
+  warm-up scan, so one stalled pass on a shared CI host no longer fails a
+  release; the 10 ms threshold is unchanged (#430).
+
+## [0.13.2] - 2026-11-21
+
+### Fixed
+
+- `nab fetch` no longer hangs after a successful response. The image OCR stage
+  has a 3-second budget for the whole page and keeps whatever text it has when
+  the budget runs out, with a warning naming the stage; the save to hebb memory
+  is capped at 5 seconds (#427).
+- Articles are no longer cut off at a heading whose anchor id contains a word
+  such as "vulnerabilities". Noise-section stripping matched those words inside
+  heading slugs and removed the heading and everything after it (#428).
+
+## [0.13.1] - 2026-11-20
+
+### Fixed
+
+- Markdown output writes images as Markdown (`![alt](src)`) instead of raw
+  `<img>` tags, and no longer carries inline script text such as a JSON-LD
+  object into the page text. A page whose article body yields nothing falls
+  back to its JSON-LD headline and description (the longest description wins)
+  when structured extraction is allowed (#419).
+- The fetch-time YARA-X screen keeps API documentation readable: a fenced code
+  example that passes a `$VARIABLE` secret to curl is kept, with a warning line
+  above its block, instead of being removed. A file upload, `$(cat …)` or
+  `env |` anywhere on the page, or any prompt-injection match, cancels the
+  exception. The Google notebook API docs page now loses no lines, against 8
+  before (#422).
+
+### Security
+
+- wasmtime, which runs the YARA-X engine, moves from 48.0.8 to 48.0.10 to clear
+  RUSTSEC-2026-0566 to RUSTSEC-2026-0573 (#421).
+
+## [0.13.0] - 2026-11-17
+
+0.12.7 was tagged but never published. Its release run was cancelled, then
+blocked by the dependency scan, so its changes ship here.
+
+### Added
+
+- `nab fetch` and the MCP fetch tool say when extraction kept a heading but
+  dropped everything under it, such as a link list readability scored as
+  navigation: `Extraction dropped the content under the heading "Get
+  started".` The MCP structured output lists those headings as
+  `emptied_sections` (#414).
+
+### Fixed
+
+- `nab fetch --raw-html` prints the page. Without `--body` it printed only
+  the status line, so the new dropped-content message's pointer to
+  `--raw-html` led nowhere.
+- A page with an app-wide state store (`window.__PRELOADED_STATE__`,
+  `__INITIAL_STATE__`, `__APOLLO_STATE__`, `__NUXT__` and similar) no longer
+  has its server-rendered content replaced by an arbitrary string from that
+  store. A Flipboard collection page now returns its article cards instead of
+  one keyword list; only `__NEXT_DATA__` is still trusted as page data (#413).
+- The fetch-time YARA-X screen no longer removes most of a page because a
+  rule's words appear far apart. The prompt-injection and exfiltration rules
+  now fire only when their parts sit within one command or paragraph (512 or
+  1,024 bytes), and only those lines are removed. A Flipboard collection page
+  that kept 19 KB of its raw HTML now keeps all 2.5 MB (#410).
+- curl, wget and DNS exfiltration rules match shell-shaped secrets
+  (`$API_TOKEN`, `@file` uploads, `$(cat …)`, `env |`) instead of bare words
+  such as `SECRET`, `token` or `-X POST`, so ordinary API documentation is
+  kept (#410).
+- On a line longer than 4,096 bytes, an OpenAI, GitHub or Slack key is now
+  removed with 256 bytes around it instead of the whole line; other secret and
+  injection matches still remove their line. A URL slug containing `sk-` is no
+  longer treated as an OpenAI key, and `nab fetch` says on stderr how much the
+  screen removed (#409).
+- Redaction stays fast with many matches on one line; a scan times out after
+  5 s plus 1 s per MB of body, which refuses the fetch (#410).
+- `nab fetch -o` saves binary responses byte for byte instead of placeholder
+  text or a lossy UTF-8 copy (#399).
+- Article extraction no longer replaces the article with a teaser, an author
+  bio or inline CSS (#398).
+
+### Changed
+
+- Replaced the unmaintained `chrono` with `time` (RUSTSEC-2026-0543). Saved
+  watch and browser-version files keep loading. chrono remains only behind
+  the optional `pdf` feature, which `pdfium-render` needs (#415).
+- Breaking for library users: the public timestamp fields of `Watch`,
+  `WatchSnapshot`, `BrowserVersions` and `LookupResult` are now
+  `time::OffsetDateTime`, and `ConversionResult` gains `emptied_sections`
+  (#414, #415).
+- Release macOS jobs run on macos-15; GitHub retired the macos-14 runner
+  (#412).
+- Rust toolchain image 1.100; dependency updates including yara-x 1.22.1,
+  tokio 1.54.1, scraper 0.29.0, zip 9.3.0 and toml 1.2.0.
+
+### Security
+
+- Bumped the lockfile's `rustix` from 1.1.5 to 1.1.6 (RUSTSEC-2026-0486).
+
+## [0.12.6] - 2026-10-24
+
+### Fixed
+
+- nab can be listed in the MCP Registry. The README now carries a visible
+  `mcp-name: io.github.MikkoParkkola/nab` line, which the registry looks for in
+  the README crates.io serves (#373).
+- The MCP Registry server description is under the registry's 100-character
+  limit (#372).
+- A release tag now fails before anything is published when the registry
+  description is too long or the README lacks a visible `mcp-name` line
+  (#372, #373).
+
+## [0.12.5] - 2026-10-23
+
+### Added
+
+- `nab-mcp` serves `tools/call` on MCP revision 2026-07-28 for every tool whose
+  call finishes without elicitation or sampling. A call that would need either
+  returns JSON-RPC error -32600 instead of sending a request back to the client.
+  This is in the GitHub release binaries and git builds; the crates.io package
+  is built without the vendored SDK patch and does not include it (#348).
+
+### Fixed
+
+- `nab fetch` no longer reports "Bot or browser challenge detected" on ordinary
+  pages that carry Cloudflare's passive bot-management script; the script counts
+  as a challenge only on HTTP 403 or 503. A Turnstile widget still counts on any
+  status.
+- A page whose embedded Schema.org JSON-LD holds only metadata (headline,
+  author, dates) no longer replaces the article text. When that JSON-LD carries
+  the article body, nab returns the body as readable text.
+- `nab analyze` removes its temporary audio file when analysis fails, not only
+  when it succeeds (#348).
+
+### Security
+
+- Bumped `rustls` to 0.23.46 (RUSTSEC-2026-0346 to 0349) (#356) and the
+  lockfile's `rustls-webpki`, `webpki-roots` and `webpki-root-certs`
+  (RUSTSEC-2026-0381 to 0383) (#369).
+- Moved the optional Wasmtime runtime to 48.0.7 and `yara-x` to 1.22
+  (RUSTSEC-2026-0353 to 0359, RUSTSEC-2026-0361 to 0364, RUSTSEC-2026-0378,
+  RUSTSEC-2026-0379).
+  `yara-x` 1.22 builds against the same Wasmtime 48 line, so nab now carries
+  one Wasmtime copy instead of two. Wasmtime stays on 48.x because 49 requires
+  Rust 1.96 and nab's minimum is 1.95 (#356, #369).
+- Bumped `ctutils` from 0.4.3 to 0.4.4 (RUSTSEC-2026-0385): mask generation and
+  `u128` comparisons in earlier releases could branch on secret values.
+
+### Changed
+
+- Upgraded `zip` to 9 (#354, #366).
+- `chromiumoxide` is built without its `rustls` and `zip8` features, which only
+  served its unused Chromium downloader, and no longer pulls zip 8 (#356).
+  RUSTSEC-2026-0367 to 0369 still match zip 2.4.2, a build dependency of the
+  optional `sherpa-onnx-sys` used only for an iOS archive nab does not build;
+  they stay as time-boxed exceptions in `.github/osv-scanner.toml`.
+
 ## [0.12.4] - 2026-10-02
 
 ### Added

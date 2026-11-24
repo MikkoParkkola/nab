@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
-use chrono::Utc;
+use time::OffsetDateTime;
 use tokio::sync::{RwLock, broadcast};
 use tracing::info;
 
@@ -133,7 +133,7 @@ impl WatchManager {
         let (etag, last_modified, snapshot) =
             initial_fetch(url, opts.selector.as_deref(), &opts.options).await?;
 
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let watch = Watch {
             id: id.clone(),
             url: url.to_owned(),
@@ -226,14 +226,12 @@ impl WatchManager {
              \n---\n\n{}",
             watch.id,
             watch.url,
-            watch.last_check_at.map_or_else(
-                || "never".into(),
-                |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-            ),
-            watch.last_change_at.map_or_else(
-                || "never".into(),
-                |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-            ),
+            watch
+                .last_check_at
+                .map_or_else(|| "never".into(), crate::util::format_utc_seconds),
+            watch
+                .last_change_at
+                .map_or_else(|| "never".into(), crate::util::format_utc_seconds),
             watch.interval_secs,
             watch
                 .selector
@@ -297,7 +295,8 @@ impl WatchManager {
 /// Generate an 8-hex-char watch id: `sha256(url + selector? + timestamp)[..8]`.
 fn generate_id(url: &str, selector: Option<&str>) -> WatchId {
     use sha2::{Digest, Sha256};
-    let ts = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    // i64, as before the chrono swap: the id hash takes these 8 bytes.
+    let ts = i64::try_from(OffsetDateTime::now_utc().unix_timestamp_nanos()).unwrap_or(0);
     let mut h = Sha256::new();
     h.update(url.as_bytes());
     if let Some(s) = selector {
@@ -351,7 +350,7 @@ async fn initial_fetch(
     let sha256 = diff::sha256_hex(content.as_bytes());
     let snap = WatchSnapshot {
         sha256,
-        captured_at: Utc::now(),
+        captured_at: OffsetDateTime::now_utc(),
         size: body.len(),
     };
 
@@ -418,7 +417,7 @@ mod tests {
             url: "https://example.com".into(),
             selector: None,
             interval_secs: 3600,
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
             last_check_at: None,
             last_change_at: None,
             last_etag: None,
@@ -449,7 +448,7 @@ mod tests {
             url: "https://remove-me.com".into(),
             selector: None,
             interval_secs: 3600,
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
             last_check_at: None,
             last_change_at: None,
             last_etag: None,

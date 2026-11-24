@@ -84,10 +84,9 @@ pub async fn cmd_watch_list(cfg: &WatchListConfig) -> Result<()> {
     println!("{:<10} {:<50} {:>10}  LAST CHECK", "ID", "URL", "INTERVAL");
     println!("{}", "-".repeat(80));
     for w in &watches {
-        let last_check = w.last_check_at.map_or_else(
-            || "never".into(),
-            |t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        );
+        let last_check = w
+            .last_check_at
+            .map_or_else(|| "never".into(), nab::util::format_utc_seconds);
         let interval = if w.interval_secs == 0 {
             "muted".into()
         } else {
@@ -132,7 +131,7 @@ pub async fn cmd_watch_logs(cfg: &WatchLogsConfig) -> Result<()> {
     for snap in &watch.snapshots {
         println!(
             "{:<20} {:>10}  {}",
-            snap.captured_at.format("%Y-%m-%dT%H:%M:%SZ"),
+            nab::util::format_utc_seconds(snap.captured_at),
             snap.size,
             &snap.sha256[..16],
         );

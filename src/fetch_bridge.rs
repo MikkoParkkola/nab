@@ -337,8 +337,8 @@ mod tests {
     #[test]
     fn test_fetch_client_new() {
         let client = FetchClient::new(None, None);
-        assert!(client.cookie_header.is_empty());
-        assert!(client.base_url.is_empty());
+        assert_eq!(client.cookie_header, "");
+        assert_eq!(client.base_url, "");
     }
 
     #[test]
@@ -357,7 +357,7 @@ mod tests {
     fn test_fetch_log_empty_initially() {
         let client = FetchClient::new(None, None);
         let log = client.get_fetch_log();
-        assert!(log.is_empty());
+        assert_eq!(log, [] as [std::string::String; 0]);
     }
 
     // ─── SSRF validation tests ───────────────────────────────────────────

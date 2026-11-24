@@ -55,21 +55,22 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
 
     // ── Resolve audio path (extract if video) ─────────────────────────────────
     let input_path = std::path::Path::new(&cfg.video);
-    let tmp_wav: Option<PathBuf>;
-
-    let audio_path = if audio_only {
-        tmp_wav = None;
-        input_path.to_path_buf()
+    // Held until this function returns, including the backend and transcribe errors.
+    let temp_wav = if audio_only {
+        None
     } else {
         eprintln!("  Extracting audio track via ffmpeg...");
-        let dest = std::env::temp_dir().join(format!("nab_analyze_{}.wav", std::process::id()));
+        let temp = nab::analyze::TempWav::create().context("temp audio")?;
         AudioExtractor::new()
-            .extract(input_path, &dest)
+            .extract(input_path, temp.path())
             .await
             .context("ffmpeg audio extraction failed")?;
-        tmp_wav = Some(dest.clone());
-        dest
+        Some(temp)
     };
+    let audio_path = temp_wav.as_ref().map_or_else(
+        || input_path.to_path_buf(),
+        |temp| temp.path().to_path_buf(),
+    );
 
     // ── Select backend ────────────────────────────────────────────────────────
     let backend = default_backend();
@@ -107,11 +108,6 @@ pub async fn cmd_analyze(cfg: &AnalyzeConfig) -> Result<()> {
         .await
         .context("transcription failed")?;
     let elapsed = start.elapsed();
-
-    // ── Clean up temp file ────────────────────────────────────────────────────
-    if let Some(ref tmp) = tmp_wav {
-        let _ = std::fs::remove_file(tmp);
-    }
 
     eprintln!(
         "\nComplete: {} segments in {:.1}s ({:.0}x realtime)",

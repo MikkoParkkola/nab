@@ -48,7 +48,7 @@ pub use fluidaudio_backend::FluidAudioBackend;
 
 // ── Legacy API ────────────────────────────────────────────────────────────────
 pub use diarize::{Diarizer, SpeakerSegment};
-pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor};
+pub use extract::{AudioExtractor, ExtractedFrame, FrameExtractor, TempWav};
 pub use fusion::{FusedSegment, FusionEngine};
 pub use report::{AnalysisReport, ReportFormat};
 pub use transcribe::{TranscriptSegment, TranscriptionBackend, VllmTranscriber, WordTiming};
