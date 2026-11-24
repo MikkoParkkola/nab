@@ -646,21 +646,24 @@ async fn continue_response(
     event: &chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused,
     main_frame: Option<&chromiumoxide::cdp::browser_protocol::page::FrameId>,
 ) {
-    use chromiumoxide::cdp::browser_protocol::fetch::{
-        ContinueRequestParams, ContinueResponseParams, HeaderEntry,
-    };
-    use chromiumoxide::cdp::browser_protocol::network::ResourceType;
+    use chromiumoxide::cdp::browser_protocol::fetch::{ContinueRequestParams, FailRequestParams};
+    use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
     let top_document = event.resource_type == ResourceType::Document
         && main_frame.is_some_and(|main| *main == event.frame_id);
     let settled = if top_document {
-        let mut headers = event.response_headers.clone().unwrap_or_default();
-        headers.push(HeaderEntry {
-            name: "Content-Security-Policy".to_string(),
-            value: "sandbox allow-scripts allow-same-origin allow-forms".to_string(),
-        });
-        let mut params = ContinueResponseParams::new(event.request_id.clone());
-        params.response_headers = Some(headers);
-        page.execute(params).await.err()
+        match fulfill_sandboxed(page, event).await {
+            Ok(()) => None,
+            // Fail closed: an unsandboxed top document could open popups.
+            Err(err) => {
+                debug!("could not sandbox the render page, refusing it: {err:#}");
+                page.execute(FailRequestParams::new(
+                    event.request_id.clone(),
+                    ErrorReason::BlockedByClient,
+                ))
+                .await
+                .err()
+            }
+        }
     } else {
         page.execute(ContinueRequestParams::new(event.request_id.clone()))
             .await
@@ -669,6 +672,54 @@ async fn continue_response(
     if let Some(err) = settled {
         debug!("ssrf fetch guard could not continue a response: {err}");
     }
+}
+
+/// Fulfil a paused top-document response with its own body and headers plus
+/// a CSP `sandbox` that omits `allow-popups`.
+#[cfg(feature = "browser")]
+async fn fulfill_sandboxed(
+    page: &chromiumoxide::Page,
+    event: &chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused,
+) -> Result<()> {
+    use base64::Engine;
+    use chromiumoxide::cdp::browser_protocol::fetch::{
+        FulfillRequestParams, GetResponseBodyParams, HeaderEntry,
+    };
+    let body = page
+        .execute(GetResponseBodyParams::new(event.request_id.clone()))
+        .await
+        .context("failed to read the paused response body")?
+        .result;
+    let body = if body.base64_encoded {
+        body.body
+    } else {
+        base64::engine::general_purpose::STANDARD.encode(body.body.as_bytes())
+    };
+    // The body comes back decoded, so length and encoding headers no longer apply.
+    let mut headers: Vec<HeaderEntry> = event
+        .response_headers
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|h| {
+            !h.name.eq_ignore_ascii_case("content-length")
+                && !h.name.eq_ignore_ascii_case("content-encoding")
+        })
+        .collect();
+    headers.push(HeaderEntry {
+        name: "Content-Security-Policy".to_string(),
+        value: "sandbox allow-scripts allow-same-origin allow-forms".to_string(),
+    });
+    let mut params = FulfillRequestParams::new(
+        event.request_id.clone(),
+        event.response_status_code.unwrap_or(200),
+    );
+    params.response_headers = Some(headers);
+    params.body = Some(body.into());
+    page.execute(params)
+        .await
+        .context("failed to fulfil the sandboxed response")?;
+    Ok(())
 }
 
 /// The URL a paused Fetch event asks to reach: the request URL at the request
