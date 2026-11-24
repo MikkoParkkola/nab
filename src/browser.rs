@@ -717,7 +717,11 @@ async fn fulfill_sandboxed(
         .collect();
     headers.push(HeaderEntry {
         name: "Content-Security-Policy".to_string(),
-        value: "sandbox allow-scripts allow-same-origin allow-forms".to_string(),
+        // No allow-popups; frames of any scheme and workers are refused too,
+        // since either can run as a child target the guard cannot see.
+        value: "sandbox allow-scripts allow-same-origin allow-forms; \
+                frame-src 'none'; worker-src 'none'"
+            .to_string(),
     });
     let mut params = FulfillRequestParams::new(
         event.request_id.clone(),
@@ -1384,6 +1388,17 @@ mod tests {
                 format!(
                     "<form id=f action=\"{sink_url}form\" target=_blank></form>\
                      <script>document.getElementById('f').submit()</script>"
+                ),
+            ),
+            (
+                "data: iframe",
+                format!("<iframe src=\"data:text/html,<img src='{sink_url}data.png'>\"></iframe>"),
+            ),
+            (
+                "worker",
+                format!(
+                    "<script>new Worker(URL.createObjectURL(new Blob(\
+                     [\"fetch('{sink_url}worker')\"])))</script>"
                 ),
             ),
             (
