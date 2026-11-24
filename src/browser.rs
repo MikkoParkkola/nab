@@ -89,7 +89,7 @@ impl BrowserLogin {
     pub async fn login(&self, url: &str, credential: Option<&Credential>) -> Result<Vec<Cookie>> {
         info!("Starting browser login for {}", url);
 
-        let (page, guard) = self.open_guarded().await?;
+        let (page, guard) = self.open_guarded(PageUse::Login).await?;
         if let Err(err) = goto_guarded(&page, &guard, url).await {
             let _ = page.close().await;
             return Err(err);
@@ -270,7 +270,7 @@ impl BrowserLogin {
     /// wraps so the brain-driven loop can escalate to a browser without nab ever
     /// bundling Chromium — it orchestrates the user's EXTERNAL Chrome over CDP.
     pub async fn render_markdown(&self, url: &str) -> Result<String> {
-        let (page, guard) = self.open_guarded().await?;
+        let (page, guard) = self.open_guarded(PageUse::Render).await?;
         if let Err(err) = block_window_open(&page).await {
             let _ = page.close().await;
             return Err(err);
@@ -328,7 +328,7 @@ impl BrowserLogin {
 
         // Open a blank page first so cookies are present in the context BEFORE
         // the first navigation to the target URL.
-        let (page, guard) = self.open_guarded().await?;
+        let (page, guard) = self.open_guarded(PageUse::Render).await?;
         if let Err(err) = block_window_open(&page).await {
             let _ = page.close().await;
             return Err(err);
@@ -390,13 +390,16 @@ impl BrowserLogin {
 
     /// Open `about:blank` with the SSRF Fetch guard armed, so no later
     /// navigation or redirect hop on the page reaches a denied address.
-    async fn open_guarded(&self) -> Result<(chromiumoxide::Page, SsrfFetchGuard)> {
+    async fn open_guarded(
+        &self,
+        page_use: PageUse,
+    ) -> Result<(chromiumoxide::Page, SsrfFetchGuard)> {
         let page = self
             .browser
             .new_page("about:blank")
             .await
             .context("failed to open browser page")?;
-        match SsrfFetchGuard::arm(&page).await {
+        match SsrfFetchGuard::arm(&page, page_use).await {
             Ok(guard) => Ok((page, guard)),
             Err(err) => {
                 let _ = page.close().await;
@@ -454,6 +457,17 @@ fn browser_request_check(
     }
 }
 
+/// What a guarded page is for; decides which frames it may load.
+#[cfg(feature = "browser")]
+#[derive(Clone, Copy)]
+enum PageUse {
+    /// Unattended render: only the top document is read, so subframes and
+    /// popups are refused outright.
+    Render,
+    /// Interactive login: the user may need sign-in frames and popups.
+    Login,
+}
+
 /// Refuses the first document navigation the Fetch guard failed.
 ///
 /// Subresource requests to denied targets are failed inside Chrome but do not
@@ -474,7 +488,18 @@ impl SsrfFetchGuard {
     /// this is the only place a redirect hop can be checked: responses are
     /// paused too, and a 3xx whose `Location` is denied is failed before
     /// Chrome follows it.
-    async fn arm(page: &chromiumoxide::Page) -> Result<Self> {
+    ///
+    /// Limit: chromiumoxide 0.9 auto-attaches child targets (cross-site
+    /// iframes, popups, workers) with `waitForDebuggerOnStart` and resumes them
+    /// itself with `Runtime.runIfWaitingForDebugger` inside its handler,
+    /// before an embedder sees `Target.attachedToTarget`, and it offers no
+    /// call to send commands on a child session. Fetch therefore cannot be
+    /// armed on a child target before it loads. A render page instead refuses
+    /// every subframe document (seen here, on the parent, before the frame
+    /// starts) and every popup, so no child target with network access is
+    /// created. The login page keeps frames and popups for sign-in flows,
+    /// and worker traffic is not intercepted.
+    async fn arm(page: &chromiumoxide::Page, page_use: PageUse) -> Result<Self> {
         use chromiumoxide::cdp::browser_protocol::fetch::{
             ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
             RequestPattern, RequestStage,
@@ -505,10 +530,43 @@ impl SsrfFetchGuard {
         .await
         .context("failed to enable the browser Fetch domain")?;
 
+        let main_frame = match page_use {
+            PageUse::Render => Some(
+                page.mainframe()
+                    .await
+                    .context("failed to read the browser page's main frame")?
+                    .context("the browser page has no main frame")?,
+            ),
+            PageUse::Login => None,
+        };
         let page = page.clone();
         let task_guard = guard.clone();
         tokio::spawn(async move {
             while let Some(event) = events.next().await {
+                // A render page loads no subframe document: a frame from
+                // another site would run as a child target this guard cannot
+                // see, and the render reads only the top document.
+                let subframe = event.response_status_code.is_none()
+                    && event.resource_type == ResourceType::Document
+                    && main_frame
+                        .as_ref()
+                        .is_some_and(|main| *main != event.frame_id);
+                if subframe {
+                    debug!(
+                        "refusing a subframe on a render page: {}",
+                        event.request.url
+                    );
+                    if let Err(err) = page
+                        .execute(FailRequestParams::new(
+                            event.request_id.clone(),
+                            ErrorReason::BlockedByClient,
+                        ))
+                        .await
+                    {
+                        debug!("ssrf fetch guard could not fail a subframe: {err}");
+                    }
+                    continue;
+                }
                 // Request stage: the request's own URL. Response stage: the
                 // redirect target of a 3xx, or nothing to check.
                 let Some(url) = paused_target(&event) else {
@@ -1125,7 +1183,7 @@ mod tests {
             .expect("free port")
             .port();
         let profile = tempfile::tempdir().expect("chrome profile dir");
-        let child = std::process::Command::new(chrome)
+        let mut child = std::process::Command::new(chrome)
             .arg("--headless=new")
             .arg(format!("--remote-debugging-port={port}"))
             .arg(format!("--user-data-dir={}", profile.path().display()))
@@ -1141,6 +1199,8 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
+        let _ = child.kill();
+        let _ = child.wait();
         panic!("could not connect to the throwaway chrome");
     }
 
