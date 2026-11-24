@@ -958,6 +958,7 @@ mod tests {
     #[cfg(feature = "browser")]
     #[tokio::test]
     #[ignore = "requires a local Chrome binary and a network interface"]
+    #[allow(clippy::too_many_lines)] // One end-to-end scenario: launch, serve, render, assert.
     async fn browser_refuses_redirect_to_private_targets() {
         let chrome = std::env::var("NAB_TEST_CHROME")
             .ok()
