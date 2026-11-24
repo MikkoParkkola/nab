@@ -562,12 +562,7 @@ impl SsrfFetchGuard {
                 // Request stage: the request's own URL. Response stage: the
                 // redirect target of a 3xx, or nothing to check.
                 let Some(url) = paused_target(&event) else {
-                    if let Err(err) = page
-                        .execute(ContinueRequestParams::new(event.request_id.clone()))
-                        .await
-                    {
-                        debug!("ssrf fetch guard could not continue a response: {err}");
-                    }
+                    continue_response(&page, &event, main_frame.as_ref()).await;
                     continue;
                 };
                 let policy = task_guard.policy.clone();
@@ -637,6 +632,42 @@ async fn render_main_frame(
                 .context("the browser page has no main frame")?,
         )),
         PageUse::Login => Ok(None),
+    }
+}
+
+/// Continue a paused response that needs no SSRF check. The top document of
+/// a render page gets a CSP `sandbox` without `allow-popups`, so its links,
+/// forms and scripts cannot open a window (a separate target the guard cannot
+/// see), even when the connected Chrome allows popups. Everything else is
+/// continued unchanged.
+#[cfg(feature = "browser")]
+async fn continue_response(
+    page: &chromiumoxide::Page,
+    event: &chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused,
+    main_frame: Option<&chromiumoxide::cdp::browser_protocol::page::FrameId>,
+) {
+    use chromiumoxide::cdp::browser_protocol::fetch::{
+        ContinueRequestParams, ContinueResponseParams, HeaderEntry,
+    };
+    use chromiumoxide::cdp::browser_protocol::network::ResourceType;
+    let top_document = event.resource_type == ResourceType::Document
+        && main_frame.is_some_and(|main| *main == event.frame_id);
+    let settled = if top_document {
+        let mut headers = event.response_headers.clone().unwrap_or_default();
+        headers.push(HeaderEntry {
+            name: "Content-Security-Policy".to_string(),
+            value: "sandbox allow-scripts allow-same-origin allow-forms".to_string(),
+        });
+        let mut params = ContinueResponseParams::new(event.request_id.clone());
+        params.response_headers = Some(headers);
+        page.execute(params).await.err()
+    } else {
+        page.execute(ContinueRequestParams::new(event.request_id.clone()))
+            .await
+            .err()
+    };
+    if let Some(err) = settled {
+        debug!("ssrf fetch guard could not continue a response: {err}");
     }
 }
 
