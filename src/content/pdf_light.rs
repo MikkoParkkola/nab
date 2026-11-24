@@ -1494,7 +1494,7 @@ mod tests {
         enc.write_all(b"0123456789abcdef").unwrap();
         let compressed = enc.finish().unwrap();
         assert_eq!(inflate_capped(&compressed, 4).len(), 4);
-        assert!(inflate_capped(&compressed, 0).is_empty());
+        assert_eq!(inflate_capped(&compressed, 0), Vec::<u8>::new());
     }
 
     #[test]
