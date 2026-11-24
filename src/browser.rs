@@ -445,7 +445,9 @@ impl SsrfFetchGuard {
     /// Arm Chrome's Fetch domain on `page` so every request is paused and a
     /// request to a denied target is failed with `BlockedByClient` before it
     /// leaves the browser. `Page::goto` follows redirects inside Chrome, so
-    /// this is the only place a redirect hop can be checked.
+    /// this is the only place a redirect hop can be checked: responses are
+    /// paused too, and a 3xx whose `Location` is denied is failed before
+    /// Chrome follows it.
     async fn arm(page: &chromiumoxide::Page) -> Result<Self> {
         use chromiumoxide::cdp::browser_protocol::fetch::{
             ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
@@ -461,14 +463,17 @@ impl SsrfFetchGuard {
             .event_listener::<EventRequestPaused>()
             .await
             .context("failed to listen for paused browser requests")?;
-        let pattern = RequestPattern::builder()
-            .url_pattern("*")
-            .request_stage(RequestStage::Request)
-            .build();
+        let stage = |stage| {
+            RequestPattern::builder()
+                .url_pattern("*")
+                .request_stage(stage)
+                .build()
+        };
         page.execute(
             EnableParams::builder()
                 .handle_auth_requests(false)
-                .pattern(pattern)
+                .pattern(stage(RequestStage::Request))
+                .pattern(stage(RequestStage::Response))
                 .build(),
         )
         .await
@@ -478,7 +483,17 @@ impl SsrfFetchGuard {
         let task_guard = guard.clone();
         tokio::spawn(async move {
             while let Some(event) = events.next().await {
-                let url = event.request.url.clone();
+                // Request stage: the request's own URL. Response stage: the
+                // redirect target of a 3xx, or nothing to check.
+                let Some(url) = paused_target(&event) else {
+                    if let Err(err) = page
+                        .execute(ContinueRequestParams::new(event.request_id.clone()))
+                        .await
+                    {
+                        debug!("ssrf fetch guard could not continue a response: {err}");
+                    }
+                    continue;
+                };
                 let policy = task_guard.policy.clone();
                 let check_url = url.clone();
                 // The check may resolve DNS; keep it off the async workers.
@@ -494,10 +509,10 @@ impl SsrfFetchGuard {
                         .err()
                 } else {
                     debug!("refusing browser request: {url}");
-                    if event.resource_type == ResourceType::Document {
-                        if let Ok(mut slot) = task_guard.blocked.lock() {
-                            slot.get_or_insert(url);
-                        }
+                    if event.resource_type == ResourceType::Document
+                        && let Ok(mut slot) = task_guard.blocked.lock()
+                    {
+                        slot.get_or_insert(url);
                     }
                     page.execute(FailRequestParams::new(
                         request_id,
@@ -529,6 +544,33 @@ impl SsrfFetchGuard {
         }
         Ok(())
     }
+}
+
+/// The URL a paused Fetch event asks to reach: the request URL at the request
+/// stage, the resolved `Location` of a 3xx at the response stage, `None` for
+/// any other response.
+#[cfg(feature = "browser")]
+fn paused_target(
+    event: &chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused,
+) -> Option<String> {
+    let Some(status) = event.response_status_code else {
+        return Some(event.request.url.clone());
+    };
+    if !(300..400).contains(&status) {
+        return None;
+    }
+    let location = event
+        .response_headers
+        .as_deref()?
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("location"))?;
+    let base = url::Url::parse(&event.request.url).ok()?;
+    // An unparseable Location is handed to the request check as-is, which
+    // refuses it.
+    Some(
+        base.join(&location.value)
+            .map_or_else(|_| location.value.clone(), String::from),
+    )
 }
 
 /// Navigate `page` to `url`, refusing a denied target or redirect hop.
