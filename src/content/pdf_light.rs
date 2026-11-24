@@ -130,30 +130,88 @@ fn is_pdf(bytes: &[u8]) -> bool {
 /// Uncompressed page dictionaries sit outside `stream` bodies. PDF 1.5 puts
 /// them inside `FlateDecode` object streams, which a raw scan cannot see.
 /// Returns 0 when none are visible — callers must not invent a page count.
-/// An incremental update can leave a replaced page object in the file, so the
-/// count can be high for those files.
+///
+/// The `/Count` of the page-tree root wins when one is found: an incremental
+/// save appends a new root and can leave replaced or deleted page objects in
+/// the file, so the last root's `/Count` is the document's page count. Leaf
+/// objects are counted only when no root is visible.
 fn count_pages(bytes: &[u8]) -> usize {
     count_pages_with_budget(bytes, MAX_DECOMPRESSED_BYTES)
 }
 
 fn count_pages_with_budget(bytes: &[u8], mut budget: usize) -> usize {
     let mut total = 0;
+    let mut root = None;
     let mut cursor = 0;
     while let Some(span) = next_stream(bytes, cursor) {
-        total += count_page_tokens(&bytes[cursor..span.keyword]);
+        let outside = &bytes[cursor..span.keyword];
+        total += count_page_tokens(outside);
+        root = last_root_count(outside).or(root);
         // An object stream that cannot be read in full makes the total a
         // guess; report it as unknown rather than as a partial count.
-        let Some(in_stream) = page_tokens_in_object_stream(bytes, &span, &mut budget) else {
+        let Some((in_stream, stream_root)) =
+            page_tokens_in_object_stream(bytes, &span, &mut budget)
+        else {
             return 0;
         };
         total += in_stream;
+        root = stream_root.or(root);
         cursor = span.after;
     }
+    let rest = &bytes[cursor..];
     // An object stream whose end could not be found was never read.
-    if window_contains(&bytes[cursor..], b"/ObjStm") {
+    if window_contains(rest, b"/ObjStm") {
         return 0;
     }
-    total + count_page_tokens(&bytes[cursor..])
+    total += count_page_tokens(rest);
+    last_root_count(rest).or(root).unwrap_or(total)
+}
+
+/// `/Count` of the last page-tree root (`/Type /Pages` without `/Parent`) in
+/// `region`, in file order.
+fn last_root_count(region: &[u8]) -> Option<usize> {
+    let mut found = None;
+    let mut from = 0;
+    while let Some(rel) = find_subsequence(&region[from..], b"/Pages") {
+        let at = from + rel;
+        from = at + b"/Pages".len();
+        // The exact name `/Pages`, as the value of `/Type`.
+        if region
+            .get(from)
+            .is_some_and(|&b| !is_pdf_delimiter_or_ws(b))
+        {
+            continue;
+        }
+        let before = &region[..at];
+        let Some(open) = before.windows(2).rposition(|w| w == b"<<") else {
+            continue;
+        };
+        let end = before
+            .iter()
+            .rposition(|b| !is_pdf_whitespace(*b))
+            .map_or(0, |i| i + 1);
+        let typed = before[open..end.max(open)].ends_with(b"/Type");
+        let Some(close) = find_subsequence(&region[from..], b">>") else {
+            continue;
+        };
+        let dict = &region[open..from + close];
+        if !typed || window_contains(dict, b"/Parent") {
+            continue;
+        }
+        let Some(c) = find_subsequence(dict, b"/Count") else {
+            continue;
+        };
+        let rest = &dict[c + b"/Count".len()..];
+        let i = skip_pdf_ws(rest, 0);
+        let digits = rest[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+        if let Ok(n) = std::str::from_utf8(&rest[i..i + digits])
+            .unwrap_or("")
+            .parse()
+        {
+            found = Some(n);
+        }
+    }
+    found
 }
 
 struct StreamSpan {
@@ -341,7 +399,7 @@ fn page_tokens_in_object_stream(
     bytes: &[u8],
     span: &StreamSpan,
     budget: &mut usize,
-) -> Option<usize> {
+) -> Option<(usize, Option<usize>)> {
     let dict = &bytes[span.dict_start..span.dict_end];
     // An escaped name (`/Obj#53tm` is `/ObjStm`) could hide the type, filter
     // or predictor; a stream dictionary with one is not interpreted.
@@ -349,7 +407,7 @@ fn page_tokens_in_object_stream(
         return None;
     }
     if !window_contains(dict, b"/ObjStm") {
-        return Some(0);
+        return Some((0, None));
     }
     // Strings, decode parameters (a predictor, or an indirect reference to
     // one) are beyond this reader; such an object stream is not read.
@@ -368,7 +426,7 @@ fn page_tokens_in_object_stream(
         return None;
     }
     *budget -= payload.len();
-    Some(count_page_tokens(&payload))
+    Some((count_page_tokens(&payload), last_root_count(&payload)))
 }
 
 /// The `/Filter` of a stream dictionary, as far as the light reader can decode it.
@@ -1683,6 +1741,23 @@ mod tests {
         let span = next_stream(&pdf, 0).expect("stream");
         assert_eq!(span.data_start, data_start);
         assert_eq!(span.data_end, data_start + body.len());
+    }
+
+    #[test]
+    fn count_pages_takes_the_last_page_tree_root_after_an_incremental_save() {
+        let pdf = b"%PDF-1.4\n\
+            1 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >> endobj\n\
+            3 0 obj << /Type /Page /Parent 1 0 R >> endobj\n\
+            4 0 obj << /Type /Page /Parent 1 0 R >> endobj\n\
+            5 0 obj << /Type /Page /Parent 1 0 R >> endobj\n\
+            %%EOF\n\
+            1 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj\n\
+            %%EOF\n";
+        assert_eq!(count_pages(pdf), 2);
+        // A nested /Pages node (with /Parent) is not the root.
+        let nested =
+            b"%PDF-1.4\n<< /Type /Pages /Count 4 >>\n<< /Type /Pages /Parent 1 0 R /Count 1 >>\n";
+        assert_eq!(count_pages(nested), 4);
     }
 
     #[test]
