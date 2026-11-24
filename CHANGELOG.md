@@ -17,10 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a denied page navigation fails the call with the same SSRF error. The
   `NAB_SSRF_ALLOW_PRIVATE` and `NAB_SSRF_ALLOWLIST` opt-outs apply here too.
   Every DNS answer for a host must pass, since Chrome picks its own address.
-  Render pages cannot open popups. Known limits: DNS rebinding between the
-  check and Chrome's own lookup, cross-site iframes that Chrome runs as
-  separate targets, popups opened during the interactive login, and WebSocket
-  or worker traffic are not covered.
+  Render pages load no subframes and cannot open popups, since a frame or
+  popup from another site runs as a separate browser target that the page's
+  guard cannot pause (the CDP client resumes such targets before they can be
+  armed). Known limits: DNS rebinding between the check and Chrome's own
+  lookup; frames and popups during the interactive login; WebSocket and worker
+  traffic.
 - `cargo audit` no longer ignores the three `zip` extraction advisories
   (RUSTSEC-2026-0367, -0368, -0369): `zip` 9.3.0, the only version in the lock
   file, already carries the fix, so the ignores muted nothing and would have

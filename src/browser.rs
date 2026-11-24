@@ -530,15 +530,7 @@ impl SsrfFetchGuard {
         .await
         .context("failed to enable the browser Fetch domain")?;
 
-        let main_frame = match page_use {
-            PageUse::Render => Some(
-                page.mainframe()
-                    .await
-                    .context("failed to read the browser page's main frame")?
-                    .context("the browser page has no main frame")?,
-            ),
-            PageUse::Login => None,
-        };
+        let main_frame = render_main_frame(page, page_use).await?;
         let page = page.clone();
         let task_guard = guard.clone();
         tokio::spawn(async move {
@@ -627,6 +619,24 @@ impl SsrfFetchGuard {
             anyhow::bail!("browser navigation refused for {url}");
         }
         Ok(())
+    }
+}
+
+/// The main frame of a render page, whose subframes the guard refuses;
+/// `None` for a login page, which keeps its frames.
+#[cfg(feature = "browser")]
+async fn render_main_frame(
+    page: &chromiumoxide::Page,
+    page_use: PageUse,
+) -> Result<Option<chromiumoxide::cdp::browser_protocol::page::FrameId>> {
+    match page_use {
+        PageUse::Render => Ok(Some(
+            page.mainframe()
+                .await
+                .context("failed to read the browser page's main frame")?
+                .context("the browser page has no main frame")?,
+        )),
+        PageUse::Login => Ok(None),
     }
 }
 
