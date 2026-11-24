@@ -11,7 +11,9 @@
 //!
 //! # Limitations
 //!
-//! - Does not handle compressed object streams (`/FlateDecode`, `/LZWDecode`, etc.)
+//! - `FlateDecode` streams, including object streams that hold page dictionaries,
+//!   are inflated. Predictor-encoded streams and LZW are not. When no page
+//!   object can be read, the page count is reported as unavailable.
 //! - Character encoding: PDFs may use custom font encoding (`WinAnsi`, `MacRoman`, custom `ToUnicode` `CMaps`).
 //!   This extractor outputs raw bytes within the printable ASCII range and replaces
 //!   non-ASCII bytes with `?`.
@@ -50,6 +52,14 @@ const MAX_DECOMPRESSED_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum output characters to prevent flooding LLM context windows.
 const MAX_OUTPUT_CHARS: usize = 50_000;
 
+/// TJ adjustment, in thousandths of an em, wide enough to be a word space.
+///
+/// The number is subtracted from the text cursor (PDF 32000-1:2008, 9.4.3),
+/// so a negative value opens a gap. On a 14-page born-digital paper the
+/// values were bimodal: kerning sat above -100 and word spaces sat below
+/// -180, clustered near -250. -160 is the empty middle.
+const WORD_GAP_THOUSANDTHS: f64 = -160.0;
+
 /// Classification of *why* a PDF has no extractable text layer in the light path.
 ///
 /// Born-digital PDFs (with embedded fonts) must never be reported as "scanned":
@@ -81,7 +91,7 @@ impl ContentHandler for PdfLightHandler {
             anyhow::bail!("Not a PDF: missing %PDF- header");
         }
 
-        let page_count = count_pages(bytes);
+        let found_pages = count_pages(bytes);
         let scan = &bytes[..bytes.len().min(MAX_SCAN_BYTES)];
 
         // Collect stream contents (inflating FlateDecode, skipping images).
@@ -97,11 +107,11 @@ impl ContentHandler for PdfLightHandler {
         // inside compressed object streams still count as a text layer.
         let kind = classify_pdf(scan, &decompressed);
 
-        let markdown = build_markdown(text, page_count, kind);
+        let markdown = build_markdown(text, found_pages, kind);
 
         Ok(ConversionResult {
             markdown,
-            page_count: Some(page_count),
+            page_count: (found_pages > 0).then_some(found_pages),
             content_type: content_type.to_string(),
             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
             quality: None,
@@ -115,33 +125,451 @@ fn is_pdf(bytes: &[u8]) -> bool {
     bytes.starts_with(b"%PDF-")
 }
 
-/// Count pages by scanning for `/Type /Page` entries in the PDF structure.
+/// Count leaf page objects (`/Type /Page`, not the `/Type /Pages` tree).
 ///
-/// This is an approximation — compressed cross-reference streams (PDF 1.5+)
-/// may cause undercounting. In practice it is accurate for most PDFs.
+/// Uncompressed page dictionaries sit outside `stream` bodies. PDF 1.5 puts
+/// them inside `FlateDecode` object streams, which a raw scan cannot see.
+/// Returns 0 when none are visible — callers must not invent a page count.
+///
+/// The `/Count` of the page-tree root wins when one is found: an incremental
+/// save appends a new root and can leave replaced or deleted page objects in
+/// the file, so the last root's `/Count` is the document's page count. Leaf
+/// objects are counted only when no root is visible.
 fn count_pages(bytes: &[u8]) -> usize {
-    let count = count_occurrences(bytes, b"/Type /Page");
-    // Also handle alternative spacing
-    let count2 = count_occurrences(bytes, b"/Type/Page");
-    count.max(count2).max(1)
+    count_pages_with_budget(bytes, MAX_DECOMPRESSED_BYTES)
 }
 
-/// Count non-overlapping occurrences of `needle` in `haystack`.
-fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
-    if needle.is_empty() {
+fn count_pages_with_budget(bytes: &[u8], mut budget: usize) -> usize {
+    let mut total = 0;
+    let mut root = None;
+    let mut cursor = 0;
+    while let Some(span) = next_stream(bytes, cursor) {
+        let outside = &bytes[cursor..span.keyword];
+        total += count_page_tokens(outside);
+        root = last_root_count(outside).or(root);
+        // An object stream that cannot be read in full makes the total a
+        // guess; report it as unknown rather than as a partial count.
+        let Some((in_stream, stream_root)) =
+            page_tokens_in_object_stream(bytes, &span, &mut budget)
+        else {
+            return 0;
+        };
+        total += in_stream;
+        root = stream_root.or(root);
+        cursor = span.after;
+    }
+    let rest = &bytes[cursor..];
+    // An object stream whose end could not be found was never read.
+    if window_contains(rest, b"/ObjStm") {
         return 0;
     }
+    total += count_page_tokens(rest);
+    last_root_count(rest).or(root).unwrap_or(total)
+}
+
+/// Bounds (`<<` start, `>>` end) of the innermost dictionary around `at`.
+fn enclosing_dict(region: &[u8], at: usize) -> Option<(usize, usize)> {
+    // Walk back two bytes per delimiter so `>>>>` counts as two closers.
+    let mut depth = 0usize;
+    let mut i = at;
+    let open = loop {
+        if i < 2 {
+            return None;
+        }
+        match &region[i - 2..i] {
+            b">>" => {
+                depth += 1;
+                i -= 2;
+            }
+            b"<<" if depth == 0 => break i - 2,
+            b"<<" => {
+                depth -= 1;
+                i -= 2;
+            }
+            _ => i -= 1,
+        }
+    };
+    let mut depth = 0usize;
+    let mut j = at;
+    while j + 1 < region.len() {
+        if region[j..].starts_with(b"<<") {
+            depth += 1;
+            j += 2;
+        } else if region[j..].starts_with(b">>") {
+            if depth == 0 {
+                return Some((open, j + 2));
+            }
+            depth -= 1;
+            j += 2;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// `/Count` of the last page-tree root (`/Type /Pages` without `/Parent`) in
+/// `region`, in file order.
+fn last_root_count(region: &[u8]) -> Option<usize> {
+    let mut found = None;
+    let mut from = 0;
+    while let Some(rel) = find_subsequence(&region[from..], b"/Pages") {
+        let at = from + rel;
+        from = at + b"/Pages".len();
+        // The exact name `/Pages`, as the value of `/Type`.
+        if region
+            .get(from)
+            .is_some_and(|&b| !is_pdf_delimiter_or_ws(b))
+        {
+            continue;
+        }
+        let before = &region[..at];
+        let end = before
+            .iter()
+            .rposition(|b| !is_pdf_whitespace(*b))
+            .map_or(0, |i| i + 1);
+        if !before[..end].ends_with(b"/Type") {
+            continue;
+        }
+        // The dictionary that holds this `/Type`, across nested dictionaries
+        // such as an inherited `/Resources`.
+        let Some((open, close)) = enclosing_dict(region, at) else {
+            continue;
+        };
+        let dict = &region[open..close];
+        if window_contains(dict, b"/Parent") {
+            continue;
+        }
+        let Some(c) = find_subsequence(dict, b"/Count") else {
+            continue;
+        };
+        let rest = &dict[c + b"/Count".len()..];
+        let i = skip_pdf_ws(rest, 0);
+        let digits = rest[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+        if let Ok(n) = std::str::from_utf8(&rest[i..i + digits])
+            .unwrap_or("")
+            .parse()
+        {
+            found = Some(n);
+        }
+    }
+    found
+}
+
+struct StreamSpan {
+    keyword: usize,
+    dict_start: usize,
+    dict_end: usize,
+    data_start: usize,
+    data_end: usize,
+    after: usize,
+}
+
+/// PDF whitespace: NUL, TAB, LF, FF, CR, space.
+fn is_pdf_whitespace(b: u8) -> bool {
+    matches!(b, 0x00 | b'\t' | b'\n' | 0x0c | b'\r' | b' ')
+}
+
+/// Next real `stream … endstream` span at or after `from`.
+///
+/// The keyword counts only at depth zero, immediately after a dictionary.
+/// Whitespace and comments may sit between that dictionary and the keyword.
+/// A `stream` inside a string, a comment, or a name is not a stream. The walk
+/// ends when a stream has no `endstream`.
+fn next_stream(bytes: &[u8], from: usize) -> Option<StreamSpan> {
+    let mut i = from;
+    let mut depth = 0i32;
+    let mut dict_start = from;
+    let mut pending: Option<(usize, usize)> = None;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b if is_pdf_whitespace(b) => i += 1,
+            b'%' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'(' => {
+                if depth == 0 {
+                    pending = None;
+                }
+                match parse_literal_string(&bytes[i..]) {
+                    Some((_, n)) => i += n,
+                    None => break,
+                }
+            }
+            b'<' if bytes.get(i + 1) == Some(&b'<') => {
+                if depth == 0 {
+                    dict_start = i;
+                    pending = None;
+                }
+                depth += 1;
+                i += 2;
+            }
+            b'>' if bytes.get(i + 1) == Some(&b'>') => {
+                if depth > 0 {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        pending = Some((dict_start, i));
+                    }
+                } else {
+                    i += 2;
+                }
+            }
+            b'<' => {
+                if depth == 0 {
+                    pending = None;
+                }
+                match parse_hex_string(&bytes[i..]) {
+                    Some((_, n)) => i += n,
+                    None => break,
+                }
+            }
+            b'/' => {
+                if depth == 0 {
+                    pending = None;
+                }
+                i += 1;
+                while i < bytes.len()
+                    && !is_pdf_delimiter_or_ws(bytes[i])
+                    && bytes[i] != b'%'
+                    && !is_pdf_whitespace(bytes[i])
+                {
+                    i += 1;
+                }
+            }
+            _ => {
+                if is_pdf_delimiter_or_ws(bytes[i]) {
+                    if depth == 0 {
+                        pending = None;
+                    }
+                    i += 1;
+                    continue;
+                }
+                let token_start = i;
+                while i < bytes.len()
+                    && !is_pdf_delimiter_or_ws(bytes[i])
+                    && bytes[i] != b'%'
+                    && !is_pdf_whitespace(bytes[i])
+                {
+                    i += 1;
+                }
+                if depth != 0 {
+                    continue;
+                }
+                if &bytes[token_start..i] == b"stream"
+                    && let Some((start, end)) = pending
+                {
+                    return stream_span(bytes, token_start, start, end);
+                }
+                pending = None;
+            }
+        }
+    }
+    None
+}
+
+/// Body of a stream whose keyword starts at `keyword`.
+fn stream_span(
+    bytes: &[u8],
+    keyword: usize,
+    dict_start: usize,
+    dict_end: usize,
+) -> Option<StreamSpan> {
+    let mut data_start = keyword + b"stream".len();
+    if bytes.get(data_start) == Some(&b'\r') {
+        data_start += 1;
+    }
+    if bytes.get(data_start) == Some(&b'\n') {
+        data_start += 1;
+    }
+    let data_end =
+        direct_length_end(&bytes[dict_start..dict_end], bytes, data_start).or_else(|| {
+            find_subsequence(&bytes[data_start..], b"endstream").map(|rel| data_start + rel)
+        })?;
+    Some(StreamSpan {
+        keyword,
+        dict_start,
+        dict_end,
+        data_start,
+        data_end,
+        after: data_end + b"endstream".len(),
+    })
+}
+
+/// Page objects inside an object stream; `None` when the stream is an object
+/// stream that could not be read in full (byte budget spent, or a filter this
+/// reader does not decode).
+/// End of the stream body from a direct `/Length` value, when the bytes at
+/// that offset (after an optional EOL) are `endstream`. Data that happens to
+/// contain the word `endstream` then does not cut the body short.
+fn direct_length_end(dict: &[u8], bytes: &[u8], data_start: usize) -> Option<usize> {
+    // The exact name `/Length`, not `/Length1` (font streams carry both).
+    let key = b"/Length";
+    let at = (0..dict.len().saturating_sub(key.len() - 1)).find(|&i| {
+        dict[i..].starts_with(key)
+            && dict
+                .get(i + key.len())
+                .is_none_or(|&b| is_pdf_delimiter_or_ws(b) || b == b'%')
+    })?;
+    let rest = &dict[at + b"/Length".len()..];
+    let i = skip_pdf_ws(rest, 0);
+    let digits = rest[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let after = skip_pdf_ws(rest, i + digits);
+    // `12 0 R` is an indirect reference, not a length.
+    if digits == 0 || rest.get(after).is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    let len: usize = std::str::from_utf8(&rest[i..i + digits])
+        .ok()?
+        .parse()
+        .ok()?;
+    let end = data_start.checked_add(len)?;
+    let tail = bytes.get(end..)?;
+    let skip = tail
+        .iter()
+        .take(2)
+        .take_while(|b| matches!(b, b'\r' | b'\n'))
+        .count();
+    tail[skip..].starts_with(b"endstream").then_some(end)
+}
+
+fn page_tokens_in_object_stream(
+    bytes: &[u8],
+    span: &StreamSpan,
+    budget: &mut usize,
+) -> Option<(usize, Option<usize>)> {
+    let dict = &bytes[span.dict_start..span.dict_end];
+    if !window_contains(dict, b"/ObjStm") {
+        return Some((0, None));
+    }
+    // An escaped name could hide the object stream's filter or predictor.
+    if dict.contains(&b'#') {
+        return None;
+    }
+    // Strings, decode parameters (a predictor, or an indirect reference to
+    // one) are beyond this reader; such an object stream is not read.
+    if dict.contains(&b'(') || window_contains(dict, b"/DecodeParms") {
+        return None;
+    }
+    let data = &bytes[span.data_start..span.data_end];
+    let limit = *budget;
+    let payload = match object_stream_filter(dict) {
+        StreamFilter::None => data[..data.len().min(limit)].to_vec(),
+        StreamFilter::Flate => inflate_strict(data, limit)?,
+        StreamFilter::Other => return None,
+    };
+    // Reaching the cap means the stream may hold more than was read.
+    if payload.len() >= limit {
+        return None;
+    }
+    *budget -= payload.len();
+    Some((count_page_tokens(&payload), last_root_count(&payload)))
+}
+
+/// The `/Filter` of a stream dictionary, as far as the light reader can decode it.
+enum StreamFilter {
+    None,
+    Flate,
+    Other,
+}
+
+/// Read the `/Filter` value: absent, a single `/FlateDecode` (bare or as a
+/// one-element array), or anything else.
+fn object_stream_filter(dict: &[u8]) -> StreamFilter {
+    let Some(at) = dict.windows(b"/Filter".len()).position(|w| w == b"/Filter") else {
+        return StreamFilter::None;
+    };
+    let rest = &dict[at + b"/Filter".len()..];
+    let mut i = skip_pdf_ws(rest, 0);
+    let in_array = rest.get(i) == Some(&b'[');
+    if in_array {
+        i = skip_pdf_ws(rest, i + 1);
+    }
+    let Some((name, n)) = pdf_name_at(&rest[i..]) else {
+        return StreamFilter::Other;
+    };
+    i = skip_pdf_ws(rest, i + n);
+    let closed = !in_array || rest.get(i) == Some(&b']');
+    if name == b"/FlateDecode" && closed {
+        StreamFilter::Flate
+    } else {
+        StreamFilter::Other
+    }
+}
+
+/// Count `/Type` names whose value is the name `/Page`.
+///
+/// Whitespace may separate the two names. `/Pages` is a different name.
+/// Matches inside comments and literal or hex strings are not page objects.
+fn count_page_tokens(bytes: &[u8]) -> usize {
     let mut count = 0;
     let mut i = 0;
-    while i + needle.len() <= haystack.len() {
-        if haystack[i..i + needle.len()] == *needle {
-            count += 1;
-            i += needle.len();
-        } else {
-            i += 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'(' => match parse_literal_string(&bytes[i..]) {
+                Some((_, n)) => i += n,
+                // The rest of this region is the unclosed string.
+                None => break,
+            },
+            // A dictionary opens with `<<`. Treating the second `<` as a hex
+            // string would read through the next `>` and hide the names inside.
+            b'<' if bytes.get(i + 1) == Some(&b'<') => i += 2,
+            b'<' => match parse_hex_string(&bytes[i..]) {
+                Some((_, n)) => i += n,
+                None => break,
+            },
+            b'/' => {
+                let Some((name, n)) = pdf_name_at(&bytes[i..]) else {
+                    i += 1;
+                    continue;
+                };
+                i += n;
+                if name == b"/Type" {
+                    i = skip_pdf_ws(bytes, i);
+                    if let Some((value, n2)) = pdf_name_at(&bytes[i..]) {
+                        if value == b"/Page" {
+                            count += 1;
+                        }
+                        i += n2;
+                    }
+                }
+            }
+            _ => i += 1,
         }
     }
     count
+}
+
+fn pdf_name_at(bytes: &[u8]) -> Option<(&[u8], usize)> {
+    if bytes.first() != Some(&b'/') {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len()
+        && !is_pdf_delimiter_or_ws(bytes[i])
+        && bytes[i] != b'%'
+        && !is_pdf_whitespace(bytes[i])
+    {
+        i += 1;
+    }
+    Some((&bytes[..i], i.max(1)))
+}
+
+fn skip_pdf_ws(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && is_pdf_whitespace(bytes[i]) {
+        i += 1;
+    }
+    i
 }
 
 /// Extract text from PDF byte stream using operator-based scanning.
@@ -417,20 +845,32 @@ fn hex_digit(b: u8) -> Option<u8> {
 
 /// Parse a PDF array `[ (str1) adj (str2) ... ]` used by the TJ operator.
 ///
-/// Numbers (spacing adjustments) are ignored; only string elements are collected.
+/// Consecutive positioning numbers are summed. A total of
+/// [`WORD_GAP_THOUSANDTHS`] or less becomes one space before the next
+/// non-empty string. An empty string does not consume that total, and a
+/// comment is not a number. The space is stored in the preceding string so
+/// later joining cannot drop it.
 fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
     if bytes.first() != Some(&b'[') {
         return None;
     }
     let mut strings = Vec::new();
     let mut i = 1;
+    let mut adjust = 0.0;
+    let mut saw_adjust = false;
 
     while i < bytes.len() {
         match bytes[i] {
             b']' => return Some((strings, i + 1)),
+            b'%' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    i += 1;
+                }
+            }
             b'(' => {
                 if let Some((s, consumed)) = parse_literal_string(&bytes[i..]) {
-                    strings.push(s);
+                    take_tj_piece(&mut strings, &s, &mut adjust, &mut saw_adjust);
                     i += consumed;
                 } else {
                     i += 1;
@@ -438,7 +878,16 @@ fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
             }
             b'<' if bytes.get(i + 1).is_some_and(|&b| b != b'<') => {
                 if let Some((s, consumed)) = parse_hex_string(&bytes[i..]) {
-                    strings.push(s);
+                    take_tj_piece(&mut strings, &s, &mut adjust, &mut saw_adjust);
+                    i += consumed;
+                } else {
+                    i += 1;
+                }
+            }
+            b'+' | b'-' | b'.' | b'0'..=b'9' => {
+                if let Some((n, consumed)) = parse_pdf_number(&bytes[i..]) {
+                    adjust += n;
+                    saw_adjust = true;
                     i += consumed;
                 } else {
                     i += 1;
@@ -450,6 +899,61 @@ fn parse_array_strings(bytes: &[u8]) -> Option<(Vec<String>, usize)> {
         }
     }
     None // unclosed array
+}
+
+fn take_tj_piece(strings: &mut Vec<String>, piece: &str, adjust: &mut f64, saw_adjust: &mut bool) {
+    let gap = *saw_adjust && *adjust <= WORD_GAP_THOUSANDTHS;
+    if push_tj_piece(strings, piece, gap) {
+        *adjust = 0.0;
+        *saw_adjust = false;
+    }
+}
+
+fn push_tj_piece(strings: &mut Vec<String>, piece: &str, gap: bool) -> bool {
+    if piece.is_empty() {
+        return false;
+    }
+    if gap && let Some(prev) = strings.last_mut() {
+        if !prev.ends_with(' ') && !piece.starts_with(' ') {
+            prev.push(' ');
+        }
+        prev.push_str(piece);
+    } else {
+        strings.push(piece.to_string());
+    }
+    true
+}
+
+/// Parse a PDF number (`-250`, `16.5`, `-.5`). Returns the value and the
+/// number of bytes consumed.
+fn parse_pdf_number(bytes: &[u8]) -> Option<(f64, usize)> {
+    let mut i = 0;
+    if matches!(bytes.first(), Some(b'+' | b'-')) {
+        i = 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    let mut saw_digit = false;
+    let mut saw_dot = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'0'..=b'9' => {
+                saw_digit = true;
+                i += 1;
+            }
+            b'.' if !saw_dot => {
+                saw_dot = true;
+                i += 1;
+            }
+            _ => break,
+        }
+    }
+    if !saw_digit {
+        return None;
+    }
+    let text = std::str::from_utf8(&bytes[..i]).ok()?;
+    Some((text.parse().ok()?, i))
 }
 
 /// Find the end of a PDF operator token starting at `i`.
@@ -478,49 +982,17 @@ fn sanitize_pdf_string(s: &str) -> String {
 /// ponytail: heuristic stream walker, not a full PDF parser. It does not apply
 /// PNG/TIFF predictors (used by some object/xref streams) or LZW; such streams
 /// simply yield no text rather than wrong text. Upgrade path: `--features pdf`
-/// (pdfium) for full-fidelity decoding.
+/// (pdfium) for full-fidelity decoding. The walk itself is [`next_stream`].
 fn collect_stream_contents(bytes: &[u8]) -> Option<Vec<u8>> {
-    const KW: &[u8] = b"stream";
     let mut out: Vec<u8> = Vec::new();
-    let mut i = 0;
     let mut found_any = false;
-    // Start of the current object's dictionary lookback — never reaches back
-    // past the previous stream, so one object's filters can't bleed into the next.
-    let mut prev_end = 0usize;
+    let mut cursor = 0usize;
 
-    while i + KW.len() <= bytes.len() {
-        if &bytes[i..i + KW.len()] != KW {
-            i += 1;
-            continue;
-        }
-        // Reject the "stream" inside "endstream": the preceding byte is a letter.
-        if i > 0 && bytes[i - 1].is_ascii_alphabetic() {
-            i += KW.len();
-            continue;
-        }
+    while let Some(span) = next_stream(bytes, cursor) {
         found_any = true;
-
-        // The stream dictionary precedes the keyword; inspect a bounded window
-        // clamped to this object (after the previous stream's end).
-        let dict_start = i.saturating_sub(512).max(prev_end);
-        let dict = &bytes[dict_start..i];
-
-        // Data begins after the EOL that follows the `stream` keyword
-        // (CRLF or LF per the PDF spec).
-        let mut data_start = i + KW.len();
-        if bytes.get(data_start) == Some(&b'\r') {
-            data_start += 1;
-        }
-        if bytes.get(data_start) == Some(&b'\n') {
-            data_start += 1;
-        }
-
-        let Some(rel_end) = find_subsequence(&bytes[data_start..], b"endstream") else {
-            break;
-        };
-        let data = &bytes[data_start..data_start + rel_end];
-        i = data_start + rel_end + b"endstream".len();
-        prev_end = i;
+        let dict = &bytes[span.dict_start..span.dict_end];
+        let data = &bytes[span.data_start..span.data_end];
+        cursor = span.after;
 
         if dict_is_image(dict) {
             continue;
@@ -567,15 +1039,53 @@ fn dict_is_image(dict: &[u8]) -> bool {
 /// Partial output is accepted: a truncated/corrupt tail still yields the text
 /// decoded so far.
 fn inflate_flate(data: &[u8]) -> Option<Vec<u8>> {
-    let mut buf = Vec::new();
-    let mut z = ZlibDecoder::new(data).take(MAX_DECOMPRESSED_BYTES as u64);
-    if z.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-        return Some(buf);
-    }
-    buf.clear();
-    let mut d = DeflateDecoder::new(data).take(MAX_DECOMPRESSED_BYTES as u64);
-    let _ = d.read_to_end(&mut buf);
+    let buf = inflate_capped(data, MAX_DECOMPRESSED_BYTES);
     if buf.is_empty() { None } else { Some(buf) }
+}
+
+/// Inflate at most `limit` bytes. A short or failed decode keeps the bytes
+/// already emitted, so a caller can charge them against a budget.
+fn inflate_capped(data: &[u8], limit: usize) -> Vec<u8> {
+    if limit == 0 || data.is_empty() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    let mut z = ZlibDecoder::new(data).take(limit as u64);
+    let _ = z.read_to_end(&mut buf);
+    if buf.is_empty() {
+        let mut raw = DeflateDecoder::new(data).take(limit as u64);
+        let _ = raw.read_to_end(&mut buf);
+    }
+    if buf.len() > limit {
+        buf.truncate(limit);
+    }
+    buf
+}
+
+/// Inflate a zlib or raw deflate stream that must reach its end marker.
+///
+/// Returns `None` for corrupt or truncated data, so a caller never mistakes a
+/// partial body for a whole. Output stops once it reaches `limit` bytes; the
+/// caller treats a body at the limit as incomplete.
+fn inflate_strict(data: &[u8], limit: usize) -> Option<Vec<u8>> {
+    use flate2::{Decompress, FlushDecompress, Status};
+    'format: for zlib in [true, false] {
+        let mut d = Decompress::new(zlib);
+        let mut out = Vec::new();
+        while out.len() < limit {
+            out.reserve((limit - out.len()).min(64 * 1024));
+            let (in_before, out_before) = (d.total_in(), d.total_out());
+            let input = data.get(usize::try_from(in_before).ok()?..)?;
+            match d.decompress_vec(input, &mut out, FlushDecompress::None) {
+                Ok(Status::StreamEnd) => return Some(out),
+                Ok(_) if (d.total_in(), d.total_out()) != (in_before, out_before) => {}
+                // No progress and no end marker: the stream was cut short.
+                _ => continue 'format,
+            }
+        }
+        return Some(out);
+    }
+    None
 }
 
 /// Classify why a PDF has (or lacks) a text layer, for honest messaging (#195).
@@ -614,10 +1124,10 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Build the final markdown output from extracted text and page count.
 fn build_markdown(text: Option<String>, page_count: usize, kind: PdfKind) -> String {
-    let pages_label = if page_count == 1 {
-        "1 page".to_string()
-    } else {
-        format!("{page_count} pages")
+    let pages_label = match page_count {
+        0 => "page count unavailable".to_string(),
+        1 => "1 page".to_string(),
+        n => format!("{n} pages"),
     };
 
     match text {
@@ -699,6 +1209,193 @@ mod tests {
         let count = count_pages(bytes);
         // THEN: two pages detected
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn count_pages_does_not_count_the_pages_tree_node() {
+        // /Type /Pages is the tree node. Only /Type /Page is a leaf.
+        let bytes = b"%PDF-1.4\n/Type /Pages\n/Type /Page\n/Type /Page\n";
+        assert_eq!(count_pages(bytes), 2);
+    }
+
+    #[test]
+    fn count_pages_reads_page_objects_inside_a_compressed_stream() {
+        // arXiv-style PDF 1.5: the page dictionaries live in a FlateDecode
+        // object stream, so a raw byte scan sees no /Type /Page at all.
+        let payload = b"<< /Type /Pages /Count 2 >>\n<< /Type /Page >>\n<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n%%EOF");
+
+        assert_eq!(count_pages(&pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_unknown_is_zero_not_a_fabricated_single_page() {
+        // No page object and no inflated stand-in. Do not report 1.
+        assert_eq!(count_pages(b"%PDF-1.4\n% no pages\n%%EOF"), 0);
+    }
+
+    #[test]
+    fn tj_word_gap_becomes_a_space() {
+        // Measured on a born-digital paper: word gaps cluster near -250
+        // (thousandths of an em). The light extractor used to drop the number
+        // and glue the two strings together.
+        let (strings, _) = parse_array_strings(b"[(Hello) -250 (world)]").unwrap();
+        let line: String = strings.concat();
+        assert_eq!(line, "Hello world");
+    }
+
+    #[test]
+    fn tj_kerning_does_not_become_a_space() {
+        // The same paper's kerning adjustments sat above -100.
+        let (strings, _) = parse_array_strings(b"[(A) -20 (V)]").unwrap();
+        let line: String = strings.concat();
+        assert_eq!(line, "AV");
+    }
+
+    #[test]
+    fn tj_empty_piece_does_not_swallow_the_word_gap() {
+        let (strings, _) = parse_array_strings(b"[(Hello) -250 () (world)]").unwrap();
+        assert_eq!(strings.concat(), "Hello world");
+    }
+
+    #[test]
+    fn tj_cancelling_adjustments_do_not_become_a_space() {
+        let (strings, _) = parse_array_strings(b"[(A) -250 250 (V)]").unwrap();
+        assert_eq!(strings.concat(), "AV");
+    }
+
+    #[test]
+    fn tj_comment_is_not_a_positioning_number() {
+        let (strings, _) = parse_array_strings(b"[(A) % -250\n (V)]").unwrap();
+        assert_eq!(strings.concat(), "AV");
+    }
+
+    #[test]
+    fn count_pages_ignores_a_stream_word_inside_a_string() {
+        // The bytes `stream` in metadata are not a content stream. Page
+        // dictionaries after them must still count.
+        let pdf = b"%PDF-1.4\n<< /Title (stream) >>\n<< /Type /Page >>\n<< /Type /Page >>\n<< /Length 5 >>\nstream\nhello\nendstream\n";
+        assert_eq!(count_pages(pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_ignores_type_page_inside_strings_and_comments() {
+        let bytes = b"%PDF-1.4\n% /Type /Page\n/Title (/Type /Page)\n/Type\n/Page\n";
+        assert_eq!(count_pages(bytes), 1);
+    }
+
+    #[test]
+    fn count_pages_reads_object_stream_after_a_nearby_image_name() {
+        let payload = b"<< /Type /Page >>\n<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /XObject << /Image1 9 0 R >> >>\n");
+        pdf.extend_from_slice(b"<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n%%EOF");
+
+        assert_eq!(count_pages(&pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_reads_a_stream_whose_dictionary_ends_with_nested_closers() {
+        // `>>>>` is two closers with no space. A one-byte backward scan
+        // counts the overlapping pair and rejects the stream.
+        let payload = b"<< /Type /Page >>\n<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b"/X<< /A 1>>>>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        assert_eq!(count_pages(&pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_reads_a_stream_after_a_comment() {
+        let payload = b"<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\n% between the dictionary and the keyword\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        assert_eq!(count_pages(&pdf), 1);
+    }
+
+    #[test]
+    fn count_pages_ignores_a_fake_dictionary_inside_a_string() {
+        let pdf = b"%PDF-1.4\n<< /Title (<< >> stream) >>\n<< /Type /Page >>\n<< /Type /Page >>\n<< /Length 5 >>\nstream\nhello\nendstream\n";
+        assert_eq!(count_pages(pdf), 2);
+    }
+
+    #[test]
+    fn count_pages_accepts_form_feed_between_type_and_page() {
+        assert_eq!(count_pages(b"%PDF-1.4\n/Type\x0c/Page\n"), 1);
+    }
+
+    #[test]
+    fn count_pages_stops_at_an_unclosed_string() {
+        // The remainder of an unclosed literal string is string data.
+        assert_eq!(count_pages(b"%PDF-1.4\n(unclosed /Type /Page\n"), 0);
+    }
+
+    #[test]
+    fn handler_does_not_invent_a_page_count() {
+        let pdf = b"%PDF-1.4\nBT\n(Hello) Tj\nET\n%%EOF";
+        let result = PdfLightHandler.to_markdown(pdf, "application/pdf").unwrap();
+        assert_eq!(result.page_count, None);
+        assert!(
+            result.markdown.contains("page count unavailable"),
+            "got: {}",
+            result.markdown
+        );
+        assert!(
+            !result.markdown.contains("1 page"),
+            "got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn handler_keeps_the_word_gap_and_reports_one_real_page() {
+        let pdf = b"%PDF-1.4\n/Type /Page\nBT\n[(Hello) -298 (world)] TJ\nET\n%%EOF";
+        let result = PdfLightHandler.to_markdown(pdf, "application/pdf").unwrap();
+        assert_eq!(result.page_count, Some(1));
+        assert!(
+            result.markdown.contains("Hello world"),
+            "got: {}",
+            result.markdown
+        );
+        assert!(
+            !result.markdown.contains("Helloworld"),
+            "got: {}",
+            result.markdown
+        );
     }
 
     // ─── Literal string parsing ───────────────────────────────────────────
@@ -968,6 +1665,24 @@ mod tests {
     }
 
     #[test]
+    fn collect_stream_contents_keeps_a_stream_whose_dictionary_nests() {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"BT (visible) Tj ET").unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"<< /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b"/DecodeParms<< /Predictor 1>>>>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        let out = collect_stream_contents(&pdf).expect("nested dictionary is still a stream");
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains("visible"), "inflated text missing: {s}");
+    }
+
+    #[test]
     fn classify_pdf_detects_born_digital_via_font() {
         let pdf = b"%PDF-1.5\n<< /Type /Font /Subtype /Type1 /FontDescriptor 1 0 R >>";
         assert_eq!(classify_pdf(pdf, b""), PdfKind::HasTextLayer);
@@ -990,21 +1705,128 @@ mod tests {
     }
 
     #[test]
+    fn inflate_capped_stops_at_the_callers_limit() {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"0123456789abcdef").unwrap();
+        let compressed = enc.finish().unwrap();
+        assert_eq!(inflate_capped(&compressed, 4).len(), 4);
+        assert_eq!(inflate_capped(&compressed, 0), Vec::<u8>::new());
+    }
+
+    #[test]
     fn pdf_light_supported_types_is_application_pdf() {
         let handler = PdfLightHandler;
         assert_eq!(handler.supported_types(), &["application/pdf"]);
     }
 
-    // ─── count_occurrences helper ────────────────────────────────────────
-
     #[test]
-    fn count_occurrences_finds_no_match_in_empty_haystack() {
-        assert_eq!(count_occurrences(b"", b"needle"), 0);
+    fn count_pages_is_unknown_for_a_corrupt_or_chained_object_stream() {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"<< /Type /Page >>\n<< /Type /Page >>\n")
+            .unwrap();
+        let compressed = enc.finish().unwrap();
+        let build = |filter: &[u8], body: &[u8]| {
+            let mut pdf = b"%PDF-1.5\n<< /Type /Page >>\n<< /Type /ObjStm /Filter ".to_vec();
+            pdf.extend_from_slice(filter);
+            pdf.extend_from_slice(b" >>\nstream\n");
+            pdf.extend_from_slice(body);
+            pdf.extend_from_slice(b"\nendstream\n");
+            pdf
+        };
+        assert_eq!(count_pages(&build(b"/FlateDecode", &compressed)), 3);
+        let truncated = &compressed[..compressed.len() - 6];
+        assert_eq!(count_pages(&build(b"/FlateDecode", truncated)), 0);
+        let chained = build(b"[/ASCII85Decode /FlateDecode]", &compressed);
+        assert_eq!(count_pages(&chained), 0);
+        let predicted = build(
+            b"/FlateDecode /DecodeParms << /Predictor 12 /Columns 5 >>",
+            &compressed,
+        );
+        assert_eq!(count_pages(&predicted), 0);
+        assert_eq!(count_pages(&build(b"/Crypt", &compressed)), 0);
+        let flate_crypt = build(b"[/FlateDecode /Crypt]", &compressed);
+        assert_eq!(count_pages(&flate_crypt), 0);
+        assert_eq!(count_pages(&build(b"[/FlateDecode]", &compressed)), 3);
+        let indirect = build(b"/FlateDecode /DecodeParms 7 0 R", &compressed);
+        assert_eq!(count_pages(&indirect), 0);
+        assert_eq!(
+            count_pages(&build(b"/Fi#6cter /Crypt /FlateDecode", &compressed)),
+            0
+        );
+        // Raw deflate (no zlib header) cut short is unknown as well.
+        let mut raw =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        raw.write_all(b"<< /Type /Page >>\n<< /Type /Page >>\n")
+            .unwrap();
+        let raw = raw.finish().unwrap();
+        assert_eq!(count_pages(&build(b"/FlateDecode", &raw)), 3);
+        assert_eq!(
+            count_pages(&build(b"/FlateDecode", &raw[..raw.len() - 3])),
+            0
+        );
+        // An object stream with no endstream was never read.
+        let mut open = build(b"/FlateDecode", &compressed);
+        open.truncate(open.len() - b"\nendstream\n".len());
+        assert_eq!(count_pages(&open), 0);
     }
 
     #[test]
-    fn count_occurrences_finds_multiple_non_overlapping() {
-        let hay = b"abcabcabc";
-        assert_eq!(count_occurrences(hay, b"abc"), 3);
+    fn direct_length_skips_length1_and_survives_an_embedded_endstream() {
+        let body = b"xx endstream yy";
+        let mut pdf = b"%PDF-1.4\n<< /Length1 3 /Length ".to_vec();
+        pdf.extend_from_slice(body.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        let data_start = pdf.len();
+        pdf.extend_from_slice(body);
+        pdf.extend_from_slice(b"\nendstream\n");
+        let span = next_stream(&pdf, 0).expect("stream");
+        assert_eq!(span.data_start, data_start);
+        assert_eq!(span.data_end, data_start + body.len());
+    }
+
+    #[test]
+    fn count_pages_takes_the_last_page_tree_root_after_an_incremental_save() {
+        let pdf = b"%PDF-1.4\n\
+            1 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >> endobj\n\
+            3 0 obj << /Type /Page /Parent 1 0 R >> endobj\n\
+            4 0 obj << /Type /Page /Parent 1 0 R >> endobj\n\
+            5 0 obj << /Type /Page /Parent 1 0 R >> endobj\n\
+            %%EOF\n\
+            1 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj\n\
+            %%EOF\n";
+        assert_eq!(count_pages(pdf), 2);
+        // A root with nested inherited resources still yields its /Count.
+        let nested_res = b"%PDF-1.4\n<< /Type /Pages /Resources << /Font << /F1 9 0 R >> >> /Kids [] /Count 5 >>\n";
+        assert_eq!(count_pages(nested_res), 5);
+        let compact = b"%PDF-1.4\n<</Resources<</Font<</F1 9 0 R>>>>/Type/Pages/Count 6>>\n";
+        assert_eq!(count_pages(compact), 6);
+        // A spot-colour image name with # escapes does not discard the count.
+        let spot = b"%PDF-1.4\n<< /Type /Pages /Count 2 >>\n<< /ColorSpace [/Separation /PANTONE#20300#20C /DeviceCMYK 7 0 R] /Length 1 >>\nstream\nx\nendstream\n";
+        assert_eq!(count_pages(spot), 2);
+        // A nested /Pages node (with /Parent) is not the root.
+        let nested =
+            b"%PDF-1.4\n<< /Type /Pages /Count 4 >>\n<< /Type /Pages /Parent 1 0 R /Count 1 >>\n";
+        assert_eq!(count_pages(nested), 4);
+    }
+
+    #[test]
+    fn count_pages_is_unknown_when_the_byte_budget_is_spent() {
+        let payload = b"<< /Type /Page >>\n<< /Type /Page >>\n";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.5\n<< /Type /Page >>\n");
+        pdf.extend_from_slice(b"<< /Type /ObjStm /Filter /FlateDecode /Length ");
+        pdf.extend_from_slice(compressed.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\n");
+
+        // A stream the budget cannot cover makes the count unknown, not 1.
+        assert_eq!(count_pages_with_budget(&pdf, 0), 0);
+        assert_eq!(count_pages_with_budget(&pdf, 8), 0);
+        assert_eq!(count_pages(&pdf), 3);
     }
 }
