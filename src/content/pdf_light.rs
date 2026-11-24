@@ -308,12 +308,13 @@ fn page_tokens_in_object_stream(
     }
     let data = &bytes[span.data_start..span.data_end];
     let limit = *budget;
-    let payload = if window_contains(dict, b"/FlateDecode") {
-        inflate_capped(data, limit)
-    } else if !window_contains(dict, b"Decode") {
-        data[..data.len().min(limit)].to_vec()
-    } else {
-        return None;
+    let occurrences = |pat: &[u8]| dict.windows(pat.len()).filter(|w| *w == pat).count();
+    let filters = occurrences(b"Decode") - occurrences(b"DecodeParms");
+    let payload = match filters {
+        0 => data[..data.len().min(limit)].to_vec(),
+        // A single Flate filter; a chain or any other filter is not decoded here.
+        1 if window_contains(dict, b"/FlateDecode") => inflate_strict(data, limit)?,
+        _ => return None,
     };
     // Reaching the cap means the stream may hold more than was read.
     if payload.len() >= limit {
@@ -882,6 +883,25 @@ fn inflate_capped(data: &[u8], limit: usize) -> Vec<u8> {
         buf.truncate(limit);
     }
     buf
+}
+
+/// Inflate at most `limit` bytes of a zlib or raw deflate stream; `None` when
+/// the data is corrupt, so a caller never mistakes a partial body for a whole.
+fn inflate_strict(data: &[u8], limit: usize) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    if ZlibDecoder::new(data)
+        .take(limit as u64)
+        .read_to_end(&mut buf)
+        .is_ok()
+    {
+        return Some(buf);
+    }
+    buf.clear();
+    DeflateDecoder::new(data)
+        .take(limit as u64)
+        .read_to_end(&mut buf)
+        .ok()?;
+    Some(buf)
 }
 
 /// Classify why a PDF has (or lacks) a text layer, for honest messaging (#195).
@@ -1513,6 +1533,27 @@ mod tests {
     fn pdf_light_supported_types_is_application_pdf() {
         let handler = PdfLightHandler;
         assert_eq!(handler.supported_types(), &["application/pdf"]);
+    }
+
+    #[test]
+    fn count_pages_is_unknown_for_a_corrupt_or_chained_object_stream() {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"<< /Type /Page >>\n<< /Type /Page >>\n")
+            .unwrap();
+        let compressed = enc.finish().unwrap();
+        let build = |filter: &[u8], body: &[u8]| {
+            let mut pdf = b"%PDF-1.5\n<< /Type /Page >>\n<< /Type /ObjStm /Filter ".to_vec();
+            pdf.extend_from_slice(filter);
+            pdf.extend_from_slice(b" >>\nstream\n");
+            pdf.extend_from_slice(body);
+            pdf.extend_from_slice(b"\nendstream\n");
+            pdf
+        };
+        assert_eq!(count_pages(&build(b"/FlateDecode", &compressed)), 3);
+        let truncated = &compressed[..compressed.len() - 6];
+        assert_eq!(count_pages(&build(b"/FlateDecode", truncated)), 0);
+        let chained = build(b"[/ASCII85Decode /FlateDecode]", &compressed);
+        assert_eq!(count_pages(&chained), 0);
     }
 
     #[test]
