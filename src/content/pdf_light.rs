@@ -307,9 +307,14 @@ fn stream_span(
 /// that offset (after an optional EOL) are `endstream`. Data that happens to
 /// contain the word `endstream` then does not cut the body short.
 fn direct_length_end(dict: &[u8], bytes: &[u8], data_start: usize) -> Option<usize> {
-    let at = dict
-        .windows(b"/Length".len())
-        .position(|w| w == b"/Length")?;
+    // The exact name `/Length`, not `/Length1` (font streams carry both).
+    let key = b"/Length";
+    let at = (0..dict.len().saturating_sub(key.len() - 1)).find(|&i| {
+        dict[i..].starts_with(key)
+            && dict
+                .get(i + key.len())
+                .is_none_or(|&b| is_pdf_delimiter_or_ws(b) || b == b'%')
+    })?;
     let rest = &dict[at + b"/Length".len()..];
     let i = skip_pdf_ws(rest, 0);
     let digits = rest[i..].iter().take_while(|b| b.is_ascii_digit()).count();
@@ -1664,6 +1669,20 @@ mod tests {
         let mut open = build(b"/FlateDecode", &compressed);
         open.truncate(open.len() - b"\nendstream\n".len());
         assert_eq!(count_pages(&open), 0);
+    }
+
+    #[test]
+    fn direct_length_skips_length1_and_survives_an_embedded_endstream() {
+        let body = b"xx endstream yy";
+        let mut pdf = b"%PDF-1.4\n<< /Length1 3 /Length ".to_vec();
+        pdf.extend_from_slice(body.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        let data_start = pdf.len();
+        pdf.extend_from_slice(body);
+        pdf.extend_from_slice(b"\nendstream\n");
+        let span = next_stream(&pdf, 0).expect("stream");
+        assert_eq!(span.data_start, data_start);
+        assert_eq!(span.data_end, data_start + body.len());
     }
 
     #[test]
