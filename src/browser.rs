@@ -600,8 +600,17 @@ impl SsrfFetchGuard {
         Ok(guard)
     }
 
-    /// Check `url` up front, before any page is opened.
+    /// Check a caller-supplied target before navigating to it. Only HTTP(S)
+    /// pages are rendered: a `data:` or `blob:` document would skip the
+    /// response-stage sandbox that keeps render pages from opening popups.
     fn check(&self, url: &str) -> Result<()> {
+        let scheme = url::Url::parse(url).map(|u| u.scheme().to_string());
+        if !matches!(scheme.as_deref(), Ok("http" | "https")) {
+            return Err(crate::error::NabError::SsrfBlocked(format!(
+                "browser target must be http or https: {url}"
+            ))
+            .into());
+        }
         browser_request_check(url, &self.policy)?;
         Ok(())
     }
@@ -732,7 +741,9 @@ fn paused_target(
     let Some(status) = event.response_status_code else {
         return Some(event.request.url.clone());
     };
-    if !(300..400).contains(&status) {
+    // Only these statuses make Chrome follow `Location`; a 300 or 304 body
+    // is rendered and must go through the sandbox like any document.
+    if !matches!(status, 301 | 302 | 303 | 307 | 308) {
         return None;
     }
     let location = event
