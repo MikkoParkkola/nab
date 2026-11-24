@@ -338,46 +338,21 @@ fn page_tokens_in_object_stream(
     budget: &mut usize,
 ) -> Option<usize> {
     let dict = &bytes[span.dict_start..span.dict_end];
-    // `/Obj#53tm` is the same name as `/ObjStm`; an escaped type is not read.
-    if !window_contains(dict, b"/ObjStm") {
-        let escaped_type = dict
-            .windows(b"/Type".len())
-            .position(|w| w == b"/Type")
-            .and_then(|at| {
-                let rest = &dict[at + b"/Type".len()..];
-                pdf_name_at(&rest[skip_pdf_ws(rest, 0)..]).map(|(name, _)| name.contains(&b'#'))
-            })
-            .unwrap_or(false);
-        return if escaped_type { None } else { Some(0) };
+    // An escaped name (`/Obj#53tm` is `/ObjStm`) could hide the type, filter
+    // or predictor; a stream dictionary with one is not interpreted.
+    if dict.contains(&b'#') {
+        return None;
     }
-    // Escaped names (`#xx`), strings, or an indirect /DecodeParms could hide
-    // the real filter or predictor; such a stream is not read.
-    let indirect_parms = dict
-        .windows(b"/DecodeParms".len())
-        .position(|w| w == b"/DecodeParms")
-        .is_some_and(|at| {
-            let rest = &dict[at + b"/DecodeParms".len()..];
-            let i = skip_pdf_ws(rest, 0);
-            !matches!(rest.get(i), Some(b'<' | b'['))
-        });
-    if indirect_parms || dict.iter().any(|b| matches!(b, b'#' | b'(')) {
+    if !window_contains(dict, b"/ObjStm") {
+        return Some(0);
+    }
+    // Strings, decode parameters (a predictor, or an indirect reference to
+    // one) are beyond this reader; such an object stream is not read.
+    if dict.contains(&b'(') || window_contains(dict, b"/DecodeParms") {
         return None;
     }
     let data = &bytes[span.data_start..span.data_end];
     let limit = *budget;
-    // A PNG/TIFF predictor would need reversing before the names are readable.
-    let predictor = dict
-        .windows(b"/Predictor".len())
-        .position(|w| w == b"/Predictor")
-        .map(|at| {
-            let rest = &dict[at + b"/Predictor".len()..];
-            let rest = &rest[skip_pdf_ws(rest, 0)..];
-            let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
-            rest[..digits].to_vec()
-        });
-    if predictor.is_some_and(|value| value != b"1") {
-        return None;
-    }
     let payload = match object_stream_filter(dict) {
         StreamFilter::None => data[..data.len().min(limit)].to_vec(),
         StreamFilter::Flate => inflate_strict(data, limit)?,
