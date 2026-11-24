@@ -286,8 +286,10 @@ fn stream_span(
     if bytes.get(data_start) == Some(&b'\n') {
         data_start += 1;
     }
-    let rel = find_subsequence(&bytes[data_start..], b"endstream")?;
-    let data_end = data_start + rel;
+    let data_end =
+        direct_length_end(&bytes[dict_start..dict_end], bytes, data_start).or_else(|| {
+            find_subsequence(&bytes[data_start..], b"endstream").map(|rel| data_start + rel)
+        })?;
     Some(StreamSpan {
         keyword,
         dict_start,
@@ -301,14 +303,65 @@ fn stream_span(
 /// Page objects inside an object stream; `None` when the stream is an object
 /// stream that could not be read in full (byte budget spent, or a filter this
 /// reader does not decode).
+/// End of the stream body from a direct `/Length` value, when the bytes at
+/// that offset (after an optional EOL) are `endstream`. Data that happens to
+/// contain the word `endstream` then does not cut the body short.
+fn direct_length_end(dict: &[u8], bytes: &[u8], data_start: usize) -> Option<usize> {
+    let at = dict
+        .windows(b"/Length".len())
+        .position(|w| w == b"/Length")?;
+    let rest = &dict[at + b"/Length".len()..];
+    let i = skip_pdf_ws(rest, 0);
+    let digits = rest[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let after = skip_pdf_ws(rest, i + digits);
+    // `12 0 R` is an indirect reference, not a length.
+    if digits == 0 || rest.get(after).is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    let len: usize = std::str::from_utf8(&rest[i..i + digits])
+        .ok()?
+        .parse()
+        .ok()?;
+    let end = data_start.checked_add(len)?;
+    let tail = bytes.get(end..)?;
+    let skip = tail
+        .iter()
+        .take(2)
+        .take_while(|b| matches!(b, b'\r' | b'\n'))
+        .count();
+    tail[skip..].starts_with(b"endstream").then_some(end)
+}
+
 fn page_tokens_in_object_stream(
     bytes: &[u8],
     span: &StreamSpan,
     budget: &mut usize,
 ) -> Option<usize> {
     let dict = &bytes[span.dict_start..span.dict_end];
+    // `/Obj#53tm` is the same name as `/ObjStm`; an escaped type is not read.
     if !window_contains(dict, b"/ObjStm") {
-        return Some(0);
+        let escaped_type = dict
+            .windows(b"/Type".len())
+            .position(|w| w == b"/Type")
+            .and_then(|at| {
+                let rest = &dict[at + b"/Type".len()..];
+                pdf_name_at(&rest[skip_pdf_ws(rest, 0)..]).map(|(name, _)| name.contains(&b'#'))
+            })
+            .unwrap_or(false);
+        return if escaped_type { None } else { Some(0) };
+    }
+    // Escaped names (`#xx`), strings, or an indirect /DecodeParms could hide
+    // the real filter or predictor; such a stream is not read.
+    let indirect_parms = dict
+        .windows(b"/DecodeParms".len())
+        .position(|w| w == b"/DecodeParms")
+        .is_some_and(|at| {
+            let rest = &dict[at + b"/DecodeParms".len()..];
+            let i = skip_pdf_ws(rest, 0);
+            !matches!(rest.get(i), Some(b'<' | b'['))
+        });
+    if indirect_parms || dict.iter().any(|b| matches!(b, b'#' | b'(')) {
+        return None;
     }
     let data = &bytes[span.data_start..span.data_end];
     let limit = *budget;
@@ -1615,6 +1668,12 @@ mod tests {
         let flate_crypt = build(b"[/FlateDecode /Crypt]", &compressed);
         assert_eq!(count_pages(&flate_crypt), 0);
         assert_eq!(count_pages(&build(b"[/FlateDecode]", &compressed)), 3);
+        let indirect = build(b"/FlateDecode /DecodeParms 7 0 R", &compressed);
+        assert_eq!(count_pages(&indirect), 0);
+        assert_eq!(
+            count_pages(&build(b"/Fi#6cter /Crypt /FlateDecode", &compressed)),
+            0
+        );
         // Raw deflate (no zlib header) cut short is unknown as well.
         let mut raw =
             flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
