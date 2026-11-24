@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file, already carries the fix, so the ignores muted nothing and would have
   hidden a regression (#425, #432; thanks @zyl71).
 
+### Fixed
+
+- Light PDF extraction counts page objects stored in compressed object
+  streams and page names inside dictionaries, recognises a stream by the
+  dictionary in front of it, and keeps a word space where a text-array
+  positioning gap is wide enough to be one. A count that cannot be read is
+  omitted instead of being reported as a single page.
+
 ## [0.13.3] - 2026-11-22
 
 0.13.2 was tagged but never published: its release run failed on a timing test.
